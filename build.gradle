@@ -183,8 +183,8 @@ spotless {
 // ============================================================================
 sonar {
     properties {
-        property 'sonar.projectKey', 'SSCC-Web-BE'
-        property 'sonar.projectName', 'SSCC-Web-BE'
+        property 'sonar.projectKey', 'ssccops-server'
+        property 'sonar.projectName', 'ssccops-server'
         // Java 분석을 위한 바이너리 경로
         property 'sonar.java.binaries', 'build/classes/java/main'
         property 'sonar.java.libraries', "${System.getProperty('user.home')}/.gradle/caches/**/modules-*/files-*/**/*.jar"

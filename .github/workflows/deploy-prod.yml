@@ -46,7 +46,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/sscc-web-be
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ssccops-server
 
 jobs:
   # ==========================================================================
@@ -172,7 +172,7 @@ jobs:
   # ==========================================================================
   # Deploy Job - Coolify 환경변수 주입 후 webhook으로 배포 트리거
   # 사전 조건: Coolify 대시보드에서 이미지 소스가
-  #            ghcr.io/<owner>/sscc-web-be:prod (소문자) 로 설정되어 있어야 함
+  #            ghcr.io/<owner>/ssccops-server:prod (소문자) 로 설정되어 있어야 함
   # ==========================================================================
   deploy:
     name: Deploy

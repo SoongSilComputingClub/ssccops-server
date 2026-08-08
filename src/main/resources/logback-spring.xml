@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-    <springProperty name="APP_NAME" source="spring.application.name" defaultValue="SSCC-Web-BE"/>
+    <springProperty name="APP_NAME" source="spring.application.name" defaultValue="ssccops-server"/>
     <springProperty name="APP_ENV" source="spring.profiles.active" defaultValue="local"/>
 
     <!-- prod: JSON format (Alloy/Loki) -->

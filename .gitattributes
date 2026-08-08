@@ -1,0 +1,11 @@
+/gradlew text eol=lf
+*.bat text eol=crlf
+*.jar binary
+
+# Source files - LF for cross-platform consistency
+*.java text eol=lf
+*.xml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.properties text eol=lf
+*.md text eol=lf

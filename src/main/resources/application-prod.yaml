@@ -1,0 +1,71 @@
+spring:
+  datasource:
+    url: ${PROD_DATABASE_URL}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${PROD_DATABASE_USER}
+    password: ${PROD_DATABASE_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    database-platform: org.hibernate.dialect.MySQLDialect
+
+  h2:
+    console:
+      enabled: false
+
+  security:
+    oauth2:
+      client:
+        registration:
+          # Google registration
+          google:
+            client-name: ${PROD_GOOGLE_CLIENT_NAME}
+            client-id: ${PROD_GOOGLE_CLIENT_ID}
+            client-secret: ${PROD_GOOGLE_CLIENT_SECRET}
+            redirect-uri: ${PROD_GOOGLE_REDIRECT_URI}
+            authorization-grant-type: authorization_code
+            scope:
+              - profile
+              - email
+
+springdoc:
+  api-docs:
+    enabled: false # /v3/api-docs API
+  swagger-ui:
+    enabled: false # /swagger-ui.html
+
+# JWT Configuration (production uses environment variables)
+jwt:
+  secret-key: ${PROD_JWT_SECRET_KEY}
+  access-token-expires-in: ${PROD_JWT_ACCESS_TOKEN_EXPIRES_IN}
+  refresh-token-expires-in: ${PROD_JWT_REFRESH_TOKEN_EXPIRES_IN}
+
+# Frontend Configuration
+frontend:
+  url: ${PROD_FRONTEND_URL}
+  cookie:
+    same-site: none
+    secure: true
+    http-only: true
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: WARN
+
+#OpenTelemetry : off
+otel:
+  sdk:
+    disabled: true
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+    logging:
+      export:
+        enabled: false
+    tracing:
+      export:
+        enabled: false

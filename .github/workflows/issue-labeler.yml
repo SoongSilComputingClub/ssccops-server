@@ -1,0 +1,35 @@
+name: Issue Labeler
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add_label:
+    runs-on: ubuntu-latest
+    if: github.event.issue.user.login != 'github-actions[bot]'
+
+    steps:
+      - name: Parse title prefix and add label
+        run: |
+          TITLE="${{ github.event.issue.title }}"
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+
+          # 이슈 제목에서 [Feat], [Bug] 등 접두사 추출 → 소문자 변환
+          TAG=$(echo "$TITLE" | grep -oE '^\[[A-Za-z]+\]' | tr -d '[]' | tr '[:upper:]' '[:lower:]')
+
+          # 태그 → 라벨 매핑
+          case "$TAG" in
+            feat)     LABEL="feat" ;;
+            bug)      LABEL="bug" ;;
+            fix)      LABEL="fix" ;;
+            refactor) LABEL="refactor" ;;
+            docs)     LABEL="docs" ;;
+            chore)    LABEL="chore" ;;
+            test)     LABEL="test" ;;
+            *)        LABEL="feat" ;;
+          esac
+
+          gh issue edit "$ISSUE_NUMBER" --add-label "$LABEL" --repo "${{ github.repository }}"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

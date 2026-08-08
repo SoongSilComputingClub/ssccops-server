@@ -1,0 +1,197 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.9'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'checkstyle'
+    id 'jacoco'
+    id 'com.diffplug.spotless' version '6.25.0'
+    id 'org.sonarqube' version '7.2.0.6526'
+}
+
+group = 'com.project'
+version = '0.0.1-SNAPSHOT'
+description = 'Demo project for Spring Boot'
+
+// ============================================================================
+// Coverage Exclusion Patterns (공통 제외 패턴)
+// ============================================================================
+def coverageExcludePackages = [
+    '**/config/**',      // Config 클래스 제외
+    '**/exception/**',   // Exception 클래스 제외
+    '**/dto/**',         // DTO 클래스 제외
+    '**/apipayload/**',  // API 공통 응답 및 예외 처리 제외
+    '**/security/**', // 시큐리티 관련 클래스 제외
+    '**/apitest/**' // 테스트용 토큰 방법 api 제외
+]
+
+// JaCoCo용 제외 패턴 (클래스 파일)
+def jacocoCoverageExcludes = coverageExcludePackages + ['**/*Application.class']
+
+// Sonar용 제외 패턴 (소스 파일)
+def sonarCoverageExcludes = coverageExcludePackages.collect { it + '/*.java' } + ['**/Application.java']
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+// OpenTelemetry BOM for consistent versions
+dependencyManagement {
+    imports {
+        mavenBom 'io.opentelemetry:opentelemetry-bom:1.44.1'
+        mavenBom 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.11.0-alpha'
+    }
+}
+
+dependencies {
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+
+    // JWT
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+    implementation 'io.jsonwebtoken:jjwt-impl:0.12.6'
+    implementation 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+    // Monitoring & Observability - OpenTelemetry (traces, logs)
+    implementation 'io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter'
+    implementation 'io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0'
+
+    // Logstash encoder (JSON logging for prod profile)
+    implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
+
+    // Micrometer - Prometheus (local scraping) + OTLP (push to Alloy)
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+    implementation 'io.micrometer:micrometer-registry-otlp'
+
+    // Database
+    runtimeOnly 'com.mysql:mysql-connector-j'
+    runtimeOnly 'com.h2database:h2'
+
+    // Swagger
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly 'com.h2database:h2'
+}
+
+// ============================================================================
+// Test
+// ============================================================================
+tasks.named('test') {
+    useJUnitPlatform()
+    finalizedBy jacocoTestReport, jacocoTestCoverageVerification
+}
+
+// ============================================================================
+// JaCoCo (Code Coverage)
+// ============================================================================
+jacoco {
+    toolVersion = '0.8.12'
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: jacocoCoverageExcludes)
+        }))
+    }
+}
+
+jacocoTestCoverageVerification {
+    dependsOn jacocoTestReport
+
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it, exclude: jacocoCoverageExcludes)
+        }))
+    }
+
+    violationRules {
+        rule {
+            limit {
+                minimum = 0.0
+            }
+        }
+    }
+
+    // 검사할 클래스가 없으면 커버리지 검증 건너뛰기
+    doFirst {
+        def hasClasses = classDirectories.files.any { dir ->
+            dir.exists() && fileTree(dir: dir, exclude: jacocoCoverageExcludes).files.size() > 0
+        }
+        if (!hasClasses) {
+            println "No classes to verify coverage. Skipping jacocoTestCoverageVerification."
+            throw new StopExecutionException()
+        }
+    }
+}
+
+// ============================================================================
+// Checkstyle (Code Style) - Naver Conventions
+// ============================================================================
+checkstyle {
+    toolVersion = '10.21.4'
+    configFile = file("${rootDir}/config/checkstyle/checkstyle.xml")
+    configDirectory = file("${rootDir}/config/checkstyle")
+    ignoreFailures = false
+    maxWarnings = 0
+}
+
+// ============================================================================
+// Spotless (Code Formatting) - 4-space indentation, Naver import order
+// ============================================================================
+spotless {
+    java {
+        target 'src/*/java/**/*.java'
+        googleJavaFormat().aosp().reflowLongStrings()
+        // Naver convention import order: java -> javax -> jakarta -> org -> net -> com -> others -> lombok
+        importOrder('java', 'javax', 'jakarta', 'org', 'net', 'com', '', 'lombok')
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
+// ============================================================================
+// SonarQube (Self-Hosted)
+// ============================================================================
+sonar {
+    properties {
+        property 'sonar.projectKey', 'SSCC-Web-BE'
+        property 'sonar.projectName', 'SSCC-Web-BE'
+        // Java 분석을 위한 바이너리 경로
+        property 'sonar.java.binaries', 'build/classes/java/main'
+        property 'sonar.java.libraries', "${System.getProperty('user.home')}/.gradle/caches/**/modules-*/files-*/**/*.jar"
+        // JaCoCo 커버리지
+        property 'sonar.java.coveragePlugin', 'jacoco'
+        property 'sonar.coverage.jacoco.xmlReportPaths', 'build/reports/jacoco/test/jacocoTestReport.xml'
+        property 'sonar.coverage.exclusions', sonarCoverageExcludes.join(',')
+        property 'sonar.exclusions', sonarCoverageExcludes.join(',')
+    }
+}

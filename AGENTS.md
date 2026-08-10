@@ -24,14 +24,15 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 - `domain/{admin,applyform,user}` — 도메인별로 `controller/service/repository/entity/dto/code` 하위 구조를 반복하는 계층형 패키지. 새 도메인을 추가할 때 이 구조를 그대로 따른다.
 - `global/apipayload` — 모든 API 응답의 공통 껍데기.
   - `ApiResponse<T>` — 생성자는 private, `success`/`successWithNoData`/`created`/`fail` 정적 팩토리로만 생성.
-  - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 도메인별 enum(`UserErrorCode`, `ApplyFormErrorCode`, `JwtErrorCode`, `OAuth2ErrorCode`, `CommonErrorCode` 등)이 구현. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.
+  - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 도메인별 enum(`UserErrorCode`, `ApplyFormErrorCode`, `CommonErrorCode`)이 구현. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.
   - `exception/GeneralException` — 서비스 레이어에서 던지는 표준 예외, `ErrorCode`를 감싼다.
   - `handler/GlobalExceptionHandler` — `@RestControllerAdvice`. `GeneralException`은 감싼 `ErrorCode` 그대로, `MethodArgumentNotValidException`/`HttpMessageNotReadableException` 등 스프링 기본 예외는 `CommonErrorCode`로 변환해 항상 `ApiResponse.fail(...)` 포맷으로 응답한다. 컨트롤러 레벨에서 별도 try/catch를 추가하지 않는다.
-- `global/security` — 인증/인가.
-  - OAuth2 소셜 로그인(Google)이 성공/실패하면 `SocialSuccessHandler`/`SocialFailureHandler`가 JWT 발급으로 이어진다 (`security/jwt/` 하위: `JwtUtil`, `JwtService`, `JwtFilter`, `/jwt/exchange`·`/jwt/refresh` 컨트롤러).
-  - `JwtFilter`는 `OncePerRequestFilter`를 직접 구현 — Spring Security 기본 인증 필터 체인을 쓰지 않고 `Authorization: Bearer` 헤더를 수동 파싱해 `SecurityContextHolder`에 인증 정보를 채운다. 필터 단계라 `GlobalExceptionHandler`를 타지 않으므로, 토큰 검증 실패 시 `ApiResponse` 포맷 응답을 필터 안에서 직접 작성한다.
-  - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER), `/admin/**`은 ADMIN 전용, `/jwt/exchange`·`/jwt/refresh`(+ 비prod의 Swagger 경로)만 permitAll, 나머지는 인증 필요.
-  - Refresh Token은 DB(`UserRefreshEntity`/`UserRefreshRepository`)에 저장되며 `refresh-token.cleanup-cron`(application.yaml, 매일 03:00)으로 만료분을 정리한다 (`ScheduleConfig`).
+- `global/security` — 인가. **현재 인증 수단이 없는 과도기 상태다.**
+  - 구글 OAuth2 로그인과 자체 JWT 발급 스택(`JwtUtil`/`JwtService`/`JwtFilter`/`/jwt/exchange`·`/jwt/refresh`, Social 핸들러, Refresh 토큰 화이트리스트)은 Supabase Auth 도입을 위해 제거됐다. 관련 클래스를 찾는 코드가 있다면 잔재이므로 지우면 된다.
+  - 그 결과 **Swagger(비 prod)를 제외한 모든 요청이 401**이다. 인증 실패 응답은 `CustomAuthenticationEntryPoint`, 권한 부족은 `CustomAccessDeniedHandler`가 `ApiResponse` 포맷으로 작성한다.
+  - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로만 permitAll, 나머지는 인증 필요. **인가 규칙은 Supabase 도입 후에도 그대로 재사용한다.**
+  - CORS는 `SecurityConfig.corsConfigurationSource()` 한 곳에서만 정의한다(허용 오리진은 `frontend.url`). 시큐리티 필터체인이 먼저 처리하므로 `WebMvcConfigurer.addCorsMappings()`로 중복 정의하지 말 것.
+  - 다음 단계: `spring-boot-starter-oauth2-resource-server`를 추가하고 Supabase의 JWKS(`/auth/v1/.well-known/jwks.json`)로 Access Token을 검증한다. 권한의 source of truth는 계속 `user_entity.roleType`이며, JWT의 `role` 클레임은 RLS용 Postgres 역할이라 앱 역할과 무관하다.
 - 관측성: OpenTelemetry(OTLP) + Micrometer(Prometheus/OTLP) + Logstash JSON 로깅(`prod` 프로파일에서만 JSON, 그 외 텍스트 — `logback-spring.xml`)이 이미 연결돼 있다. 로컬에 OTLP collector가 없으면 애플리케이션 종료 시 `Connection refused` 경고가 뜨는데 무해하다.
 
 ## 커밋 · 브랜치 · PR 컨벤션

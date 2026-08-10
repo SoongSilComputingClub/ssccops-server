@@ -14,34 +14,9 @@ spring:
     console:
       enabled: false
 
-  security:
-    oauth2:
-      client:
-        registration:
-          # Google registration
-          google:
-            client-name: ${STAGING_GOOGLE_CLIENT_NAME}
-            client-id: ${STAGING_GOOGLE_CLIENT_ID}
-            client-secret: ${STAGING_GOOGLE_CLIENT_SECRET}
-            redirect-uri: ${STAGING_GOOGLE_REDIRECT_URI}
-            authorization-grant-type: authorization_code
-            scope:
-              - profile
-              - email
-
-# JWT Configuration (production uses environment variables)
-jwt:
-  secret-key: ${STAGING_JWT_SECRET_KEY}
-  access-token-expires-in: ${STAGING_JWT_ACCESS_TOKEN_EXPIRES_IN}
-  refresh-token-expires-in: ${STAGING_JWT_REFRESH_TOKEN_EXPIRES_IN}
-
-# Frontend Configuration
+# Frontend Configuration (CORS 허용 오리진)
 frontend:
   url: ${STAGING_FRONTEND_URL}
-  cookie:
-    same-site: none
-    secure: true
-    http-only: true
 
 logging:
   level:

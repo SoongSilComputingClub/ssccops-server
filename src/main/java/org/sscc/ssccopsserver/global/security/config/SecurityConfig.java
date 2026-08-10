@@ -4,7 +4,6 @@ import java.util.List;
 
 import jakarta.annotation.PostConstruct;
 
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,31 +16,30 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
-import org.springframework.security.web.authentication.AuthenticationFailureHandler;
-import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
-import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.sscc.ssccopsserver.global.security.UserRoleType;
-import org.sscc.ssccopsserver.global.security.handler.CustomLogoutSuccessHandler;
-import org.sscc.ssccopsserver.global.security.handler.RefreshTokenLogoutHandler;
-import org.sscc.ssccopsserver.global.security.jwt.filter.JwtFilter;
-import org.sscc.ssccopsserver.global.security.jwt.service.JwtService;
 
 import lombok.extern.slf4j.Slf4j;
 
+/*
+ * 인증 수단이 없는 상태의 필터체인.
+ *
+ * 구글 OAuth2 로그인과 자체 JWT 발급 스택을 제거했으므로, 현재 이 서버는 요청을 인증할 방법이 없다.
+ * permitAll로 열어둔 Swagger를 제외한 모든 요청은 CustomAuthenticationEntryPoint를 타고 401로 응답한다.
+ *
+ * 다음 단계에서 Supabase Auth가 발급한 JWT를 검증하는 resource server 설정
+ * (spring-boot-starter-oauth2-resource-server + JWKS)을 여기에 붙인다.
+ * 인가 규칙(RoleHierarchy, /admin/** 제한)은 그대로 재사용된다.
+ */
 @Slf4j
 @Configuration
 @EnableWebSecurity // 시큐리티 빈 설정 활성화
 public class SecurityConfig {
 
-    private final AuthenticationSuccessHandler socialSuccessHandler;
-    private final AuthenticationFailureHandler socialFailureHandler;
     private final AuthenticationEntryPoint authenticationEntryPoint;
     private final AccessDeniedHandler accessDeniedHandler;
-    private final JwtService jwtService;
-    private final CustomLogoutSuccessHandler customLogoutSuccessHandler;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -58,20 +56,11 @@ public class SecurityConfig {
         log.info("Swagger UI enabled: {}", swaggerEnabled);
     }
 
-    // LoginSuccessHandler 빈을 명확히 주입 받기 위해 Qualifier 설정 도입
     public SecurityConfig(
-            @Qualifier("SocialSuccessHandler") AuthenticationSuccessHandler socialSuccessHandler,
-            @Qualifier("SocialFailureHandler") AuthenticationFailureHandler socialFailureHandler,
             AuthenticationEntryPoint authenticationEntryPoint,
-            AccessDeniedHandler accessDeniedHandler,
-            JwtService jwtService,
-            CustomLogoutSuccessHandler customLogoutSuccessHandler) {
-        this.socialSuccessHandler = socialSuccessHandler;
-        this.socialFailureHandler = socialFailureHandler;
+            AccessDeniedHandler accessDeniedHandler) {
         this.authenticationEntryPoint = authenticationEntryPoint;
         this.accessDeniedHandler = accessDeniedHandler;
-        this.jwtService = jwtService;
-        this.customLogoutSuccessHandler = customLogoutSuccessHandler;
     }
 
     // 권한 계층
@@ -93,7 +82,7 @@ public class SecurityConfig {
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
-        configuration.setExposedHeaders(List.of("Authorization", "Set-Cookie"));
+        configuration.setExposedHeaders(List.of("Authorization"));
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
@@ -111,23 +100,14 @@ public class SecurityConfig {
         // CORS 설정 (리액트 기반 서비스이기에 필수적)
         http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
 
-        // 기본 로그아웃 필터 + 커스텀 Refresh 토큰 삭제 핸들러 추가 + 로그아웃 성공 핸들러
-        http.logout(
-                logout ->
-                        logout.addLogoutHandler(new RefreshTokenLogoutHandler(jwtService))
-                                .logoutSuccessHandler(customLogoutSuccessHandler));
-
-        // 기본 Form 기반 인증 필터들 disable => 때문에 LoginFilter.java를 등록하여 사용해야함
+        // 기본 Form 기반 인증 필터들 disable
         http.formLogin(AbstractHttpConfigurer::disable);
 
         // 기본 Basic 인증 필터 disable
         http.httpBasic(AbstractHttpConfigurer::disable);
 
-        // OAuth2 인증용
-        http.oauth2Login(
-                oauth2 ->
-                        oauth2.successHandler(socialSuccessHandler)
-                                .failureHandler(socialFailureHandler));
+        // 로그아웃은 Supabase(클라이언트) 책임이므로 서버 로그아웃 필터를 비활성화한다
+        http.logout(AbstractHttpConfigurer::disable);
 
         // 인가
         http.authorizeHttpRequests(
@@ -137,9 +117,7 @@ public class SecurityConfig {
                                         "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html")
                                 .permitAll(); // Swagger UI : 비 prod 환경에서만 허용
                     }
-                    auth.requestMatchers("/jwt/exchange", "/jwt/refresh")
-                            .permitAll() // JWT 발급 경로 : 전체 허용
-                            .requestMatchers("/admin/**")
+                    auth.requestMatchers("/admin/**")
                             .hasRole(UserRoleType.ADMIN.name())
                             .anyRequest()
                             .authenticated();
@@ -150,9 +128,6 @@ public class SecurityConfig {
                 e ->
                         e.authenticationEntryPoint(authenticationEntryPoint)
                                 .accessDeniedHandler(accessDeniedHandler));
-
-        // 커스텀 필터 추가 (로그아웃 필터 앞에 넣음)
-        http.addFilterBefore(new JwtFilter(), LogoutFilter.class);
 
         // 세션 필터 설정 (STATELESS)
         http.sessionManagement(

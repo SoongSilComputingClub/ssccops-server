@@ -11,39 +11,9 @@ spring:
     database-platform: org.hibernate.dialect.MySQLDialect
     show-sql: true
 
-  security:
-    oauth2:
-      client:
-        registration:
-          # Google registration
-          google:
-            client-name: ${goole-client-name}
-            client-id: ${google-client-id}
-            client-secret: ${google-client-secret}
-            redirect-uri: ${google-redirect-uri}
-            authorization-grant-type: authorization_code
-            scope:
-              - profile
-              - email
-
-# JWT Configuration
-jwt:
-  secret-key: ${jwt-secret-key}
-  access-token-expires-in: ${jwt-access-ttl}  # (ms)
-  refresh-token-expires-in: ${jwt-refresh-ttl}  # (ms)
-
-# Refresh Token Configuration
-refresh-token:
-  ttl-days: 8
-  cleanup-cron: "0 0 3 * * *"  # 3AM
-
-# Frontend Configuration
+# Frontend Configuration (CORS 허용 오리진)
 frontend:
   url: http://localhost:3000
-  cookie:
-    secure: false
-    same-site: lax
-    http-only: true
 
 logging:
   level:

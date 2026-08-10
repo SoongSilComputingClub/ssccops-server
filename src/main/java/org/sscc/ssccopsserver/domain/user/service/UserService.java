@@ -1,10 +1,7 @@
 package org.sscc.ssccopsserver.domain.user.service;
 
-import org.springframework.security.oauth2.client.userinfo.OAuth2UserRequest;
-import org.springframework.security.oauth2.client.userinfo.OAuth2UserService;
-import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.sscc.ssccopsserver.domain.user.dto.UserResponseDto;
 
-public interface UserService extends OAuth2UserService<OAuth2UserRequest, OAuth2User> {
+public interface UserService {
     UserResponseDto readUser();
 }

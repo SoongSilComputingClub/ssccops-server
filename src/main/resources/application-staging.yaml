@@ -1,14 +1,13 @@
 spring:
   datasource:
     url: ${STAGING_DATABASE_URL}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    driver-class-name: org.postgresql.Driver
     username: ${STAGING_DATABASE_USER}
     password: ${STAGING_DATABASE_PASSWORD}
 
   jpa:
     hibernate:
       ddl-auto: create-drop
-    database-platform: org.hibernate.dialect.MySQLDialect
 
   h2:
     console:

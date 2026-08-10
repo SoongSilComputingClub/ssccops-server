@@ -21,7 +21,7 @@
 #   - PROD_COOLIFY_URL          : Production Coolify 서버 URL
 #   - PROD_COOLIFY_SERVICE_ID   : Production Coolify 애플리케이션 서비스 UUID
 #   - SPRING_PROFILES_ACTIVE        : prod
-#   - PROD_DATABASE_URL         : Production DB URL (jdbc:mysql://...)
+#   - PROD_DATABASE_URL         : Production DB URL (jdbc:postgresql://...)
 #   - PROD_DATABASE_USER        : Production DB 사용자명
 #   - PROD_DATABASE_PASSWORD    : Production DB 비밀번호
 #   - PROD_JWT_SECRET_KEY       : JWT 서명 키

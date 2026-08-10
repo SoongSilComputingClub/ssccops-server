@@ -9,29 +9,6 @@ spring:
       ddl-auto: create-drop
     database-platform: org.hibernate.dialect.H2Dialect
 
-  security:
-    oauth2:
-      client:
-        registration:
-          # Google registration
-          google:
-            client-name: ${goole-client-name:test-google}
-            client-id: ${google-client-id:test-client-id}
-            client-secret: ${google-client-secret:test-client-secret}
-            redirect-uri: ${google-redirect-uri:http://localhost:8080/login/oauth2/code/google}
-            authorization-grant-type: authorization_code
-            scope:
-              - profile
-              - email
-
-# JWT Configuration (test environment)
-jwt:
-  secret-key: test-secret-key-for-testing-only
-  access-token-expires-in: 3600000  # 1시간 (밀리초)
-  refresh-token-expires-in: 604800000  # 7일 (밀리초)
-
-# Frontend Configuration
+# Frontend Configuration (CORS 허용 오리진)
 frontend:
   url: http://localhost:5173
-  cookie:
-    secure: false

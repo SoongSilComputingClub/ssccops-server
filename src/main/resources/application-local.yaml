@@ -1,14 +1,13 @@
 spring:
   datasource:
     url: ${db-url}
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    driver-class-name: org.postgresql.Driver
     username: ${db-username}
     password: ${db-password}
 
   jpa:
     hibernate:
       ddl-auto: create-drop
-    database-platform: org.hibernate.dialect.MySQLDialect
     show-sql: true
 
 # Frontend Configuration (CORS 허용 오리진)

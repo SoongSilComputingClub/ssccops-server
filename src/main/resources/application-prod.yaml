@@ -5,6 +5,12 @@ spring:
     username: ${PROD_DATABASE_USER}
     password: ${PROD_DATABASE_PASSWORD}
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${PROD_SUPABASE_URL}/auth/v1/.well-known/jwks.json
+
   jpa:
     hibernate:
       ddl-auto: none

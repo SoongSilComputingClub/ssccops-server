@@ -5,6 +5,12 @@ spring:
     username: ${STAGING_DATABASE_USER}
     password: ${STAGING_DATABASE_PASSWORD}
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${STAGING_SUPABASE_URL}/auth/v1/.well-known/jwks.json
+
   jpa:
     hibernate:
       ddl-auto: create-drop

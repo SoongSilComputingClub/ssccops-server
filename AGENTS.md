@@ -21,10 +21,10 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 패키지 루트는 `org.sscc.ssccopsserver` (Gradle group도 `org.sscc`) — SSCC 동아리 프로젝트이므로 Spring Initializr 기본값(`com.example`)을 쓰지 않는다.
 
-- `domain/{admin,applyform,user}` — 도메인별로 `controller/service/repository/entity/dto/code` 하위 구조를 반복하는 계층형 패키지. 새 도메인을 추가할 때 이 구조를 그대로 따른다.
+- `domain/{member,...}` — 도메인별로 `controller/service/repository/entity/dto/code` 하위 구조를 반복하는 계층형 패키지. 새 도메인을 추가할 때 이 구조를 그대로 따른다. (`admin`/`applyform`/`user`는 Supabase 인증 전환에 맞춰 재설계 예정이라 제거됨 — 잔재를 찾는 코드가 있다면 지우면 된다.)
 - `global/apipayload` — 모든 API 응답의 공통 껍데기.
   - `ApiResponse<T>` — 생성자는 private, `success`/`successWithNoData`/`created`/`fail` 정적 팩토리로만 생성.
-  - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 도메인별 enum(`UserErrorCode`, `ApplyFormErrorCode`, `CommonErrorCode`)이 구현. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.
+  - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 `CommonErrorCode`가 전역 에러를 구현하고, 도메인 전용 에러가 필요하면 같은 방식으로 도메인 패키지 아래 `code/error` enum을 구현한다. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.
   - `exception/GeneralException` — 서비스 레이어에서 던지는 표준 예외, `ErrorCode`를 감싼다.
   - `handler/GlobalExceptionHandler` — `@RestControllerAdvice`. `GeneralException`은 감싼 `ErrorCode` 그대로, `MethodArgumentNotValidException`/`HttpMessageNotReadableException` 등 스프링 기본 예외는 `CommonErrorCode`로 변환해 항상 `ApiResponse.fail(...)` 포맷으로 응답한다. 컨트롤러 레벨에서 별도 try/catch를 추가하지 않는다.
 - `global/security` — 인가. **현재 인증 수단이 없는 과도기 상태다.**

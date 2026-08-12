@@ -39,5 +39,5 @@ out/
 .vscode/
 
 ### Private files & Artifacts ###
-/.private-workspace/
+/private-workspace/
 /.omc/

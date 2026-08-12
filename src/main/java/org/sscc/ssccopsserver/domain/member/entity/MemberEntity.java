@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.member.entity;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -28,8 +29,10 @@ import lombok.NoArgsConstructor;
 @EntityListeners(AuditingEntityListener.class)
 @Table(
         name = "mbr",
-        uniqueConstraints =
-                @UniqueConstraint(name = "uk_mbr_student_number", columnNames = "stdnt_no"))
+        uniqueConstraints = {
+            @UniqueConstraint(name = "uk_mbr_student_number", columnNames = "stdnt_no"),
+            @UniqueConstraint(name = "uk_mbr_spb_user_id", columnNames = "spb_user_id")
+        })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -72,6 +75,10 @@ public class MemberEntity {
     @Column(name = "join_ymd", nullable = false)
     private LocalDate joinDate;
 
+    // Supabase Auth 사용자 식별자(auth.users.id). 아직 로그인하지 않은 이관 회원은 NULL
+    @Column(name = "spb_user_id")
+    private UUID spbUserId;
+
     @CreatedDate
     @Column(name = "crt_dt", updatable = false)
     private Instant createdAt;
@@ -104,6 +111,7 @@ public class MemberEntity {
                 membershipStatus,
                 joinDate,
                 null,
+                null,
                 null);
     }
 
@@ -128,5 +136,9 @@ public class MemberEntity {
 
     public void changeMembershipStatus(MemberStatusEntity membershipStatus) {
         this.membershipStatus = membershipStatus;
+    }
+
+    public void assignSpbUserId(UUID spbUserId) {
+        this.spbUserId = spbUserId;
     }
 }

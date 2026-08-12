@@ -20,18 +20,16 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.sscc.ssccopsserver.global.security.UserRoleType;
+import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtAuthenticationConverter;
 
 import lombok.extern.slf4j.Slf4j;
 
 /*
- * 인증 수단이 없는 상태의 필터체인.
+ * Supabase Auth가 발급한 JWT를 검증하는 리소스 서버 필터체인.
  *
- * 구글 OAuth2 로그인과 자체 JWT 발급 스택을 제거했으므로, 현재 이 서버는 요청을 인증할 방법이 없다.
- * permitAll로 열어둔 Swagger를 제외한 모든 요청은 CustomAuthenticationEntryPoint를 타고 401로 응답한다.
- *
- * 다음 단계에서 Supabase Auth가 발급한 JWT를 검증하는 resource server 설정
- * (spring-boot-starter-oauth2-resource-server + JWKS)을 여기에 붙인다.
- * 인가 규칙(RoleHierarchy, /admin/** 제한)은 그대로 재사용된다.
+ * SupabaseJwtAuthenticationConverter가 JWT의 sub/email로 MemberEntity를 찾거나 임시회원으로
+ * 프로비저닝해 인증 주체로 설정한다. 아직 권한(GrantedAuthority)을 채우지 않으므로 hasRole 기반
+ * 인가(/admin/** 등)는 role 판별 로직이 붙기 전까지 사실상 항상 거부된다 — 별도 이슈에서 처리한다.
  */
 @Slf4j
 @Configuration
@@ -40,6 +38,7 @@ public class SecurityConfig {
 
     private final AuthenticationEntryPoint authenticationEntryPoint;
     private final AccessDeniedHandler accessDeniedHandler;
+    private final SupabaseJwtAuthenticationConverter supabaseJwtAuthenticationConverter;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -58,9 +57,11 @@ public class SecurityConfig {
 
     public SecurityConfig(
             AuthenticationEntryPoint authenticationEntryPoint,
-            AccessDeniedHandler accessDeniedHandler) {
+            AccessDeniedHandler accessDeniedHandler,
+            SupabaseJwtAuthenticationConverter supabaseJwtAuthenticationConverter) {
         this.authenticationEntryPoint = authenticationEntryPoint;
         this.accessDeniedHandler = accessDeniedHandler;
+        this.supabaseJwtAuthenticationConverter = supabaseJwtAuthenticationConverter;
     }
 
     // 권한 계층
@@ -122,6 +123,14 @@ public class SecurityConfig {
                             .anyRequest()
                             .authenticated();
                 });
+
+        // Supabase JWT 검증 (JWKS) 및 인증 컨텍스트 구성
+        http.oauth2ResourceServer(
+                oauth2 ->
+                        oauth2.jwt(
+                                jwt ->
+                                        jwt.jwtAuthenticationConverter(
+                                                supabaseJwtAuthenticationConverter)));
 
         // 예외 처리
         http.exceptionHandling(

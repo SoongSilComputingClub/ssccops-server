@@ -4,6 +4,12 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # 테스트는 SecurityMockMvcRequestPostProcessors.jwt()로 디코더를 우회하므로 실제 네트워크 호출 없음
+          jwk-set-uri: http://localhost/auth/v1/.well-known/jwks.json
   jpa:
     hibernate:
       ddl-auto: create-drop

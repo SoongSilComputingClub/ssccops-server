@@ -6,8 +6,8 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 - 전체 빌드: `./gradlew build` (compileJava → checkstyle → spotless → test → jacoco 순서로 전부 수행)
 - 테스트만: `./gradlew test`
-- 단일 테스트 클래스: `./gradlew test --tests "org.sscc.ssccopsserver.domain.user.service.UserServiceImplTest"`
-- 단일 테스트 메서드: `./gradlew test --tests "*.UserServiceImplTest.메서드명"`
+- 단일 테스트 클래스: `./gradlew test --tests "org.sscc.ssccopsserver.domain.member.service.MemberServiceImplTest"`
+- 단일 테스트 메서드: `./gradlew test --tests "*.MemberServiceImplTest.메서드명"`
 - 포맷 검사: `./gradlew spotlessCheck` / 자동 정렬·수정: `./gradlew spotlessApply`
 - 스타일 검사: `./gradlew checkstyleMain checkstyleTest` (설정: `config/checkstyle/checkstyle.xml`, Naver 컨벤션 변형 — 상단 주석에 원본과의 차이가 정리되어 있음)
 - 로컬 실행: `./gradlew bootJar` 후 `java -jar build/libs/*.jar`, 또는 IDE에서 `SsccopsServerApplication` 직접 실행. `local` 프로필(`-Dspring.profiles.active=local`)이 PostgreSQL 접속 정보(`db-url`/`db-username`/`db-password`)를 요구하므로, `docker-compose up postgres`로 DB만 띄우는 방식을 권장 (호스트 포트 `15432`). 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `jdbc:postgresql://localhost:5432/ssccops_server_db`로 접속한다.
@@ -28,12 +28,12 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
   - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 `CommonErrorCode`가 전역 에러를 구현하고, 도메인 전용 에러가 필요하면 같은 방식으로 도메인 패키지 아래 `code/error` enum을 구현한다. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.
   - `exception/GeneralException` — 서비스 레이어에서 던지는 표준 예외, `ErrorCode`를 감싼다.
   - `handler/GlobalExceptionHandler` — `@RestControllerAdvice`. `GeneralException`은 감싼 `ErrorCode` 그대로, `MethodArgumentNotValidException`/`HttpMessageNotReadableException` 등 스프링 기본 예외는 `CommonErrorCode`로 변환해 항상 `ApiResponse.fail(...)` 포맷으로 응답한다. 컨트롤러 레벨에서 별도 try/catch를 추가하지 않는다.
-- `global/security` — 인가. **현재 인증 수단이 없는 과도기 상태다.**
-  - 구글 OAuth2 로그인과 자체 JWT 발급 스택(`JwtUtil`/`JwtService`/`JwtFilter`/`/jwt/exchange`·`/jwt/refresh`, Social 핸들러, Refresh 토큰 화이트리스트)은 Supabase Auth 도입을 위해 제거됐다. 관련 클래스를 찾는 코드가 있다면 잔재이므로 지우면 된다.
-  - 그 결과 **Swagger(비 prod)를 제외한 모든 요청이 401**이다. 인증 실패 응답은 `CustomAuthenticationEntryPoint`, 권한 부족은 `CustomAccessDeniedHandler`가 `ApiResponse` 포맷으로 작성한다.
-  - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로만 permitAll, 나머지는 인증 필요. **인가 규칙은 Supabase 도입 후에도 그대로 재사용한다.**
+- `global/security` — 인증/인가. 구글 OAuth2 로그인과 자체 JWT 발급 스택은 제거됐고, 지금은 Supabase Auth가 발급한 JWT를 `spring-boot-starter-oauth2-resource-server`로 검증한다. JWKS URI(`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`)는 프로필별로 다른 Supabase 프로젝트를 가리키도록 `application-{profile}.yaml`에 분리돼 있다.
+  - `global/security/jwt/SupabaseJwtAuthenticationConverter` — JWT의 `sub`(UUID)/`email` 클레임으로 `domain/member`의 `MemberService.findOrProvisionBySpbUserId(...)`를 호출해 `MemberEntity`를 찾거나, 매칭되는 회원이 없으면(최초 로그인) 임시회원(`mbr_grd_cd = 'TEMP'`, `mbr_stts_cd = 'ENROLLED'` — `data.sql`로 시드)으로 즉시 생성한다(JIT 프로비저닝). `MemberEntity`가 ASIS의 `UserEntity`에 대응하는 계정 엔티티다. JWT의 `role` 클레임은 RLS용 Postgres 역할이라 인가 판단에 쓰지 않는다.
+  - 매칭/생성된 `MemberEntity`가 `SupabaseAuthenticationToken`의 principal이 된다. `GrantedAuthority`는 아직 부여하지 않는다 — 역할(ADMIN/USER/PREUSER) 기반 인가는 별도로 AOP를 통해 구현할 예정이라, 현재 `hasRole` 기반 규칙(`/admin/**`)은 사실상 항상 거부된다.
+  - 인증 실패(서명/만료 오류 등)는 `CustomAuthenticationEntryPoint`, 권한 부족은 `CustomAccessDeniedHandler`가 `ApiResponse` 포맷으로 응답한다.
+  - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER — 실제 부여 로직은 미구현), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로만 permitAll, 나머지는 인증 필요.
   - CORS는 `SecurityConfig.corsConfigurationSource()` 한 곳에서만 정의한다(허용 오리진은 `frontend.url`). 시큐리티 필터체인이 먼저 처리하므로 `WebMvcConfigurer.addCorsMappings()`로 중복 정의하지 말 것.
-  - 다음 단계: `spring-boot-starter-oauth2-resource-server`를 추가하고 Supabase의 JWKS(`/auth/v1/.well-known/jwks.json`)로 Access Token을 검증한다. 권한의 source of truth는 계속 `user_entity.roleType`이며, JWT의 `role` 클레임은 RLS용 Postgres 역할이라 앱 역할과 무관하다.
 - 관측성: OpenTelemetry(OTLP) + Micrometer(Prometheus/OTLP) + Logstash JSON 로깅(`prod` 프로파일에서만 JSON, 그 외 텍스트 — `logback-spring.xml`)이 이미 연결돼 있다. 로컬에 OTLP collector가 없으면 애플리케이션 종료 시 `Connection refused` 경고가 뜨는데 무해하다.
 
 ## 커밋 · 브랜치 · PR 컨벤션

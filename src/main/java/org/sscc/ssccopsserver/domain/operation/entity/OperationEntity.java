@@ -1,0 +1,135 @@
+package org.sscc.ssccopsserver.domain.operation.entity;
+
+import java.time.Instant;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/*
+ * oper(운영) — 업무(work)와 회의(mtg)가 공유하는 공통 속성을 담는 부모 테이블.
+ * 확장 테이블이 oper_id를 FK로 참조하며, PK=FK 상속이 아니므로 @MapsId를 쓰지 않는다.
+ *
+ * 컬럼은 데이터사전(테이블ID: oper)을 따른다. Seq 6·7·9·10·11(종일여부·부서·공개범위·
+ * 기수)은 데이터사전 개정으로 삭제된 결번이라 매핑하지 않는다.
+ * bgng_dt·end_dt·del_dt만 NULL을 허용하고 나머지는 NOT NULL이다.
+ *
+ * prrty_rnk_cd(우선순위)는 등록 화면에 입력란이 있어 되살린 컬럼이다.
+ */
+@Entity
+@EntityListeners(AuditingEntityListener.class)
+@Table(name = "oper")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
+public class OperationEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "oper_id")
+    private Long id;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "oper_type_cd", nullable = false, length = 20)
+    private OperationType operationType;
+
+    @Column(name = "oper_ttl", nullable = false, length = 256)
+    private String title;
+
+    @Column(name = "bgng_dt")
+    private Instant beginAt;
+
+    @Column(name = "end_dt")
+    private Instant endAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "prrty_rnk_cd", nullable = false, length = 20)
+    private OperationPriority priority;
+
+    /*
+     * 담당자(mbr.mbr_id). 조회·매핑 전용 연관이며 회원의 상태를 여기서 바꾸지 않는다 —
+     * 회원 정보 변경이 필요하면 회원 도메인 Service를 호출한다 (개발지침서 DB-10·AR-07).
+     */
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "pic_id", nullable = false)
+    private MemberEntity personInCharge;
+
+    // 소프트 삭제 시각. 살아있는 운영 건은 NULL (LY-18)
+    @Column(name = "del_dt")
+    private Instant deletedAt;
+
+    @CreatedDate
+    @Column(name = "crt_dt", nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @LastModifiedDate
+    @Column(name = "mdfcn_dt", nullable = false)
+    private Instant updatedAt;
+
+    /*
+     * 업무 등록(OPS-002)용 생성 팩토리. oper_type_cd = WORK는 서버가 고정하며
+     * 클라이언트가 지정할 수 없다. 회의 등록이 붙을 때 createForMeeting을 따로 연다.
+     */
+    public static OperationEntity createForWork(
+            String title,
+            MemberEntity personInCharge,
+            Instant beginAt,
+            Instant endAt,
+            OperationPriority priority) {
+        return new OperationEntity(
+                null,
+                OperationType.WORK,
+                title,
+                beginAt,
+                endAt,
+                priority == null ? OperationPriority.NORMAL : priority,
+                personInCharge,
+                null,
+                null,
+                null);
+    }
+
+    public void changePriority(OperationPriority priority) {
+        this.priority = priority;
+    }
+
+    public void changeTitle(String title) {
+        this.title = title;
+    }
+
+    public void changeSchedule(Instant beginAt, Instant endAt) {
+        this.beginAt = beginAt;
+        this.endAt = endAt;
+    }
+
+    public void changePersonInCharge(MemberEntity personInCharge) {
+        this.personInCharge = personInCharge;
+    }
+
+    public void softDelete(Instant deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    public boolean isDeleted() {
+        return this.deletedAt != null;
+    }
+}

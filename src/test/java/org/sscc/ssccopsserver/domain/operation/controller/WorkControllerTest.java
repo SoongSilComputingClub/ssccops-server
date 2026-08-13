@@ -1,0 +1,202 @@
+package org.sscc.ssccopsserver.domain.operation.controller;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.Instant;
+import java.util.UUID;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.member.service.MemberService;
+
+/*
+ * 실제 JWKS 없이 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
+ * SupabaseJwtAuthenticationIntegrationTest와 같은 방식이며,
+ * SecurityMockMvcRequestPostProcessors.jwt()는 커스텀 컨버터를 우회하므로 쓰지 않는다.
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+@Import(WorkControllerTest.StubJwtDecoderConfig.class)
+@Transactional
+class WorkControllerTest {
+
+    private static final UUID SPB_USER_ID = UUID.randomUUID();
+
+    @Autowired private MockMvc mockMvc;
+    @Autowired private MemberService memberService;
+
+    private Long ownerId;
+
+    @BeforeEach
+    void setUp() {
+        ownerId =
+                memberService
+                        .findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org")
+                        .getId();
+    }
+
+    @Test
+    void createWorkReturns201WithLocation() throws Exception {
+        String body =
+                """
+                {
+                  "title": "동아리 박람회 부스 운영",
+                  "itemType": "EVENT",
+                  "ownerId": %d,
+                  "startAt": "2026-09-01T18:00:00+09:00",
+                  "endAt": "2026-09-01T20:00:00+09:00",
+                  "priority": "NORMAL",
+                  "review": null
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(authenticated(body))
+                .andExpect(status().isCreated())
+                .andExpect(header().exists("Location"))
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.workId").isNumber())
+                .andExpect(jsonPath("$.data.operationId").isNumber())
+                .andExpect(jsonPath("$.data.workStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data.itemType").value("EVENT"))
+                .andExpect(jsonPath("$.data.priority").value("NORMAL"))
+                .andExpect(jsonPath("$.data.ownerId").value(ownerId));
+    }
+
+    @Test
+    void missingRequiredFieldReturnsValidationFailed() throws Exception {
+        String body =
+                """
+                {
+                  "itemType": "EVENT",
+                  "ownerId": %d
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(authenticated(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void unknownItemTypeReturnsInvalidCodeValue() throws Exception {
+        String body =
+                """
+                {
+                  "title": "코드값 밖 업무",
+                  "itemType": "FESTIVAL",
+                  "ownerId": %d
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(authenticated(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    @Test
+    void invertedPeriodReturnsValidationFailed() throws Exception {
+        String body =
+                """
+                {
+                  "title": "기간 역전 업무",
+                  "itemType": "EVENT",
+                  "ownerId": %d,
+                  "startAt": "2026-09-01T20:00:00+09:00",
+                  "endAt": "2026-09-01T18:00:00+09:00"
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(authenticated(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void unknownOwnerReturnsValidationFailed() throws Exception {
+        String body =
+                """
+                {
+                  "title": "담당자 없는 업무",
+                  "itemType": "EVENT",
+                  "ownerId": %d
+                }
+                """
+                        .formatted(ownerId + 999);
+
+        mockMvc.perform(authenticated(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    // 화면의 우선순위 버튼은 3종뿐이라 그 밖의 값은 기준 코드 위반이다
+    @Test
+    void unknownPriorityReturnsInvalidCodeValue() throws Exception {
+        String body =
+                """
+                {
+                  "title": "우선순위 코드값 밖",
+                  "itemType": "EVENT",
+                  "ownerId": %d,
+                  "priority": "URGENT"
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(authenticated(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    @Test
+    void requestWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(post("/v1/works").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+            authenticated(String body) {
+        return post("/v1/works")
+                .header("Authorization", "Bearer any-token")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body);
+    }
+
+    @TestConfiguration
+    static class StubJwtDecoderConfig {
+
+        @Bean
+        @Primary
+        JwtDecoder jwtDecoder() {
+            return token ->
+                    Jwt.withTokenValue(token)
+                            .header("alg", "none")
+                            .subject(SPB_USER_ID.toString())
+                            .claim("email", "actor@sscc.org")
+                            .issuedAt(Instant.now())
+                            .expiresAt(Instant.now().plusSeconds(60))
+                            .build();
+        }
+    }
+}

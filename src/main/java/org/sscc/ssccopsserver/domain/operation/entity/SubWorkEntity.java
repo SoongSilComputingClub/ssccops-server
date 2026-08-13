@@ -124,4 +124,17 @@ public class SubWorkEntity {
                 dueAt,
                 null);
     }
+
+    /*
+     * 마감이 지났는데 아직 완료되지 않았는지. dly_yn 컬럼을 읽지 않고 그때그때 판정한다 —
+     * 컬럼은 등록 시 false로 고정된 뒤 갱신하는 주체가 없어 항상 false이기 때문이다.
+     * 컬럼을 실제로 채우는 배치는 목록 조회(OPS-008)의 마감 임박·지연 필터가 인덱스를
+     * 필요로 할 때 붙는다.
+     *
+     * 마감이 없는 하위 업무는 지연될 수 없고, 완료된 하위 업무는 늦게 끝났더라도 지연이 아니다
+     * — 화면이 이 값으로 '지금 손봐야 하는 건'을 표시하기 때문이다.
+     */
+    public boolean isDelayedAt(Instant now) {
+        return dueAt != null && workStatus != WorkStatus.DONE && dueAt.isBefore(now);
+    }
 }

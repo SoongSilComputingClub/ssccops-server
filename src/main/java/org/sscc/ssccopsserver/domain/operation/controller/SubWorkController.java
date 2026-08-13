@@ -6,6 +6,8 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 
@@ -39,5 +42,14 @@ public class SubWorkController {
         SubWorkCreateResponse response = subWorkService.createSubWork(request, registrant);
         URI location = URI.create("/v1/sub-works/" + response.subWorkId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 하위 업무 상세 조회 (OPS-009). '하위 업무 상세' 화면(OPS-SCR-002)이 진입 시 호출한다.
+     * 소프트 삭제된 건은 서비스가 404로 막으므로 여기서 분기하지 않는다 (LY-02).
+     */
+    @GetMapping("/{subWorkId}")
+    public ApiResponse<SubWorkDetailResponse> getSubWork(@PathVariable Long subWorkId) {
+        return ApiResponse.success(subWorkService.getSubWork(subWorkId));
     }
 }

@@ -14,15 +14,25 @@ import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkRejectionEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkStatusHistoryEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -39,6 +49,9 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkRepository subWorkRepository;
     private final SubWorkTypeRepository subWorkTypeRepository;
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
+    private final SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
+    private final SubWorkApprovalRepository subWorkApprovalRepository;
+    private final SubWorkRejectionRepository subWorkRejectionRepository;
     private final MemberService memberService;
 
     // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
@@ -123,6 +136,84 @@ public class SubWorkServiceImpl implements SubWorkService {
                 subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);
 
         return SubWorkDetailResponse.of(subWork, checklist, subWork.isDelayedAt(clock.instant()));
+    }
+
+    /*
+     * 상태 전이(OPS-010). 전이 판단은 엔티티가 하고 여기서는 조회·기록·집계만 맡는다 (LY-09).
+     *
+     * 업무 상태 변경 · 상태 이력 · 승인/반려 기록 · 상위 진행률 재집계가 한 트랜잭션이다.
+     * 이력 없이 상태만 바뀌는 결과를 허용하지 않기 위해 경계를 쪼개지 않는다 (AR-11).
+     */
+    @Override
+    @Transactional
+    public SubWorkTransitionResponse transitionSubWork(
+            Long subWorkId, SubWorkTransitionRequest request, MemberEntity performer) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+
+        TransitionAction action = request.transition();
+        WorkStatus previousWorkStatus = subWork.getWorkStatus();
+        ApprovalStatus previousApprovalStatus = subWork.getApprovalStatus();
+        Instant occurredAt = clock.instant();
+
+        subWork.applyTransition(
+                action, request.reason(), isCompletionCriteriaMet(subWork, action), occurredAt);
+
+        SubWorkStatusHistoryEntity history =
+                subWorkStatusHistoryRepository.save(
+                        SubWorkStatusHistoryEntity.record(
+                                subWork,
+                                previousWorkStatus,
+                                subWork.getWorkStatus(),
+                                performer,
+                                request.reason(),
+                                occurredAt));
+
+        boolean selfApproval = false;
+        if (action == TransitionAction.APPROVE_COMPLETE) {
+            selfApproval = isRegisteredBy(subWork, performer);
+            subWorkApprovalRepository.save(
+                    SubWorkApprovalEntity.record(
+                            subWork, performer, history, occurredAt, selfApproval));
+            // 완료 개수가 바뀌는 전이는 이것뿐이다. 완료에서 빠져나가는 전이는 전이표에 없다
+            recalculateParentProgressRate(subWork.getWork());
+        } else if (action == TransitionAction.REJECT) {
+            subWorkRejectionRepository.save(
+                    SubWorkRejectionEntity.record(
+                            subWork, performer, history, request.reason(), occurredAt));
+        }
+
+        return SubWorkTransitionResponse.of(
+                subWork,
+                action,
+                previousWorkStatus,
+                previousApprovalStatus,
+                selfApproval,
+                occurredAt);
+    }
+
+    /*
+     * 완료 체크리스트 충족 여부. 완료 승인이 아닌 전이는 이 조건을 보지 않으므로 세지 않는다 —
+     * 착수·검토요청·반려마다 쿼리를 한 번 더 쓸 이유가 없다.
+     */
+    private boolean isCompletionCriteriaMet(SubWorkEntity subWork, TransitionAction action) {
+        return action != TransitionAction.APPROVE_COMPLETE
+                || subWorkChecklistItemRepository.countBySubWorkAndCompletedFalse(subWork) == 0;
+    }
+
+    /*
+     * 자가 승인 판정. 담당자가 아니라 등록자(oper.oper_rgtr_id) 기준이다 — 남을 담당자로
+     * 지정해 등록할 수 있으므로 '스스로 올린 건을 스스로 승인했는지'는 등록자로만 알 수 있다.
+     * 등록자를 알 수 없는 이관 데이터는 자가 승인이 아닌 것으로 본다.
+     */
+    private boolean isRegisteredBy(SubWorkEntity subWork, MemberEntity performer) {
+        MemberEntity registrant = subWork.getOperation().getRegistrant();
+        return registrant != null
+                && performer != null
+                && registrant.getId().equals(performer.getId());
     }
 
     // 유형에 정의된 완료 점검 항목을 순서대로 복사한다 (REQ-021)

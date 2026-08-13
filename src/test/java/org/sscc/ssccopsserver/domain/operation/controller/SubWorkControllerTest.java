@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -29,6 +30,8 @@ import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
+
+import com.jayway.jsonpath.JsonPath;
 
 /*
  * 실제 JWKS 없이 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
@@ -191,6 +194,73 @@ class SubWorkControllerTest {
     void requestWithoutTokenReturns401() throws Exception {
         mockMvc.perform(post("/v1/sub-works").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // 상세 화면(OPS-SCR-002)이 진입 시 호출하는 조회. 화면이 쓰는 값이 다 담겨 나와야 한다
+    @Test
+    void getSubWorkReturns200WithDetail() throws Exception {
+        Long subWorkId = createSubWork();
+
+        mockMvc.perform(
+                        get("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.subWorkId").value(subWorkId))
+                .andExpect(jsonPath("$.data.workId").value(parentWorkId))
+                .andExpect(jsonPath("$.data.operationType").value("SUB_WORK"))
+                .andExpect(jsonPath("$.data.title").value("부스 배치도 확정"))
+                .andExpect(jsonPath("$.data.subWorkTypeName").value("예산지출"))
+                .andExpect(jsonPath("$.data.workStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data.approvalStatus").value("PENDING"))
+                .andExpect(jsonPath("$.data.approvalRequired").value(true))
+                .andExpect(jsonPath("$.data.owner.memberId").value(ownerId))
+                .andExpect(jsonPath("$.data.owner.name").isNotEmpty())
+                .andExpect(jsonPath("$.data.registrant.memberId").value(registrantId))
+                .andExpect(jsonPath("$.data.collaborators").isEmpty())
+                .andExpect(jsonPath("$.data.isDelayed").value(false))
+                .andExpect(jsonPath("$.data.checklist.length()").value(4))
+                .andExpect(jsonPath("$.data.checklist[0].sortOrder").value(1))
+                .andExpect(jsonPath("$.data.checklistSummary.completedCount").value(0))
+                .andExpect(jsonPath("$.data.checklistSummary.totalCount").value(4))
+                // 기수는 프론트 디자인에서 빠져 응답에도 두지 않는다
+                .andExpect(jsonPath("$.data.owner.generationNumber").doesNotExist());
+    }
+
+    @Test
+    void getUnknownSubWorkReturns404() throws Exception {
+        mockMvc.perform(get("/v1/sub-works/{subWorkId}", 999).header("Authorization", "Bearer any"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void getSubWorkWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/v1/sub-works/{subWorkId}", 1)).andExpect(status().isUnauthorized());
+    }
+
+    private Long createSubWork() throws Exception {
+        String body =
+                """
+                {
+                  "workId": %d,
+                  "title": "부스 배치도 확정",
+                  "subWorkTypeId": %d,
+                  "ownerId": %d,
+                  "dueAt": "2099-01-01T23:59:00+09:00",
+                  "content": "박람회 부스 위치와 동선을 확정한다"
+                }
+                """
+                        .formatted(parentWorkId, SUB_WORK_TYPE_ID, ownerId);
+
+        String response =
+                mockMvc.perform(authenticated(body))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.subWorkId", Long.class);
     }
 
     private static MockHttpServletRequestBuilder authenticated(String body) {

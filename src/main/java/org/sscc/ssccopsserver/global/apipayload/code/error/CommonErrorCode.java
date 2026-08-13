@@ -12,6 +12,11 @@ public enum CommonErrorCode implements ErrorCode {
     // COMMON 4XX
     INVALID_PARAMETER(HttpStatus.BAD_REQUEST, "COMMON400", "파라미터가 올바르지 않습니다."),
     INVALID_BODY(HttpStatus.BAD_REQUEST, "COMMON400", "요청 본문이 올바르지 않습니다."),
+    // 아래 두 코드의 문자열만 영문 표기인 것은 운영관리 API 정의서 03_오류_코드와
+    // 개발지침서 EX-10(숫자 코드 금지)을 따른 것이다. 전역 체계 전환은 별도 이슈로 다룬다.
+    VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "필수값이 누락되었거나 형식이 올바르지 않습니다."),
+    // 코드성 필드(enum)에 기준 코드 밖의 값이 온 경우
+    INVALID_CODE_VALUE(HttpStatus.BAD_REQUEST, "INVALID_CODE_VALUE", "기준 코드에 없는 값입니다."),
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "COMMON400", "잘못된 요청입니다."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "COMMON401", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "COMMON403", "금지된 요청입니다."),

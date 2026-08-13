@@ -17,6 +17,8 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 **주의**: checkstyle의 `ImportOrder`는 `java, javax, jakarta, org, net, com, *, lombok` 그룹 순서를 엄격히 검사한다. import를 추가/이동한 뒤 checkstyle이 실패하면 순서를 수동으로 고치지 말고 `./gradlew spotlessApply`로 자동 정렬할 것 (Spotless의 `importOrder` 설정이 checkstyle 규칙과 동일하게 맞춰져 있음).
 
+**주의**: `prod`는 `ddl-auto: none`이라 엔티티 컬럼/테이블 변경(특히 리네임)이 배포만으로 반영되지 않는다. `local`/`dev`는 `ddl-auto: create-drop`이라 재기동 시 자동 반영되지만, `prod`는 배포 전 수동 DDL을 직접 실행해야 한다 — 예: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`를 배포 전에 미리 실행한다. 마이그레이션 도구(Flyway/Liquibase)가 없어 현재는 전적으로 수동이다.
+
 ## 아키텍처
 
 패키지 루트는 `org.sscc.ssccopsserver` (Gradle group도 `org.sscc`) — SSCC 동아리 프로젝트이므로 Spring Initializr 기본값(`com.example`)을 쓰지 않는다.
@@ -29,7 +31,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
   - `exception/GeneralException` — 서비스 레이어에서 던지는 표준 예외, `ErrorCode`를 감싼다.
   - `handler/GlobalExceptionHandler` — `@RestControllerAdvice`. `GeneralException`은 감싼 `ErrorCode` 그대로, `MethodArgumentNotValidException`/`HttpMessageNotReadableException` 등 스프링 기본 예외는 `CommonErrorCode`로 변환해 항상 `ApiResponse.fail(...)` 포맷으로 응답한다. 컨트롤러 레벨에서 별도 try/catch를 추가하지 않는다.
 - `global/security` — 인증/인가. 구글 OAuth2 로그인과 자체 JWT 발급 스택은 제거됐고, 지금은 Supabase Auth가 발급한 JWT를 `spring-boot-starter-oauth2-resource-server`로 검증한다. JWKS URI(`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`)는 프로필별로 다른 Supabase 프로젝트를 가리키도록 `application-{profile}.yaml`에 분리돼 있다.
-  - `global/security/jwt/SupabaseJwtAuthenticationConverter` — JWT의 `sub`(UUID)/`email` 클레임으로 `domain/member`의 `MemberService.findOrProvisionBySpbUserId(...)`를 호출해 `MemberEntity`를 찾거나, 매칭되는 회원이 없으면(최초 로그인) 임시회원(`mbr_grd_cd = 'TEMP'`, `mbr_stts_cd = 'ENROLLED'` — `data.sql`로 시드)으로 즉시 생성한다(JIT 프로비저닝). `MemberEntity`가 ASIS의 `UserEntity`에 대응하는 계정 엔티티다. JWT의 `role` 클레임은 RLS용 Postgres 역할이라 인가 판단에 쓰지 않는다.
+  - `global/security/jwt/SupabaseJwtAuthenticationConverter` — JWT의 `sub`(UUID)/`email` 클레임으로 `domain/member`의 `MemberService.findOrProvisionByAuthUserId(...)`를 호출해 `MemberEntity`를 찾거나, 매칭되는 회원이 없으면(최초 로그인) 임시회원(`mbr_grd_cd = 'TEMP'`, `mbr_stts_cd = 'ENROLLED'` — `data.sql`로 시드)으로 즉시 생성한다(JIT 프로비저닝). `MemberEntity`가 ASIS의 `UserEntity`에 대응하는 계정 엔티티다. `MemberEntity.authUserId`(컬럼 `auth_user_id`)는 특정 인증 벤더 이름을 쓰지 않는다 — 지금은 Supabase Auth의 사용자 ID를 담지만 인증 수단이 바뀌어도 이 컬럼명은 유지된다. JWT의 `role` 클레임은 RLS용 Postgres 역할이라 인가 판단에 쓰지 않는다.
   - 매칭/생성된 `MemberEntity`가 `SupabaseAuthenticationToken`의 principal이 된다. `GrantedAuthority`는 아직 부여하지 않는다 — 역할(ADMIN/USER/PREUSER) 기반 인가는 별도로 AOP를 통해 구현할 예정이라, 현재 `hasRole` 기반 규칙(`/admin/**`)은 사실상 항상 거부된다.
   - 인증 실패(서명/만료 오류 등)는 `CustomAuthenticationEntryPoint`, 권한 부족은 `CustomAccessDeniedHandler`가 `ApiResponse` 포맷으로 응답한다.
   - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER — 실제 부여 로직은 미구현), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로만 permitAll, 나머지는 인증 필요.

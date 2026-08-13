@@ -94,9 +94,9 @@ class SubWorkServiceImplTest {
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant =
-                memberService.findOrProvisionBySpbUserId(UUID.randomUUID(), "registrant@sscc.org");
+                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "registrant@sscc.org");
         MemberEntity owner =
-                memberService.findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org");
+                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org");
         ownerId = owner.getId();
         parentWorkId =
                 workService

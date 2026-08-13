@@ -25,15 +25,15 @@ public class SupabaseJwtAuthenticationConverter
 
     @Override
     public AbstractAuthenticationToken convert(Jwt jwt) {
-        UUID spbUserId = parseSpbUserId(jwt);
+        UUID authUserId = parseAuthUserId(jwt);
         String email = jwt.getClaimAsString("email");
 
-        MemberEntity member = memberService.findOrProvisionBySpbUserId(spbUserId, email);
+        MemberEntity member = memberService.findOrProvisionByAuthUserId(authUserId, email);
 
         return new SupabaseAuthenticationToken(member, jwt);
     }
 
-    private UUID parseSpbUserId(Jwt jwt) {
+    private UUID parseAuthUserId(Jwt jwt) {
         try {
             return UUID.fromString(jwt.getSubject());
         } catch (IllegalArgumentException e) {

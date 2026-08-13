@@ -31,7 +31,7 @@ import lombok.NoArgsConstructor;
         name = "mbr",
         uniqueConstraints = {
             @UniqueConstraint(name = "uk_mbr_student_number", columnNames = "stdnt_no"),
-            @UniqueConstraint(name = "uk_mbr_spb_user_id", columnNames = "spb_user_id")
+            @UniqueConstraint(name = "uk_mbr_auth_user_id", columnNames = "auth_user_id")
         })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -76,8 +76,8 @@ public class MemberEntity {
     private LocalDate joinDate;
 
     // Supabase Auth 사용자 식별자(auth.users.id). 아직 로그인하지 않은 이관 회원은 NULL
-    @Column(name = "spb_user_id")
-    private UUID spbUserId;
+    @Column(name = "auth_user_id")
+    private UUID authUserId;
 
     @CreatedDate
     @Column(name = "crt_dt", updatable = false)
@@ -138,7 +138,7 @@ public class MemberEntity {
         this.membershipStatus = membershipStatus;
     }
 
-    public void assignSpbUserId(UUID spbUserId) {
-        this.spbUserId = spbUserId;
+    public void assignAuthUserId(UUID authUserId) {
+        this.authUserId = authUserId;
     }
 }

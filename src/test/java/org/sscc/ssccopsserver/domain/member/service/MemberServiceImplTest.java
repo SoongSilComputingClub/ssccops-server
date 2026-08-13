@@ -28,13 +28,13 @@ class MemberServiceImplTest {
 
     @Test
     void firstLoginProvisionsTemporaryMember() {
-        UUID spbUserId = UUID.randomUUID();
+        UUID authUserId = UUID.randomUUID();
 
         MemberEntity created =
-                memberService().findOrProvisionBySpbUserId(spbUserId, "test@sscc.org");
+                memberService().findOrProvisionByAuthUserId(authUserId, "test@sscc.org");
 
         assertThat(created.getId()).isNotNull();
-        assertThat(created.getSpbUserId()).isEqualTo(spbUserId);
+        assertThat(created.getAuthUserId()).isEqualTo(authUserId);
         assertThat(created.getEmail()).isEqualTo("test@sscc.org");
         assertThat(created.getName()).isEqualTo("test");
         assertThat(created.getMembershipGrade().getCode()).isEqualTo("TEMP");
@@ -43,11 +43,11 @@ class MemberServiceImplTest {
 
     @Test
     void existingMappingDoesNotCreateDuplicate() {
-        UUID spbUserId = UUID.randomUUID();
+        UUID authUserId = UUID.randomUUID();
         MemberService service = memberService();
 
-        MemberEntity first = service.findOrProvisionBySpbUserId(spbUserId, "test@sscc.org");
-        MemberEntity second = service.findOrProvisionBySpbUserId(spbUserId, "test@sscc.org");
+        MemberEntity first = service.findOrProvisionByAuthUserId(authUserId, "test@sscc.org");
+        MemberEntity second = service.findOrProvisionByAuthUserId(authUserId, "test@sscc.org");
 
         assertThat(second.getId()).isEqualTo(first.getId());
         assertThat(memberRepository.count()).isEqualTo(1);

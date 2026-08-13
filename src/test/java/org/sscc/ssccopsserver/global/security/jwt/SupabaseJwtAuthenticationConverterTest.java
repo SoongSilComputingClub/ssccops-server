@@ -27,12 +27,12 @@ class SupabaseJwtAuthenticationConverterTest {
 
     @Test
     void convertsValidJwtToAuthenticatedTokenWithMemberPrincipal() {
-        UUID spbUserId = UUID.randomUUID();
+        UUID authUserId = UUID.randomUUID();
         MemberEntity member = mockMember();
-        given(memberService.findOrProvisionBySpbUserId(spbUserId, "test@sscc.org"))
+        given(memberService.findOrProvisionByAuthUserId(authUserId, "test@sscc.org"))
                 .willReturn(member);
 
-        var token = converter.convert(jwt(spbUserId.toString(), "test@sscc.org"));
+        var token = converter.convert(jwt(authUserId.toString(), "test@sscc.org"));
 
         assertThat(token.isAuthenticated()).isTrue();
         assertThat(token.getPrincipal()).isEqualTo(member);

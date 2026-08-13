@@ -11,7 +11,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 - 포맷 검사: `./gradlew spotlessCheck` / 자동 정렬·수정: `./gradlew spotlessApply`
 - 스타일 검사: `./gradlew checkstyleMain checkstyleTest` (설정: `config/checkstyle/checkstyle.xml`, Naver 컨벤션 변형 — 상단 주석에 원본과의 차이가 정리되어 있음)
 - 로컬 실행: `./gradlew bootJar` 후 `java -jar build/libs/*.jar`, 또는 IDE에서 `SsccopsServerApplication` 직접 실행. `local` 프로필(`-Dspring.profiles.active=local`)이 PostgreSQL 접속 정보(`db-url`/`db-username`/`db-password`)를 요구하므로, `docker-compose up postgres`로 DB만 띄우는 방식을 권장 (호스트 포트 `15432`). 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `jdbc:postgresql://localhost:5432/ssccops_server_db`로 접속한다.
-- 프로필: `local`(PostgreSQL, OTel 비활성) / `staging` / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create-drop — 테스트 실행 시 자동 적용).
+- 프로필: `local`(PostgreSQL, OTel 비활성) / `dev` / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create-drop — 테스트 실행 시 자동 적용).
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.
 

@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -12,6 +13,7 @@ import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
@@ -38,6 +40,9 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkTypeRepository subWorkTypeRepository;
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     private final MemberService memberService;
+
+    // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
+    private final Clock clock;
 
     /*
      * oper(공통)·sub_work(확장)·체크리스트를 한 트랜잭션에서 INSERT 한다. 체크리스트 없이
@@ -99,6 +104,25 @@ public class SubWorkServiceImpl implements SubWorkService {
         recalculateParentProgressRate(parentWork);
 
         return SubWorkCreateResponse.of(subWork, checklist);
+    }
+
+    /*
+     * 상세 조회(OPS-009). 연관은 @EntityGraph가 한 번에 끌어오고 체크리스트만 따로 세므로
+     * 쿼리는 2회다. 조회는 어떤 상태도 바꾸지 않는다 (AP-07) — 지연 여부도 컬럼을 갱신하지
+     * 않고 응답에서만 판정한다.
+     */
+    @Override
+    public SubWorkDetailResponse getSubWork(Long subWorkId) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+
+        List<SubWorkChecklistItemEntity> checklist =
+                subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);
+
+        return SubWorkDetailResponse.of(subWork, checklist, subWork.isDelayedAt(clock.instant()));
     }
 
     // 유형에 정의된 완료 점검 항목을 순서대로 복사한다 (REQ-021)

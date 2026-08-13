@@ -38,6 +38,9 @@ public enum OperationErrorCode implements ErrorCode {
     // 404 — 선택한 하위 업무 유형이 없을 때. 유형은 기준 데이터라 삭제·변경될 수 있다
     SUB_WORK_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "하위 업무 유형을 찾을 수 없습니다."),
 
+    // 404 — 소프트 삭제된 하위 업무도 여기에 걸린다. 존재를 알려주지 않기 위해 409로 나누지 않는다
+    SUB_WORK_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "하위 업무를 찾을 수 없습니다."),
+
     // 500 — 감사 로그 기록 실패. 원 트랜잭션도 함께 롤백된다 (EX-13, BR-O12)
     AUDIT_LOG_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "AUDIT_LOG_FAILED", "감사 로그 기록에 실패했습니다.");
 

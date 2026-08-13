@@ -56,7 +56,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             HttpStatusCode status,
             WebRequest request) {
         log.warn("MethodArgumentNotValidException");
-        ErrorCode errorCode = CommonErrorCode.INVALID_PARAMETER;
+        ErrorCode errorCode = CommonErrorCode.VALIDATION_FAILED;
         return handleExceptionInternal(errorCode, getDefaultMessage(ex));
     }
 
@@ -77,7 +77,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             String message =
                     String.format(
                             "'%s'는 %s 필드에 유효하지 않은 값입니다. (%s 타입)", value, fieldName, targetType);
-            ErrorCode errorCode = CommonErrorCode.INVALID_BODY;
+            // 대상이 enum이면 기준 코드 위반이다. 단순 타입 변환 실패와 구분해야
+            // 프론트가 "허용값 목록을 다시 확인" 과 "형식 오류" 를 다르게 안내할 수 있다.
+            ErrorCode errorCode =
+                    isEnumTarget(ife)
+                            ? CommonErrorCode.INVALID_CODE_VALUE
+                            : CommonErrorCode.INVALID_BODY;
             return handleExceptionInternal(errorCode, message);
         }
 
@@ -90,6 +95,10 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         log.error("Unhandled Exception", ex);
         ErrorCode errorCode = CommonErrorCode.INTERNAL_SERVER_ERROR;
         return handleExceptionInternal(errorCode);
+    }
+
+    private static boolean isEnumTarget(InvalidFormatException ife) {
+        return ife.getTargetType() != null && ife.getTargetType().isEnum();
     }
 
     private static String getDefaultMessage(MethodArgumentNotValidException ex) {

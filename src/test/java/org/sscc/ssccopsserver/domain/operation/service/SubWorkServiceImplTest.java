@@ -9,6 +9,8 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
 
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,7 +53,7 @@ import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
  * 전체 테스트를 함께 돌릴 때는 다른 @SpringBootTest가 Spring Data의 static 감사 핸들러를
  * 먼저 세팅해 우연히 통과하므로, 이 클래스만 단독 실행할 때 드러난다.
  */
-@DataJpaTest
+@DataJpaTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @Import(JpaAuditingConfig.class)
 @ActiveProfiles("test")
 class SubWorkServiceImplTest {
@@ -452,6 +454,33 @@ class SubWorkServiceImplTest {
         entityManager.clear();
 
         assertThat(detailOf(subWorkId).isDelayed()).isFalse();
+    }
+
+    /*
+     * 상세 응답이 담당자·등록자 이름과 유형명·상위 업무를 모두 쓰므로, 연관을 지연 로딩에
+     * 맡기면 응답을 조립하는 동안 쿼리가 하나씩 더 나간다 (DB-13). 하위 업무 + 체크리스트
+     * 2회로 끝나는지 못 박아 둔다 — 연관이 늘어도 EntityGraph에 넣으면 이 수는 유지된다.
+     */
+    @Test
+    void getSubWorkRunsTwoQueries() {
+        Long subWorkId =
+                subWorkService
+                        .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
+                        .subWorkId();
+        entityManager.flush();
+        entityManager.clear();
+
+        Statistics statistics =
+                entityManager
+                        .getEntityManager()
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        subWorkService.getSubWork(subWorkId);
+
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
     }
 
     private Long subWorkWithDueAt(OffsetDateTime dueAt) {

@@ -1,0 +1,127 @@
+package org.sscc.ssccopsserver.domain.operation.entity;
+
+import java.time.Instant;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+/*
+ * sub_work(하위 업무) — 실제 실행 단위. work와 마찬가지로 oper(운영)의 확장 테이블이라
+ * 제목·기간·담당자·우선순위는 자기 oper가 갖고, 여기에는 하위 업무 고유 속성만 둔다.
+ *
+ * 데이터사전은 sub_work_id를 'PK=FK'로 적고 있으나 oper_id를 별도 FK 컬럼으로도 정의한다.
+ * 상속 매핑을 쓰지 않는 work의 선례를 따라 sub_work_id를 자체 PK로 두고 @MapsId를 쓰지 않는다.
+ *
+ * sub_work_ttl은 oper_ttl과 값이 같다. 화면의 제목 입력란이 하나뿐인데 두 컬럼 모두
+ * NOT NULL이라 같은 값을 넣는다. 제목 수정이 붙으면 두 컬럼을 함께 바꿔야 한다.
+ *
+ * work_id(상위 업무)는 NOT NULL이다. 데이터사전 비고에 'NULL 허용'이 남아 있으나
+ * Not Null 여부 컬럼이 Y이고, 화면도 "하위 업무는 상위 업무 안에서만 생성됩니다"라고
+ * 못박고 있으며 API 정의서 OPS-007의 workId도 필수다.
+ */
+@Entity
+@Table(name = "sub_work")
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
+public class SubWorkEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "sub_work_id")
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "work_id", nullable = false)
+    private WorkEntity work;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "oper_id", nullable = false)
+    private OperationEntity operation;
+
+    @Column(name = "sub_work_ttl", nullable = false, length = 256)
+    private String title;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "sub_work_type_id", nullable = false)
+    private SubWorkTypeEntity subWorkType;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "work_stts_cd", nullable = false, length = 20)
+    private WorkStatus workStatus;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "aprv_stts_cd", nullable = false, length = 20)
+    private ApprovalStatus approvalStatus;
+
+    // 무엇을 하는 하위 업무인지. 현재 유효한 계획만 담고 변경 이력은 남기지 않는다
+    @Column(name = "work_cn", columnDefinition = "TEXT")
+    private String content;
+
+    // 완료 기준 서술. 화면에 입력란이 없어 등록 시점에는 비어 있고, 완료 판정은 체크리스트가 맡는다
+    @Column(name = "cmptn_crtr_cn", columnDefinition = "TEXT")
+    private String completionCriteria;
+
+    // 지연 여부는 마감 일시를 기준으로 자동 판정할 값이라 등록 시점에는 항상 false다
+    @Column(name = "dly_yn", nullable = false)
+    private boolean delayed;
+
+    @Column(name = "otsd_url_addr", length = 200)
+    private String externalLink;
+
+    @Column(name = "ddln_dt")
+    private Instant dueAt;
+
+    @Column(name = "cmptn_dt")
+    private Instant completedAt;
+
+    /*
+     * 하위 업무 등록(OPS-007)용 생성 팩토리. 상태는 항상 PLANNING(기획)이고 지연 여부는
+     * false, 완료 일시는 NULL로 서버가 고정하며 클라이언트가 지정할 수 없다.
+     *
+     * 승인 상태는 유형의 승인 필요 여부만으로 정한다. 승인이 필요 없는 유형(REQ-016
+     * 저위험 업무)은 NOT_REQUIRED로 시작해 승인 절차를 아예 타지 않고, 필요한 유형은
+     * 아직 승인받지 않았다는 뜻의 PENDING으로 시작한다. 승인 대기 목록(OPS-017)에
+     * 실제로 뜨는 시점은 검토요청 전이(TR-02) 이후이므로, 목록 조회는 업무 상태와
+     * 승인 상태를 함께 걸러야 한다.
+     */
+    public static SubWorkEntity create(
+            WorkEntity work,
+            OperationEntity operation,
+            SubWorkTypeEntity subWorkType,
+            String title,
+            String content,
+            String externalLink,
+            Instant dueAt) {
+        return new SubWorkEntity(
+                null,
+                work,
+                operation,
+                title,
+                subWorkType,
+                WorkStatus.PLANNING,
+                subWorkType.isApprovalNeeded()
+                        ? ApprovalStatus.PENDING
+                        : ApprovalStatus.NOT_REQUIRED,
+                content,
+                null,
+                false,
+                externalLink,
+                dueAt,
+                null);
+    }
+}

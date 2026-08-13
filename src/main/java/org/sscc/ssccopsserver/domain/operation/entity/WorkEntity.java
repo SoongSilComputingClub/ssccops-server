@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -33,8 +34,11 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class WorkEntity {
 
-    // 업무 진행률 초기값. 하위 업무 완료율 집계가 붙기 전까지 0으로 시작한다
+    // 업무 진행률 초기값. 하위 업무가 하나도 없는 동안은 0이다
     private static final BigDecimal INITIAL_PROGRESS_RATE = BigDecimal.ZERO;
+
+    private static final BigDecimal PERCENT_MULTIPLIER = BigDecimal.valueOf(100);
+    private static final int PROGRESS_RATE_SCALE = 2;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -83,7 +87,24 @@ public class WorkEntity {
         this.generalReview = generalReview;
     }
 
-    public void updateProgressRate(BigDecimal progressRate) {
-        this.progressRate = progressRate;
+    /*
+     * 하위 업무 완료 개수로 진행률을 다시 계산한다. 등록 화면의 "하위 업무를 이 운영에
+     * 연결하면 진행률이 자동으로 집계됩니다" 안내가 이 계산을 가리킨다.
+     *
+     * 하위 업무가 하나도 없으면 0이다. 완료율은 백분율(0.00~100.00)로 소수 2자리까지
+     * 반올림해 저장한다 — work_prgrs_rt가 NUMERIC(5,2)이라 그 이상은 담기지 않는다.
+     */
+    public void recalculateProgressRate(long completedCount, long totalCount) {
+        if (totalCount <= 0) {
+            this.progressRate = INITIAL_PROGRESS_RATE;
+            return;
+        }
+        this.progressRate =
+                BigDecimal.valueOf(completedCount)
+                        .multiply(PERCENT_MULTIPLIER)
+                        .divide(
+                                BigDecimal.valueOf(totalCount),
+                                PROGRESS_RATE_SCALE,
+                                RoundingMode.HALF_UP);
     }
 }

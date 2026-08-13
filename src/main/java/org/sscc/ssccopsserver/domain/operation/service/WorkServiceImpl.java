@@ -33,7 +33,7 @@ public class WorkServiceImpl implements WorkService {
      */
     @Override
     @Transactional
-    public WorkCreateResponse createWork(WorkCreateRequest request) {
+    public WorkCreateResponse createWork(WorkCreateRequest request, MemberEntity registrant) {
         // 담당자 실재 여부는 회원 도메인 Service를 경유해 확인한다 (AR-07·LY-10)
         MemberEntity owner =
                 memberService
@@ -51,7 +51,12 @@ public class WorkServiceImpl implements WorkService {
         OperationEntity operation =
                 operationRepository.save(
                         OperationEntity.createForWork(
-                                request.title(), owner, beginAt, endAt, request.priority()));
+                                request.title(),
+                                registrant,
+                                owner,
+                                beginAt,
+                                endAt,
+                                request.priority()));
         WorkEntity work =
                 workRepository.save(
                         WorkEntity.create(operation, request.itemType(), request.review()));

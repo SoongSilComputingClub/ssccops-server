@@ -22,67 +22,96 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
+import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 
 /*
  * 실제 JWKS 없이 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
- * SupabaseJwtAuthenticationIntegrationTest와 같은 방식이며,
- * SecurityMockMvcRequestPostProcessors.jwt()는 커스텀 컨버터를 우회하므로 쓰지 않는다.
+ * WorkControllerTest와 같은 방식이다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(WorkControllerTest.StubJwtDecoderConfig.class)
+@Import(SubWorkControllerTest.StubJwtDecoderConfig.class)
 @Transactional
-class WorkControllerTest {
+class SubWorkControllerTest {
 
     private static final UUID SPB_USER_ID = UUID.randomUUID();
 
+    // data.sql이 넣는 유형. 1=예산지출(승인 필요)
+    private static final long SUB_WORK_TYPE_ID = 1L;
+
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberService memberService;
+    @Autowired private WorkService workService;
 
     private Long ownerId;
     private Long registrantId;
+    private Long parentWorkId;
 
     @BeforeEach
     void setUp() {
-        ownerId =
-                memberService
-                        .findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org")
-                        .getId();
+        MemberEntity owner =
+                memberService.findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org");
+        ownerId = owner.getId();
         // 등록자는 토큰의 sub(SPB_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
-        registrantId =
-                memberService.findOrProvisionBySpbUserId(SPB_USER_ID, "actor@sscc.org").getId();
+        MemberEntity registrant =
+                memberService.findOrProvisionBySpbUserId(SPB_USER_ID, "actor@sscc.org");
+        registrantId = registrant.getId();
+        parentWorkId =
+                workService
+                        .createWork(
+                                new WorkCreateRequest(
+                                        "2026 동아리 박람회",
+                                        WorkType.EVENT,
+                                        ownerId,
+                                        null,
+                                        null,
+                                        null,
+                                        null),
+                                registrant)
+                        .workId();
     }
 
     @Test
-    void createWorkReturns201WithLocation() throws Exception {
+    void createSubWorkReturns201WithLocation() throws Exception {
         String body =
                 """
                 {
-                  "title": "동아리 박람회 부스 운영",
-                  "itemType": "EVENT",
+                  "workId": %d,
+                  "title": "부스 배치도 확정",
+                  "subWorkTypeId": %d,
                   "ownerId": %d,
                   "startAt": "2026-09-01T18:00:00+09:00",
                   "endAt": "2026-09-01T20:00:00+09:00",
-                  "priority": "NORMAL",
-                  "review": null
+                  "dueAt": "2026-08-25T23:59:00+09:00",
+                  "priority": "HIGH",
+                  "content": "박람회 부스 위치와 동선을 확정한다",
+                  "externalLink": "https://docs.example.com/booth"
                 }
                 """
-                        .formatted(ownerId);
+                        .formatted(parentWorkId, SUB_WORK_TYPE_ID, ownerId);
 
         mockMvc.perform(authenticated(body))
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("Location"))
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.workId").isNumber())
+                .andExpect(jsonPath("$.data.subWorkId").isNumber())
                 .andExpect(jsonPath("$.data.operationId").isNumber())
+                .andExpect(jsonPath("$.data.workId").value(parentWorkId))
+                .andExpect(jsonPath("$.data.subWorkTypeName").value("예산지출"))
                 .andExpect(jsonPath("$.data.workStatus").value("PLANNING"))
-                .andExpect(jsonPath("$.data.itemType").value("EVENT"))
-                .andExpect(jsonPath("$.data.priority").value("NORMAL"))
+                .andExpect(jsonPath("$.data.approvalStatus").value("PENDING"))
+                .andExpect(jsonPath("$.data.priority").value("HIGH"))
                 .andExpect(jsonPath("$.data.ownerId").value(ownerId))
-                .andExpect(jsonPath("$.data.registrantId").value(registrantId));
+                .andExpect(jsonPath("$.data.registrantId").value(registrantId))
+                .andExpect(jsonPath("$.data.isDelayed").value(false))
+                .andExpect(jsonPath("$.data.checklist.length()").value(4));
     }
 
     @Test
@@ -90,11 +119,12 @@ class WorkControllerTest {
         String body =
                 """
                 {
-                  "itemType": "EVENT",
+                  "title": "상위 업무 없는 하위 업무",
+                  "subWorkTypeId": %d,
                   "ownerId": %d
                 }
                 """
-                        .formatted(ownerId);
+                        .formatted(SUB_WORK_TYPE_ID, ownerId);
 
         mockMvc.perform(authenticated(body))
                 .andExpect(status().isBadRequest())
@@ -103,35 +133,18 @@ class WorkControllerTest {
     }
 
     @Test
-    void unknownItemTypeReturnsInvalidCodeValue() throws Exception {
+    void malformedExternalLinkReturnsValidationFailed() throws Exception {
         String body =
                 """
                 {
-                  "title": "코드값 밖 업무",
-                  "itemType": "FESTIVAL",
-                  "ownerId": %d
-                }
-                """
-                        .formatted(ownerId);
-
-        mockMvc.perform(authenticated(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
-    }
-
-    @Test
-    void invertedPeriodReturnsValidationFailed() throws Exception {
-        String body =
-                """
-                {
-                  "title": "기간 역전 업무",
-                  "itemType": "EVENT",
+                  "workId": %d,
+                  "title": "링크 형식 오류",
+                  "subWorkTypeId": %d,
                   "ownerId": %d,
-                  "startAt": "2026-09-01T20:00:00+09:00",
-                  "endAt": "2026-09-01T18:00:00+09:00"
+                  "externalLink": "not-a-url"
                 }
                 """
-                        .formatted(ownerId);
+                        .formatted(parentWorkId, SUB_WORK_TYPE_ID, ownerId);
 
         mockMvc.perform(authenticated(body))
                 .andExpect(status().isBadRequest())
@@ -139,50 +152,49 @@ class WorkControllerTest {
     }
 
     @Test
-    void unknownOwnerReturnsValidationFailed() throws Exception {
+    void unknownSubWorkTypeReturnsNotFound() throws Exception {
         String body =
                 """
                 {
-                  "title": "담당자 없는 업무",
-                  "itemType": "EVENT",
+                  "workId": %d,
+                  "title": "유형 없는 하위 업무",
+                  "subWorkTypeId": 999,
                   "ownerId": %d
                 }
                 """
-                        .formatted(ownerId + 999);
+                        .formatted(parentWorkId, ownerId);
 
         mockMvc.perform(authenticated(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
-    // 화면의 우선순위 버튼은 3종뿐이라 그 밖의 값은 기준 코드 위반이다
     @Test
-    void unknownPriorityReturnsInvalidCodeValue() throws Exception {
+    void unknownParentWorkReturnsNotFound() throws Exception {
         String body =
                 """
                 {
-                  "title": "우선순위 코드값 밖",
-                  "itemType": "EVENT",
-                  "ownerId": %d,
-                  "priority": "URGENT"
+                  "workId": %d,
+                  "title": "상위 업무 없는 하위 업무",
+                  "subWorkTypeId": %d,
+                  "ownerId": %d
                 }
                 """
-                        .formatted(ownerId);
+                        .formatted(parentWorkId + 999, SUB_WORK_TYPE_ID, ownerId);
 
         mockMvc.perform(authenticated(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
     @Test
     void requestWithoutTokenReturns401() throws Exception {
-        mockMvc.perform(post("/v1/works").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mockMvc.perform(post("/v1/sub-works").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
     }
 
-    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
-            authenticated(String body) {
-        return post("/v1/works")
+    private static MockHttpServletRequestBuilder authenticated(String body) {
+        return post("/v1/sub-works")
                 .header("Authorization", "Bearer any-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);

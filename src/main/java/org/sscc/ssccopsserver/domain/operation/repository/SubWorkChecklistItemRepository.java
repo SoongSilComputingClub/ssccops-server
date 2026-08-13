@@ -14,4 +14,11 @@ public interface SubWorkChecklistItemRepository
      * 정렬을 쿼리에 고정한다 — 클라이언트가 다시 정렬하지 않아도 되게 한다.
      */
     List<SubWorkChecklistItemEntity> findBySubWorkOrderBySortOrderAsc(SubWorkEntity subWork);
+
+    /*
+     * 완료 승인 전이(TR-03)의 선행 조건 판정용. 남은 항목이 0건이어야 완료할 수 있다.
+     * 항목 전체를 로딩해 세지 않는다 — 판정에 필요한 것은 개수뿐이다.
+     * 유형에 완료 점검 항목이 없어 체크리스트가 비어 있으면 0건이라 그대로 통과한다.
+     */
+    long countBySubWorkAndCompletedFalse(SubWorkEntity subWork);
 }

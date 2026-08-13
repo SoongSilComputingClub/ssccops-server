@@ -23,6 +23,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -238,6 +239,104 @@ class SubWorkControllerTest {
     @Test
     void getSubWorkWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/v1/sub-works/{subWorkId}", 1)).andExpect(status().isUnauthorized());
+    }
+
+    /*
+     * 상세 화면(OPS-SCR-002)의 '완료 승인' 버튼이 부르는 경로. 여기서는 체크리스트를 채우지
+     * 않은 채 검토까지만 올려 두고, 완료 승인은 다음 테스트에서 409로 막히는지 본다.
+     */
+    @Test
+    void transitionReturns200WithChangedStatus() throws Exception {
+        Long subWorkId = createSubWork();
+
+        transition(subWorkId, "START", null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.subWorkId").value(subWorkId))
+                .andExpect(jsonPath("$.data.transition").value("START"))
+                .andExpect(jsonPath("$.data.previousWorkStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data.workStatus").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.data.approvalStatus").value("PENDING"))
+                .andExpect(jsonPath("$.data.isSelfApproval").value(false))
+                .andExpect(jsonPath("$.data.completedAt").doesNotExist());
+
+        transition(subWorkId, "REQUEST_REVIEW", null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.workStatus").value("REVIEW"));
+    }
+
+    // 화면은 체크리스트가 미충족이면 버튼을 비활성해야 한다. 눌러도 서버가 409로 막는다
+    @Test
+    void approveCompleteWithUnfinishedChecklistReturns409() throws Exception {
+        Long subWorkId = createSubWork();
+        transition(subWorkId, "START", null).andExpect(status().isOk());
+        transition(subWorkId, "REQUEST_REVIEW", null).andExpect(status().isOk());
+
+        transition(subWorkId, "APPROVE_COMPLETE", null)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("COMPLETION_CRITERIA_UNMET"));
+    }
+
+    // 전이표에 없는 조합은 409다 (기획 상태에서 곧장 완료 승인)
+    @Test
+    void transitionOutsideTransitionTableReturns409() throws Exception {
+        Long subWorkId = createSubWork();
+
+        transition(subWorkId, "APPROVE_COMPLETE", null)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSITION_NOT_ALLOWED"));
+    }
+
+    // 반려 사유 누락은 400(VALIDATION_FAILED)이 아니라 422다 (VR-O06)
+    @Test
+    void rejectWithoutReasonReturns422() throws Exception {
+        Long subWorkId = createSubWork();
+        transition(subWorkId, "START", null).andExpect(status().isOk());
+        transition(subWorkId, "REQUEST_REVIEW", null).andExpect(status().isOk());
+
+        transition(subWorkId, "REJECT", "  ")
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("REASON_REQUIRED"));
+    }
+
+    // 기준 코드에 없는 전이 액션은 enum 역직렬화 단계에서 걸린다 (VL-09)
+    @Test
+    void unknownTransitionActionReturns400() throws Exception {
+        Long subWorkId = createSubWork();
+
+        transition(subWorkId, "CANCEL", null)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    @Test
+    void transitionOnUnknownSubWorkReturns404() throws Exception {
+        transition(999L, "START", null)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void transitionWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(
+                        post("/v1/sub-works/{subWorkId}/transitions", 1)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"transition\": \"START\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private ResultActions transition(Long subWorkId, String action, String reason)
+            throws Exception {
+        String body =
+                reason == null
+                        ? "{\"transition\": \"%s\"}".formatted(action)
+                        : "{\"transition\": \"%s\", \"reason\": \"%s\"}".formatted(action, reason);
+        return mockMvc.perform(
+                post("/v1/sub-works/{subWorkId}/transitions", subWorkId)
+                        .header("Authorization", "Bearer any-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body));
     }
 
     private Long createSubWork() throws Exception {

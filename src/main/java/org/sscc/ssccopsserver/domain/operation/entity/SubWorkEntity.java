@@ -14,6 +14,9 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -123,6 +126,90 @@ public class SubWorkEntity {
                 externalLink,
                 dueAt,
                 null);
+    }
+
+    /*
+     * 상태 전이(OPS-010). 전이표(TR-01~TR-04)에 있는 조합만 통과하고 나머지는 전부 막는다
+     * (BR-O03·VR-O04·LY-14). 상태를 직접 쓰는 setter를 열지 않는 것이 이 통제의 전제다 (AR-10).
+     *
+     * completionCriteriaMet(완료 체크리스트 충족 여부)은 다른 테이블(sub_work_chck_list)에
+     * 있어 엔티티가 스스로 알 수 없으므로 사실만 넘겨받고, 그 사실로 완료를 막을지는 여기서 정한다.
+     */
+    public void applyTransition(
+            TransitionAction action,
+            String reason,
+            boolean completionCriteriaMet,
+            Instant occurredAt) {
+        switch (action) {
+            case START -> start();
+            case REQUEST_REVIEW -> requestReview();
+            case APPROVE_COMPLETE -> approveAndComplete(completionCriteriaMet, occurredAt);
+            case REJECT -> reject(reason);
+        }
+    }
+
+    // TR-01 착수. 승인 상태는 건드리지 않는다 — 승인 절차는 검토요청부터 시작한다
+    private void start() {
+        requireStatus(WorkStatus.PLANNING);
+        this.workStatus = WorkStatus.IN_PROGRESS;
+    }
+
+    /*
+     * TR-02 검토요청. 승인이 필요한 유형이면 여기서 승인 대기가 발생한다.
+     * 직전에 반려된 건이 다시 올라온 것이라면 대기가 아니라 재승인필요로 둔다 —
+     * 승인자가 승인함(OPS-017)에서 '처음 올라온 건'과 '반려 후 다시 올라온 건'을 구분해야 한다.
+     */
+    private void requestReview() {
+        requireStatus(WorkStatus.IN_PROGRESS);
+        this.workStatus = WorkStatus.REVIEW;
+        if (subWorkType.isApprovalNeeded()) {
+            this.approvalStatus =
+                    this.approvalStatus == ApprovalStatus.REJECTED
+                            ? ApprovalStatus.REAPPROVAL_REQUIRED
+                            : ApprovalStatus.PENDING;
+        }
+    }
+
+    /*
+     * TR-03 승인·완료. 승인과 완료가 한 단계다 — 승인 없이 완료하는 경로를 따로 두지 않는다.
+     *
+     * 완료 체크리스트를 다 채우지 못한 건은 완료되지 않는다 (REQ-021). 승인이 필요 없는
+     * 유형(REQ-016 저위험 면제)은 승인 상태를 NOT_REQUIRED 그대로 두고 완료만 시킨다.
+     */
+    private void approveAndComplete(boolean completionCriteriaMet, Instant completedAt) {
+        requireStatus(WorkStatus.REVIEW);
+        if (!completionCriteriaMet) {
+            throw new GeneralException(OperationErrorCode.COMPLETION_CRITERIA_UNMET);
+        }
+        this.workStatus = WorkStatus.DONE;
+        this.completedAt = completedAt;
+        if (subWorkType.isApprovalNeeded()) {
+            this.approvalStatus = ApprovalStatus.APPROVED;
+        }
+    }
+
+    /*
+     * TR-04 반려. 상태가 진행으로 되돌아간다. 체크리스트 체크 상태는 초기화하지 않는다 —
+     * 되돌아간 담당자가 남은 항목만 마저 채우는 것이 화면의 흐름이다.
+     *
+     * 사유는 필수이며 공백만 있는 문자열도 거부한다 (VR-O06). 승인이 필요 없는 유형은
+     * 승인 상태를 바꾸지 않는다 — 반려 사실은 sub_work_rjct에 남는다.
+     */
+    private void reject(String reason) {
+        requireStatus(WorkStatus.REVIEW);
+        if (reason == null || reason.isBlank()) {
+            throw new GeneralException(OperationErrorCode.REASON_REQUIRED);
+        }
+        this.workStatus = WorkStatus.IN_PROGRESS;
+        if (subWorkType.isApprovalNeeded()) {
+            this.approvalStatus = ApprovalStatus.REJECTED;
+        }
+    }
+
+    private void requireStatus(WorkStatus required) {
+        if (this.workStatus != required) {
+            throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        }
     }
 
     /*

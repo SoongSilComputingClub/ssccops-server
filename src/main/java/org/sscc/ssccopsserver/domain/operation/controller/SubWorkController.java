@@ -16,6 +16,8 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 
@@ -51,5 +53,21 @@ public class SubWorkController {
     @GetMapping("/{subWorkId}")
     public ApiResponse<SubWorkDetailResponse> getSubWork(@PathVariable Long subWorkId) {
         return ApiResponse.success(subWorkService.getSubWork(subWorkId));
+    }
+
+    /*
+     * 하위 업무 상태 전이 (OPS-010). 상세 화면(OPS-SCR-002)의 '반려'·'완료 승인' 버튼과
+     * 담당자의 착수·검토요청이 모두 이 하나의 액션 경로를 쓴다. 상태를 PATCH로 직접 쓰는
+     * 경로는 두지 않는다 (POL-003·AP-03).
+     *
+     * 전이 가능 여부·사유 필수 여부는 서비스와 도메인이 판단하므로 여기서 분기하지 않는다 (LY-02).
+     * 상태 변경은 생성이 아니므로 200이다 (LY-06).
+     */
+    @PostMapping("/{subWorkId}/transitions")
+    public ApiResponse<SubWorkTransitionResponse> transition(
+            @PathVariable Long subWorkId,
+            @Valid @RequestBody SubWorkTransitionRequest request,
+            @AuthenticationPrincipal MemberEntity performer) {
+        return ApiResponse.success(subWorkService.transitionSubWork(subWorkId, request, performer));
     }
 }

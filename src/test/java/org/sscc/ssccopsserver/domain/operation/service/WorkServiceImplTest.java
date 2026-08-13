@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
@@ -30,8 +31,16 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 
+/*
+ * @DataJpaTest는 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다.
+ * 없으면 @CreatedDate가 동작하지 않아 crt_dt NOT NULL 위반으로 저장이 실패한다 —
+ * 전체 테스트를 함께 돌릴 때는 다른 @SpringBootTest가 Spring Data의 static 감사 핸들러를
+ * 먼저 세팅해 우연히 통과하므로, 이 클래스만 단독 실행할 때 드러난다.
+ */
 @DataJpaTest
+@Import(JpaAuditingConfig.class)
 @ActiveProfiles("test")
 class WorkServiceImplTest {
 
@@ -46,6 +55,7 @@ class WorkServiceImplTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
 
     private WorkService workService;
+    private MemberEntity registrant;
     private Long ownerId;
 
     @BeforeEach
@@ -55,6 +65,9 @@ class WorkServiceImplTest {
                         memberRepository, memberGradeRepository, memberStatusRepository);
         workService = new WorkServiceImpl(operationRepository, workRepository, memberService);
 
+        // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
+        registrant =
+                memberService.findOrProvisionBySpbUserId(UUID.randomUUID(), "registrant@sscc.org");
         MemberEntity owner =
                 memberService.findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org");
         ownerId = owner.getId();
@@ -66,7 +79,7 @@ class WorkServiceImplTest {
                 new WorkCreateRequest(
                         "2026 신입생 환영회", WorkType.EVENT, ownerId, START, END, null, null);
 
-        WorkCreateResponse response = workService.createWork(request);
+        WorkCreateResponse response = workService.createWork(request, registrant);
 
         assertThat(operationRepository.count()).isEqualTo(1);
         assertThat(workRepository.count()).isEqualTo(1);
@@ -80,6 +93,11 @@ class WorkServiceImplTest {
         assertThat(operation.getEndAt()).isEqualTo(END.toInstant());
         assertThat(operation.getDeletedAt()).isNull();
         assertThat(operation.getCreatedAt()).isNotNull();
+
+        // 등록자는 인증 주체에서 오고 담당자와 별개로 기록된다
+        assertThat(operation.getRegistrant().getId()).isEqualTo(registrant.getId());
+        assertThat(operation.getRegistrant().getId()).isNotEqualTo(ownerId);
+        assertThat(response.registrantId()).isEqualTo(registrant.getId());
     }
 
     @Test
@@ -87,7 +105,8 @@ class WorkServiceImplTest {
         WorkCreateResponse response =
                 workService.createWork(
                         new WorkCreateRequest(
-                                "정기 총회", WorkType.REGULAR, ownerId, null, null, null, null));
+                                "정기 총회", WorkType.REGULAR, ownerId, null, null, null, null),
+                        registrant);
 
         assertThat(response.workStatus()).isEqualTo(WorkStatus.PLANNING);
         assertThat(workRepository.findById(response.workId()).orElseThrow().getWorkStatus())
@@ -106,7 +125,8 @@ class WorkServiceImplTest {
                                 START,
                                 END,
                                 OperationPriority.HIGH,
-                                "부스 위치 선정이 늦었다"));
+                                "부스 위치 선정이 늦었다"),
+                        registrant);
 
         assertThat(response.priority()).isEqualTo(OperationPriority.HIGH);
         assertThat(response.review()).isEqualTo("부스 위치 선정이 늦었다");
@@ -124,7 +144,8 @@ class WorkServiceImplTest {
         WorkCreateResponse response =
                 workService.createWork(
                         new WorkCreateRequest(
-                                "우선순위 미지정", WorkType.ROUTINE, ownerId, null, null, null, null));
+                                "우선순위 미지정", WorkType.ROUTINE, ownerId, null, null, null, null),
+                        registrant);
 
         assertThat(response.priority()).isEqualTo(OperationPriority.NORMAL);
         assertThat(response.review()).isNull();
@@ -136,7 +157,7 @@ class WorkServiceImplTest {
                 new WorkCreateRequest(
                         "담당자 없는 업무", WorkType.EVENT, ownerId + 999, START, END, null, null);
 
-        assertThatThrownBy(() -> workService.createWork(request))
+        assertThatThrownBy(() -> workService.createWork(request, registrant))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER);
@@ -150,7 +171,7 @@ class WorkServiceImplTest {
         WorkCreateRequest request =
                 new WorkCreateRequest("기간 역전 업무", WorkType.EVENT, ownerId, END, START, null, null);
 
-        assertThatThrownBy(() -> workService.createWork(request))
+        assertThatThrownBy(() -> workService.createWork(request, registrant))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.INVALID_OPERATION_PERIOD);

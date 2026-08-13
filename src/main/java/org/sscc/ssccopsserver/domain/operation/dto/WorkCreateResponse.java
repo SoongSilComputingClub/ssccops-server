@@ -14,7 +14,8 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 /*
  * 업무 등록 응답 (OPS-002).
  *
- * workStatus는 서버가 PLANNING으로 고정한 값이며 클라이언트가 지정할 수 없다.
+ * workStatus는 서버가 PLANNING으로 고정한 값이며, registrantId는 인증 주체에서 온 등록자라
+ * 둘 다 클라이언트가 지정할 수 없다. 담당자(ownerId)와 등록자는 다를 수 있다.
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record WorkCreateResponse(
@@ -24,6 +25,7 @@ public record WorkCreateResponse(
         WorkType itemType,
         WorkStatus workStatus,
         Long ownerId,
+        Long registrantId,
         OffsetDateTime startAt,
         OffsetDateTime endAt,
         OperationPriority priority,
@@ -42,6 +44,7 @@ public record WorkCreateResponse(
                 work.getWorkType(),
                 work.getWorkStatus(),
                 operation.getPersonInCharge().getId(),
+                operation.getRegistrant() == null ? null : operation.getRegistrant().getId(),
                 toOffsetDateTime(operation.getBeginAt()),
                 toOffsetDateTime(operation.getEndAt()),
                 operation.getPriority(),

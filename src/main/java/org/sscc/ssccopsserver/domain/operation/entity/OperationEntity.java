@@ -55,6 +55,17 @@ public class OperationEntity {
     @Column(name = "oper_ttl", nullable = false, length = 256)
     private String title;
 
+    /*
+     * 등록자(mbr.mbr_id). 인증 주체를 서버가 기록하며 클라이언트가 지정할 수 없다 (LY-05).
+     * 담당자(pic_id)와는 다른 축이다 — 남을 담당자로 지정해 등록할 수 있다.
+     *
+     * 사후 변경 불가라 updatable = false로 잠근다. 데이터사전은 NULL을 허용하지만(등록자를
+     * 알 수 없는 이관 데이터 대비) 신규 등록 건은 항상 채운다.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "oper_rgtr_id", updatable = false)
+    private MemberEntity registrant;
+
     @Column(name = "bgng_dt")
     private Instant beginAt;
 
@@ -91,6 +102,7 @@ public class OperationEntity {
      */
     public static OperationEntity createForWork(
             String title,
+            MemberEntity registrant,
             MemberEntity personInCharge,
             Instant beginAt,
             Instant endAt,
@@ -99,6 +111,32 @@ public class OperationEntity {
                 null,
                 OperationType.WORK,
                 title,
+                registrant,
+                beginAt,
+                endAt,
+                priority == null ? OperationPriority.NORMAL : priority,
+                personInCharge,
+                null,
+                null,
+                null);
+    }
+
+    /*
+     * 하위 업무 등록(OPS-007)용 생성 팩토리. 하위 업무도 제목·기간·담당자·우선순위를
+     * oper에 두므로 자기 운영 건을 하나 갖는다. 상위 업무의 oper를 재사용하지 않는다.
+     */
+    public static OperationEntity createForSubWork(
+            String title,
+            MemberEntity registrant,
+            MemberEntity personInCharge,
+            Instant beginAt,
+            Instant endAt,
+            OperationPriority priority) {
+        return new OperationEntity(
+                null,
+                OperationType.SUB_WORK,
+                title,
+                registrant,
                 beginAt,
                 endAt,
                 priority == null ? OperationPriority.NORMAL : priority,

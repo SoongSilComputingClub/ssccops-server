@@ -41,3 +41,6 @@ out/
 ### Private files & Artifacts ###
 /private-workspace/
 /.omc/
+
+### macOS ###
+.DS_Store

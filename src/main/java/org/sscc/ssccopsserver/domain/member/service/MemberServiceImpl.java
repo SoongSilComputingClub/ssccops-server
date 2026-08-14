@@ -140,12 +140,23 @@ public class MemberServiceImpl implements MemberService {
                         .findById(memberId)
                         .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
 
-        List<MemberRoleResponse> roles =
-                memberRoleAssignmentRepository.findCurrentByMemberId(memberId).stream()
-                        .map(MemberRoleResponse::from)
-                        .toList();
+        return MemberProfileResponse.of(member, findCurrentRoles(memberId));
+    }
 
-        return MemberProfileResponse.of(member, roles);
+    /*
+     * 현재 역할만 고른다 — 종료일이 채워진 배정은 지난 역할이라 권한 판정에도 화면에도 쓰이지 않는다.
+     * 회원이 실재하는지는 확인하지 않는다. 역할이 없는 것과 회원이 없는 것 모두 빈 목록이며,
+     * 이 메서드를 부르는 쪽(프로필 조회·승인 권한 판정)은 이미 회원을 손에 쥐고 있다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<MemberRoleResponse> findCurrentRoles(Long memberId) {
+        if (memberId == null) {
+            return List.of();
+        }
+        return memberRoleAssignmentRepository.findCurrentByMemberId(memberId).stream()
+                .map(MemberRoleResponse::from)
+                .toList();
     }
 
     /*

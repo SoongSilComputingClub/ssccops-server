@@ -25,6 +25,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
@@ -95,6 +97,24 @@ public class SubWorkController {
             @Valid @RequestBody SubWorkTransitionRequest request,
             @CurrentMember MemberEntity performer) {
         return ApiResponse.success(subWorkService.transitionSubWork(subWorkId, request, performer));
+    }
+
+    /*
+     * 정족수 승인 투표 (OPS-015 · #47). 승인함 화면의 카드에 있는 `찬성`·`반대` 버튼이 부른다.
+     *
+     * 승인·반려와 달리 별도 경로를 두는 것은 이것이 상태 전이가 아니기 때문이다 — 정족수를
+     * 채워도 업무 상태·승인 상태는 그대로이고, 승인자가 전이 API를 눌러야 완료된다(POL-007).
+     * 전이가 아니므로 POST /transitions에 액션을 하나 더 얹지 않았다.
+     *
+     * 투표 자격·정족수 유형 여부·상태 조건은 서비스와 도메인이 판단하므로 여기서 분기하지 않는다 (LY-02).
+     * 표를 새로 만들든 기존 표를 바꾸든 결과가 같은 멱등한 호출이라 201이 아니라 200이다 (LY-06).
+     */
+    @PostMapping("/{subWorkId}/approvals/votes")
+    public ApiResponse<SubWorkVoteResponse> vote(
+            @PathVariable Long subWorkId,
+            @Valid @RequestBody SubWorkVoteRequest request,
+            @CurrentMember MemberEntity voter) {
+        return ApiResponse.success(subWorkService.voteOnSubWork(subWorkId, request, voter));
     }
 
     /*

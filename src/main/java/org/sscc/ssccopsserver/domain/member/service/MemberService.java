@@ -1,9 +1,11 @@
 package org.sscc.ssccopsserver.domain.member.service;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
@@ -30,6 +32,15 @@ public interface MemberService {
      * 돌려준다 — 인증 주체에 실린 MemberEntity는 준영속이라 그대로 꺼내 쓸 수 없다.
      */
     MemberProfileResponse getProfile(Long memberId);
+
+    /*
+     * 회원이 지금 맡고 있는 조직 역할 목록. 종료일이 지난 배정은 담지 않는다.
+     *
+     * 운영 도메인의 승인자·운영진 판정(#47)이 쓴다. 다른 도메인은 회원 Repository를 직접
+     * 호출할 수 없으므로(AR-07·LY-10) 역할 조회의 진입점을 여기 하나로 둔다.
+     * 대표 역할 여부(rprs_role_yn)는 화면 표시용이며 권한 판정에 쓰지 않는다.
+     */
+    List<MemberRoleResponse> findCurrentRoles(Long memberId);
 
     /*
      * 다른 도메인이 담당자·작성자 등으로 지정할 수 있는 회원인지 확인해 반환한다.

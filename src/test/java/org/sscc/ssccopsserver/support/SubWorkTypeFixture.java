@@ -18,6 +18,9 @@ public final class SubWorkTypeFixture {
     /** 승인이 필요 없는 유형 */
     public static final String APPROVAL_FREE = "내부행사";
 
+    /** 승인이 필요하고 승인자가 회장인 유형. 정족수 테스트가 이 유형을 정족수로 바꿔 쓴다 */
+    public static final String ANNOUNCEMENT = "대외공지";
+
     private SubWorkTypeFixture() {}
 
     public static Long idOf(SubWorkTypeRepository repository, String typeName) {

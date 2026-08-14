@@ -26,19 +26,24 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalVoteEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkRejectionEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkStatusHistoryEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
+import org.sscc.ssccopsserver.domain.operation.entity.VoteChoice;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
@@ -63,8 +68,12 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     private final SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     private final SubWorkApprovalRepository subWorkApprovalRepository;
+    private final SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     private final SubWorkRejectionRepository subWorkRejectionRepository;
     private final MemberService memberService;
+
+    // 승인자·투표자 판정은 한 곳에만 둔다 — 역할 인가(#9)가 붙으면 통째로 옮겨간다
+    private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
 
     // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -248,8 +257,21 @@ public class SubWorkServiceImpl implements SubWorkService {
         ApprovalStatus previousApprovalStatus = subWork.getApprovalStatus();
         Instant occurredAt = clock.instant();
 
+        /*
+         * 승인·완료와 반려는 유형이 지정한 승인자만 할 수 있다 (TR-03·TR-04 수행 권한 · #47).
+         * 착수·검토요청은 담당자의 몫이라 검사하지 않는다 — 그쪽 통제는 역할 인가(#9)가 맡는다.
+         * 상태를 바꾸기 전에 먼저 끊어야 권한 없는 요청이 이력을 남기지 않는다.
+         */
+        if (action == TransitionAction.APPROVE_COMPLETE || action == TransitionAction.REJECT) {
+            approvalAuthorityPolicy.requireApprover(subWork, performer);
+        }
+
         subWork.applyTransition(
-                action, request.reason(), isCompletionCriteriaMet(subWork, action), occurredAt);
+                action,
+                request.reason(),
+                isCompletionCriteriaMet(subWork, action),
+                agreedVoteCount(subWork, action),
+                occurredAt);
 
         SubWorkStatusHistoryEntity history =
                 subWorkStatusHistoryRepository.save(
@@ -282,6 +304,66 @@ public class SubWorkServiceImpl implements SubWorkService {
                 previousApprovalStatus,
                 selfApproval,
                 occurredAt);
+    }
+
+    /*
+     * 정족수 승인 투표 (OPS-015 · #47). 승인함 카드의 찬성·반대 버튼 하나가 이 호출 하나다.
+     *
+     * 업무 상태·승인 상태를 바꾸지 않으므로 sub_work_stts_hstry에 남기지 않는다 — 투표는
+     * 전이가 아니다. 정족수를 채웠다는 사실(met)도 저장하지 않고 셀 때마다 다시 센다:
+     * 저장하면 표가 바뀔 때마다 갱신할 주체가 하나 더 생기고 실제 표와 어긋날 수 있다.
+     */
+    @Override
+    @Transactional
+    public SubWorkVoteResponse voteOnSubWork(
+            Long subWorkId, SubWorkVoteRequest request, MemberEntity voter) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+
+        // 정족수 유형인지·검토 단계인지·승인 대기 중인지를 한 번에 본다
+        subWork.requireVotable();
+        // 사전에 운영진 권한을 가진 회원이면 누구나 던질 수 있다 — 승인자만의 권한이 아니다
+        approvalAuthorityPolicy.requireStaff(voter);
+
+        int approvalSequence = currentApprovalSequence(subWork);
+        Instant votedAt = clock.instant();
+        VoteChoice choice = request.vote();
+
+        /*
+         * 1인 1표. 이미 던진 표가 있으면 새로 만들지 않고 바꾼다 — 화면이 낙관적으로 버튼을
+         * 눌러 두고 재전송하는 흐름이라 두 번째 호출을 409로 끊으면 버튼이 잠긴다.
+         * 선조회만으로는 동시 요청을 막지 못하므로 uk_sub_work_aprv_vote가 함께 지킨다.
+         */
+        subWorkApprovalVoteRepository
+                .findBySubWorkAndApprovalSequenceAndVoter(subWork, approvalSequence, voter)
+                .ifPresentOrElse(
+                        vote -> vote.changeVote(choice, votedAt),
+                        () ->
+                                subWorkApprovalVoteRepository.save(
+                                        SubWorkApprovalVoteEntity.cast(
+                                                subWork,
+                                                voter,
+                                                approvalSequence,
+                                                choice,
+                                                votedAt)));
+
+        // 방금 던진 표까지 세야 하므로 flush 후에 집계한다
+        subWorkApprovalVoteRepository.flush();
+        long agreedCount =
+                subWorkApprovalVoteRepository.countBySubWorkAndApprovalSequenceAndAgreedIsTrue(
+                        subWork, approvalSequence);
+        int requiredCount = subWork.getSubWorkType().getMinAgreeCount();
+
+        return new SubWorkVoteResponse(
+                subWork.getId(),
+                choice,
+                agreedCount >= requiredCount,
+                agreedCount,
+                requiredCount,
+                approvalSequence);
     }
 
     /*
@@ -349,6 +431,30 @@ public class SubWorkServiceImpl implements SubWorkService {
     private boolean isCompletionCriteriaMet(SubWorkEntity subWork, TransitionAction action) {
         return action != TransitionAction.APPROVE_COMPLETE
                 || subWorkChecklistItemRepository.countBySubWorkAndCompletedFalse(subWork) == 0;
+    }
+
+    /*
+     * 최종 승인의 정족수 판정에 넘길 이번 회차 찬성 수 (#47). 승인·완료가 아닌 전이와
+     * 정족수를 쓰지 않는 유형에서는 세지 않는다 — 쓰이지 않을 값에 쿼리를 태우지 않는다.
+     */
+    private long agreedVoteCount(SubWorkEntity subWork, TransitionAction action) {
+        if (action != TransitionAction.APPROVE_COMPLETE
+                || !subWork.getSubWorkType().requiresQuorum()) {
+            return 0L;
+        }
+        return subWorkApprovalVoteRepository.countBySubWorkAndApprovalSequenceAndAgreedIsTrue(
+                subWork, currentApprovalSequence(subWork));
+    }
+
+    /*
+     * 지금이 몇 번째 승인 절차인지. 검토(REVIEW)에 들어간 횟수를 센다 — 반려되면 진행으로
+     * 돌아갔다가 다시 올라오므로, 이 값이 올라간다는 것은 계획이 한 번 바뀌었다는 뜻이다.
+     * 이전 회차의 찬성은 새 계획에 대한 동의가 아니므로 집계에서 빠진다.
+     */
+    private int currentApprovalSequence(SubWorkEntity subWork) {
+        return (int)
+                subWorkStatusHistoryRepository.countBySubWorkAndNextWorkStatus(
+                        subWork, WorkStatus.REVIEW);
     }
 
     /*

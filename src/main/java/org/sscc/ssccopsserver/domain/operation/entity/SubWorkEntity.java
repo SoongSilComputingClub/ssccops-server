@@ -154,18 +154,24 @@ public class SubWorkEntity {
      * 상태 전이(OPS-010). 전이표(TR-01~TR-04)에 있는 조합만 통과하고 나머지는 전부 막는다
      * (BR-O03·VR-O04·LY-14). 상태를 직접 쓰는 setter를 열지 않는 것이 이 통제의 전제다 (AR-10).
      *
-     * completionCriteriaMet(완료 체크리스트 충족 여부)은 다른 테이블(sub_work_chck_list)에
-     * 있어 엔티티가 스스로 알 수 없으므로 사실만 넘겨받고, 그 사실로 완료를 막을지는 여기서 정한다.
+     * completionCriteriaMet(완료 체크리스트 충족 여부)과 agreedVoteCount(이번 회차 찬성 수)는
+     * 다른 테이블(sub_work_chck_list·sub_work_aprv_vote)에 있어 엔티티가 스스로 셀 수 없다.
+     * 사실만 넘겨받고, 그 사실로 전이를 막을지는 여기서 정한다.
+     *
+     * 수행자가 승인자인지는 여기서 보지 않는다 — 회원의 역할은 회원 도메인에 있고, 그 판정은
+     * 역할 인가(#9)가 붙으면 통째로 옮겨갈 관심사라 서비스의 ApprovalAuthorityPolicy가 맡는다.
      */
     public void applyTransition(
             TransitionAction action,
             String reason,
             boolean completionCriteriaMet,
+            long agreedVoteCount,
             Instant occurredAt) {
         switch (action) {
             case START -> start();
             case REQUEST_REVIEW -> requestReview();
-            case APPROVE_COMPLETE -> approveAndComplete(completionCriteriaMet, occurredAt);
+            case APPROVE_COMPLETE ->
+                    approveAndComplete(completionCriteriaMet, agreedVoteCount, occurredAt);
             case REJECT -> reject(reason);
         }
     }
@@ -198,17 +204,25 @@ public class SubWorkEntity {
      * 완료 체크리스트를 다 채우지 못한 건은 완료되지 않는다 (REQ-021). 승인이 필요 없는
      * 유형(REQ-016 저위험 면제)은 승인 상태를 NOT_REQUIRED 그대로 두고 완료만 시킨다.
      *
-     * 아직 강제하지 않는 선행 조건이 둘 있다 (POL-007 O-03 확정 · TR-03):
-     *  1. 최종 승인은 유형의 autzr_role_cd 보유자만 할 수 있다 — 역할 인가(AOP)가 없어
-     *     지금은 전이 API를 호출할 수 있는 누구든 승인이 된다.
-     *  2. 정족수 유형은 찬성 수가 min_need_agre_cnt에 이른 뒤에야 승인할 수 있고,
-     *     미달이면 QUORUM_NOT_MET(409)이다 — 투표(OPS-015)와 sub_work_aprv_vote가
-     *     아직 없어 셀 대상이 존재하지 않는다.
-     * 둘 다 승인 처리(OPS-014·OPS-015) 구현 시 이 메서드의 선행 조건으로 들어온다.
-     * 그때까지 이 메서드는 유형의 승인 정책 중 aprv_need_yn 하나만 읽는다.
+     * 정족수 유형은 찬성 수가 min_need_agre_cnt에 이른 뒤에야 승인할 수 있고, 미달이면
+     * QUORUM_NOT_MET(409)다 (POL-007 O-03 확정 · TR-03 · #47). 정족수는 승인자를 대체하는
+     * 경로가 아니라 그 승인의 선행 조건이다 — 찬성이 다 모여도 이 메서드가 불리지 않으면
+     * 완료되지 않고, 승인자라도 정족수 전에는 여기서 막힌다.
+     *
+     * 검사 순서는 정족수 → 체크리스트다. 정족수 미달은 담당자가 손쓸 수 없는 조건이라
+     * 먼저 알려야 하고, 체크리스트는 승인자가 아니라 담당자가 채우는 값이다.
+     *
+     * 정족수·승인자 설정은 하위 업무에 복사돼 있지 않고 유형에서 그때그때 읽는다. 등록 시점에
+     * 복사되는 것은 승인 필요 여부(aprv_stts_cd의 초기값)와 완료 점검 항목뿐이라, 유형의
+     * 정족수를 바꾸면 이미 검토 중인 건의 승인 문턱도 함께 바뀐다 (#43의 소급 금지는
+     * '이미 저장된 값을 건드리지 않는다'는 뜻이며, 저장되지 않은 값까지 얼리지는 않는다).
      */
-    private void approveAndComplete(boolean completionCriteriaMet, Instant completedAt) {
+    private void approveAndComplete(
+            boolean completionCriteriaMet, long agreedVoteCount, Instant completedAt) {
         requireStatus(WorkStatus.REVIEW);
+        if (subWorkType.requiresQuorum() && agreedVoteCount < subWorkType.getMinAgreeCount()) {
+            throw new GeneralException(OperationErrorCode.QUORUM_NOT_MET);
+        }
         if (!completionCriteriaMet) {
             throw new GeneralException(OperationErrorCode.COMPLETION_CRITERIA_UNMET);
         }
@@ -248,6 +262,27 @@ public class SubWorkEntity {
      */
     public void requireChecklistEditable() {
         if (this.workStatus == WorkStatus.DONE) {
+            throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        }
+    }
+
+    /*
+     * 지금 찬반 투표를 받을 수 있는지 (OPS-015 · #47). 세 가지가 모두 성립해야 한다.
+     *  1. 정족수 유형이어야 한다 — 단독·승인 불필요 유형은 셀 대상이 없다. 승인함 화면이
+     *     네 카드에 모두 찬성·반대 버튼을 그리고 있으나, 버튼 구성이 계약은 아니다.
+     *  2. 검토(REVIEW) 상태여야 한다 — 아직 올라오지 않았거나 이미 끝난 건에 표를 던질 수 없다.
+     *  3. 승인 대기 중이어야 한다(대기·재승인필요) — 이미 승인·반려된 건은 이번 회차가 닫혔다.
+     *
+     * 전용 오류 코드를 만들지 않고 TRANSITION_NOT_ALLOWED를 재사용한다. 정의서 03_오류_코드에
+     * 없는 코드를 늘리면 코드 문자열로 분기하는 프론트와 어긋난다 (requireChecklistEditable 선례).
+     */
+    public void requireVotable() {
+        boolean awaitingApproval =
+                this.approvalStatus == ApprovalStatus.PENDING
+                        || this.approvalStatus == ApprovalStatus.REAPPROVAL_REQUIRED;
+        if (!subWorkType.requiresQuorum()
+                || this.workStatus != WorkStatus.REVIEW
+                || !awaitingApproval) {
             throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
         }
     }

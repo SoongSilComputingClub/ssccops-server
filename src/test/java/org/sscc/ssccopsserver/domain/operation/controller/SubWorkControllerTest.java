@@ -31,11 +31,15 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -59,6 +63,9 @@ class SubWorkControllerTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private WorkService workService;
 
     private Long ownerId;
@@ -72,6 +79,16 @@ class SubWorkControllerTest {
         // 등록자는 토큰의 sub(AUTH_USER_ID)와 연결된 회원이며 담당자와 다른 사람이다
         MemberEntity registrant = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org");
         registrantId = registrant.getId();
+        /*
+         * 승인·반려는 유형이 지정한 승인자만 할 수 있다 (#47). 이 클래스가 쓰는 유형
+         * '예산지출'의 승인자가 총무라, 토큰 주체에게 그 역할을 붙여 승인 경로를 열어 둔다.
+         */
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                registrant,
+                MemberRoleFixture.TREASURER);
         parentWorkId =
                 workService
                         .createWork(

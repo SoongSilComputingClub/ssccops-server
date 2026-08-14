@@ -25,6 +25,8 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryReposit
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
@@ -46,6 +48,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
@@ -56,6 +59,7 @@ import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 
 /*
@@ -88,9 +92,12 @@ class SubWorkServiceImplSearchTest {
     @Autowired private SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     @Autowired private SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     @Autowired private SubWorkApprovalRepository subWorkApprovalRepository;
+    @Autowired private SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     @Autowired private SubWorkRejectionRepository subWorkRejectionRepository;
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
@@ -141,12 +148,21 @@ class SubWorkServiceImplSearchTest {
                         subWorkChecklistItemRepository,
                         subWorkStatusHistoryRepository,
                         subWorkApprovalRepository,
+                        subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
+                        new ApprovalAuthorityPolicy(memberService),
                         FIXED_CLOCK);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
+        // 반려 전이를 태우는 목록 테스트가 있어 승인자 역할(예산지출=총무)을 붙여 둔다 (#47)
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                registrant,
+                MemberRoleFixture.TREASURER);
         ownerId = saveMember("20200002", "이서연", "owner@sscc.org").getId();
 
         // 상위 업무를 둘 둬 목록이 상위 업무를 가로지르는지 확인한다

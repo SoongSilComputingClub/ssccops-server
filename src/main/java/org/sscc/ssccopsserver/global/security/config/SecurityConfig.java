@@ -14,6 +14,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
@@ -43,6 +46,9 @@ public class SecurityConfig {
     private final AuthenticationEntryPoint authenticationEntryPoint;
     private final AccessDeniedHandler accessDeniedHandler;
     private final SupabaseJwtAuthenticationConverter supabaseJwtAuthenticationConverter;
+
+    @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
+    private String jwkSetUri;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -101,6 +107,25 @@ public class SecurityConfig {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
+    }
+
+    /*
+     * Supabase JWT 디코더 등록.
+     *
+     * Supabase는 프로젝트에 따라 ES256(타원곡선) 또는 RS256(RSA) 비대칭 키로 서명하므로,
+     * 기본값(RS256 전용)에 ES256 등 지원 알고리즘을 명시적으로 추가하여 서명 검증 실패를 방지한다.
+     */
+    @Bean
+    public JwtDecoder jwtDecoder() {
+        return NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
+                .jwsAlgorithms(
+                        algorithms -> {
+                            algorithms.add(SignatureAlgorithm.RS256);
+                            algorithms.add(SignatureAlgorithm.ES256);
+                            algorithms.add(SignatureAlgorithm.ES384);
+                            algorithms.add(SignatureAlgorithm.ES512);
+                        })
+                .build();
     }
 
     private List<String> allowedOrigins() {

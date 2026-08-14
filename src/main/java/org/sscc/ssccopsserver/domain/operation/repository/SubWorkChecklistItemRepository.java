@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.operation.repository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -17,6 +18,13 @@ public interface SubWorkChecklistItemRepository
      * 정렬을 쿼리에 고정한다 — 클라이언트가 다시 정렬하지 않아도 되게 한다.
      */
     List<SubWorkChecklistItemEntity> findBySubWorkOrderBySortOrderAsc(SubWorkEntity subWork);
+
+    /*
+     * 체크·해제(OPS-013)의 대상 항목. itemId만으로 찾으면 경로의 subWorkId와 무관한 남의
+     * 항목을 체크할 수 있으므로(IDOR) 소속을 조건에 함께 건다. 소속이 다른 항목은 조회되지
+     * 않아 호출부가 404로 처리하며, 403으로 나누지 않는다 — 존재 사실을 알려주지 않는다.
+     */
+    Optional<SubWorkChecklistItemEntity> findByIdAndSubWork(Long id, SubWorkEntity subWork);
 
     /*
      * 완료 승인 전이(TR-03)의 선행 조건 판정용. 남은 항목이 0건이어야 완료할 수 있다.

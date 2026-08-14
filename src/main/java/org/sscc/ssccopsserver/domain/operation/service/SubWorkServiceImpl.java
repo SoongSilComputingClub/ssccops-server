@@ -100,6 +100,16 @@ public class SubWorkServiceImpl implements SubWorkService {
                                         new GeneralException(
                                                 OperationErrorCode.SUB_WORK_TYPE_NOT_FOUND));
 
+        /*
+         * 사용하지 않는 유형은 새로 고를 수 없다 (#43). 없는 유형(404)과 나누는 것은 유형이
+         * 실재하기 때문이다 — 화면은 드롭다운을 useYn=true로 채우므로 여기 걸리는 것은
+         * 목록을 받은 뒤 유형이 꺼진 경우이고, 그때 '없는 유형'이라고 답하면 오해를 부른다.
+         * 이미 이 유형으로 등록된 하위 업무는 그대로 살아 있다.
+         */
+        if (!subWorkType.isActive()) {
+            throw new GeneralException(OperationErrorCode.SUB_WORK_TYPE_INACTIVE);
+        }
+
         Instant beginAt = toInstant(request.startAt());
         Instant endAt = toInstant(request.endAt());
         // DTO의 @AssertTrue가 이미 걸러내지만, Service를 직접 호출하는 경로에서도 성립해야 하는 규칙이다

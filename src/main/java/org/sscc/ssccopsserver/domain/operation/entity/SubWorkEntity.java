@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 import jakarta.persistence.Column;
@@ -210,6 +211,16 @@ public class SubWorkEntity {
         if (this.workStatus != required) {
             throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
         }
+    }
+
+    /*
+     * 진행률(OPS-003의 하위 업무 목록). sub_work에는 진행률 컬럼이 없으므로 완료 체크리스트의
+     * 완료 비율에서 파생한다. 체크리스트는 다른 테이블(sub_work_chck_list)에 있어 엔티티가
+     * 스스로 셀 수 없으므로 개수만 넘겨받고, 완료 여부로 100을 확정하는 판단은 여기서 한다.
+     */
+    public BigDecimal progressRate(long completedItems, long totalItems) {
+        return ProgressRate.ofChecklist(
+                this.workStatus == WorkStatus.DONE, completedItems, totalItems);
     }
 
     /*

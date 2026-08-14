@@ -197,6 +197,15 @@ public class SubWorkEntity {
      *
      * 완료 체크리스트를 다 채우지 못한 건은 완료되지 않는다 (REQ-021). 승인이 필요 없는
      * 유형(REQ-016 저위험 면제)은 승인 상태를 NOT_REQUIRED 그대로 두고 완료만 시킨다.
+     *
+     * 아직 강제하지 않는 선행 조건이 둘 있다 (POL-007 O-03 확정 · TR-03):
+     *  1. 최종 승인은 유형의 autzr_role_cd 보유자만 할 수 있다 — 역할 인가(AOP)가 없어
+     *     지금은 전이 API를 호출할 수 있는 누구든 승인이 된다.
+     *  2. 정족수 유형은 찬성 수가 min_need_agre_cnt에 이른 뒤에야 승인할 수 있고,
+     *     미달이면 QUORUM_NOT_MET(409)이다 — 투표(OPS-015)와 sub_work_aprv_vote가
+     *     아직 없어 셀 대상이 존재하지 않는다.
+     * 둘 다 승인 처리(OPS-014·OPS-015) 구현 시 이 메서드의 선행 조건으로 들어온다.
+     * 그때까지 이 메서드는 유형의 승인 정책 중 aprv_need_yn 하나만 읽는다.
      */
     private void approveAndComplete(boolean completionCriteriaMet, Instant completedAt) {
         requireStatus(WorkStatus.REVIEW);

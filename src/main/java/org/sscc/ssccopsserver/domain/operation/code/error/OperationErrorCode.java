@@ -35,6 +35,18 @@ public enum OperationErrorCode implements ErrorCode {
      */
     INVALID_CURSOR(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "잘못된 커서입니다."),
 
+    /*
+     * 400 — 하위 업무 유형의 승인 정책 조합이 성립하지 않을 때(OPS-019). 승인이 필요한데
+     * 승인자가 없거나, 정족수인데 인원이 1 미만인 경우다. 승인이 필요 없는 유형에 승인자·정족수가
+     * 실려 오는 것은 여기 걸리지 않는다 — 그건 거절이 아니라 엔티티가 정리한다.
+     * 정의서 03_오류_코드에 전용 코드가 없어 코드 문자열은 VALIDATION_FAILED를 쓴다.
+     */
+    INVALID_APPROVAL_POLICY(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "승인 정책 설정이 올바르지 않습니다."),
+
+    // 400 — 사용하지 않는(use_yn = false) 유형으로 하위 업무를 등록하려 할 때.
+    // 이미 그 유형으로 등록된 하위 업무는 그대로 살아 있다. 새로 고르는 것만 막는다
+    SUB_WORK_TYPE_INACTIVE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "사용하지 않는 하위 업무 유형입니다."),
+
     // 403 — 국장 미만 권한. 역할 인가가 AOP로 붙기 전까지는 사용처가 없다
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "권한이 없습니다."),
 
@@ -53,6 +65,13 @@ public enum OperationErrorCode implements ErrorCode {
 
     // 409 — 전이표(TR-01~TR-04)에 없는 상태 전환. 완료 → 진행 되돌리기도 여기에 걸린다
     TRANSITION_NOT_ALLOWED(HttpStatus.CONFLICT, "TRANSITION_NOT_ALLOWED", "현재 상태에서 할 수 없는 작업입니다."),
+
+    /*
+     * 409 — 이미 있는 유형명으로 등록·수정할 때(OPS-019). 선조회만으로는 동시 요청을 막지 못하므로
+     * uk_sub_work_type_name 위반(DataIntegrityViolationException)도 같은 코드로 옮긴다.
+     */
+    DUPLICATE_SUB_WORK_TYPE_NAME(
+            HttpStatus.CONFLICT, "DUPLICATE_SUB_WORK_TYPE_NAME", "이미 있는 유형명입니다."),
 
     // 409 — 완료 체크리스트를 다 채우지 않은 채 완료 승인을 시도했을 때 (TR-03 선행 조건)
     COMPLETION_CRITERIA_UNMET(

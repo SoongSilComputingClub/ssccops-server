@@ -48,6 +48,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkRejectionEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkStatusHistoryEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
@@ -63,6 +64,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 
 /*
  * @DataJpaTest는 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다.
@@ -74,10 +76,6 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @Import(JpaAuditingConfig.class)
 @ActiveProfiles("test")
 class SubWorkServiceImplTest {
-
-    // data.sql이 넣는 유형. 1=예산지출(승인 필요), 3=내부행사(승인 불필요)
-    private static final long APPROVAL_NEEDED_TYPE_ID = 1L;
-    private static final long APPROVAL_FREE_TYPE_ID = 3L;
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
 
@@ -113,8 +111,19 @@ class SubWorkServiceImplTest {
     private Long ownerId;
     private Long parentWorkId;
 
+    /*
+     * 시드가 sub_work_type_id를 지정하지 않으므로(IDENTITY 시퀀스 충돌 방지) 유형은
+     * 이름으로 찾는다. 1=예산지출처럼 식별자를 박아 두면 시드 순서에 묶인다.
+     */
+    private Long approvalNeededTypeId;
+    private Long approvalFreeTypeId;
+
     @BeforeEach
     void setUp() {
+        approvalNeededTypeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.EXPENDITURE);
+        approvalFreeTypeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
         MemberService memberService =
                 new MemberServiceImpl(
                         memberRepository,
@@ -163,6 +172,53 @@ class SubWorkServiceImplTest {
                         .workId();
     }
 
+    /*
+     * 사용하지 않는 유형은 새로 고를 수 없다 (#43). 없는 유형(404)과 나누는 것은 유형이
+     * 실재하기 때문이다 — 목록을 받은 뒤 유형이 꺼진 경우이고, 그때 '없는 유형'이라고
+     * 답하면 오해를 부른다.
+     */
+    @Test
+    void createSubWorkRejectsInactiveSubWorkType() {
+        SubWorkTypeEntity subWorkType =
+                SubWorkTypeFixture.entityOf(
+                        subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
+        subWorkType.changeActivation(false);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThatThrownBy(
+                        () -> subWorkService.createSubWork(request(approvalFreeTypeId), registrant))
+                .isInstanceOf(GeneralException.class)
+                .hasFieldOrPropertyWithValue(
+                        "errorCode", OperationErrorCode.SUB_WORK_TYPE_INACTIVE);
+    }
+
+    /*
+     * 화면 하단 안내 문구 — "유형별 승인 규칙은 하위 업무 등록 시 자동 적용되며, 기존 하위
+     * 업무에는 소급되지 않습니다." 하위 업무가 등록 시점에 값을 복사해 가므로 성립하는 규칙이라,
+     * 유형 관리(#43)가 이 성질을 깨지 않는지 고정한다.
+     */
+    @Test
+    void subWorkTypePolicyChangeDoesNotApplyRetroactively() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        int checklistCountAtCreation = subWorkService.getSubWork(subWorkId).checklist().size();
+
+        SubWorkTypeEntity subWorkType =
+                SubWorkTypeFixture.entityOf(
+                        subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
+        subWorkType.update(
+                subWorkType.getTypeName(), true, "PRESIDENT", false, null, List.of("새 점검 항목"));
+        entityManager.flush();
+        entityManager.clear();
+
+        SubWorkDetailResponse detail = subWorkService.getSubWork(subWorkId);
+        assertThat(detail.approvalStatus()).isEqualTo(ApprovalStatus.NOT_REQUIRED);
+        assertThat(detail.checklist()).hasSize(checklistCountAtCreation);
+        assertThat(detail.checklist())
+                .extracting(SubWorkChecklistItemResponse::article)
+                .doesNotContain("새 점검 항목");
+    }
+
     private SubWorkCreateRequest request(long subWorkTypeId) {
         return new SubWorkCreateRequest(
                 parentWorkId,
@@ -180,7 +236,7 @@ class SubWorkServiceImplTest {
     @Test
     void createSubWorkPersistsOperationAndSubWork() {
         SubWorkCreateResponse response =
-                subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
 
         SubWorkEntity subWork = subWorkRepository.findById(response.subWorkId()).orElseThrow();
         assertThat(subWork.getWork().getId()).isEqualTo(parentWorkId);
@@ -216,7 +272,7 @@ class SubWorkServiceImplTest {
     @Test
     void createSubWorkCopiesTypeChecklistAndStartsInPlanning() {
         SubWorkCreateResponse response =
-                subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
 
         assertThat(response.workStatus()).isEqualTo(WorkStatus.PLANNING);
         assertThat(response.isDelayed()).isFalse();
@@ -234,12 +290,12 @@ class SubWorkServiceImplTest {
     void createSubWorkDerivesApprovalStatusFromType() {
         assertThat(
                         subWorkService
-                                .createSubWork(request(APPROVAL_NEEDED_TYPE_ID), registrant)
+                                .createSubWork(request(approvalNeededTypeId), registrant)
                                 .approvalStatus())
                 .isEqualTo(ApprovalStatus.PENDING);
         assertThat(
                         subWorkService
-                                .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
+                                .createSubWork(request(approvalFreeTypeId), registrant)
                                 .approvalStatus())
                 .isEqualTo(ApprovalStatus.NOT_REQUIRED);
     }
@@ -247,8 +303,8 @@ class SubWorkServiceImplTest {
     // 상위 업무 진행률은 하위 업무 완료율에서 나온다. 기획 상태 하위 업무만 있으면 0이다
     @Test
     void createSubWorkRecalculatesParentProgressRate() {
-        subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
-        subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+        subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
+        subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
 
         WorkEntity parentWork = workRepository.findById(parentWorkId).orElseThrow();
         assertThat(parentWork.getProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
@@ -262,7 +318,7 @@ class SubWorkServiceImplTest {
                 new SubWorkCreateRequest(
                         parentWorkId + 999,
                         "상위 업무 없는 하위 업무",
-                        APPROVAL_FREE_TYPE_ID,
+                        approvalFreeTypeId,
                         ownerId,
                         null,
                         null,
@@ -308,7 +364,7 @@ class SubWorkServiceImplTest {
                 new SubWorkCreateRequest(
                         parentWorkId,
                         "담당자 없는 하위 업무",
-                        APPROVAL_FREE_TYPE_ID,
+                        approvalFreeTypeId,
                         ownerId + 999,
                         null,
                         null,
@@ -331,7 +387,7 @@ class SubWorkServiceImplTest {
                 new SubWorkCreateRequest(
                         parentWorkId,
                         "기간 역전 하위 업무",
-                        APPROVAL_FREE_TYPE_ID,
+                        approvalFreeTypeId,
                         ownerId,
                         END,
                         START,
@@ -352,9 +408,7 @@ class SubWorkServiceImplTest {
     @Test
     void getSubWorkReturnsDetailForScreen() {
         Long subWorkId =
-                subWorkService
-                        .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
-                        .subWorkId();
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
         entityManager.flush();
         entityManager.clear();
 
@@ -385,9 +439,7 @@ class SubWorkServiceImplTest {
     @Test
     void getSubWorkReturnsChecklistInOrderWithSummary() {
         Long subWorkId =
-                subWorkService
-                        .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
-                        .subWorkId();
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
         // 첫 항목만 체크한다 (OPS-013)
         updateChecklistItem(subWorkId, checklistItemIds(subWorkId).get(0), true);
 
@@ -405,13 +457,9 @@ class SubWorkServiceImplTest {
     @Test
     void getSubWorkExposesTypeApprovalPolicy() {
         Long approvalNeededId =
-                subWorkService
-                        .createSubWork(request(APPROVAL_NEEDED_TYPE_ID), registrant)
-                        .subWorkId();
+                subWorkService.createSubWork(request(approvalNeededTypeId), registrant).subWorkId();
         Long approvalFreeId =
-                subWorkService
-                        .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
-                        .subWorkId();
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
 
         SubWorkDetailResponse approvalNeeded = subWorkService.getSubWork(approvalNeededId);
         assertThat(approvalNeeded.approvalRequired()).isTrue();
@@ -434,7 +482,7 @@ class SubWorkServiceImplTest {
     @Test
     void getSoftDeletedSubWorkIsRejected() {
         SubWorkCreateResponse created =
-                subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
         operationRepository
                 .findById(created.operationId())
                 .orElseThrow()
@@ -487,9 +535,7 @@ class SubWorkServiceImplTest {
     @Test
     void getSubWorkRunsTwoQueries() {
         Long subWorkId =
-                subWorkService
-                        .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
-                        .subWorkId();
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
         entityManager.flush();
         entityManager.clear();
 
@@ -509,7 +555,7 @@ class SubWorkServiceImplTest {
     // TR-01 착수. 승인 상태는 검토요청 전까지 등록 시점 값 그대로다
     @Test
     void startMovesPlanningToInProgress() {
-        Long subWorkId = createSubWork(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = createSubWork(approvalNeededTypeId);
 
         SubWorkTransitionResponse response = transition(subWorkId, TransitionAction.START, null);
 
@@ -522,7 +568,7 @@ class SubWorkServiceImplTest {
     // TR-02 검토요청. 승인이 필요한 유형은 여기서 승인 대기가 된다
     @Test
     void requestReviewPutsApprovalNeededTypeIntoPending() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
 
         SubWorkDetailResponse detail = detailOf(subWorkId);
 
@@ -533,7 +579,7 @@ class SubWorkServiceImplTest {
     // 승인이 필요 없는 유형(REQ-016 저위험 면제)은 검토 단계에서도 승인 상태가 불필요 그대로다
     @Test
     void requestReviewKeepsApprovalFreeTypeNotRequired() {
-        Long subWorkId = subWorkInReview(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
 
         assertThat(detailOf(subWorkId).approvalStatus()).isEqualTo(ApprovalStatus.NOT_REQUIRED);
     }
@@ -544,7 +590,7 @@ class SubWorkServiceImplTest {
      */
     @Test
     void approveCompleteMarksDoneAndRecordsCompletedAt() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         completeChecklist(subWorkId);
 
         SubWorkTransitionResponse response =
@@ -561,7 +607,7 @@ class SubWorkServiceImplTest {
     // 승인이 필요 없는 유형은 승인 상태를 승인으로 바꾸지 않는다 — 승인 절차를 아예 타지 않는다
     @Test
     void approveCompleteKeepsApprovalFreeTypeNotRequired() {
-        Long subWorkId = subWorkInReview(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
         completeChecklist(subWorkId);
 
         SubWorkTransitionResponse response =
@@ -574,7 +620,7 @@ class SubWorkServiceImplTest {
     // 완료 체크리스트를 다 채우지 않은 건은 완료되지 않는다 (REQ-021)
     @Test
     void approveCompleteWithUnfinishedChecklistIsRejected() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
 
         assertThatThrownBy(() -> transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null))
                 .isInstanceOf(GeneralException.class)
@@ -586,7 +632,7 @@ class SubWorkServiceImplTest {
     // TR-04 반려. 상태가 진행으로 회귀하고 승인 상태는 반려로 남는다
     @Test
     void rejectReturnsToInProgress() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
 
         SubWorkTransitionResponse response =
                 transition(subWorkId, TransitionAction.REJECT, "예산안 대비 초과");
@@ -599,7 +645,7 @@ class SubWorkServiceImplTest {
     // 반려는 사유 없이 성립하지 않는다 (VR-O06). 400이 아니라 422다
     @Test
     void rejectWithoutReasonIsRejected() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
 
         assertThatThrownBy(() -> transition(subWorkId, TransitionAction.REJECT, "   "))
                 .isInstanceOf(GeneralException.class)
@@ -614,7 +660,7 @@ class SubWorkServiceImplTest {
      */
     @Test
     void reReviewAfterRejectionRequiresReapproval() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         transition(subWorkId, TransitionAction.REJECT, "예산안 대비 초과");
 
         SubWorkTransitionResponse response =
@@ -627,7 +673,7 @@ class SubWorkServiceImplTest {
     // 전이표에 없는 조합은 전부 차단한다 (BR-O03·VR-O04). 기획 상태에서 완료로 건너뛸 수 없다
     @Test
     void transitionOutsideTransitionTableIsRejected() {
-        Long subWorkId = createSubWork(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = createSubWork(approvalNeededTypeId);
 
         assertThatThrownBy(() -> transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null))
                 .isInstanceOf(GeneralException.class)
@@ -638,7 +684,7 @@ class SubWorkServiceImplTest {
     // TR-X1 — 완료된 건을 진행으로 되돌리는 경로는 없다
     @Test
     void completedSubWorkCannotBeReopened() {
-        Long subWorkId = subWorkInReview(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
         completeChecklist(subWorkId);
         transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
 
@@ -651,7 +697,7 @@ class SubWorkServiceImplTest {
     // 전이마다 전/후 상태와 수행자가 이력에 남는다. 남지 않으면 나중에 소급할 수 없다
     @Test
     void transitionRecordsStatusHistory() {
-        Long subWorkId = createSubWork(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = createSubWork(approvalNeededTypeId);
         transition(subWorkId, TransitionAction.START, null);
         transition(subWorkId, TransitionAction.REQUEST_REVIEW, null);
         transition(subWorkId, TransitionAction.REJECT, "견적서 재첨부 필요");
@@ -677,7 +723,7 @@ class SubWorkServiceImplTest {
     // 반려는 사유·반려자와 함께 반려 테이블에도 남고, 어느 전이에서 나왔는지 이력에 이어진다
     @Test
     void rejectRecordsRejectionLinkedToHistory() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         transition(subWorkId, TransitionAction.REJECT, "견적서 재첨부 필요");
 
         SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
@@ -698,7 +744,7 @@ class SubWorkServiceImplTest {
      */
     @Test
     void approveCompleteMarksSelfApprovalWhenApproverIsRegistrant() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         completeChecklist(subWorkId);
 
         SubWorkTransitionResponse response =
@@ -716,7 +762,7 @@ class SubWorkServiceImplTest {
 
     @Test
     void approveCompleteByAnotherMemberIsNotSelfApproval() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         completeChecklist(subWorkId);
         MemberEntity approver = memberRepository.findById(ownerId).orElseThrow();
 
@@ -741,7 +787,7 @@ class SubWorkServiceImplTest {
     @Test
     void transitionOnSoftDeletedSubWorkIsRejected() {
         SubWorkCreateResponse created =
-                subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
         operationRepository
                 .findById(created.operationId())
                 .orElseThrow()
@@ -758,7 +804,7 @@ class SubWorkServiceImplTest {
     // 화면의 체크박스 하나. 응답의 요약이 곧 '1/4 완료' 표기다 (OPS-013)
     @Test
     void checkChecklistItemUpdatesItemAndSummary() {
-        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = createSubWork(approvalFreeTypeId);
         Long firstItemId = checklistItemIds(subWorkId).get(0);
 
         SubWorkChecklistItemUpdateResponse response =
@@ -778,7 +824,7 @@ class SubWorkServiceImplTest {
     // 체크 해제도 같은 경로다. 완료 조건이 되돌아가는 것을 막지 않는다
     @Test
     void uncheckChecklistItemDecreasesSummary() {
-        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = createSubWork(approvalFreeTypeId);
         Long firstItemId = checklistItemIds(subWorkId).get(0);
         updateChecklistItem(subWorkId, firstItemId, true);
 
@@ -792,7 +838,7 @@ class SubWorkServiceImplTest {
     // 더블 탭이 완료 수를 두 번 올리지 않는다 — 멱등이라 별도 멱등성 키를 두지 않는다 (AP-16)
     @Test
     void checkingSameItemTwiceCountsOnce() {
-        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = createSubWork(approvalFreeTypeId);
         Long firstItemId = checklistItemIds(subWorkId).get(0);
 
         updateChecklistItem(subWorkId, firstItemId, true);
@@ -808,7 +854,7 @@ class SubWorkServiceImplTest {
      */
     @Test
     void updateChecklistItemDoesNotChangeStatusesOrParentProgress() {
-        Long subWorkId = createSubWork(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = createSubWork(approvalNeededTypeId);
 
         completeChecklist(subWorkId);
 
@@ -827,7 +873,7 @@ class SubWorkServiceImplTest {
      */
     @Test
     void approveCompleteSucceedsAfterCheckingEveryItem() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         List<Long> itemIds = checklistItemIds(subWorkId);
 
         for (Long itemId : itemIds.subList(0, itemIds.size() - 1)) {
@@ -857,7 +903,7 @@ class SubWorkServiceImplTest {
      */
     @Test
     void updateChecklistItemOnCompletedSubWorkIsRejected() {
-        Long subWorkId = subWorkInReview(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
         completeChecklist(subWorkId);
         transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
         Long firstItemId = checklistItemIds(subWorkId).get(0);
@@ -872,7 +918,7 @@ class SubWorkServiceImplTest {
     // 반려로 진행에 되돌아온 담당자가 남은 항목을 마저 채우는 것이 화면의 흐름이다
     @Test
     void checklistIsEditableAfterRejection() {
-        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
         transition(subWorkId, TransitionAction.REJECT, "현장 답사 결과 누락");
         Long firstItemId = checklistItemIds(subWorkId).get(0);
 
@@ -885,8 +931,8 @@ class SubWorkServiceImplTest {
      */
     @Test
     void updateChecklistItemOfAnotherSubWorkIsRejected() {
-        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
-        Long otherSubWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        Long otherSubWorkId = createSubWork(approvalFreeTypeId);
         Long otherItemId = checklistItemIds(otherSubWorkId).get(0);
 
         assertThatThrownBy(() -> updateChecklistItem(subWorkId, otherItemId, true))
@@ -898,7 +944,7 @@ class SubWorkServiceImplTest {
 
     @Test
     void updateUnknownChecklistItemIsRejected() {
-        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long subWorkId = createSubWork(approvalFreeTypeId);
 
         assertThatThrownBy(() -> updateChecklistItem(subWorkId, 999L, true))
                 .isInstanceOf(GeneralException.class)
@@ -918,7 +964,7 @@ class SubWorkServiceImplTest {
     @Test
     void updateChecklistItemOnSoftDeletedSubWorkIsRejected() {
         SubWorkCreateResponse created =
-                subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
         Long itemId = checklistItemIds(created.subWorkId()).get(0);
         operationRepository
                 .findById(created.operationId())
@@ -984,7 +1030,7 @@ class SubWorkServiceImplTest {
                         new SubWorkCreateRequest(
                                 parentWorkId,
                                 "마감 판정용 하위 업무",
-                                APPROVAL_FREE_TYPE_ID,
+                                approvalFreeTypeId,
                                 ownerId,
                                 null,
                                 null,

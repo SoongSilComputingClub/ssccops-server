@@ -56,6 +56,7 @@ import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 
 /*
  * 하위 업무 목록 조회(OPS-008)만 다룬다. SubWorkServiceImplTest와 클래스를 나눈 것은
@@ -69,10 +70,6 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @Import(JpaAuditingConfig.class)
 @ActiveProfiles("test")
 class SubWorkServiceImplSearchTest {
-
-    // data.sql이 넣는 유형. 1=예산지출(승인 필요), 3=내부행사(승인 불필요). 둘 다 점검 항목 4개
-    private static final long APPROVAL_NEEDED_TYPE_ID = 1L;
-    private static final long APPROVAL_FREE_TYPE_ID = 3L;
 
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
 
@@ -106,8 +103,19 @@ class SubWorkServiceImplSearchTest {
     private Long springMtWorkId;
     private Long expoWorkId;
 
+    /*
+     * 시드가 sub_work_type_id를 지정하지 않으므로(IDENTITY 시퀀스 충돌 방지) 유형은
+     * 이름으로 찾는다. 1=예산지출처럼 식별자를 박아 두면 시드 순서에 묶인다.
+     */
+    private Long approvalNeededTypeId;
+    private Long approvalFreeTypeId;
+
     @BeforeEach
     void setUp() {
+        approvalNeededTypeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.EXPENDITURE);
+        approvalFreeTypeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
         MemberService memberService =
                 new MemberServiceImpl(
                         memberRepository,
@@ -216,7 +224,7 @@ class SubWorkServiceImplSearchTest {
      */
     @Test
     void approvalPendingChipExcludesSubWorksNotYetInReview() {
-        Long pending = createSubWork(springMtWorkId, "승인 필요한 건", APPROVAL_NEEDED_TYPE_ID, SOON);
+        Long pending = createSubWork(springMtWorkId, "승인 필요한 건", approvalNeededTypeId, SOON);
 
         assertThat(subWorkRepository.findById(pending).orElseThrow().getApprovalStatus())
                 .isEqualTo(ApprovalStatus.PENDING);
@@ -231,7 +239,7 @@ class SubWorkServiceImplSearchTest {
     // 반려 후 다시 올라온 건은 재승인필요다. 승인자가 처리해야 할 건이므로 같은 칩에 실린다
     @Test
     void approvalPendingChipIncludesReapprovalRequired() {
-        Long rejected = createSubWork(springMtWorkId, "반려된 건", APPROVAL_NEEDED_TYPE_ID, SOON);
+        Long rejected = createSubWork(springMtWorkId, "반려된 건", approvalNeededTypeId, SOON);
         transition(rejected, TransitionAction.START, null);
         transition(rejected, TransitionAction.REQUEST_REVIEW, null);
         transition(rejected, TransitionAction.REJECT, "예산 근거가 부족합니다.");
@@ -325,7 +333,7 @@ class SubWorkServiceImplSearchTest {
         Long kept = createSubWork(springMtWorkId, "살아있는 건", SOON);
         SubWorkCreateResponse deleted =
                 subWorkService.createSubWork(
-                        createRequest(springMtWorkId, "삭제된 건", APPROVAL_FREE_TYPE_ID, SOON),
+                        createRequest(springMtWorkId, "삭제된 건", approvalFreeTypeId, SOON),
                         registrant);
         operationRepository
                 .findById(deleted.operationId())
@@ -494,7 +502,7 @@ class SubWorkServiceImplSearchTest {
     }
 
     private Long createSubWork(Long workId, String title, OffsetDateTime dueAt) {
-        return createSubWork(workId, title, APPROVAL_FREE_TYPE_ID, dueAt);
+        return createSubWork(workId, title, approvalFreeTypeId, dueAt);
     }
 
     private Long createSubWork(Long workId, String title, long typeId, OffsetDateTime dueAt) {

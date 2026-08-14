@@ -10,6 +10,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 
 public interface SubWorkService {
 
@@ -41,6 +43,17 @@ public interface SubWorkService {
      */
     SubWorkTransitionResponse transitionSubWork(
             Long subWorkId, SubWorkTransitionRequest request, MemberEntity performer);
+
+    /*
+     * 정족수 승인 투표 (OPS-015 · REQ-014 · #47). 사전에 운영진 권한을 가진 회원이면 누구나
+     * 찬성·반대를 던질 수 있고, 승인자만의 권한이 아니다.
+     *
+     * 업무 상태·승인 상태를 바꾸지 않는다 — 정족수를 채워도 승인자가 최종 승인(TR-03)을
+     * 하지 않으면 완료되지 않는다(POL-007 O-03). 같은 회원이 다시 던지면 표가 늘지 않고 바뀐다.
+     * voter는 인증 주체이며 요청 본문이 아니라 토큰에서 온다 (LY-05).
+     */
+    SubWorkVoteResponse voteOnSubWork(
+            Long subWorkId, SubWorkVoteRequest request, MemberEntity voter);
 
     /*
      * 완료 체크리스트 항목 하나를 체크·해제한다 (OPS-013 · REQ-021). 완료 승인 전이(TR-03)의

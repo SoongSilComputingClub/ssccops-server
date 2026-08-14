@@ -47,7 +47,11 @@ public enum OperationErrorCode implements ErrorCode {
     // 이미 그 유형으로 등록된 하위 업무는 그대로 살아 있다. 새로 고르는 것만 막는다
     SUB_WORK_TYPE_INACTIVE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "사용하지 않는 하위 업무 유형입니다."),
 
-    // 403 — 국장 미만 권한. 역할 인가가 AOP로 붙기 전까지는 사용처가 없다
+    /*
+     * 403 — 승인자 역할이 아닌 회원의 승인·반려(TR-03·TR-04), 운영진이 아닌 회원의 투표(OPS-015).
+     * 판정은 ApprovalAuthorityPolicy가 한 곳에서 하며, 역할 인가가 AOP로 붙으면(#9) 그쪽으로
+     * 옮겨간다. 그 전까지 이 코드를 던지는 곳은 승인 관련 경로뿐이고 '국장 이상' 통제는 아직 없다.
+     */
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "권한이 없습니다."),
 
     // 404
@@ -72,6 +76,13 @@ public enum OperationErrorCode implements ErrorCode {
      */
     DUPLICATE_SUB_WORK_TYPE_NAME(
             HttpStatus.CONFLICT, "DUPLICATE_SUB_WORK_TYPE_NAME", "이미 있는 유형명입니다."),
+
+    /*
+     * 409 — 정족수 유형에서 찬성 수가 min_need_agre_cnt에 못 미치는 채로 최종 승인(TR-03)을
+     * 시도했을 때. 투표(OPS-015) 자체가 아니라 승인자의 최종 승인에서 난다 — 정족수는
+     * 승인자를 대체하는 경로가 아니라 그 승인의 선행 조건이다 (POL-007 O-03 확정).
+     */
+    QUORUM_NOT_MET(HttpStatus.CONFLICT, "QUORUM_NOT_MET", "승인 인원이 부족합니다."),
 
     // 409 — 완료 체크리스트를 다 채우지 않은 채 완료 승인을 시도했을 때 (TR-03 선행 조건)
     COMPLETION_CRITERIA_UNMET(

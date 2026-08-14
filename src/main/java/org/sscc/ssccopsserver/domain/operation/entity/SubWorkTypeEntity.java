@@ -234,6 +234,17 @@ public class SubWorkTypeEntity {
     }
 
     /*
+     * 이 유형의 하위 업무가 최종 승인(TR-03) 전에 찬성 투표를 모아야 하는지 (#47).
+     *
+     * 세 값을 따로 읽지 않고 여기서 한 번에 판정한다 — 승인을 거치지 않는 유형의 정족수,
+     * 인원이 비어 있는 정족수는 성립하지 않는다. apply(...)가 그런 조합을 저장하지 못하게
+     * 막고 있으나, 판정을 호출부에 흩어 두면 규칙이 두 벌이 된다.
+     */
+    public boolean requiresQuorum() {
+        return approvalNeeded && minAgreeCountNeeded && minAgreeCount != null;
+    }
+
+    /*
      * 완료 점검 항목을 저장 형태(개행 구분 TEXT)로 되돌린다. 아래 completionCheckArticles()의
      * 역방향이며, 빈 항목은 버린다 — 남겨 두면 체크할 수 없는 빈 체크리스트 행이 생긴다.
      * 남는 항목이 없으면 NULL이다(체크리스트 없이 등록되는 유형).

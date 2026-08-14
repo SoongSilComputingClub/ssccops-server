@@ -114,7 +114,12 @@ public class FormEntity {
             Instant receiptBeginAt,
             Instant receiptEndAt) {
         return create(
-                creator, title, questionComposition, receiptBeginAt, receiptEndAt, FormStatus.DRAFT);
+                creator,
+                title,
+                questionComposition,
+                receiptBeginAt,
+                receiptEndAt,
+                FormStatus.DRAFT);
     }
 
     /*

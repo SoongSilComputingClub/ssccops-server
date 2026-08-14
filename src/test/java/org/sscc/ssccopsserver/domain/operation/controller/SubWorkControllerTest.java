@@ -1,12 +1,14 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -324,6 +326,119 @@ class SubWorkControllerTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"transition\": \"START\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // 상세 화면(OPS-SCR-002) 체크박스가 부르는 경로. 응답의 요약이 '1/4 완료' 표기가 된다
+    @Test
+    void updateChecklistItemReturns200WithSummary() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+
+        updateChecklistItem(subWorkId, itemId, "true")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.subWorkId").value(subWorkId))
+                .andExpect(jsonPath("$.data.item.checklistItemId").value(itemId))
+                .andExpect(jsonPath("$.data.item.isCompleted").value(true))
+                .andExpect(jsonPath("$.data.item.sortOrder").value(1))
+                .andExpect(jsonPath("$.data.checklistSummary.completedCount").value(1))
+                .andExpect(jsonPath("$.data.checklistSummary.totalCount").value(4));
+
+        updateChecklistItem(subWorkId, itemId, "false")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.isCompleted").value(false))
+                .andExpect(jsonPath("$.data.checklistSummary.completedCount").value(0));
+    }
+
+    /*
+     * isCompleted 누락은 400이다. 원시 boolean으로 받으면 false(해제)로 역직렬화돼
+     * 의도하지 않은 체크 해제가 되므로 요청 DTO가 Boolean + @NotNull이다.
+     */
+    @Test
+    void updateChecklistItemWithoutIsCompletedReturns400() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+
+        mockMvc.perform(
+                        patch("/v1/sub-works/{subWorkId}/checklist/{itemId}", subWorkId, itemId)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    // 다른 하위 업무의 항목은 존재를 알려주지 않고 404다 (403이 아니다)
+    @Test
+    void updateChecklistItemOfAnotherSubWorkReturns404() throws Exception {
+        Long subWorkId = createSubWork();
+        Long otherItemId = firstChecklistItemId(createSubWork());
+
+        updateChecklistItem(subWorkId, otherItemId, "true")
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void updateChecklistItemOnUnknownSubWorkReturns404() throws Exception {
+        updateChecklistItem(999L, 1L, "true")
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    // 완료된 건의 체크는 되돌릴 수 없다 (409). 완료 승인까지 화면 흐름을 그대로 태워 확인한다
+    @Test
+    void updateChecklistItemOnCompletedSubWorkReturns409() throws Exception {
+        Long subWorkId = createSubWork();
+        transition(subWorkId, "START", null).andExpect(status().isOk());
+        transition(subWorkId, "REQUEST_REVIEW", null).andExpect(status().isOk());
+        for (Long itemId : checklistItemIds(subWorkId)) {
+            updateChecklistItem(subWorkId, itemId, "true").andExpect(status().isOk());
+        }
+        // 체크리스트를 다 채웠으므로 이번에는 409가 아니라 통과한다 (이 이슈의 존재 이유)
+        transition(subWorkId, "APPROVE_COMPLETE", null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.workStatus").value("DONE"));
+
+        updateChecklistItem(subWorkId, firstChecklistItemId(subWorkId), "false")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSITION_NOT_ALLOWED"));
+    }
+
+    @Test
+    void updateChecklistItemWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(
+                        patch("/v1/sub-works/{subWorkId}/checklist/{itemId}", 1, 1)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"isCompleted\": true}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private ResultActions updateChecklistItem(Long subWorkId, Long itemId, String isCompleted)
+            throws Exception {
+        return mockMvc.perform(
+                patch("/v1/sub-works/{subWorkId}/checklist/{itemId}", subWorkId, itemId)
+                        .header("Authorization", "Bearer any-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"isCompleted\": %s}".formatted(isCompleted)));
+    }
+
+    private List<Long> checklistItemIds(Long subWorkId) throws Exception {
+        String response =
+                mockMvc.perform(
+                                get("/v1/sub-works/{subWorkId}", subWorkId)
+                                        .header("Authorization", "Bearer any-token"))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        // JsonPath는 정수를 Integer로 읽으므로 Long으로 직접 좁힌다
+        List<Number> itemIds = JsonPath.parse(response).read("$.data.checklist[*].checklistItemId");
+        return itemIds.stream().map(Number::longValue).toList();
+    }
+
+    private Long firstChecklistItemId(Long subWorkId) throws Exception {
+        return checklistItemIds(subWorkId).get(0);
     }
 
     private ResultActions transition(Long subWorkId, String action, String reason)

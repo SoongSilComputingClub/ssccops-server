@@ -28,6 +28,8 @@ import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -375,22 +377,10 @@ class SubWorkServiceImplTest {
                 subWorkService
                         .createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant)
                         .subWorkId();
-        // 첫 항목만 완료 처리한다. 체크 API(OPS-012)가 아직 없어 엔티티를 직접 저장한다
-        SubWorkChecklistItemEntity firstItem =
-                subWorkChecklistItemRepository
-                        .findBySubWorkOrderBySortOrderAsc(
-                                subWorkRepository.findById(subWorkId).orElseThrow())
-                        .get(0);
-        entityManager
-                .getEntityManager()
-                .createQuery(
-                        "update SubWorkChecklistItemEntity i set i.completed = true where i.id ="
-                                + " :id")
-                .setParameter("id", firstItem.getId())
-                .executeUpdate();
-        entityManager.clear();
+        // 첫 항목만 체크한다 (OPS-013)
+        updateChecklistItem(subWorkId, checklistItemIds(subWorkId).get(0), true);
 
-        SubWorkDetailResponse detail = subWorkService.getSubWork(subWorkId);
+        SubWorkDetailResponse detail = detailOf(subWorkId);
 
         assertThat(detail.checklist())
                 .extracting(SubWorkChecklistItemResponse::sortOrder)
@@ -754,6 +744,182 @@ class SubWorkServiceImplTest {
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
     }
 
+    // 화면의 체크박스 하나. 응답의 요약이 곧 '1/4 완료' 표기다 (OPS-013)
+    @Test
+    void checkChecklistItemUpdatesItemAndSummary() {
+        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+
+        SubWorkChecklistItemUpdateResponse response =
+                updateChecklistItem(subWorkId, firstItemId, true);
+
+        assertThat(response.subWorkId()).isEqualTo(subWorkId);
+        assertThat(response.item().checklistItemId()).isEqualTo(firstItemId);
+        assertThat(response.item().isCompleted()).isTrue();
+        assertThat(response.item().sortOrder()).isEqualTo(1);
+        assertThat(response.checklistSummary().completedCount()).isEqualTo(1);
+        assertThat(response.checklistSummary().totalCount()).isEqualTo(4);
+
+        // 응답의 요약과 다음 상세 조회의 요약이 같은 값이어야 화면이 흔들리지 않는다
+        assertThat(detailOf(subWorkId).checklistSummary().completedCount()).isEqualTo(1);
+    }
+
+    // 체크 해제도 같은 경로다. 완료 조건이 되돌아가는 것을 막지 않는다
+    @Test
+    void uncheckChecklistItemDecreasesSummary() {
+        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+        updateChecklistItem(subWorkId, firstItemId, true);
+
+        SubWorkChecklistItemUpdateResponse response =
+                updateChecklistItem(subWorkId, firstItemId, false);
+
+        assertThat(response.item().isCompleted()).isFalse();
+        assertThat(response.checklistSummary().completedCount()).isZero();
+    }
+
+    // 더블 탭이 완료 수를 두 번 올리지 않는다 — 멱등이라 별도 멱등성 키를 두지 않는다 (AP-16)
+    @Test
+    void checkingSameItemTwiceCountsOnce() {
+        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+
+        updateChecklistItem(subWorkId, firstItemId, true);
+        SubWorkChecklistItemUpdateResponse response =
+                updateChecklistItem(subWorkId, firstItemId, true);
+
+        assertThat(response.checklistSummary().completedCount()).isEqualTo(1);
+    }
+
+    /*
+     * 체크는 상태 전이가 아니다. 스테퍼(업무 상태)·승인 칩(승인 상태)이 그대로여야 하고,
+     * 상위 업무 진행률도 하위 업무 완료 건수에서 나오므로 움직이지 않는다.
+     */
+    @Test
+    void updateChecklistItemDoesNotChangeStatusesOrParentProgress() {
+        Long subWorkId = createSubWork(APPROVAL_NEEDED_TYPE_ID);
+
+        completeChecklist(subWorkId);
+
+        SubWorkDetailResponse detail = detailOf(subWorkId);
+        assertThat(detail.workStatus()).isEqualTo(WorkStatus.PLANNING);
+        assertThat(detail.approvalStatus()).isEqualTo(ApprovalStatus.PENDING);
+        assertThat(detail.completedAt()).isNull();
+        assertThat(workRepository.findById(parentWorkId).orElseThrow().getProgressRate())
+                .isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(subWorkStatusHistoryRepository.count()).isZero();
+    }
+
+    /*
+     * 이 이슈의 존재 이유. 체크 API가 없던 동안에는 완료 점검 항목이 있는 유형이 완료 승인에서
+     * 항상 COMPLETION_CRITERIA_UNMET(409)로 막혔다 — 마지막 항목까지 체크하면 통과한다.
+     */
+    @Test
+    void approveCompleteSucceedsAfterCheckingEveryItem() {
+        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        List<Long> itemIds = checklistItemIds(subWorkId);
+
+        for (Long itemId : itemIds.subList(0, itemIds.size() - 1)) {
+            updateChecklistItem(subWorkId, itemId, true);
+        }
+        // 마지막 항목을 남긴 동안에는 여전히 막힌다
+        assertThatThrownBy(() -> transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.COMPLETION_CRITERIA_UNMET);
+
+        SubWorkChecklistItemUpdateResponse lastCheck =
+                updateChecklistItem(subWorkId, itemIds.get(itemIds.size() - 1), true);
+        assertThat(lastCheck.checklistSummary().completedCount())
+                .isEqualTo(lastCheck.checklistSummary().totalCount());
+
+        SubWorkTransitionResponse response =
+                transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+
+        assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
+        assertThat(response.completedAt()).isEqualTo(NOW);
+    }
+
+    /*
+     * 완료된 건의 체크는 되돌릴 수 없다 — '완료됐는데 완료 조건 미충족'인 데이터를 만들지 않는다.
+     * 전용 코드를 새로 만들지 않고 TRANSITION_NOT_ALLOWED(409)를 재사용한다.
+     */
+    @Test
+    void updateChecklistItemOnCompletedSubWorkIsRejected() {
+        Long subWorkId = subWorkInReview(APPROVAL_FREE_TYPE_ID);
+        completeChecklist(subWorkId);
+        transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+
+        assertThatThrownBy(() -> updateChecklistItem(subWorkId, firstItemId, false))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        assertThat(detailOf(subWorkId).checklistSummary().completedCount()).isEqualTo(4);
+    }
+
+    // 반려로 진행에 되돌아온 담당자가 남은 항목을 마저 채우는 것이 화면의 흐름이다
+    @Test
+    void checklistIsEditableAfterRejection() {
+        Long subWorkId = subWorkInReview(APPROVAL_NEEDED_TYPE_ID);
+        transition(subWorkId, TransitionAction.REJECT, "현장 답사 결과 누락");
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+
+        assertThat(updateChecklistItem(subWorkId, firstItemId, true).item().isCompleted()).isTrue();
+    }
+
+    /*
+     * 경로의 하위 업무에 속하지 않는 항목은 체크할 수 없다 (IDOR). 존재 사실을 알려주지 않기
+     * 위해 403이 아니라 404이며, 남의 항목은 그대로 미완료로 남는다.
+     */
+    @Test
+    void updateChecklistItemOfAnotherSubWorkIsRejected() {
+        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long otherSubWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+        Long otherItemId = checklistItemIds(otherSubWorkId).get(0);
+
+        assertThatThrownBy(() -> updateChecklistItem(subWorkId, otherItemId, true))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND);
+        assertThat(detailOf(otherSubWorkId).checklistSummary().completedCount()).isZero();
+    }
+
+    @Test
+    void updateUnknownChecklistItemIsRejected() {
+        Long subWorkId = createSubWork(APPROVAL_FREE_TYPE_ID);
+
+        assertThatThrownBy(() -> updateChecklistItem(subWorkId, 999L, true))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND);
+    }
+
+    @Test
+    void updateChecklistItemOnUnknownSubWorkIsRejected() {
+        assertThatThrownBy(() -> updateChecklistItem(999L, 1L, true))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
+    // 소프트 삭제된 건은 조회·전이와 마찬가지로 존재하지 않는 것처럼 다룬다
+    @Test
+    void updateChecklistItemOnSoftDeletedSubWorkIsRejected() {
+        SubWorkCreateResponse created =
+                subWorkService.createSubWork(request(APPROVAL_FREE_TYPE_ID), registrant);
+        Long itemId = checklistItemIds(created.subWorkId()).get(0);
+        operationRepository
+                .findById(created.operationId())
+                .orElseThrow()
+                .softDelete(NOW.toInstant());
+
+        assertThatThrownBy(() -> updateChecklistItem(created.subWorkId(), itemId, true))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
     private Long createSubWork(long subWorkTypeId) {
         return subWorkService.createSubWork(request(subWorkTypeId), registrant).subWorkId();
     }
@@ -774,20 +940,31 @@ class SubWorkServiceImplTest {
         return subWorkId;
     }
 
-    /*
-     * 체크리스트를 전부 체크한 상태로 만든다. 체크 API(OPS-012)가 아직 없어 직접 갱신한다 —
-     * 그 API가 붙으면 이 헬퍼는 API 호출로 바뀐다.
-     */
+    // 체크리스트를 전부 체크한 상태로 만든다. 화면에서 체크박스를 하나씩 누르는 것과 같은 경로다
     private void completeChecklist(Long subWorkId) {
+        for (Long itemId : checklistItemIds(subWorkId)) {
+            updateChecklistItem(subWorkId, itemId, true);
+        }
+    }
+
+    private List<Long> checklistItemIds(Long subWorkId) {
         entityManager.flush();
-        entityManager
-                .getEntityManager()
-                .createQuery(
-                        "update SubWorkChecklistItemEntity i set i.completed = true"
-                                + " where i.subWork.id = :id")
-                .setParameter("id", subWorkId)
-                .executeUpdate();
         entityManager.clear();
+        SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
+        return subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork).stream()
+                .map(SubWorkChecklistItemEntity::getId)
+                .toList();
+    }
+
+    private SubWorkChecklistItemUpdateResponse updateChecklistItem(
+            Long subWorkId, Long checklistItemId, boolean completed) {
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkService.updateChecklistItem(
+                subWorkId,
+                checklistItemId,
+                new SubWorkChecklistItemUpdateRequest(completed),
+                registrant);
     }
 
     private Long subWorkWithDueAt(OffsetDateTime dueAt) {

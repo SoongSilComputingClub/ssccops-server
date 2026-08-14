@@ -34,9 +34,6 @@ public enum FormErrorCode implements ErrorCode {
     INVALID_RECEIPT_PERIOD(
             HttpStatus.BAD_REQUEST, "INVALID_RECEIPT_PERIOD", "접수 종료 일시는 시작 일시보다 빠를 수 없습니다."),
 
-    // 400 — 요청이 지정한 폼 라벨이 없을 때. 본문이 가리키는 참조가 틀린 것이라 404가 아니다
-    LABEL_NOT_ASSIGNABLE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "지정할 수 없는 폼 라벨입니다."),
-
     // 404 — 폼 자체를 찾을 수 없을 때. 공개 링크로 접근한 미공개(DRAFT) 폼도 여기에 걸린다
     FORM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "폼을 찾을 수 없습니다."),
 
@@ -64,7 +61,30 @@ public enum FormErrorCode implements ErrorCode {
 
     // 422 — 저장된 응답 내용(rspns_cn) JSON을 읽을 수 없을 때. 위와 같은 이유
     RESPONSE_CONTENT_MALFORMED(
-            HttpStatus.UNPROCESSABLE_ENTITY, "RESPONSE_CONTENT_MALFORMED", "폼 응답 내용을 읽을 수 없습니다.");
+            HttpStatus.UNPROCESSABLE_ENTITY, "RESPONSE_CONTENT_MALFORMED", "폼 응답 내용을 읽을 수 없습니다."),
+
+    // 404 — 존재하지 않는 라벨. 비활성 라벨은 여기에 걸리지 않는다 (지워지지 않고 살아 있다)
+    FORM_LABEL_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_LABEL_NOT_FOUND", "폼 라벨을 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 같은 이름의 라벨이 있을 때.
+     *
+     * 라벨 이름은 화면에서 사람이 읽고 고르는 유일한 단서라 같은 이름이 둘이면 어느 쪽을 골랐는지
+     * 알 수 없다. 선조회로 대부분 걸리지만 동시 생성은 uk_form_lbl_name 위반으로만 드러나므로
+     * 그 경로에서도 같은 코드로 내린다 (#21 학번 중복과 같은 방식).
+     */
+    FORM_LABEL_NAME_DUPLICATED(
+            HttpStatus.CONFLICT, "FORM_LABEL_NAME_DUPLICATED", "이미 등록된 라벨 이름입니다."),
+
+    /*
+     * 400 — 비활성(use_yn = false) 라벨을 폼에 새로 지정하려 할 때.
+     *
+     * 이미 지정된 라벨이 비활성으로 바뀐 경우는 여기 걸리지 않는다 — 비활성은 "새로 달 수 없다"는
+     * 뜻이지 "달려 있던 것을 떼라"는 뜻이 아니기 때문이다. 그래서 지정 교체는 새로 추가되는
+     * 라벨만 이 규칙으로 검사한다.
+     */
+    FORM_LABEL_NOT_USABLE(
+            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

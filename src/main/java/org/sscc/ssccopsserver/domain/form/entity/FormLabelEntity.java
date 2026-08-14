@@ -9,6 +9,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -29,10 +30,17 @@ import lombok.NoArgsConstructor;
  * 지우는 대신 use_yn을 내린다. 이미 폼에 달린 라벨을 삭제하면 그 폼의 분류 이력이 사라지고,
  * form_lbl_rel의 FK를 함께 지워야 해서 과거 폼 목록의 필터 결과가 조용히 바뀐다.
  * 비활성 라벨은 "새로 달 수 없고 필터 목록에 뜨지 않을 뿐" 이미 달린 것은 그대로 남는다.
+ *
+ * lbl_nm에 UNIQUE를 건다(#34에서 추가). 데이터사전에는 없지만 라벨 관리 화면이 이름 중복을
+ * 막는 것을 전제로 만들어져 있고, 이름은 사람이 라벨을 고르는 유일한 단서라 같은 이름이 둘이면
+ * 어느 쪽을 골랐는지 알 수 없다. 선조회만으로는 동시 생성을 막지 못하므로 제약을 DB에 둔다 —
+ * 회원 학번(#21)과 같은 이유다.
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
-@Table(name = "form_lbl")
+@Table(
+        name = "form_lbl",
+        uniqueConstraints = @UniqueConstraint(name = "uk_form_lbl_name", columnNames = "lbl_nm"))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)

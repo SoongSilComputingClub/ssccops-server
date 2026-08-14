@@ -41,6 +41,9 @@ public enum OperationErrorCode implements ErrorCode {
     // 404 — 소프트 삭제된 하위 업무도 여기에 걸린다. 존재를 알려주지 않기 위해 409로 나누지 않는다
     SUB_WORK_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "하위 업무를 찾을 수 없습니다."),
 
+    // 404 — 경로의 하위 업무에 속하지 않는 체크리스트 항목도 여기에 걸린다 (403으로 나누지 않는다)
+    CHECKLIST_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "체크리스트 항목을 찾을 수 없습니다."),
+
     // 409 — 전이표(TR-01~TR-04)에 없는 상태 전환. 완료 → 진행 되돌리기도 여기에 걸린다
     TRANSITION_NOT_ALLOWED(HttpStatus.CONFLICT, "TRANSITION_NOT_ALLOWED", "현재 상태에서 할 수 없는 작업입니다."),
 

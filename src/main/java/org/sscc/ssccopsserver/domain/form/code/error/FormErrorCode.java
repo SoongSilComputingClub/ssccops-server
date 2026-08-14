@@ -116,6 +116,35 @@ public enum FormErrorCode implements ErrorCode {
     RESPONSE_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "RESPONSE_ALREADY_SUBMITTED", "이미 제출한 폼입니다."),
 
     /*
+     * 409 — 같은 응답 행을 두 요청이 동시에 만들려다 (form_id, mbr_id) UNIQUE에 걸렸을 때 (#36).
+     *
+     * 자동 저장은 응답자가 타이핑하는 동안 계속 날아오므로, 두 탭이 열려 있거나 디바운스가 겹치면
+     * 첫 저장 두 건이 동시에 도착할 수 있다. 둘 다 선조회에서 "행이 없다"를 보고 INSERT를 시도하면
+     * 하나는 반드시 제약에 걸린다. 그대로 두면 500이라 웹은 서버가 고장난 것으로 읽지만, 실제로는
+     * 잠깐 뒤 다시 보내면 되는 상황이다.
+     *
+     * RESPONSE_ALREADY_SUBMITTED로 묶지 않는 것은 뜻이 다르기 때문이다 — 경합한 상대는
+     * 제출이 아니라 같은 사람의 다른 임시저장일 수 있고, 그 경우 "이미 제출했다"는 거짓이다.
+     */
+    RESPONSE_SAVE_CONFLICT(
+            HttpStatus.CONFLICT, "RESPONSE_SAVE_CONFLICT", "응답이 동시에 저장되어 처리하지 못했습니다. 다시 시도해주세요."),
+
+    /*
+     * 413 — 응답 내용(rspns_cn)이 상한을 넘겼을 때 (#36).
+     *
+     * 자동 저장은 응답자가 글자를 칠 때마다 같은 본문을 통째로 다시 보낸다. 상한이 없으면 붙여넣기
+     * 한 번으로 수 MB짜리 JSONB가 매 요청마다 오가고, 그 행은 폼 목록·응답 조회가 읽을 때마다
+     * 따라온다. 문항 수는 폼이 정하므로(폼에 없는 qitemId는 거절된다) 남는 축은 답 하나하나의
+     * 길이뿐이라, 답 전체의 글자 수 합으로 끊는다.
+     *
+     * 제출(#35)에도 같은 상한을 건다. 자동 저장만 막으면 상한을 넘긴 내용이 제출로는 들어와
+     * 결국 같은 크기의 행이 남고, 반대로 제출만 막으면 자동 저장으로 저장해 둔 응답자가 무엇을
+     * 지워야 낼 수 있는지 알 수 없는 채로 거절당한다.
+     */
+    RESPONSE_CONTENT_TOO_LARGE(
+            HttpStatus.PAYLOAD_TOO_LARGE, "RESPONSE_CONTENT_TOO_LARGE", "응답 내용이 너무 큽니다."),
+
+    /*
      * 409 — 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 이름을 바꾸려 할 때.
      *
      * rspns_cn의 key가 qitemId라, 문항 식별자가 끊기는 순간 과거 응답이 어느 문항의 답인지

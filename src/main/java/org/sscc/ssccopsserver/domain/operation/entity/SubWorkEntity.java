@@ -11,6 +11,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -37,8 +38,24 @@ import lombok.NoArgsConstructor;
  * Not Null 여부 컬럼이 Y이고, 화면도 "하위 업무는 상위 업무 안에서만 생성됩니다"라고
  * 못박고 있으며 API 정의서 OPS-007의 workId도 필수다.
  */
+/*
+ * 인덱스는 목록 조회(OPS-008)의 필터·정렬 컬럼에 건다 (DB-17). 마감 일시는 정렬 기본 키이자
+ * 지연·마감임박 필터의 조건이고, 두 상태 코드는 화면 필터 칩이 그대로 거는 조건이다.
+ *
+ * 주의: 이 선언으로 인덱스가 만들어지는 것은 ddl-auto가 도는 local·dev·test뿐이다.
+ * prod는 ddl-auto가 none이라 배포 전에 아래 DDL을 직접 실행해야 한다.
+ *   CREATE INDEX idx_sub_work_ddln_dt ON sub_work (ddln_dt);
+ *   CREATE INDEX idx_sub_work_work_stts_cd ON sub_work (work_stts_cd);
+ *   CREATE INDEX idx_sub_work_aprv_stts_cd ON sub_work (aprv_stts_cd);
+ */
 @Entity
-@Table(name = "sub_work")
+@Table(
+        name = "sub_work",
+        indexes = {
+            @Index(name = "idx_sub_work_ddln_dt", columnList = "ddln_dt"),
+            @Index(name = "idx_sub_work_work_stts_cd", columnList = "work_stts_cd"),
+            @Index(name = "idx_sub_work_aprv_stts_cd", columnList = "aprv_stts_cd")
+        })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)

@@ -11,7 +11,8 @@ import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 
-public interface SubWorkRepository extends JpaRepository<SubWorkEntity, Long> {
+public interface SubWorkRepository
+        extends JpaRepository<SubWorkEntity, Long>, SubWorkRepositoryCustom {
 
     /*
      * 상세 조회(OPS-009)용 단건 조회. 소프트 삭제 여부는 부모 oper가 관리하므로 조인해서
@@ -54,4 +55,10 @@ public interface SubWorkRepository extends JpaRepository<SubWorkEntity, Long> {
 
     long countByWorkAndWorkStatusAndOperationDeletedAtIsNull(
             WorkEntity work, WorkStatus workStatus);
+
+    /*
+     * 목록 조회(OPS-008)가 화면 우상단에 표시하는 '전체 N건'. 필터를 걸지 않았을 때의 건수라
+     * 조건이 없고, 삭제된 건을 빼는 기준만 목록과 같아야 한다 (AGG-03).
+     */
+    long countByOperationDeletedAtIsNull();
 }

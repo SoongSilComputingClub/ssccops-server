@@ -21,7 +21,10 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
+import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -40,8 +43,10 @@ import lombok.NoArgsConstructor;
  * 컬렉션 연관(@OneToMany)을 열지 않은 것은 폼 목록이 라벨을 폼마다 한 번씩 조회해
  * N+1이 되는 것을 막기 위해서다 — 라벨은 FormLabelRelationRepository로 한 번에 모아 온다.
  *
- * 상태 전이(DRAFT → OPEN → CLOSED)와 수정 규칙은 폼 CRUD가 붙는 #32의 범위라 여기에는
- * 생성 팩토리만 둔다. 상태를 직접 쓰는 setter를 열지 않는 것이 그 통제의 전제다.
+ * 상태(form_stts_cd)를 바꾸는 길은 changeStatus(FormStatusAction) 하나뿐이다 (#33).
+ * update()는 상태를 받지 않는다 — 편집 자동 저장(ssccops #63)이 매 타이핑마다 PUT을 쏘는데
+ * 거기에 상태가 실릴 수 있으면 자동 저장 한 번이 접수 상태를 덮어쓴다. setter를 열지 않는 것이
+ * 그 통제의 전제다.
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
@@ -127,8 +132,9 @@ public class FormEntity {
      * OPEN인 폼을 요구해서 열어 둔다 — 만들고 나서 상태를 한 번 더 바꾸게 하면 두 번째 호출이
      * 실패했을 때 사용자가 의도하지 않은 DRAFT 폼이 남는다.
      *
-     * 상태를 자유롭게 넣을 수 있게 된 만큼 어떤 상태가 허용되는지는 호출부(서비스)가 정한다.
-     * 상태 전이 규칙 자체는 접수 상태 전이 API(#33)의 범위다.
+     * OPEN으로 만드는 경우에는 상태 전이 API(#33)가 거는 사전 검증을 똑같이 태운다. 검증을
+     * 전이 경로에만 두면 '바로 접수 시작'으로 만든 폼만 문항 0개로 공개되는 구멍이 남는다 —
+     * 같은 결과(열린 폼)에 도달하는 두 경로가 다른 규칙을 쓰면 안 된다.
      */
     public static FormEntity create(
             MemberEntity creator,
@@ -137,16 +143,21 @@ public class FormEntity {
             Instant receiptBeginAt,
             Instant receiptEndAt,
             FormStatus status) {
-        return new FormEntity(
-                null,
-                creator,
-                title,
-                status,
-                receiptBeginAt,
-                receiptEndAt,
-                questionComposition,
-                null,
-                null);
+        FormEntity form =
+                new FormEntity(
+                        null,
+                        creator,
+                        title,
+                        status,
+                        receiptBeginAt,
+                        receiptEndAt,
+                        questionComposition,
+                        null,
+                        null);
+        if (status == FormStatus.OPEN) {
+            form.requireOpenable();
+        }
+        return form;
     }
 
     /*
@@ -155,17 +166,70 @@ public class FormEntity {
      * 클라이언트가 보내지 않은 항목이 조용히 사라진 채 반쯤 남는다.
      *
      * 생성자(creator)는 바꾸지 않는다. 폼을 넘겨받는 개념이 없어 컬럼 자체가 updatable = false다.
+     *
+     * 상태(form_stts_cd)도 받지 않는다 (#33). 편집 자동 저장이 매 타이핑마다 이 경로를 타는데,
+     * 상태를 함께 쓸 수 있으면 자동 저장이 접수 상태를 조용히 덮어쓴다. 상태를 바꾸는 길은
+     * changeStatus 하나로 좁힌다 — 문항을 고치는 것과 접수를 여는 것은 권한·검증·감사 대상이
+     * 다른 행위다.
      */
     public void update(
             String title,
-            FormStatus status,
             QuestionCompositionContent questionComposition,
             Instant receiptBeginAt,
             Instant receiptEndAt) {
         this.title = title;
-        this.status = status;
         this.questionComposition = questionComposition;
         this.receiptBeginAt = receiptBeginAt;
         this.receiptEndAt = receiptEndAt;
+    }
+
+    /*
+     * 접수 상태 전이 (#33 · POST /v1/forms/{formId}/status).
+     *
+     * 전이표는 FormStatusAction이 갖고, 여기서는 그 표를 어겼을 때 무엇으로 거절할지와
+     * 여는 쪽에만 걸리는 사전 검증을 맡는다. 검사 순서가 곧 오류의 정확도다 — 전이 자체가
+     * 불가능한 요청(이미 열린 폼을 또 여는 등)에 문항 개수 오류를 돌려주면 프론트가
+     * 엉뚱한 안내를 띄운다.
+     *
+     * 전이 이력은 남기지 않는다. 데이터사전에 폼 상태 이력 테이블이 없고, 감사 로그(#8)가
+     * 확정되기 전에 여기서 새 테이블을 만들면 나중에 두 벌이 된다.
+     */
+    public void changeStatus(FormStatusAction action) {
+        if (!action.isAllowedFrom(this.status)) {
+            throw new GeneralException(FormErrorCode.INVALID_FORM_STATUS_TRANSITION);
+        }
+        if (action.opensReceipt()) {
+            requireOpenable();
+        }
+        this.status = action.targetStatus();
+    }
+
+    /*
+     * 접수를 열 수 있는 폼인지. 생성(OPEN 지정)과 전이(OPEN 액션) 두 경로가 함께 쓴다.
+     *
+     * 문항 0개 자체는 저장 시점에는 정상이다 — 편집을 막 시작한 DRAFT가 그 상태이므로
+     * QuestionCompositionValidator는 통과시킨다. 막아야 하는 것은 그 상태로 '공개'되는 것이다.
+     */
+    private void requireOpenable() {
+        if (questionComposition == null
+                || questionComposition.qitems() == null
+                || questionComposition.qitems().isEmpty()) {
+            throw new GeneralException(FormErrorCode.FORM_HAS_NO_QUESTION);
+        }
+        requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
+    }
+
+    /*
+     * 접수 기간 정합성. 폼 생성·수정(#32)은 아직 엔티티가 없는 값을 검사해야 하므로 static이다 —
+     * 같은 규칙을 서비스에 한 벌 더 두면 저장 경로와 전이 경로의 판단이 갈린다.
+     *
+     * 한쪽만 주어진 경우는 검사 대상이 아니다. 기간 제한 없이 여는 폼이 정상이기 때문이다.
+     */
+    public static void requireValidReceiptPeriod(Instant receiptBeginAt, Instant receiptEndAt) {
+        if (receiptBeginAt != null
+                && receiptEndAt != null
+                && receiptEndAt.isBefore(receiptBeginAt)) {
+            throw new GeneralException(FormErrorCode.INVALID_RECEIPT_PERIOD);
+        }
     }
 }

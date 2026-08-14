@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
@@ -22,12 +23,17 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 나눠 보여주는데 그 집계는 응답 조회 API(#37)의 몫이고, 여기서는 목록과 같은 한 숫자만 준다 —
  * 같은 이름의 필드가 화면마다 다른 값을 뜻하면 어느 쪽이 맞는지 알 수 없게 된다.
  *
+ * receiptStatus는 목록과 같은 파생 값이다 (#33 · FormReceiptPolicy). 상세 화면의 '접수 시작 /
+ * 마감' 버튼 문구는 formSttsCd로 고르지만(전이표가 그 값으로 정의돼 있다), 사용자에게 보이는
+ * 배지는 기간까지 반영해야 하므로 두 값을 함께 내린다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormDetailResponse(
         Long formId,
         String formTtlNm,
         FormStatus formSttsCd,
+        FormReceiptStatus receiptStatus,
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
         QuestionCompositionContent qitemCpstCn,
@@ -41,11 +47,15 @@ public record FormDetailResponse(
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static FormDetailResponse of(
-            FormEntity form, List<FormLabelSummaryResponse> labels, long responseCount) {
+            FormEntity form,
+            FormReceiptStatus receiptStatus,
+            List<FormLabelSummaryResponse> labels,
+            long responseCount) {
         return new FormDetailResponse(
                 form.getId(),
                 form.getTitle(),
                 form.getStatus(),
+                receiptStatus,
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
                 form.getQuestionComposition(),

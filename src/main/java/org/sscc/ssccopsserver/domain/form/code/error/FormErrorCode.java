@@ -34,6 +34,27 @@ public enum FormErrorCode implements ErrorCode {
     INVALID_RECEIPT_PERIOD(
             HttpStatus.BAD_REQUEST, "INVALID_RECEIPT_PERIOD", "접수 종료 일시는 시작 일시보다 빠를 수 없습니다."),
 
+    /*
+     * 400 — 전이표에 없는 상태 전이 (#33). 이미 열린 폼을 또 열거나(OPEN → OPEN), 작성 중인
+     * 폼을 마감하려는(DRAFT → CLOSE) 요청이 여기에 걸린다.
+     *
+     * 409가 아니라 400인 것은 이슈 #33의 계약표를 따른 것이다. 상태 충돌이라는 점에서는 409에
+     * 가깝지만, 웹은 현재 상태를 이미 화면에 들고 있어 보낼 수 있는 액션이 하나로 정해진다 —
+     * 즉 이 오류는 "지금 할 수 없는 일"보다 "보내면 안 되는 요청"에 가깝다.
+     */
+    INVALID_FORM_STATUS_TRANSITION(
+            HttpStatus.BAD_REQUEST, "INVALID_FORM_STATUS_TRANSITION", "허용되지 않는 폼 상태 전이입니다."),
+
+    /*
+     * 400 — 문항이 하나도 없는 폼을 접수 시작하려 할 때 (#33).
+     *
+     * 문항 0개는 저장 시점에는 정상이다 — 편집을 막 시작한 DRAFT가 그 상태다
+     * (QuestionCompositionValidator). 하지만 그대로 열면 응답자가 아무것도 입력할 수 없는
+     * 공개 링크가 나가고, 빈 응답이 접수된 뒤에는 문항을 추가해도 이미 낸 응답이 비어 있다.
+     */
+    FORM_HAS_NO_QUESTION(
+            HttpStatus.BAD_REQUEST, "FORM_HAS_NO_QUESTION", "문항이 없는 폼은 접수를 시작할 수 없습니다."),
+
     // 404 — 폼 자체를 찾을 수 없을 때. 공개 링크로 접근한 미공개(DRAFT) 폼도 여기에 걸린다
     FORM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "폼을 찾을 수 없습니다."),
 

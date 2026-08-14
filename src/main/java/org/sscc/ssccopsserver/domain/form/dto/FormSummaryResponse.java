@@ -5,6 +5,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 
@@ -20,12 +21,18 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * 아직 응답자가 낸 것이 아니라, 세면 운영진이 보는 "응답 N건"이 실제 접수 건수보다 부풀어
  * 마감 판단을 잘못하게 만든다.
  *
+ * receiptStatus는 DB 컬럼이 아니라 formSttsCd와 접수 기간을 함께 본 파생 값이다 (#33 ·
+ * FormReceiptPolicy). 접수 기간이 끝난 폼은 자동으로 CLOSED가 되지 않으므로 formSttsCd만
+ * 그리면 이미 응답을 받지 않는 폼이 목록에서 계속 '접수 중'으로 보인다. 배치로 상태를
+ * 덮어쓰는 대신 이 필드로 나눈다 — 배지 문구는 이 값으로 고른다 (ssccops-web #9).
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormSummaryResponse(
         Long formId,
         String formTtlNm,
         FormStatus formSttsCd,
+        FormReceiptStatus receiptStatus,
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
         List<FormLabelSummaryResponse> labels,
@@ -35,11 +42,15 @@ public record FormSummaryResponse(
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static FormSummaryResponse of(
-            FormEntity form, List<FormLabelSummaryResponse> labels, long responseCount) {
+            FormEntity form,
+            FormReceiptStatus receiptStatus,
+            List<FormLabelSummaryResponse> labels,
+            long responseCount) {
         return new FormSummaryResponse(
                 form.getId(),
                 form.getTitle(),
                 form.getStatus(),
+                receiptStatus,
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
                 labels,

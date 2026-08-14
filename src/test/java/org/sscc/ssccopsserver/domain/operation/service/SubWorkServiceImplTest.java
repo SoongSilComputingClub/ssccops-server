@@ -112,7 +112,12 @@ class SubWorkServiceImplTest {
     @BeforeEach
     void setUp() {
         MemberService memberService =
-                new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
+                new MemberServiceImpl(
+                        memberRepository,
+                        memberRoleAssignmentRepository,
+                        memberGradeRepository,
+                        memberStatusRepository,
+                        FIXED_CLOCK);
         WorkService workService =
                 new WorkServiceImpl(
                         operationRepository,

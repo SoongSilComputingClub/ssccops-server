@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.member.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Clock;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -26,7 +27,12 @@ class MemberServiceImplTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
 
     private MemberService memberService() {
-        return new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
+        return new MemberServiceImpl(
+                memberRepository,
+                memberRoleAssignmentRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                Clock.systemDefaultZone());
     }
 
     @Test

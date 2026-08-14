@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -88,7 +89,12 @@ class WorkServiceImplTest {
     @BeforeEach
     void setUp() {
         MemberService memberService =
-                new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
+                new MemberServiceImpl(
+                        memberRepository,
+                        memberRoleAssignmentRepository,
+                        memberGradeRepository,
+                        memberStatusRepository,
+                        Clock.systemDefaultZone());
         workService =
                 new WorkServiceImpl(
                         operationRepository,

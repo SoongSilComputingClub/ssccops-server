@@ -53,8 +53,7 @@ public enum MemberErrorCode implements ErrorCode {
      * 학번이 일치한다고 그 행에 자동으로 연결하지 않는다 — 학번만 알면 남의 계정을 가로챌 수
      * 있어서다. 안전한 연결 절차는 명부 이관 기능을 설계할 때 함께 다룬다 (#21).
      */
-    STUDENT_NUMBER_DUPLICATED(
-            HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다.");
+    STUDENT_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

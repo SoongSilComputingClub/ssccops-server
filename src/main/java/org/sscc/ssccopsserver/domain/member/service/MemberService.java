@@ -4,9 +4,20 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
 public interface MemberService {
+
+    /*
+     * 회원가입. 인증만 마친 사용자를 정식 회원으로 만든다 — mbr 행이 생기는 유일한 경로다.
+     *
+     * 인증 주체에서 오는 값(auth_user_id·이메일)과 요청 본문에서 오는 값(프로필)을 나눠 받는다.
+     * 응답은 세션 조회의 member 블록과 같은 MemberProfileResponse다 — 가입 직후 프론트가
+     * 세션을 다시 조회하지 않아도 되게 하려는 것이 이 API의 설계 의도이기 때문이다.
+     */
+    MemberProfileResponse signUp(AuthenticatedUser user, MemberSignupRequest request);
 
     /*
      * Supabase 인증 사용자 식별자로 연결된 회원을 조회한다. 아직 가입하지 않았으면 비어 있다.

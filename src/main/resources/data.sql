@@ -114,7 +114,10 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
 
 -- 하위 업무 유형(sub_work_type). 운영 등록 화면의 업무 유형 4종과 1:1로 대응한다.
 -- 유형은 코드가 아니라 기준 데이터라서 여기서 넣는다 (REQ-010 · POL-005 — 승인 정책의 데이터화).
--- 등록 API가 이 행을 id로 참조하므로 식별자를 고정해 넣는다.
+--
+-- sub_work_type_id는 지정하지 않는다. IDENTITY 컬럼에 값을 박아 넣으면 시퀀스가 1에 머물러,
+-- 관리 화면(#43)이 유형을 추가하는 순간 시드 행과 PK가 충돌한다 — 위 role과 같은 이유다.
+-- 멱등 판정은 유형명으로 한다(uk_sub_work_type_name이 있어 이름이 곧 키다).
 -- 완료 점검 항목(cmptn_chck_artcl_cn)은 한 줄에 하나씩 적고, 하위 업무 등록 시 그대로 체크리스트가 된다.
 --
 -- 승인자 역할(autzr_role_cd)은 웹 AUTZR_ROLE_NM 어휘를 쓴다. 배정 근거는 완료 점검 항목이다 —
@@ -122,48 +125,56 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
 -- 걸려 있어 대표 명의를 가진 회장(PRESIDENT)이 승인 주체다.
 -- 승인이 필요 없는 유형(aprv_need_yn = FALSE)은 승인자를 두지 않는다 — 승인 주체가 있는데
 -- 승인을 거치지 않는다는 모순된 상태를 데이터로 만들지 않기 위해서다. 웹도 같은 규칙으로 저장한다.
+--
+-- 감사 컬럼(crt_dt·mdfcn_dt)은 여기서 직접 넣는다. 값은 평소 JPA Auditing이 채우지만 이 파일은
+-- JPA를 거치지 않는 순수 SQL이고 컬럼에 DB 기본값도 두지 않아, 빠뜨리면 NOT NULL 위반으로
+-- 기동이 깨진다(#43). 유형을 새로 시드할 때도 두 컬럼을 같이 적을 것.
+-- use_yn도 마찬가지다. prod 수동 DDL에는 DEFAULT TRUE를 걸지만, local/dev/test는 엔티티에서
+-- 생성한 스키마라 기본값이 없다 — 프로필에 따라 갈리지 않도록 시드가 값을 직접 적는다.
 INSERT INTO sub_work_type (
-    sub_work_type_id, type_nm, aprv_need_yn, autzr_role_cd,
-    min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn)
-SELECT 1, '예산지출', TRUE, 'TREASURER', FALSE, TRUE, '견적서·영수증 확보
+    type_nm, aprv_need_yn, autzr_role_cd,
+    min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn, use_yn, crt_dt, mdfcn_dt)
+SELECT '예산지출', TRUE, 'TREASURER', FALSE, TRUE, '견적서·영수증 확보
 예산 항목·잔액 확인
 지출 승인 완료
-회계 장부 반영'
-WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE sub_work_type_id = 1);
+회계 장부 반영', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '예산지출');
 
 INSERT INTO sub_work_type (
-    sub_work_type_id, type_nm, aprv_need_yn, autzr_role_cd,
-    min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn)
-SELECT 2, '대외공지', TRUE, 'PRESIDENT', FALSE, FALSE, '공지 문안 검수
+    type_nm, aprv_need_yn, autzr_role_cd,
+    min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn, use_yn, crt_dt, mdfcn_dt)
+SELECT '대외공지', TRUE, 'PRESIDENT', FALSE, FALSE, '공지 문안 검수
 게시 채널·일정 확정
 대외 명의 사용 확인
-게시 결과 링크 첨부'
-WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE sub_work_type_id = 2);
+게시 결과 링크 첨부', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '대외공지');
 
 INSERT INTO sub_work_type (
-    sub_work_type_id, type_nm, aprv_need_yn, min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn)
-SELECT 3, '내부행사', FALSE, FALSE, FALSE, '일시·장소 확정
+    type_nm, aprv_need_yn, min_need_agre_cnt_yn, expnd_yn,
+    cmptn_chck_artcl_cn, use_yn, crt_dt, mdfcn_dt)
+SELECT '내부행사', FALSE, FALSE, FALSE, '일시·장소 확정
 참석자 명단 확인
 준비물·역할 분담
-진행 결과 정리'
-WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE sub_work_type_id = 3);
+진행 결과 정리', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '내부행사');
 
 INSERT INTO sub_work_type (
-    sub_work_type_id, type_nm, aprv_need_yn, min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn)
-SELECT 4, '스터디운영', FALSE, FALSE, FALSE, '커리큘럼·일정 공유
+    type_nm, aprv_need_yn, min_need_agre_cnt_yn, expnd_yn,
+    cmptn_chck_artcl_cn, use_yn, crt_dt, mdfcn_dt)
+SELECT '스터디운영', FALSE, FALSE, FALSE, '커리큘럼·일정 공유
 출석 기록 확인
 과제·산출물 확인
-운영 결과 정리'
-WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE sub_work_type_id = 4);
+운영 결과 정리', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '스터디운영');
 
 -- 위 INSERT는 이미 시드된 DB(dev/prod)에서는 건너뛰므로, 비워 둔 채 들어가 있던 승인자 역할을
 -- 여기서 채운다. autzr_role_cd IS NULL 조건이 멱등성과 함께 "화면에서 지정한 값은 건드리지 않는다"를
 -- 같이 보장한다.
 UPDATE sub_work_type SET autzr_role_cd = 'TREASURER'
-WHERE sub_work_type_id = 1 AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
+WHERE type_nm = '예산지출' AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
 
 UPDATE sub_work_type SET autzr_role_cd = 'PRESIDENT'
-WHERE sub_work_type_id = 2 AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
+WHERE type_nm = '대외공지' AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
 
 -- 폼 라벨(form_lbl)은 일부러 시드하지 않는다 (#31에서 결정).
 -- 후보로 거론된 어휘(신규모집·회원연장·행사·스터디·연도·학기) 중 연도·학기는 해마다 값이

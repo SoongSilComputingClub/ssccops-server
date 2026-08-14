@@ -1,15 +1,15 @@
 spring:
   datasource:
-    url: ${db-url}
+    url: ${DB_URL:${db-url}}
     driver-class-name: org.postgresql.Driver
-    username: ${db-username}
-    password: ${db-password}
+    username: ${DB_USERNAME:${DB_USER:${db-username}}}
+    password: ${DB_PASSWORD:${db-password}}
 
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${supabase-url}/auth/v1/.well-known/jwks.json
+          jwk-set-uri: ${SUPABASE_URL:${supabase-url}}/auth/v1/.well-known/jwks.json
 
   jpa:
     hibernate:
@@ -18,7 +18,7 @@ spring:
 
 # Frontend Configuration (CORS 허용 오리진)
 frontend:
-  url: http://localhost:3000
+  url: ${FRONTEND_URL:http://localhost:4000,http://localhost:3000}
 
 logging:
   level:

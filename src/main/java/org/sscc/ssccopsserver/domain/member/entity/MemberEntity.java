@@ -43,7 +43,15 @@ public class MemberEntity {
     @Column(name = "mbr_id")
     private Long id;
 
-    @Column(name = "stdnt_no", nullable = false, updatable = false, length = 20)
+    /*
+     * 졸업 회원은 학번 없이 가입할 수 있어야 해 nullable이다 (#21). 학번이 기억나지 않는 졸업생을
+     * 위해 가입 화면이 선택 입력으로 두고 있는데, NOT NULL이면 그 화면이 성립하지 않는다.
+     *
+     * uk_mbr_student_number는 그대로 유지한다 — NULL은 UNIQUE 제약에 걸리지 않기 때문이다.
+     * 다만 학번 미입력을 빈 문자열로 저장하면 두 번째 졸업 회원부터 UNIQUE 충돌이 나므로
+     * 반드시 NULL로 저장해야 한다.
+     */
+    @Column(name = "stdnt_no", updatable = false, length = 20)
     private String studentNumber;
 
     @Column(name = "gen_no", nullable = false)

@@ -146,13 +146,22 @@ public class SecurityConfig {
                             .authenticated();
                 });
 
-        // Supabase JWT 검증 (JWKS) 및 인증 컨텍스트 구성
+        /*
+         * Supabase JWT 검증 (JWKS) 및 인증 컨텍스트 구성.
+         *
+         * 리소스 서버는 자체 EntryPoint(BearerTokenAuthenticationEntryPoint)를 갖고 있어서,
+         * exceptionHandling()에만 걸어 두면 토큰이 무효할 때(서명·만료·sub 형식 오류) 본문 없이
+         * WWW-Authenticate 헤더만 나간다. 토큰이 아예 없을 때만 우리 핸들러를 타 응답 포맷이
+         * 갈리므로, 여기에도 같은 핸들러를 명시해 항상 ApiResponse 포맷으로 내보낸다.
+         */
         http.oauth2ResourceServer(
                 oauth2 ->
-                        oauth2.jwt(
-                                jwt ->
-                                        jwt.jwtAuthenticationConverter(
-                                                supabaseJwtAuthenticationConverter)));
+                        oauth2.authenticationEntryPoint(authenticationEntryPoint)
+                                .accessDeniedHandler(accessDeniedHandler)
+                                .jwt(
+                                        jwt ->
+                                                jwt.jwtAuthenticationConverter(
+                                                        supabaseJwtAuthenticationConverter)));
 
         // 예외 처리
         http.exceptionHandling(

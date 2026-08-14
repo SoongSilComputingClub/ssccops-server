@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.global.security.jwt;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
@@ -36,6 +37,9 @@ class SupabaseJwtAuthenticationIntegrationTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
 
+    // 이 토큰 값일 때만 스텁 디코더가 sub를 UUID가 아닌 값으로 내려준다
+    private static final String NON_UUID_SUBJECT_TOKEN = "non-uuid-subject";
+
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
 
@@ -54,6 +58,21 @@ class SupabaseJwtAuthenticationIntegrationTest {
     @Test
     void requestWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/examples/1")).andExpect(status().isUnauthorized());
+    }
+
+    /*
+     * sub가 UUID가 아니면 우리 회원 식별 체계로 해석할 수 없는 토큰이다.
+     * 컨버터가 던지는 InvalidBearerTokenException이 EntryPoint를 타고 ApiResponse 포맷의
+     * 401로 나가는지까지 확인한다 — 프론트가 오류 본문을 코드로 분기하기 때문이다.
+     */
+    @Test
+    void tokenWithNonUuidSubjectReturns401InApiResponseFormat() throws Exception {
+        mockMvc.perform(
+                        get("/examples/1")
+                                .header("Authorization", "Bearer " + NON_UUID_SUBJECT_TOKEN))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("COMMON401"));
     }
 
     /*
@@ -79,7 +98,10 @@ class SupabaseJwtAuthenticationIntegrationTest {
             return token ->
                     Jwt.withTokenValue(token)
                             .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
+                            .subject(
+                                    NON_UUID_SUBJECT_TOKEN.equals(token)
+                                            ? "not-a-uuid"
+                                            : AUTH_USER_ID.toString())
                             .claim("email", "test@sscc.org")
                             .issuedAt(Instant.now())
                             .expiresAt(Instant.now().plusSeconds(60))

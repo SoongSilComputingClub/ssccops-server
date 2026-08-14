@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -28,6 +29,8 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+
+import com.jayway.jsonpath.JsonPath;
 
 /*
  * 실제 JWKS 없이 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
@@ -192,6 +195,73 @@ class WorkControllerTest {
                 studentNumber,
                 name,
                 email);
+    }
+
+    /*
+     * 상세 조회(OPS-003). 하위 업무가 없는 업무라 진행률은 0이고 목록은 빈 배열이다 —
+     * 값이 없어도 필드는 내린다 (AP-15). 진행률 계산 자체는 서비스 테스트가 다룬다.
+     */
+    @Test
+    void getWorkReturns200WithDetail() throws Exception {
+        Long workId = createWork();
+
+        mockMvc.perform(
+                        get("/v1/works/{workId}", workId)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.workId").value(workId))
+                .andExpect(jsonPath("$.data.operationId").isNumber())
+                .andExpect(jsonPath("$.data.operationType").value("WORK"))
+                .andExpect(jsonPath("$.data.title").value("동아리 박람회 부스 운영"))
+                .andExpect(jsonPath("$.data.workType").value("EVENT"))
+                .andExpect(jsonPath("$.data.workStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data.priority").value("NORMAL"))
+                .andExpect(jsonPath("$.data.owner.memberId").value(ownerId))
+                .andExpect(jsonPath("$.data.owner.name").exists())
+                .andExpect(jsonPath("$.data.registrant.memberId").value(registrantId))
+                .andExpect(jsonPath("$.data.startAt").value("2026-09-01T18:00:00+09:00"))
+                .andExpect(jsonPath("$.data.progressRate").value(0))
+                .andExpect(jsonPath("$.data.subWorkCount").value(0))
+                .andExpect(jsonPath("$.data.subWorks").isArray())
+                .andExpect(jsonPath("$.data.subWorks").isEmpty());
+    }
+
+    @Test
+    void getUnknownWorkReturns404() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works/{workId}", 999_999L)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void getWorkWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/v1/works/{workId}", 1L)).andExpect(status().isUnauthorized());
+    }
+
+    private Long createWork() throws Exception {
+        String body =
+                """
+                {
+                  "title": "동아리 박람회 부스 운영",
+                  "itemType": "EVENT",
+                  "ownerId": %d,
+                  "startAt": "2026-09-01T18:00:00+09:00",
+                  "endAt": "2026-09-01T20:00:00+09:00"
+                }
+                """
+                        .formatted(ownerId);
+
+        String response =
+                mockMvc.perform(authenticated(body))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.workId", Long.class);
     }
 
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder

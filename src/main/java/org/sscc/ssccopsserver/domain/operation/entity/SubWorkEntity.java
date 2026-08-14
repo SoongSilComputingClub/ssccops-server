@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 
 import jakarta.persistence.Column;
@@ -206,10 +207,35 @@ public class SubWorkEntity {
         }
     }
 
+    /*
+     * 완료 체크리스트를 지금 바꿀 수 있는지 (OPS-013). 완료된 건은 막는다 — 완료 후 체크를
+     * 해제하면 '완료됐는데 완료 조건 미충족'인 데이터가 남고, 완료를 되돌리는 전이는 전이표에
+     * 없다(TR-X1). 기획·진행·검토에서는 모두 허용한다: 반려로 진행에 되돌아온 담당자가 남은
+     * 항목을 마저 채우는 것이 화면의 흐름이라 검토 단계로 좁히지 않는다.
+     *
+     * 전용 오류 코드를 새로 만들지 않고 TRANSITION_NOT_ALLOWED를 재사용한다. 정의서
+     * 03_오류_코드에 없는 코드를 늘리면 코드 문자열로 분기하는 프론트와 어긋난다.
+     */
+    public void requireChecklistEditable() {
+        if (this.workStatus == WorkStatus.DONE) {
+            throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        }
+    }
+
     private void requireStatus(WorkStatus required) {
         if (this.workStatus != required) {
             throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
         }
+    }
+
+    /*
+     * 진행률(OPS-003의 하위 업무 목록). sub_work에는 진행률 컬럼이 없으므로 완료 체크리스트의
+     * 완료 비율에서 파생한다. 체크리스트는 다른 테이블(sub_work_chck_list)에 있어 엔티티가
+     * 스스로 셀 수 없으므로 개수만 넘겨받고, 완료 여부로 100을 확정하는 판단은 여기서 한다.
+     */
+    public BigDecimal progressRate(long completedItems, long totalItems) {
+        return ProgressRate.ofChecklist(
+                this.workStatus == WorkStatus.DONE, completedItems, totalItems);
     }
 
     /*

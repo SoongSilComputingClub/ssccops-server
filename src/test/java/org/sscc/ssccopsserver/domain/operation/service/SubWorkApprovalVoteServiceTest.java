@@ -31,6 +31,7 @@ import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
@@ -454,6 +455,125 @@ class SubWorkApprovalVoteServiceTest {
         assertThat(detailApprovalStatus(subWorkId)).isEqualTo(ApprovalStatus.NOT_REQUIRED);
     }
 
+    /*
+     * 상세 화면이 승인·반려 버튼을 그릴 수 있어야 한다 (#58). 판정을 프론트가 역할명으로
+     * 복제하면 서버의 승인자 판정과 갈리므로, 누가 누를 수 있는지는 서버가 답한다.
+     */
+    @Test
+    void detailAnswersWhoCanApproveAndReject() {
+        Long subWorkId = subWorkInReview(quorumTypeId); // 승인자가 회장인 유형
+
+        SubWorkDetailResponse forApprover = detail(subWorkId, president);
+        assertThat(forApprover.canApprove()).isTrue();
+        assertThat(forApprover.canReject()).isTrue();
+
+        // 총무도 국원도 이 유형의 승인자가 아니다 — 운영진이라는 것과 승인자라는 것은 다르다
+        assertThat(detail(subWorkId, treasurer).canApprove()).isFalse();
+        assertThat(detail(subWorkId, staff).canReject()).isFalse();
+    }
+
+    // 승인 단계가 없는 유형은 승인자도 없다 — 전이가 통과시키는 사람에게 버튼도 보여야 한다
+    @Test
+    void detailAllowsAnyoneToDecideOnApprovalFreeType() {
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
+
+        SubWorkDetailResponse detail = detail(subWorkId, studyLeader);
+
+        assertThat(detail.canApprove()).isTrue();
+        assertThat(detail.canReject()).isTrue();
+    }
+
+    // 승인함 카드와 같은 정족수 진행을 상세에서도 본다 — 시안은 여기서 승인을 누른다
+    @Test
+    void detailCarriesQuorumProgressAndMyVote() {
+        Long subWorkId = subWorkInReview(quorumTypeId);
+        vote(subWorkId, VoteChoice.AGREE, staff);
+
+        SubWorkDetailResponse forVoter = detail(subWorkId, staff);
+        assertThat(forVoter.quorum().needed()).isTrue();
+        assertThat(forVoter.quorum().requiredCount()).isEqualTo(REQUIRED_AGREE_COUNT);
+        assertThat(forVoter.quorum().currentCount()).isEqualTo(1L);
+        assertThat(forVoter.quorum().met()).isFalse();
+        assertThat(forVoter.myVote()).isEqualTo(VoteChoice.AGREE);
+
+        // 내 표는 보는 사람마다 다르다. 아직 던지지 않았으면 버튼이 선택되지 않은 상태다
+        assertThat(detail(subWorkId, president).myVote()).isNull();
+    }
+
+    /*
+     * 반려 후 다시 올라오면 회차가 바뀌므로 이전 회차에 던진 표는 이번 선택 상태가 아니다.
+     * 승인함 카드가 회차로 거르는 것과 같은 규칙이 상세에도 있어야 한다.
+     */
+    @Test
+    void detailDropsVoteFromPreviousApprovalRound() {
+        Long subWorkId = subWorkInReview(quorumTypeId);
+        vote(subWorkId, VoteChoice.AGREE, staff);
+        transition(subWorkId, TransitionAction.REJECT, "공지 문안 재검토 필요", president);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
+
+        SubWorkDetailResponse detail = detail(subWorkId, staff);
+
+        assertThat(detail.myVote()).isNull();
+        assertThat(detail.quorum().currentCount()).isZero();
+    }
+
+    // 단독 유형은 셀 표가 없다. 0으로 채우면 '아무도 찬성하지 않은 정족수 유형'과 구별되지 않는다
+    @Test
+    void detailMarksQuorumNotNeededForSoleType() {
+        Long subWorkId = subWorkInReview(soleTypeId);
+
+        SubWorkDetailResponse detail = detail(subWorkId, treasurer);
+
+        assertThat(detail.quorum().needed()).isFalse();
+        assertThat(detail.quorum().requiredCount()).isNull();
+        assertThat(detail.quorum().currentCount()).isNull();
+        assertThat(detail.quorum().met()).isNull();
+        assertThat(detail.myVote()).isNull();
+    }
+
+    /*
+     * 반려 모달이 "사유는 요청자에게 전달됩니다"라고 약속한다 (#58). 알림 채널이 없는 지금
+     * 그 전달의 실체는 상세 응답이며, 없으면 진행으로 되돌아온 담당자가 무엇을 고칠지 알 수 없다.
+     */
+    @Test
+    void detailCarriesLatestRejectionReason() {
+        Long subWorkId = subWorkInReview(soleTypeId);
+        transition(subWorkId, TransitionAction.REJECT, "예산안 대비 초과, 견적서 재첨부 필요", treasurer);
+
+        SubWorkDetailResponse detail = detail(subWorkId, registrant);
+
+        assertThat(detail.latestRejection()).isNotNull();
+        assertThat(detail.latestRejection().reason()).isEqualTo("예산안 대비 초과, 견적서 재첨부 필요");
+        assertThat(detail.latestRejection().rejector().memberId()).isEqualTo(treasurer.getId());
+        assertThat(detail.latestRejection().rejectedAt()).isNotNull();
+    }
+
+    // 반려 → 보완 → 재검토요청 → 재반려. 화면이 묻는 것은 '직전에 왜 반려됐는가' 하나다
+    @Test
+    void detailKeepsOnlyTheMostRecentRejection() {
+        Long subWorkId = subWorkInReview(soleTypeId);
+        transition(subWorkId, TransitionAction.REJECT, "첫 번째 반려 사유", treasurer);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
+        transition(subWorkId, TransitionAction.REJECT, "두 번째 반려 사유", treasurer);
+
+        assertThat(detail(subWorkId, registrant).latestRejection().reason())
+                .isEqualTo("두 번째 반려 사유");
+        // 이력 자체는 지우지 않는다 (POL-004)
+        assertThat(subWorkRejectionRepository.findAll()).hasSize(2);
+    }
+
+    // 반려된 적이 없으면 보여줄 사유도 없다
+    @Test
+    void detailHasNoRejectionBeforeAnyRejection() {
+        assertThat(detail(subWorkInReview(soleTypeId), registrant).latestRejection()).isNull();
+    }
+
+    private SubWorkDetailResponse detail(Long subWorkId, MemberEntity viewer) {
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkService.getSubWork(subWorkId, viewer);
+    }
+
     private MemberEntity saveMember(String studentNumber, String name, String roleName) {
         MemberEntity member =
                 MemberFixture.save(
@@ -534,12 +654,12 @@ class SubWorkApprovalVoteServiceTest {
     private WorkStatus detailWorkStatus(Long subWorkId) {
         entityManager.flush();
         entityManager.clear();
-        return subWorkService.getSubWork(subWorkId).workStatus();
+        return subWorkService.getSubWork(subWorkId, registrant).workStatus();
     }
 
     private ApprovalStatus detailApprovalStatus(Long subWorkId) {
         entityManager.flush();
         entityManager.clear();
-        return subWorkService.getSubWork(subWorkId).approvalStatus();
+        return subWorkService.getSubWork(subWorkId, registrant).approvalStatus();
     }
 }

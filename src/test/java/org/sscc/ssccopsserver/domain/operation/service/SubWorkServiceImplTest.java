@@ -221,7 +221,8 @@ class SubWorkServiceImplTest {
     @Test
     void subWorkTypePolicyChangeDoesNotApplyRetroactively() {
         Long subWorkId = createSubWork(approvalFreeTypeId);
-        int checklistCountAtCreation = subWorkService.getSubWork(subWorkId).checklist().size();
+        int checklistCountAtCreation =
+                subWorkService.getSubWork(subWorkId, registrant).checklist().size();
 
         SubWorkTypeEntity subWorkType =
                 SubWorkTypeFixture.entityOf(
@@ -231,7 +232,7 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        SubWorkDetailResponse detail = subWorkService.getSubWork(subWorkId);
+        SubWorkDetailResponse detail = subWorkService.getSubWork(subWorkId, registrant);
         assertThat(detail.approvalStatus()).isEqualTo(ApprovalStatus.NOT_REQUIRED);
         assertThat(detail.checklist()).hasSize(checklistCountAtCreation);
         assertThat(detail.checklist())
@@ -432,7 +433,7 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        SubWorkDetailResponse detail = subWorkService.getSubWork(subWorkId);
+        SubWorkDetailResponse detail = subWorkService.getSubWork(subWorkId, registrant);
 
         assertThat(detail.subWorkId()).isEqualTo(subWorkId);
         assertThat(detail.workId()).isEqualTo(parentWorkId);
@@ -481,18 +482,19 @@ class SubWorkServiceImplTest {
         Long approvalFreeId =
                 subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
 
-        SubWorkDetailResponse approvalNeeded = subWorkService.getSubWork(approvalNeededId);
+        SubWorkDetailResponse approvalNeeded =
+                subWorkService.getSubWork(approvalNeededId, registrant);
         assertThat(approvalNeeded.approvalRequired()).isTrue();
         assertThat(approvalNeeded.approvalStatus()).isEqualTo(ApprovalStatus.PENDING);
 
-        SubWorkDetailResponse approvalFree = subWorkService.getSubWork(approvalFreeId);
+        SubWorkDetailResponse approvalFree = subWorkService.getSubWork(approvalFreeId, registrant);
         assertThat(approvalFree.approvalRequired()).isFalse();
         assertThat(approvalFree.approvalStatus()).isEqualTo(ApprovalStatus.NOT_REQUIRED);
     }
 
     @Test
     void getSubWorkWithUnknownIdIsRejected() {
-        assertThatThrownBy(() -> subWorkService.getSubWork(999L))
+        assertThatThrownBy(() -> subWorkService.getSubWork(999L, registrant))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
@@ -510,7 +512,7 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThatThrownBy(() -> subWorkService.getSubWork(created.subWorkId()))
+        assertThatThrownBy(() -> subWorkService.getSubWork(created.subWorkId(), registrant))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
@@ -549,13 +551,33 @@ class SubWorkServiceImplTest {
 
     /*
      * 상세 응답이 담당자·등록자 이름과 유형명·상위 업무를 모두 쓰므로, 연관을 지연 로딩에
-     * 맡기면 응답을 조립하는 동안 쿼리가 하나씩 더 나간다 (DB-13). 하위 업무 + 체크리스트
-     * 2회로 끝나는지 못 박아 둔다 — 연관이 늘어도 EntityGraph에 넣으면 이 수는 유지된다.
+     * 맡기면 응답을 조립하는 동안 쿼리가 하나씩 더 나간다 (DB-13). 연관이 늘어도 EntityGraph에
+     * 넣으면 이 수가 유지되는지 못 박아 둔다.
+     *
+     * 승인이 필요 없는 유형은 3회다: 하위 업무 1 + 체크리스트 1 + 최근 반려 1 (#58).
+     * 승인자 판정이 유형만 보고 끝나 회원의 역할을 조회하지 않고, 투표가 없어 정족수도 세지 않는다.
      */
     @Test
-    void getSubWorkRunsTwoQueries() {
+    void getSubWorkRunsThreeQueriesForApprovalFreeType() {
         Long subWorkId =
                 subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
+
+        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(3);
+    }
+
+    /*
+     * 승인이 필요한 유형은 승인자 판정에 회원의 현재 역할이 필요해 한 번 더 조회한다 (4회).
+     * 정족수 유형이 아니면 회차·찬성 수·내 표는 세지 않는다 — 투표 자체가 없는 유형이다.
+     */
+    @Test
+    void getSubWorkRunsOneMoreQueryForApprovalNeededType() {
+        Long subWorkId =
+                subWorkService.createSubWork(request(approvalNeededTypeId), registrant).subWorkId();
+
+        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(4);
+    }
+
+    private long queryCountOfDetail(Long subWorkId) {
         entityManager.flush();
         entityManager.clear();
 
@@ -567,9 +589,9 @@ class SubWorkServiceImplTest {
                         .getStatistics();
         statistics.clear();
 
-        subWorkService.getSubWork(subWorkId);
+        subWorkService.getSubWork(subWorkId, registrant);
 
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
+        return statistics.getPrepareStatementCount();
     }
 
     // TR-01 착수. 승인 상태는 검토요청 전까지 등록 시점 값 그대로다
@@ -1072,7 +1094,7 @@ class SubWorkServiceImplTest {
     private SubWorkDetailResponse detailOf(Long subWorkId) {
         entityManager.flush();
         entityManager.clear();
-        return subWorkService.getSubWork(subWorkId);
+        return subWorkService.getSubWork(subWorkId, registrant);
     }
 
     private MemberEntity saveMember(String studentNumber, String name, String email) {

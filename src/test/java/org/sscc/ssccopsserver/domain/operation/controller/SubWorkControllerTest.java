@@ -258,6 +258,18 @@ class SubWorkControllerTest {
                 .andExpect(jsonPath("$.data.checklist[0].sortOrder").value(1))
                 .andExpect(jsonPath("$.data.checklistSummary.completedCount").value(0))
                 .andExpect(jsonPath("$.data.checklistSummary.totalCount").value(4))
+                /*
+                 * 승인·반려 버튼을 그릴지는 서버가 답한다 (#58). 토큰 주체가 이 유형(예산지출)의
+                 * 승인자인 총무라 둘 다 true다 — 상태·정족수는 여기 섞지 않는다.
+                 */
+                .andExpect(jsonPath("$.data.canApprove").value(true))
+                .andExpect(jsonPath("$.data.canReject").value(true))
+                // 단독 유형이라 진행바를 그리지 않는다. 나머지 정족수 값은 0이 아니라 NULL이다
+                .andExpect(jsonPath("$.data.quorum.needed").value(false))
+                .andExpect(jsonPath("$.data.quorum.requiredCount").doesNotExist())
+                .andExpect(jsonPath("$.data.myVote").doesNotExist())
+                // 반려된 적이 없으면 보여줄 사유도 없다 (값은 NULL이다)
+                .andExpect(jsonPath("$.data.latestRejection").doesNotExist())
                 // 기수는 프론트 디자인에서 빠져 응답에도 두지 않는다
                 .andExpect(jsonPath("$.data.owner.generationNumber").doesNotExist())
                 // 목록 봉투는 단건 응답에 실리지 않는다 (AP-11)

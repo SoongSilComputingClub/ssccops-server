@@ -77,10 +77,16 @@ public class SubWorkController {
     /*
      * 하위 업무 상세 조회 (OPS-009). '하위 업무 상세' 화면(OPS-SCR-002)이 진입 시 호출한다.
      * 소프트 삭제된 건은 서비스가 404로 막으므로 여기서 분기하지 않는다 (LY-02).
+     *
+     * 조회인데 인증 주체를 받는 것은 화면이 이 응답만으로 승인·반려 버튼을 그려야 하기 때문이다
+     * (#58). 응답 자체는 누가 보든 같고, 보는 사람에 따라 갈리는 것은 canApprove·canReject와
+     * myVote뿐이다. 판정을 프론트가 하지 않는 것은 서버의 승인자 판정과 어긋나면 버튼은 보이는데
+     * 누르면 403이 나기 때문이다.
      */
     @GetMapping("/{subWorkId}")
-    public ApiResponse<SubWorkDetailResponse> getSubWork(@PathVariable Long subWorkId) {
-        return ApiResponse.success(subWorkService.getSubWork(subWorkId));
+    public ApiResponse<SubWorkDetailResponse> getSubWork(
+            @PathVariable Long subWorkId, @CurrentMember MemberEntity viewer) {
+        return ApiResponse.success(subWorkService.getSubWork(subWorkId, viewer));
     }
 
     /*

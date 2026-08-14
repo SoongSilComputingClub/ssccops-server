@@ -25,8 +25,12 @@ public interface SubWorkService {
     /*
      * 하위 업무 1건을 완료 체크리스트와 함께 조회한다 (OPS-009). 소프트 삭제된 건은
      * 존재하지 않는 것으로 보고 SUB_WORK_NOT_FOUND(404)를 던진다.
+     *
+     * viewer는 인증 주체이며 응답을 좁히는 데 쓰지 않는다 — 상세는 누가 보든 같은 하위 업무를
+     * 돌려준다. 이 회원에 따라 달라지는 것은 '나'가 들어간 값뿐이다: 승인·반려 버튼을 그릴지
+     * (canApprove·canReject)와 내가 이번 회차에 던진 표(myVote) (#58).
      */
-    SubWorkDetailResponse getSubWork(Long subWorkId);
+    SubWorkDetailResponse getSubWork(Long subWorkId, MemberEntity viewer);
 
     /*
      * 조건에 맞는 하위 업무를 상위 업무를 가로질러 조회한다 (OPS-008 · REQ-025).

@@ -58,41 +58,63 @@ public class ApprovalAuthorityPolicy {
      * 담당자·국장 이상이며 그 통제는 역할 인가(#9)의 몫이다.
      */
     public void requireApprover(SubWorkEntity subWork, MemberEntity performer) {
-        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
-        if (!subWorkType.isApprovalNeeded()) {
+        if (canDecide(subWork, performer)) {
             return;
         }
 
+        /*
+         * 막힌 이유를 둘로 나눠 남긴다. 둘 다 겉으로는 평범한 403이라 로그가 없으면
+         * '권한이 없는 사람이 눌렀다'와 '승인 정책 데이터가 깨졌다'를 구분할 수 없다.
+         * 이 조회는 실패 경로에서만 돈다 — 통과하는 요청에 쿼리를 더하지 않는다.
+         */
+        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         Optional<AuthorizerRole> required =
                 AuthorizerRole.from(subWorkType.getAuthorizerRoleCode());
         if (required.isEmpty()) {
             /*
              * 승인이 필요한데 승인자 역할이 비었거나 기준 코드에 없는 값이다. 유형 저장
-             * (OPS-019)이 막는 조합이라 정상 경로로는 생기지 않는다 — 데이터가 깨진 것이므로
-             * 권한 없음과 구분해 남긴다.
+             * (OPS-019)이 막는 조합이라 정상 경로로는 생기지 않는다 — 데이터가 깨진 것이다.
              */
             log.error(
                     "승인자 역할 코드가 유효하지 않다. subWorkId={}, subWorkTypeId={}, autzrRoleCd={}",
                     subWork.getId(),
                     subWorkType.getId(),
                     subWorkType.getAuthorizerRoleCode());
-            throw new GeneralException(OperationErrorCode.FORBIDDEN);
-        }
-
-        List<String> roleNames = roleNamesOf(performer);
-        if (roleNames.stream().noneMatch(required.get()::matches)) {
+        } else {
             /*
              * 역할 관리 화면에서 역할명을 바꾸면(role.role_nm은 NOT NULL도 UNIQUE도 아니다)
-             * 승인할 수 있는 사람이 사라지는데 겉으로는 평범한 403이라 원인을 찾기 어렵다.
-             * 판정에 쓴 양쪽 값을 남겨 '권한 없음'과 '매핑이 깨짐'을 로그에서 나눌 수 있게 한다.
+             * 승인할 수 있는 사람이 사라진다. 판정에 쓴 양쪽 값을 남겨 매핑이 깨진 경우를
+             * 로그에서 알아볼 수 있게 한다.
              */
             log.warn(
                     "승인자 역할 불일치. subWorkId={}, 필요={}, 보유={}",
                     subWork.getId(),
                     required.get().getRoleName(),
-                    roleNames);
-            throw new GeneralException(OperationErrorCode.FORBIDDEN);
+                    roleNamesOf(performer));
         }
+        throw new GeneralException(OperationErrorCode.FORBIDDEN);
+    }
+
+    /*
+     * 같은 판정을 예외 없이 묻는다 (OPS-009의 canApprove·canReject · #58). 상세 화면이 승인·반려
+     * 버튼을 그릴지 정하는 데 쓰므로 흐름을 끊을 수 없다.
+     *
+     * requireApprover와 규칙을 공유하는 것이 핵심이다 — 판정이 두 벌이 되면 버튼은 보이는데
+     * 누르면 403이 나거나 그 반대가 된다. 여기서 로그를 남기지 않는 것은 조회마다 찍혀
+     * 실제 거절과 섞이기 때문이다.
+     */
+    public boolean canDecide(SubWorkEntity subWork, MemberEntity member) {
+        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
+        if (!subWorkType.isApprovalNeeded()) {
+            // 승인 단계가 없는 유형은 승인자도 없다. 막으면 저위험 업무를 아무도 완료할 수 없다
+            return true;
+        }
+        if (member == null) {
+            return false;
+        }
+        return AuthorizerRole.from(subWorkType.getAuthorizerRoleCode())
+                .filter(required -> roleNamesOf(member).stream().anyMatch(required::matches))
+                .isPresent();
     }
 
     /*

@@ -46,6 +46,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
@@ -86,6 +87,7 @@ class WorkServiceImplSearchTest {
     @Autowired private SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     @Autowired private SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     @Autowired private SubWorkApprovalRepository subWorkApprovalRepository;
+    @Autowired private SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     @Autowired private SubWorkRejectionRepository subWorkRejectionRepository;
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
@@ -127,8 +129,10 @@ class WorkServiceImplSearchTest {
                         subWorkChecklistItemRepository,
                         subWorkStatusHistoryRepository,
                         subWorkApprovalRepository,
+                        subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
+                        new ApprovalAuthorityPolicy(memberService),
                         FIXED_CLOCK);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다

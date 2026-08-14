@@ -25,6 +25,8 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryReposit
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
@@ -55,6 +57,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
@@ -64,6 +67,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 
 /*
@@ -97,9 +101,12 @@ class SubWorkServiceImplTest {
     @Autowired private SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     @Autowired private SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     @Autowired private SubWorkApprovalRepository subWorkApprovalRepository;
+    @Autowired private SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     @Autowired private SubWorkRejectionRepository subWorkRejectionRepository;
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
@@ -149,12 +156,25 @@ class SubWorkServiceImplTest {
                         subWorkChecklistItemRepository,
                         subWorkStatusHistoryRepository,
                         subWorkApprovalRepository,
+                        subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
+                        new ApprovalAuthorityPolicy(memberService),
                         FIXED_CLOCK);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
+        /*
+         * 승인·반려는 유형이 지정한 승인자만 할 수 있다 (#47). 승인이 필요한 시드 유형
+         * '예산지출'의 승인자가 총무라, 전이를 수행하는 registrant에게 그 역할을 붙여 둔다.
+         * 붙이지 않으면 이 클래스의 승인·반려 테스트가 전부 403으로 떨어진다.
+         */
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                registrant,
+                MemberRoleFixture.TREASURER);
         MemberEntity owner = saveMember("20200002", "이서연", "owner@sscc.org");
         ownerId = owner.getId();
         parentWorkId =
@@ -765,6 +785,13 @@ class SubWorkServiceImplTest {
         Long subWorkId = subWorkInReview(approvalNeededTypeId);
         completeChecklist(subWorkId);
         MemberEntity approver = memberRepository.findById(ownerId).orElseThrow();
+        // 등록자가 아닌 승인자여야 하므로 담당자에게도 승인자 역할을 붙인다 (#47)
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                approver,
+                MemberRoleFixture.TREASURER);
 
         SubWorkTransitionResponse response =
                 subWorkService.transitionSubWork(

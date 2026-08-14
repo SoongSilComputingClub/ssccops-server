@@ -11,6 +11,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -35,9 +36,24 @@ import lombok.NoArgsConstructor;
  *
  * prrty_rnk_cd(우선순위)는 등록 화면에 입력란이 있어 되살린 컬럼이다.
  */
+/*
+ * 인덱스 둘은 상위 업무 목록(OPS-020)의 정렬 키다 (DB-17·AGG-06). 정렬 대상이 work가 아니라
+ * 여기인 것은 제목·기간·등록시각 같은 공통 속성을 부모가 갖기 때문이며, 커서 페이징은 정렬
+ * 키를 매 요청 훑으므로 인덱스가 없으면 그대로 전체 스캔이 된다.
+ *
+ * 주의: 이 선언으로 인덱스가 만들어지는 것은 ddl-auto가 도는 local·dev·test뿐이다.
+ * prod는 ddl-auto가 none이라 배포 전에 아래 DDL을 직접 실행해야 한다.
+ *   CREATE INDEX idx_oper_crt_dt ON oper (crt_dt);
+ *   CREATE INDEX idx_oper_bgng_dt ON oper (bgng_dt);
+ */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
-@Table(name = "oper")
+@Table(
+        name = "oper",
+        indexes = {
+            @Index(name = "idx_oper_crt_dt", columnList = "crt_dt"),
+            @Index(name = "idx_oper_bgng_dt", columnList = "bgng_dt")
+        })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)

@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.domain.operation.dto.ApprovalQuorumResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistSummaryResponse;
@@ -20,6 +21,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCursor;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkRejectionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
@@ -152,11 +154,14 @@ public class SubWorkServiceImpl implements SubWorkService {
 
     /*
      * 상세 조회(OPS-009). 연관은 @EntityGraph가 한 번에 끌어오고 체크리스트만 따로 세므로
-     * 쿼리는 2회다. 조회는 어떤 상태도 바꾸지 않는다 (AP-07) — 지연 여부도 컬럼을 갱신하지
-     * 않고 응답에서만 판정한다.
+     * 하위 업무 1 + 체크리스트 1 + 최근 반려 1로 3회이며, 여기에 승인 관련 값이 붙는다 (#58):
+     * 승인이 필요한 유형이면 역할 1회, 정족수 유형이면 회차·찬성 수·내 표 3회가 더해져 최대 7회다.
+     * 정족수를 쓰지 않는 유형에는 투표 자체가 없으므로 그 세 쿼리를 태우지 않는다.
+     *
+     * 조회는 어떤 상태도 바꾸지 않는다 (AP-07) — 지연 여부도 컬럼을 갱신하지 않고 응답에서만 판정한다.
      */
     @Override
-    public SubWorkDetailResponse getSubWork(Long subWorkId) {
+    public SubWorkDetailResponse getSubWork(Long subWorkId, MemberEntity viewer) {
         SubWorkEntity subWork =
                 subWorkRepository
                         .findByIdAndOperationDeletedAtIsNull(subWorkId)
@@ -166,7 +171,53 @@ public class SubWorkServiceImpl implements SubWorkService {
         List<SubWorkChecklistItemEntity> checklist =
                 subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);
 
-        return SubWorkDetailResponse.of(subWork, checklist, subWork.isDelayedAt(clock.instant()));
+        /*
+         * 회차는 정족수 유형에서만 센다 — 투표가 없는 유형에는 쓸 곳이 없다. 한 번만 세어
+         * 정족수 진행과 내 표가 같은 회차를 보게 한다(따로 세면 그 사이의 전이로 갈릴 수 있다).
+         */
+        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
+        int approvalSequence = subWorkType.requiresQuorum() ? currentApprovalSequence(subWork) : 0;
+
+        return SubWorkDetailResponse.of(
+                subWork,
+                checklist,
+                subWork.isDelayedAt(clock.instant()),
+                quorumOf(subWork, approvalSequence),
+                myVoteOn(subWork, viewer, approvalSequence),
+                SubWorkRejectionResponse.from(
+                        subWorkRejectionRepository
+                                .findFirstBySubWorkOrderByRejectedAtDescIdDesc(subWork)
+                                .orElse(null)),
+                approvalAuthorityPolicy.canDecide(subWork, viewer));
+    }
+
+    /*
+     * 상세의 정족수 진행 (#58). 승인함 카드(OPS-017)와 같은 값을 같은 규칙으로 만든다 —
+     * 이번 회차의 찬성만 세고, 정족수 유형이 아니면 세지 않는다.
+     */
+    private ApprovalQuorumResponse quorumOf(SubWorkEntity subWork, int approvalSequence) {
+        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
+        if (!subWorkType.requiresQuorum()) {
+            return ApprovalQuorumResponse.of(subWorkType, 0L);
+        }
+        return ApprovalQuorumResponse.of(
+                subWorkType,
+                subWorkApprovalVoteRepository.countBySubWorkAndApprovalSequenceAndAgreedIsTrue(
+                        subWork, approvalSequence));
+    }
+
+    /*
+     * 내가 이번 회차에 던진 표 (#58). 이전 회차의 표는 이번 계획에 대한 동의가 아니므로
+     * 버튼 선택 상태로 그리지 않는다 — 승인함 카드가 회차로 거르는 것과 같은 규칙이다.
+     */
+    private VoteChoice myVoteOn(SubWorkEntity subWork, MemberEntity viewer, int approvalSequence) {
+        if (viewer == null || !subWork.getSubWorkType().requiresQuorum()) {
+            return null;
+        }
+        return subWorkApprovalVoteRepository
+                .findBySubWorkAndApprovalSequenceAndVoter(subWork, approvalSequence, viewer)
+                .map(SubWorkApprovalVoteEntity::choice)
+                .orElse(null);
     }
 
     /*

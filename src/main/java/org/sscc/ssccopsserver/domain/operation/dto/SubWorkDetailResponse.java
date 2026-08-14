@@ -12,6 +12,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationType;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.VoteChoice;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 
 /*
@@ -25,6 +26,16 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  *
  * approvalRequired·authorizerRoleCode는 화면의 "완료 전환은 회장·국장 승인이 필요합니다"
  * 안내를 그리기 위한 값으로, 하위 업무가 아니라 그 유형(sub_work_type)이 갖고 있다.
+ *
+ * canApprove·canReject는 **권한만** 답한다 (#58) — "이 사람이 승인·반려할 수 있는 사람인가"이지
+ * "지금 누르면 성공하는가"가 아니다. 화면은 이 값으로 버튼을 그릴지 정하고, 누를 수 있는지는
+ * workStatus(검토인가)·quorum.met·checklistSummary로 판단한다. 둘을 한 값에 섞으면 정족수가
+ * 모자란 승인자와 권한이 아예 없는 사람이 구별되지 않아, 승인자에게도 버튼이 사라진다.
+ * 서버가 권한(ApprovalAuthorityPolicy)과 선행 조건(SubWorkEntity)을 나눠 두는 것과 같은 경계다.
+ *
+ * quorum·myVote는 승인함 카드(OPS-017)와 같은 값이다 — 시안은 승인함이 아니라 이 상세 화면에서
+ * 승인·반려를 누르므로, 같은 판단 근거가 여기에도 있어야 한다. 정족수 유형이 아니면 quorum.needed가
+ * false이고 나머지는 NULL이다.
  *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
@@ -53,6 +64,11 @@ public record SubWorkDetailResponse(
         OffsetDateTime completedAt,
         List<SubWorkChecklistItemResponse> checklist,
         SubWorkChecklistSummaryResponse checklistSummary,
+        ApprovalQuorumResponse quorum,
+        VoteChoice myVote,
+        SubWorkRejectionResponse latestRejection,
+        boolean canApprove,
+        boolean canReject,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
@@ -68,9 +84,20 @@ public record SubWorkDetailResponse(
     /*
      * delayed는 엔티티의 dly_yn 컬럼이 아니라 조회 시점에 판정한 값이다 (SubWorkEntity.isDelayedAt).
      * 조회가 컬럼을 갱신하지는 않으므로(AP-07) 저장된 값과 어긋날 수 있다.
+     *
+     * canDecide 하나로 canApprove·canReject를 함께 채운다 — 승인과 반려의 권한 규칙이 지금은
+     * 같기 때문이다(둘 다 유형이 지정한 승인자). 그럼에도 응답 필드를 둘로 나눠 두는 것은
+     * 자가 승인 차단(O-04)이 확정되면 승인만 false가 되기 때문이며, 그때 프론트가 버튼 하나의
+     * 조건식을 고치지 않아도 되게 한다.
      */
     public static SubWorkDetailResponse of(
-            SubWorkEntity subWork, List<SubWorkChecklistItemEntity> checklist, boolean delayed) {
+            SubWorkEntity subWork,
+            List<SubWorkChecklistItemEntity> checklist,
+            boolean delayed,
+            ApprovalQuorumResponse quorum,
+            VoteChoice myVote,
+            SubWorkRejectionResponse latestRejection,
+            boolean canDecide) {
         OperationEntity operation = subWork.getOperation();
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         List<SubWorkChecklistItemResponse> checklistItems =
@@ -101,6 +128,11 @@ public record SubWorkDetailResponse(
                 toOffsetDateTime(subWork.getCompletedAt()),
                 checklistItems,
                 SubWorkChecklistSummaryResponse.from(checklistItems),
+                quorum,
+                myVote,
+                latestRejection,
+                canDecide,
+                canDecide,
                 toOffsetDateTime(operation.getCreatedAt()),
                 toOffsetDateTime(operation.getUpdatedAt()));
     }

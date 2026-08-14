@@ -161,6 +161,8 @@ public class FormServiceImpl implements FormService {
         FormStatus status = request.formSttsCd() == null ? form.getStatus() : request.formSttsCd();
 
         form.update(request.formTtlNm(), status, composition, receiptBeginAt, receiptEndAt);
+        // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
+        formRepository.flush();
 
         return FormSaveResponse.of(form, replaceLabels(form, request.labelIdsOrEmpty()));
     }

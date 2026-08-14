@@ -11,6 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -193,6 +196,64 @@ public class SubWorkServiceImpl implements SubWorkService {
                 previousApprovalStatus,
                 selfApproval,
                 occurredAt);
+    }
+
+    /*
+     * 완료 체크리스트 항목 체크·해제 (OPS-013). 상세 화면의 체크박스 하나가 이 호출 하나다.
+     *
+     * 상태 전이가 아니므로 sub_work_stts_hstry에 남기지 않고 업무 상태·승인 상태도 건드리지
+     * 않는다. 상위 업무 진행률(work_prgrs_rt)도 재집계하지 않는다 — 하위 업무 완료 건수에서
+     * 나오는 값이라 체크로 변하지 않는다. 상위 업무 상세(OPS-003)가 보여주는 하위 업무별
+     * 진행률은 저장 컬럼 없이 체크리스트에서 파생하므로(AGG-02) 다음 조회에 그대로 반영된다.
+     *
+     * performer는 아직 읽지 않는다. 권한 검사는 역할 인가(#9), 체크 이력은 감사 로그(#8)가
+     * 붙을 때 이 자리에서 쓰인다 — 그때 시그니처가 바뀌지 않도록 지금부터 받아 둔다 (LY-05).
+     */
+    @Override
+    @Transactional
+    public SubWorkChecklistItemUpdateResponse updateChecklistItem(
+            Long subWorkId,
+            Long checklistItemId,
+            SubWorkChecklistItemUpdateRequest request,
+            MemberEntity performer) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+        // 완료된 건은 체크를 되돌릴 수 없다. 항목을 찾기 전에 막아 상태를 먼저 알린다
+        subWork.requireChecklistEditable();
+
+        SubWorkChecklistItemEntity item =
+                subWorkChecklistItemRepository
+                        .findByIdAndSubWork(checklistItemId, subWork)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND));
+        item.updateCompletion(request.isCompleted());
+
+        return SubWorkChecklistItemUpdateResponse.of(subWorkId, item, checklistSummaryOf(subWork));
+    }
+
+    /*
+     * 갱신 후 '2/4 완료' 표기값. 항목 전체를 다시 로딩하지 않고 등록·상위 상세가 쓰는 집계
+     * 쿼리를 단건으로 재사용한다. 같은 트랜잭션이라 JPQL 실행 전 flush가 일어나 방금 바꾼
+     * 값이 반영된다.
+     *
+     * 방금 항목을 갱신한 하위 업무이므로 결과가 비는 경우는 없지만, 이 메서드가 다른 곳에서
+     * 불릴 때를 대비해 체크리스트가 없는 경우를 0/0으로 둔다.
+     */
+    private SubWorkChecklistSummaryResponse checklistSummaryOf(SubWorkEntity subWork) {
+        return subWorkChecklistItemRepository
+                .findProgressBySubWorkIds(List.of(subWork.getId()))
+                .stream()
+                .findFirst()
+                .map(
+                        progress ->
+                                new SubWorkChecklistSummaryResponse(
+                                        progress.getCompletedCount(), progress.getTotalCount()))
+                .orElseGet(() -> new SubWorkChecklistSummaryResponse(0, 0));
     }
 
     /*

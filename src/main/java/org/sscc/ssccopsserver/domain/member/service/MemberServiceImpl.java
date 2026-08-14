@@ -18,10 +18,14 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberGradeHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberStatusHistoryEntity;
+import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -44,6 +48,9 @@ public class MemberServiceImpl implements MemberService {
     // 기수 미배정. 운영진이 사후에 배정하므로 가입 시점에는 0으로 둔다 (gen_no는 NOT NULL)
     private static final int UNASSIGNED_GENERATION_NUMBER = 0;
 
+    // 최초 등급·상태 이력의 변경 사유. 이력만 봐도 운영진의 조정이 아니라 가입임을 알 수 있어야 한다
+    private static final String SIGNUP_HISTORY_REASON = "회원가입";
+
     /*
      * 동시 가입 요청이 UNIQUE 제약에 걸렸을 때 어느 쪽인지 가리기 위한 제약명.
      * 드라이버가 예외 메시지에 제약명을 담아 주므로 그것으로 판별한다.
@@ -55,6 +62,8 @@ public class MemberServiceImpl implements MemberService {
     private final MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     private final MemberGradeRepository memberGradeRepository;
     private final MemberStatusRepository memberStatusRepository;
+    private final MemberGradeHistoryRepository memberGradeHistoryRepository;
+    private final MemberStatusHistoryRepository memberStatusHistoryRepository;
 
     // 가입일 산출 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -108,6 +117,7 @@ public class MemberServiceImpl implements MemberService {
         member.assignAuthUserId(authUserId);
 
         MemberEntity saved = saveOrTranslateConflict(member);
+        recordInitialHistories(saved, grade, status);
 
         // 가입 직후에는 어떤 역할도 부여되지 않는다 — 역할 배정은 운영진의 별도 절차다
         return MemberProfileResponse.of(saved, List.of());
@@ -159,6 +169,25 @@ public class MemberServiceImpl implements MemberService {
      *
      * 제약 위반은 flush 시점에야 드러나므로 saveAndFlush로 이 메서드 안에서 잡는다.
      */
+    /*
+     * 등급·상태의 최초 부여도 이력에 남긴다. 이후 변경만 기록하면 회원 상세의 변경이력이
+     * "언제 무엇으로 시작했는지"를 보여줄 수 없고, 첫 승급 이력의 이전 등급이 근거 없이 떠 있게 된다.
+     *
+     * 이전 값은 NULL이다 — 가입 전에는 등급도 상태도 없었다는 사실 그대로다.
+     * 변경자는 본인이다. 운영진이 개입한 변경이 아니라 본인 신청으로 생긴 값이기 때문이다.
+     */
+    private void recordInitialHistories(
+            MemberEntity member, MemberGradeEntity grade, MemberStatusEntity status) {
+        LocalDate appliedDate = member.getJoinDate();
+
+        memberGradeHistoryRepository.save(
+                MemberGradeHistoryEntity.create(
+                        member, null, grade, appliedDate, SIGNUP_HISTORY_REASON, member));
+        memberStatusHistoryRepository.save(
+                MemberStatusHistoryEntity.create(
+                        member, null, status, appliedDate, null, SIGNUP_HISTORY_REASON, member));
+    }
+
     private MemberEntity saveOrTranslateConflict(MemberEntity member) {
         try {
             return memberRepository.saveAndFlush(member);

@@ -19,7 +19,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 **주의**: checkstyle의 `ImportOrder`는 `java, javax, jakarta, org, net, com, *, lombok` 그룹 순서를 엄격히 검사한다. import를 추가/이동한 뒤 checkstyle이 실패하면 순서를 수동으로 고치지 말고 `./gradlew spotlessApply`로 자동 정렬할 것 (Spotless의 `importOrder` 설정이 checkstyle 규칙과 동일하게 맞춰져 있음).
 
-**주의**: `prod`는 `ddl-auto: none`이라 엔티티 컬럼/테이블 변경(특히 리네임)이 배포만으로 반영되지 않는다. `local`/`dev`는 `ddl-auto: create-drop`이라 재기동 시 자동 반영되지만, `prod`는 배포 전 수동 DDL을 직접 실행해야 한다 — 예: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`를 배포 전에 미리 실행한다. 마이그레이션 도구(Flyway/Liquibase)가 없어 현재는 전적으로 수동이다.
+**주의**: `prod`는 `ddl-auto: none`이라 엔티티 컬럼/테이블 변경(특히 리네임)이 배포만으로 반영되지 않는다. `local`/`dev`는 `ddl-auto: create-drop`이라 재기동 시 자동 반영되지만, `prod`는 배포 전 수동 DDL을 직접 실행해야 한다 — 예: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`를 배포 전에 미리 실행한다. 널 허용 여부도 마찬가지다 — `mbr.stdnt_no`를 nullable로 바꿨으므로(#21, 졸업 회원 가입) `ALTER TABLE mbr ALTER COLUMN stdnt_no DROP NOT NULL;`이 배포 전에 필요하다. 마이그레이션 도구(Flyway/Liquibase)가 없어 현재는 전적으로 수동이다.
 
 ## 아키텍처
 
@@ -41,6 +41,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
   - 인증 실패(서명/만료 오류 등)는 `CustomAuthenticationEntryPoint`, 권한 부족은 `CustomAccessDeniedHandler`가 `ApiResponse` 포맷으로 응답한다.
   - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER — 실제 부여 로직은 미구현), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로와 `/actuator/health`·`/actuator/info`만 permitAll(배포 헬스 프로브는 토큰을 붙일 수 없다 — `prometheus`·`metrics`·`loggers`는 계속 보호), 나머지는 인증 필요.
   - CORS는 `SecurityConfig.corsConfigurationSource()` 한 곳에서만 정의한다. 허용 오리진은 `frontend.url`이며 **쉼표로 여러 개**를 넣을 수 있다(Cloudflare Workers 프리뷰 도메인 대응). 시큐리티 필터체인이 먼저 처리하므로 `WebMvcConfigurer.addCorsMappings()`로 중복 정의하지 말 것 — `WebConfig`는 인자 리졸버 등록에만 쓴다.
+- `domain/member` — `mbr` 행이 생기는 **유일한 경로**는 `POST /v1/members/signup`이다. 인증 시점에는 회원을 만들지 않으므로(#20) 다른 진입점을 만들지 말 것. 이 엔드포인트만 `@CurrentMember`가 아니라 `@AuthenticationPrincipal AuthenticatedUser`로 주체를 받는다 — `@CurrentMember`는 미가입 주체를 403으로 끊어 가입 자체를 막는다. 응답은 세션 조회와 같은 `MemberProfileResponse`이며, 별도 가입 응답 DTO를 두지 않는 것은 한쪽만 필드가 늘어 두 응답이 어긋나는 것을 막기 위해서다. 등급은 항상 `TEMP`로 고정하고, 등급·상태의 최초 부여는 `mbr_grd_hstry`·`mbr_stts_hstry`에 `bfr_*_cd = NULL`로 한 건씩 남긴다. `mbr.stdnt_no`는 졸업 회원을 위해 **nullable**이며 `uk_mbr_student_number`는 유지되므로 학번 미입력은 빈 문자열이 아니라 **NULL**로 저장해야 한다. 선조회만으로는 동시 요청을 못 막으므로 UNIQUE 위반(`DataIntegrityViolationException`)도 같은 409로 옮긴다.
 - `domain/auth` — 로그인·로그아웃 자체는 Supabase(클라이언트) 책임이라 서버에 엔드포인트가 없다. 서버가 답하는 것은 "이 토큰이 우리 서비스의 누구인가" 하나뿐이고 그게 `GET /v1/auth/session`이다. **미가입 사용자에게도 200**으로 응답한다(`signedUp: false`, `member: null`) — 가입이 필요하다는 것도 정상적인 세션 상태이지 오류가 아니며, 403으로 끊으면 프론트가 가입 화면으로 갈 근거를 얻지 못한다. 응답의 `member` 블록(`MemberProfileResponse`)은 회원가입 응답과 같은 모양을 쓴다.
 - 관측성: OpenTelemetry(OTLP) + Micrometer(Prometheus/OTLP) + Logstash JSON 로깅(`prod` 프로파일에서만 JSON, 그 외 텍스트 — `logback-spring.xml`)이 이미 연결돼 있다. 로컬에 OTLP collector가 없으면 애플리케이션 종료 시 `Connection refused` 경고가 뜨는데 무해하다.
 

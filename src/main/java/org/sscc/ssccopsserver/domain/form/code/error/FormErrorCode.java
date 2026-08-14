@@ -34,9 +34,6 @@ public enum FormErrorCode implements ErrorCode {
     INVALID_RECEIPT_PERIOD(
             HttpStatus.BAD_REQUEST, "INVALID_RECEIPT_PERIOD", "접수 종료 일시는 시작 일시보다 빠를 수 없습니다."),
 
-    // 400 — 요청이 지정한 폼 라벨이 없을 때. 본문이 가리키는 참조가 틀린 것이라 404가 아니다
-    LABEL_NOT_ASSIGNABLE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "지정할 수 없는 폼 라벨입니다."),
-
     // 404 — 폼 자체를 찾을 수 없을 때. 공개 링크로 접근한 미공개(DRAFT) 폼도 여기에 걸린다
     FORM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "폼을 찾을 수 없습니다."),
 

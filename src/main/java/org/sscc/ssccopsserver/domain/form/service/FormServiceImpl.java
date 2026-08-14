@@ -2,15 +2,12 @@ package org.sscc.ssccopsserver.domain.form.service;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -25,8 +22,6 @@ import org.sscc.ssccopsserver.domain.form.dto.FormSaveRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
-import org.sscc.ssccopsserver.domain.form.entity.FormLabelEntity;
-import org.sscc.ssccopsserver.domain.form.entity.FormLabelRelationEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.QuestionItem;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
@@ -59,6 +54,7 @@ public class FormServiceImpl implements FormService {
     private final FormLabelRelationRepository formLabelRelationRepository;
     private final FormResponseHistoryRepository formResponseHistoryRepository;
     private final QuestionCompositionValidator questionCompositionValidator;
+    private final FormLabelService formLabelService;
 
     /*
      * 폼 목록. 쿼리는 폼 1 + 라벨 1 + 응답 집계 1로 3회다 — 폼마다 라벨을 조회하거나 응답을
@@ -237,46 +233,24 @@ public class FormServiceImpl implements FormService {
     }
 
     /*
-     * 라벨 지정 교체. 통째로 지우고 다시 넣지 않고 차집합만 움직이는 것은, 같은 (form_id,
-     * form_lbl_id) 쌍을 지웠다 넣으면 Hibernate가 한 트랜잭션에서 INSERT를 DELETE보다 먼저
-     * 흘려보내 UNIQUE 제약에 걸리기 때문이다. 실제로 바뀐 연결만 건드리면 그 순서 문제가 없다.
+     * 폼 등록·수정 본문의 labelIds를 라벨 지정 규칙에 태운다.
      *
-     * 비활성(use_yn = false) 라벨을 여기서 막지 않는다 — 새로 달 수 없는 라벨인지는 라벨 관리
-     * 정책(#34)이 판단할 일이라는 FormLabelRelationEntity의 결정을 그대로 따른다.
+     * 예전에는 이 클래스가 지정 교체를 직접 구현했는데, #34가 같은 규칙을
+     * FormLabelService.replaceFormLabels로 세우면서 규칙이 두 벌이 됐다. 두 벌이 되자마자
+     * 실제로 갈렸다 — 여기서는 비활성(use_yn = false) 라벨을 검사하지 않아 폼 저장 경로로는
+     * 비활성 라벨이 그대로 지정됐고, 지정 API 경로로는 400으로 막혔다. 없는 라벨의 응답도
+     * 한쪽은 400, 다른 쪽은 404였다.
+     *
+     * 폼 편집 화면은 labelIds를 폼 저장에 실어 보내므로 사용자가 마주치는 것은 이 경로다.
+     * 규칙의 유일한 주인을 FormLabelService로 두고 여기서는 호출만 한다.
      */
     private List<FormLabelSummaryResponse> replaceLabels(FormEntity form, List<Long> labelIds) {
-        // 같은 라벨을 두 번 보내도 연결은 하나다 — UNIQUE 제약에 걸리기 전에 걸러 낸다
-        List<Long> requestedIds = labelIds.stream().filter(Objects::nonNull).distinct().toList();
-
-        Map<Long, FormLabelRelationEntity> currentByLabelId =
-                formLabelRelationRepository.findAllByForm(form).stream()
-                        .collect(
-                                Collectors.toMap(
-                                        relation -> relation.getLabel().getId(),
-                                        Function.identity()));
-
-        formLabelRelationRepository.deleteAll(
-                currentByLabelId.entrySet().stream()
-                        .filter(entry -> !requestedIds.contains(entry.getKey()))
-                        .map(Map.Entry::getValue)
-                        .toList());
-
-        List<FormLabelSummaryResponse> labels = new ArrayList<>();
-        for (Long labelId : requestedIds) {
-            FormLabelRelationEntity kept = currentByLabelId.get(labelId);
-            if (kept != null) {
-                labels.add(FormLabelSummaryResponse.from(kept.getLabel()));
-                continue;
-            }
-            FormLabelEntity label =
-                    formLabelRepository
-                            .findById(labelId)
-                            .orElseThrow(
-                                    () -> new GeneralException(FormErrorCode.LABEL_NOT_ASSIGNABLE));
-            formLabelRelationRepository.save(FormLabelRelationEntity.create(form, label));
-            labels.add(FormLabelSummaryResponse.from(label));
-        }
-        return labels;
+        return formLabelService.replaceFormLabels(form.getId(), labelIds).stream()
+                .map(
+                        assignment ->
+                                new FormLabelSummaryResponse(
+                                        assignment.formLblId(), assignment.lblNm()))
+                .toList();
     }
 
     private Map<Long, List<FormLabelSummaryResponse>> labelsOf(List<Long> formIds) {

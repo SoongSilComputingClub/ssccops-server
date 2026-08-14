@@ -110,7 +110,12 @@ class SubWorkServiceImplTest {
                 new MemberServiceImpl(
                         memberRepository, memberGradeRepository, memberStatusRepository);
         WorkService workService =
-                new WorkServiceImpl(operationRepository, workRepository, memberService);
+                new WorkServiceImpl(
+                        operationRepository,
+                        workRepository,
+                        subWorkRepository,
+                        subWorkChecklistItemRepository,
+                        memberService);
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,

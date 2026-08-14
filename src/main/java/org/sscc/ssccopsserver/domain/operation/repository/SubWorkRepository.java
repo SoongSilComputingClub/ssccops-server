@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,4 +62,22 @@ public interface SubWorkRepository
      * 조건이 없고, 삭제된 건을 빼는 기준만 목록과 같아야 한다 (AGG-03).
      */
     long countByOperationDeletedAtIsNull();
+
+    /*
+     * 상위 업무 목록(OPS-020)의 진행률·하위 업무 건수 집계. 업무마다 하위 업무를 조회하면
+     * 그대로 N+1이므로 이번 페이지의 업무 전체를 한 번에 읽는다 (DB-13).
+     *
+     * 엔티티가 아니라 프로젝션인 것은 집계에 필요한 값이 셋뿐이기 때문이다 — 상세 화면과 달리
+     * 카드는 하위 업무의 제목도 담당자도 그리지 않는다 (AP-14).
+     *
+     * 소프트 삭제 여부는 부모 oper가 관리하므로(sub_work에는 del_dt가 없다) 조인해서 걸러낸다.
+     * 빈 컬렉션을 넘기면 IN () 이 되어 DB에 따라 문법 오류가 나므로 호출 전에 걸러야 한다.
+     */
+    @Query(
+            "select w.id as workId, s.id as subWorkId, s.workStatus as workStatus"
+                    + " from SubWorkEntity s"
+                    + " join s.work w"
+                    + " join s.operation o"
+                    + " where w.id in :workIds and o.deletedAt is null")
+    List<WorkSubWorkAggregate> findAggregatesByWorkIds(@Param("workIds") Collection<Long> workIds);
 }

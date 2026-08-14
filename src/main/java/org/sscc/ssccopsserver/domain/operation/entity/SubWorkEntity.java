@@ -41,12 +41,15 @@ import lombok.NoArgsConstructor;
 /*
  * 인덱스는 목록 조회(OPS-008)의 필터·정렬 컬럼에 건다 (DB-17). 마감 일시는 정렬 기본 키이자
  * 지연·마감임박 필터의 조건이고, 두 상태 코드는 화면 필터 칩이 그대로 거는 조건이다.
+ * work_id는 상위 업무 목록(OPS-020)이 진행률·하위 업무 건수를 집계할 때 매 요청 타는 축이다 —
+ * PostgreSQL은 FK에 인덱스를 자동으로 만들지 않는다.
  *
  * 주의: 이 선언으로 인덱스가 만들어지는 것은 ddl-auto가 도는 local·dev·test뿐이다.
  * prod는 ddl-auto가 none이라 배포 전에 아래 DDL을 직접 실행해야 한다.
  *   CREATE INDEX idx_sub_work_ddln_dt ON sub_work (ddln_dt);
  *   CREATE INDEX idx_sub_work_work_stts_cd ON sub_work (work_stts_cd);
  *   CREATE INDEX idx_sub_work_aprv_stts_cd ON sub_work (aprv_stts_cd);
+ *   CREATE INDEX idx_sub_work_work_id ON sub_work (work_id);
  */
 @Entity
 @Table(
@@ -54,7 +57,8 @@ import lombok.NoArgsConstructor;
         indexes = {
             @Index(name = "idx_sub_work_ddln_dt", columnList = "ddln_dt"),
             @Index(name = "idx_sub_work_work_stts_cd", columnList = "work_stts_cd"),
-            @Index(name = "idx_sub_work_aprv_stts_cd", columnList = "aprv_stts_cd")
+            @Index(name = "idx_sub_work_aprv_stts_cd", columnList = "aprv_stts_cd"),
+            @Index(name = "idx_sub_work_work_id", columnList = "work_id")
         })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)

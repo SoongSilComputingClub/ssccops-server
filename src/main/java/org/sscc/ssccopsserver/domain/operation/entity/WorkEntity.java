@@ -11,6 +11,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -27,8 +28,23 @@ import lombok.NoArgsConstructor;
  * work_id를 자체 PK로 가지며 oper_id는 일반 FK다. PK=FK 상속이 아니므로 @MapsId를 쓰지 않는다.
  * 등록자·등록시각은 부모 oper의 crt_dt·mdfcn_dt가 보유하므로 여기서 중복 기록하지 않는다.
  */
+/*
+ * 인덱스는 목록 조회(OPS-020)의 필터 두 축이다 (DB-17). 정렬 키는 여기가 아니라 oper에
+ * 있으므로(등록 일시·시작 일시) 한 인덱스로 필터와 정렬을 함께 덮을 수 없다 —
+ * 두 테이블로 나뉜 구조의 대가이며, 정렬 쪽 인덱스는 OperationEntity에 있다.
+ *
+ * 주의: 이 선언으로 인덱스가 만들어지는 것은 ddl-auto가 도는 local·dev·test뿐이다.
+ * prod는 ddl-auto가 none이라 배포 전에 아래 DDL을 직접 실행해야 한다.
+ *   CREATE INDEX idx_work_work_stts_cd ON work (work_stts_cd);
+ *   CREATE INDEX idx_work_work_type_cd ON work (work_type_cd);
+ */
 @Entity
-@Table(name = "work")
+@Table(
+        name = "work",
+        indexes = {
+            @Index(name = "idx_work_work_stts_cd", columnList = "work_stts_cd"),
+            @Index(name = "idx_work_work_type_cd", columnList = "work_type_cd")
+        })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)

@@ -4,6 +4,8 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 
 public interface WorkService {
 
@@ -18,4 +20,10 @@ public interface WorkService {
      * 소프트 삭제된 업무는 없는 것으로 보고 WORK_NOT_FOUND를 던진다.
      */
     WorkDetailResponse getWork(Long workId);
+
+    /*
+     * 상위 업무 목록을 조건에 따라 조회한다 (OPS-020). '운영 통합 › 업무' 화면의 카드 그리드가
+     * 이 결과로 채워지며, 소프트 삭제된 업무는 목록에도 건수에도 없다 (AGG-03).
+     */
+    WorkSearchResponse searchWorks(WorkSearchCondition condition);
 }

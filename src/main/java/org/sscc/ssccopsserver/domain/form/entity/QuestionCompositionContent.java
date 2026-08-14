@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.form.entity;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,6 +29,26 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record QuestionCompositionContent(List<Page> pages, List<QuestionItem> qitems) {
+
+    /*
+     * 깊은 복사 (#32 폼 복제).
+     *
+     * record 자체는 불변이지만 안에 든 List·Map은 Jackson이 역직렬화하면서 만든 가변 컬렉션이라,
+     * 얕게 복사하면 원본과 사본이 같은 리스트를 가리킨다. 그 상태로 원본을 수정하면 사본의
+     * 문항까지 함께 바뀌어 "복제했는데 원본을 고치니 사본도 바뀐다"는 형태로 드러난다.
+     *
+     * List.copyOf가 아니라 원소까지 새로 만드는 것은, 원소인 QuestionItem이 다시 List·Map을
+     * 품고 있어 한 겹만 복사해서는 그 안쪽이 그대로 공유되기 때문이다.
+     */
+    public QuestionCompositionContent deepCopy() {
+        return new QuestionCompositionContent(
+                pages == null
+                        ? null
+                        : pages.stream()
+                                .map(page -> new Page(page.pageTtl(), page.pageDescCn()))
+                                .toList(),
+                qitems == null ? null : qitems.stream().map(QuestionItem::copy).toList());
+    }
 
     /*
      * 페이지. 다중 페이지 폼의 표지 역할만 하며, 어떤 문항이 어느 페이지에 있는지는
@@ -59,5 +80,22 @@ public record QuestionCompositionContent(List<Page> pages, List<QuestionItem> qi
             String ptrnCn,
             String ptrnNm,
             String ptrnMsgCn,
-            Integer maxSlctCnt) {}
+            Integer maxSlctCnt) {
+
+        /** 문항 한 건의 깊은 복사. 안쪽 컬렉션까지 새로 만든다 — 근거는 deepCopy() 주석 참조 */
+        public QuestionItem copy() {
+            return new QuestionItem(
+                    qitemId,
+                    qitemLblNm,
+                    qitemTypeCd,
+                    reqYn,
+                    pageSeq,
+                    optionList == null ? null : List.copyOf(optionList),
+                    branchMap == null ? null : new LinkedHashMap<>(branchMap),
+                    ptrnCn,
+                    ptrnNm,
+                    ptrnMsgCn,
+                    maxSlctCnt);
+        }
+    }
 }

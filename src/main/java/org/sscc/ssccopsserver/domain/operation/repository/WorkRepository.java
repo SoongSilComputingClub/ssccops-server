@@ -6,7 +6,7 @@ import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 
-public interface WorkRepository extends JpaRepository<WorkEntity, Long> {
+public interface WorkRepository extends JpaRepository<WorkEntity, Long>, WorkRepositoryCustom {
 
     /*
      * 소프트 삭제 여부는 부모 oper가 관리하므로 조인해서 걸러낸다.
@@ -17,4 +17,10 @@ public interface WorkRepository extends JpaRepository<WorkEntity, Long> {
      */
     @EntityGraph(attributePaths = {"operation", "operation.personInCharge", "operation.registrant"})
     Optional<WorkEntity> findByIdAndOperationDeletedAtIsNull(Long id);
+
+    /*
+     * 목록 조회(OPS-020)가 페이지 봉투에 싣는 '전체 건수'. 필터를 걸지 않았을 때의 건수라
+     * 조건이 없고, 삭제된 건을 빼는 기준만 목록과 같아야 한다 (AGG-03).
+     */
+    long countByOperationDeletedAtIsNull();
 }

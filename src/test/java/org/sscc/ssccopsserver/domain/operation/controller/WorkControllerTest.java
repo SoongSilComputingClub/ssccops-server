@@ -242,6 +242,87 @@ class WorkControllerTest {
         mockMvc.perform(get("/v1/works/{workId}", 1L)).andExpect(status().isUnauthorized());
     }
 
+    /*
+     * 목록 조회(OPS-020). 봉투가 단건과 다르다 — data가 배열이고 page가 그 옆에 온다 (AP-11).
+     * 값 계산 자체는 서비스 테스트가 다루고 여기서는 응답 형태와 상태 코드를 본다.
+     */
+    @Test
+    void searchWorksReturns200WithListEnvelope() throws Exception {
+        Long workId = createWork();
+
+        mockMvc.perform(get("/v1/works").header("Authorization", "Bearer any-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data[0].workId").value(workId))
+                .andExpect(jsonPath("$.data[0].title").value("동아리 박람회 부스 운영"))
+                .andExpect(jsonPath("$.data[0].workType").value("EVENT"))
+                .andExpect(jsonPath("$.data[0].workStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data[0].owner.memberId").value(ownerId))
+                .andExpect(jsonPath("$.data[0].owner.name").exists())
+                .andExpect(jsonPath("$.data[0].startAt").value("2026-09-01T18:00:00+09:00"))
+                .andExpect(jsonPath("$.data[0].progressRate").value(0))
+                .andExpect(jsonPath("$.data[0].subWorkCount").value(0))
+                .andExpect(jsonPath("$.page.size").value(20))
+                .andExpect(jsonPath("$.page.sort").value("-createdAt"))
+                .andExpect(jsonPath("$.page.hasNext").value(false))
+                .andExpect(jsonPath("$.page.nextCursor").doesNotExist())
+                .andExpect(jsonPath("$.page.totalCount").value(1))
+                .andExpect(jsonPath("$.page.overallCount").value(1));
+    }
+
+    // 결과가 없어도 200에 빈 배열이다. 404가 아니다
+    @Test
+    void searchWorksWithNoMatchReturnsEmptyArray() throws Exception {
+        createWork();
+
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("workType", "ROUTINE")
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data").isEmpty())
+                .andExpect(jsonPath("$.page.totalCount").value(0))
+                .andExpect(jsonPath("$.page.overallCount").value(1));
+    }
+
+    @Test
+    void searchWorksWithUnknownStatusReturnsInvalidCodeValue() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("workStatus", "기획")
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    // size 상한은 100이다 (AP-13). 넘기면 형식 오류로 막는다
+    @Test
+    void searchWorksWithTooLargeSizeReturnsValidationFailed() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("size", "101")
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void searchWorksWithMalformedCursorReturnsValidationFailed() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("cursor", "!!not-a-cursor!!")
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void searchWorksWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/v1/works")).andExpect(status().isUnauthorized());
+    }
+
     private Long createWork() throws Exception {
         String body =
                 """

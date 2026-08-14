@@ -16,8 +16,39 @@ import lombok.Getter;
 @AllArgsConstructor
 public enum FormErrorCode implements ErrorCode {
 
+    /*
+     * 400 — 문항 구성(qitem_cpst_cn)이 스스로 모순될 때. 존재하지 않는 페이지로 분기하거나,
+     * 컴파일되지 않는 정규식이거나, 선택지 없는 선택형 문항이면 여기에 걸린다.
+     *
+     * 형식 오류(VALIDATION_FAILED)와 코드를 나눈 것은 프론트가 할 일이 다르기 때문이다 —
+     * 전자는 입력란을 붉게 칠하면 되지만, 이쪽은 폼 편집기의 어느 문항이 잘못됐는지
+     * 찾아 보여줘야 한다. Bean Validation으로는 표현할 수 없는 문항 간 상호 규칙이다.
+     */
+    INVALID_QUESTION_COMPOSITION(
+            HttpStatus.BAD_REQUEST, "INVALID_QUESTION_COMPOSITION", "문항 구성이 올바르지 않습니다."),
+
+    /*
+     * 400 — 접수 종료가 시작보다 빠를 때. DTO의 @AssertTrue로 잡으면 전역 핸들러가
+     * VALIDATION_FAILED로 바꿔 버려 계약표의 코드와 어긋나므로 서비스가 직접 던진다.
+     */
+    INVALID_RECEIPT_PERIOD(
+            HttpStatus.BAD_REQUEST, "INVALID_RECEIPT_PERIOD", "접수 종료 일시는 시작 일시보다 빠를 수 없습니다."),
+
+    // 400 — 요청이 지정한 폼 라벨이 없을 때. 본문이 가리키는 참조가 틀린 것이라 404가 아니다
+    LABEL_NOT_ASSIGNABLE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "지정할 수 없는 폼 라벨입니다."),
+
     // 404 — 폼 자체를 찾을 수 없을 때. 공개 링크로 접근한 미공개(DRAFT) 폼도 여기에 걸린다
     FORM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "폼을 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 이름을 바꾸려 할 때.
+     *
+     * rspns_cn의 key가 qitemId라, 문항 식별자가 끊기는 순간 과거 응답이 어느 문항의 답인지
+     * 알 수 없게 된다. 되돌릴 수 없는 손실이라 400(요청이 틀렸다)이 아니라 409(지금 상태에서
+     * 할 수 없다)로 내린다 — 문항을 새로 추가하는 것은 계속 허용된다.
+     */
+    QUESTION_ITEM_IN_USE(
+            HttpStatus.CONFLICT, "QUESTION_ITEM_IN_USE", "이미 응답이 있는 폼에서는 기존 문항을 삭제하거나 변경할 수 없습니다."),
 
     /*
      * 422 — 저장된 문항 구성(qitem_cpst_cn) JSON을 읽을 수 없을 때.

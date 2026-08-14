@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.member.service;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 public interface MemberService {
@@ -12,6 +13,12 @@ public interface MemberService {
      * 인증 경로에서 호출되므로 여기서 회원을 생성하지 않는다 — 생성은 회원가입 API의 책임이다.
      */
     Optional<MemberEntity> findByAuthUserId(UUID authUserId);
+
+    /*
+     * 본인 회원 정보. 등급·상태·현재 역할이 모두 지연 로딩이라 조회 트랜잭션 안에서 DTO로 굳혀
+     * 돌려준다 — 인증 주체에 실린 MemberEntity는 준영속이라 그대로 꺼내 쓸 수 없다.
+     */
+    MemberProfileResponse getProfile(Long memberId);
 
     /*
      * 다른 도메인이 담당자·작성자 등으로 지정할 수 있는 회원인지 확인해 반환한다.

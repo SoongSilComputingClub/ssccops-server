@@ -1,0 +1,21 @@
+package org.sscc.ssccopsserver.domain.member.dto;
+
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
+
+/*
+ * 회원이 현재 맡고 있는 조직 역할(회장·부회장·국장 등) 한 건.
+ *
+ * 종료일이 지난 역할은 담지 않는다 — '현재 역할'만 화면에 쓰이기 때문이다.
+ * representative는 여러 현재 역할 중 사이드바 프로필에 대표로 표시할 하나를 가린다.
+ *
+ * 여기서 말하는 역할은 조직 직책이며, 인가용 역할(global.security.UserRoleType)과는 별개다.
+ */
+public record MemberRoleResponse(Long roleId, String roleName, boolean representative) {
+
+    public static MemberRoleResponse from(MemberRoleAssignmentEntity assignment) {
+        return new MemberRoleResponse(
+                assignment.getRole().getId(),
+                assignment.getRole().getName(),
+                Boolean.TRUE.equals(assignment.getRepresentative()));
+    }
+}

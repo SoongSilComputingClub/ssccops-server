@@ -17,6 +17,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
@@ -52,6 +53,7 @@ class WorkServiceImplTest {
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private MemberRepository memberRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
 
@@ -61,7 +63,8 @@ class WorkServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        MemberService memberService = new MemberServiceImpl(memberRepository);
+        MemberService memberService =
+                new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
         workService = new WorkServiceImpl(operationRepository, workRepository, memberService);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다

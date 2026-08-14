@@ -1,6 +1,8 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -29,4 +31,18 @@ public interface SubWorkService {
      */
     SubWorkTransitionResponse transitionSubWork(
             Long subWorkId, SubWorkTransitionRequest request, MemberEntity performer);
+
+    /*
+     * 완료 체크리스트 항목 하나를 체크·해제한다 (OPS-013 · REQ-021). 완료 승인 전이(TR-03)의
+     * 판정 근거를 바꾸는 유일한 경로다.
+     *
+     * 업무 상태·승인 상태를 바꾸지 않고 상위 업무 진행률도 재집계하지 않는다 — 그 값은
+     * 하위 업무 완료 건수에서 나오므로 체크로 변하지 않는다. 소프트 삭제된 하위 업무와
+     * 경로의 하위 업무에 속하지 않는 항목은 모두 404다.
+     */
+    SubWorkChecklistItemUpdateResponse updateChecklistItem(
+            Long subWorkId,
+            Long checklistItemId,
+            SubWorkChecklistItemUpdateRequest request,
+            MemberEntity performer);
 }

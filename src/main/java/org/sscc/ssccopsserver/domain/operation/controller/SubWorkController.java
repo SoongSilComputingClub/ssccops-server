@@ -7,12 +7,15 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -69,5 +72,24 @@ public class SubWorkController {
             @Valid @RequestBody SubWorkTransitionRequest request,
             @AuthenticationPrincipal MemberEntity performer) {
         return ApiResponse.success(subWorkService.transitionSubWork(subWorkId, request, performer));
+    }
+
+    /*
+     * 완료 체크리스트 항목 체크·해제 (OPS-013). 상세 화면(OPS-SCR-002)의 체크박스가 부른다.
+     *
+     * 상태를 PATCH로 쓰지 않는다는 POL-003·AP-03과 어긋나지 않는다 — 여기서 바꾸는 것은
+     * 업무 상태가 아니라 체크리스트 항목 자신의 완료 여부이며, 부분 수정이므로 PATCH다 (AP-06).
+     * 체크가 완료 승인으로 이어지는지는 전이 엔드포인트가 따로 판단한다.
+     *
+     * 항목의 소속·상태 제약은 서비스와 도메인이 판단하므로 여기서 분기하지 않는다 (LY-02).
+     */
+    @PatchMapping("/{subWorkId}/checklist/{checklistItemId}")
+    public ApiResponse<SubWorkChecklistItemUpdateResponse> updateChecklistItem(
+            @PathVariable Long subWorkId,
+            @PathVariable Long checklistItemId,
+            @Valid @RequestBody SubWorkChecklistItemUpdateRequest request,
+            @AuthenticationPrincipal MemberEntity performer) {
+        return ApiResponse.success(
+                subWorkService.updateChecklistItem(subWorkId, checklistItemId, request, performer));
     }
 }

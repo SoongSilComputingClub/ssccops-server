@@ -114,8 +114,15 @@ public class SecurityConfig {
      *
      * Supabase는 프로젝트에 따라 ES256(타원곡선) 또는 RS256(RSA) 비대칭 키로 서명하므로,
      * 기본값(RS256 전용)에 ES256 등 지원 알고리즘을 명시적으로 추가하여 서명 검증 실패를 방지한다.
+     *
+     * 빈 이름이 메서드명 그대로인 `jwtDecoder`가 아니라 `supabaseJwtDecoder`인 이유가 있다.
+     * 통합 테스트 12종이 각자 `jwtDecoder`라는 이름으로 스텁 디코더를 올리는데, 이름이 겹치면
+     * @Primary가 붙어 있어도 BeanDefinitionOverrideException으로 ApplicationContext 자체가
+     * 뜨지 않는다(주입 모호성이 아니라 정의 중복이라 @Primary의 영역이 아니고, 스프링 부트는
+     * 빈 정의 오버라이딩을 기본으로 막는다). 리소스 서버는 이 빈을 타입으로 찾으므로 이름을
+     * 비워 두면 테스트가 스텁으로 갈아끼우는 길이 막힌다.
      */
-    @Bean
+    @Bean("supabaseJwtDecoder")
     public JwtDecoder jwtDecoder() {
         return NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
                 .jwsAlgorithms(

@@ -39,6 +39,18 @@ class SupabaseJwtAuthenticationIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
 
+    // 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없으므로 인증 없이 통과해야 한다
+    @Test
+    void healthEndpointIsOpenWithoutToken() throws Exception {
+        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    }
+
+    // 지표는 계속 보호 대상이다 — 헬스만 열었지 actuator 전체를 연 것이 아니다
+    @Test
+    void metricsEndpointStillRequiresAuthentication() throws Exception {
+        mockMvc.perform(get("/actuator/metrics")).andExpect(status().isUnauthorized());
+    }
+
     @Test
     void requestWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/examples/1")).andExpect(status().isUnauthorized());

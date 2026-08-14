@@ -2,6 +2,9 @@ package org.sscc.ssccopsserver.domain.form.service;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -9,10 +12,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
@@ -167,6 +173,112 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
+     * 운영자용 응답 목록 (#37).
+     *
+     * **페이징을 두지 않는다.** 모집 폼에 수백 건이 들어올 수 있다는 것은 사실이지만, 이 화면은
+     * 목록을 한 번 받아 상태별로 걸러 보며 심사하는 화면이고 상세의 이전/다음 이동도 그 순서를
+     * 그대로 따른다 — 페이지를 나누면 '이전'이 페이지 경계에서 끊기거나 서버가 페이지 밖의
+     * 이웃까지 계산해야 한다. ssccops-web #13도 배열을 받는 전제로 이미 머지됐고, 폼 목록(#32)이
+     * 같은 이유로 페이징을 미뤄 둔 선례가 있다. 응답이 실제로 수백 건 쌓여 목록이 느려지면
+     * 그때 커서 기반으로 넣되 웹의 목록·상세 이동과 함께 바꾼다.
+     *
+     * 쿼리는 폼 1 + 목록 1로 두 번이다. 목록에 회원 정보가 붙지만 응답 수와 무관하게 한 번이며
+     * (findAllForOperatorList의 엔티티 그래프), 이 수는 테스트가 못 박아 둔다.
+     */
+    @Override
+    public List<FormResponseSummaryResponse> getResponses(Long formId, ResponseStatus statusCode) {
+        FormEntity form = findForm(formId);
+        return formResponseHistoryRepository
+                .findAllForOperatorList(form, statusesToList(statusCode))
+                .stream()
+                .map(FormResponseSummaryResponse::from)
+                .toList();
+    }
+
+    /*
+     * 운영자용 응답 상세 (#37).
+     *
+     * 조회에 formId를 함께 거는 것이 이 메서드의 첫 번째 책임이다 — 응답 식별자만으로 찾으면
+     * /v1/forms/1/responses/999가 다른 폼의 지원자 답변과 개인정보를 그대로 돌려준다.
+     *
+     * 인접 응답은 목록의 기본 조회와 같은 순서·범위에서 고른다. 목록에 없는 응답(DRAFT)을 직접
+     * 열면 이웃이 없다 — 심사 목록에서 빠져 있던 응답이 이동만으로 심사 흐름에 들어오면
+     * "DRAFT는 심사 대상이 아니다"가 목록에서만 지켜지는 규칙이 된다.
+     */
+    @Override
+    public FormResponseDetailResponse getResponse(Long formId, Long formResponseId) {
+        FormEntity form = findForm(formId);
+        FormResponseHistoryEntity response = findResponse(form, formResponseId);
+
+        if (response.getStatus() == ResponseStatus.DRAFT) {
+            return FormResponseDetailResponse.of(response, null, null);
+        }
+
+        List<Long> orderedIds =
+                formResponseHistoryRepository.findIdsForOperatorList(
+                        form, ResponseStatus.submittedOrLater());
+        int index = orderedIds.indexOf(formResponseId);
+        Long previousId = index > 0 ? orderedIds.get(index - 1) : null;
+        Long nextId =
+                index >= 0 && index < orderedIds.size() - 1 ? orderedIds.get(index + 1) : null;
+
+        return FormResponseDetailResponse.of(response, previousId, nextId);
+    }
+
+    /*
+     * 응답 상태 변경 (#37). 전이 규칙은 엔티티(FormResponseHistoryEntity.changeStatus)가 갖고
+     * 여기서는 범위 검사와 조립만 한다 — 서비스에 if로 옮겨 적으면 상태를 바꾸는 다른 경로가
+     * 생길 때 규칙이 갈린다 (LY-02 · FormServiceImpl.changeStatus와 같은 방식).
+     *
+     * **수행자를 기록하지 않는다.** 데이터사전에 응답 상태 이력 테이블이 없어 남는 것은
+     * mdfcn_dt뿐이고, "누가 승인했는지"는 감사 로그(#8)가 확정되기 전까지 어디에도 남지 않는다.
+     * 이 이슈에서 새 테이블을 만들지 않기로 한 결정이며(폼 상태 전이 #33과 같다), 그래서
+     * 컨트롤러가 받는 @CurrentMember도 서비스로 넘기지 않는다 — 넘겨 두면 기록되고 있는 것처럼
+     * 읽힌다.
+     *
+     * 접수 가능 여부(FormReceiptPolicy)는 보지 않는다. 심사는 접수가 끝난 뒤에 하는 일이라
+     * 응답자 경로와 같은 판정을 걸면 마감한 폼의 응답을 아무도 승인할 수 없다.
+     */
+    @Override
+    @Transactional
+    public FormResponseSummaryResponse changeResponseStatus(
+            Long formId, Long formResponseId, FormResponseStatusChangeRequest request) {
+
+        FormResponseHistoryEntity response = findResponse(findForm(formId), formResponseId);
+        response.changeStatus(request.rspnsSttsCd());
+
+        // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (updateDraft 주석과 같은 이유)
+        formResponseHistoryRepository.flush();
+
+        return FormResponseSummaryResponse.from(response);
+    }
+
+    /*
+     * 목록·인접 응답이 볼 상태 집합.
+     *
+     * 미지정은 "전체"가 아니라 **작성 중을 뺀 전부**다. 제출 전 답안이 제출된 응답과 섞이면
+     * 운영자에게는 심사 대기 목록에 든 것처럼 보이고, 그 목록에서 승인을 누르면 응답자가 아직
+     * 쓰고 있던 내용이 그대로 확정된다. 작성 중 응답을 실제로 봐야 할 때(진행 상황 확인)를 위해
+     * statusCode=DRAFT는 열어 두되, 명시적으로 고른 경우로 제한한다.
+     */
+    private static Collection<ResponseStatus> statusesToList(ResponseStatus statusCode) {
+        return statusCode == null ? ResponseStatus.submittedOrLater() : EnumSet.of(statusCode);
+    }
+
+    private FormEntity findForm(Long formId) {
+        return formRepository
+                .findById(formId)
+                .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+    }
+
+    /** 폼 범위 안에서만 찾는다. 다른 폼의 응답 식별자는 없는 응답과 같은 404다 */
+    private FormResponseHistoryEntity findResponse(FormEntity form, Long formResponseId) {
+        return formResponseHistoryRepository
+                .findByIdAndForm(formResponseId, form)
+                .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_RESPONSE_NOT_FOUND));
+    }
+
+    /*
      * 이미 낸 응답은 자동 저장으로 덮어쓸 수 없다. 제출 뒤에도 저장이 통하면 운영진이 심사한
      * 내용과 응답자가 들고 있는 화면이 소리 없이 갈라진다 — 수정 제출은 별도로 정할 규칙이다(#37).
      */
@@ -190,11 +302,13 @@ public class FormResponseServiceImpl implements FormResponseService {
         return draft;
     }
 
+    /*
+     * 응답자용 경로가 쓰는 폼 조회. 운영자용 조회(findForm)와 갈리는 것은 접수 가능 여부를
+     * 함께 보느냐 하나다 — 심사는 접수가 끝난 뒤에 하는 일이라 운영자 경로에 이 판정을 걸면
+     * 마감한 폼의 응답을 아무도 열어볼 수 없다.
+     */
     private FormEntity findAcceptingForm(Long formId) {
-        FormEntity form =
-                formRepository
-                        .findById(formId)
-                        .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+        FormEntity form = findForm(formId);
 
         // DRAFT·CLOSED와 접수 기간 밖이 전부 여기서 한 코드로 끊긴다 (FormErrorCode 주석)
         if (!formReceiptPolicy.isAcceptingResponses(form)) {

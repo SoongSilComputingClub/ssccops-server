@@ -19,9 +19,14 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * creatrMbrId만 갖고 이름은 회원 스토어에서 따로 찾고 있어서다. 서버가 이름까지 같이 내리면
  * 그 조회가 사라지고, 식별자는 그대로 남아 있어 기존 코드가 깨지지 않는다.
  *
- * responseCount는 목록과 같은 기준(제출 이상만)이다. 상세 화면의 '응답 요약'은 상태별로
- * 나눠 보여주는데 그 집계는 응답 조회 API(#37)의 몫이고, 여기서는 목록과 같은 한 숫자만 준다 —
- * 같은 이름의 필드가 화면마다 다른 값을 뜻하면 어느 쪽이 맞는지 알 수 없게 된다.
+ * responseCount는 목록과 같은 기준(제출 이상만)이다. 상세 화면은 그 위에 '전체 · 제출 · 승인 ·
+ * 반려' 네 숫자를 보여주므로 responseSummary를 함께 내린다 (#37) — 두 값은 같은 집계에서 나오고
+ * responseSummary.total과 responseCount는 언제나 같다. 굳이 둘 다 두는 것은 목록(FormSummary)이
+ * 이미 responseCount를 쓰고 있어 상세만 이름을 바꾸면 웹이 두 응답을 다르게 읽어야 하기 때문이다.
+ *
+ * 예전에는 상태별 집계를 응답 조회 API(#37)가 따로 갖는 것으로 미뤄 뒀는데, 그동안 웹은
+ * res.responseSummary를 찾지 못해 요약 상자를 늘 0으로 그렸다 — 터지지 않고 조용히 틀리는
+ * 종류라 화면만 보고는 알 수 없었다. DRAFT는 네 숫자 어디에도 들어가지 않는다 (#36 규칙).
  *
  * receiptStatus는 목록과 같은 파생 값이다 (#33 · FormReceiptPolicy). 상세 화면의 '접수 시작 /
  * 마감' 버튼 문구는 formSttsCd로 고르지만(전이표가 그 값으로 정의돼 있다), 사용자에게 보이는
@@ -39,6 +44,7 @@ public record FormDetailResponse(
         QuestionCompositionContent qitemCpstCn,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
+        FormResponseStatusSummary responseSummary,
         Long creatrMbrId,
         String creatrMbrNm,
         OffsetDateTime crtDt,
@@ -50,7 +56,7 @@ public record FormDetailResponse(
             FormEntity form,
             FormReceiptStatus receiptStatus,
             List<FormLabelSummaryResponse> labels,
-            long responseCount) {
+            FormResponseStatusSummary responseSummary) {
         return new FormDetailResponse(
                 form.getId(),
                 form.getTitle(),
@@ -60,7 +66,8 @@ public record FormDetailResponse(
                 toOffsetDateTime(form.getReceiptEndAt()),
                 form.getQuestionComposition(),
                 labels,
-                responseCount,
+                responseSummary.total(),
+                responseSummary,
                 form.getCreator().getId(),
                 form.getCreator().getName(),
                 toOffsetDateTime(form.getCreatedAt()),

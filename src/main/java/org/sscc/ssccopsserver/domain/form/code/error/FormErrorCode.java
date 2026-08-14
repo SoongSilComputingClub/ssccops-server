@@ -55,8 +55,65 @@ public enum FormErrorCode implements ErrorCode {
     FORM_HAS_NO_QUESTION(
             HttpStatus.BAD_REQUEST, "FORM_HAS_NO_QUESTION", "문항이 없는 폼은 접수를 시작할 수 없습니다."),
 
-    // 404 — 폼 자체를 찾을 수 없을 때. 공개 링크로 접근한 미공개(DRAFT) 폼도 여기에 걸린다
+    // 404 — 폼 자체를 찾을 수 없을 때. 미공개(DRAFT) 폼은 존재하므로 여기가 아니라 FORM_NOT_ACCEPTING이다
     FORM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "폼을 찾을 수 없습니다."),
+
+    /*
+     * 409 — 지금 응답을 받을 수 없는 폼일 때 (#35). DRAFT·CLOSED와 접수 기간 밖(SCHEDULED·EXPIRED)이
+     * 전부 여기에 걸린다. 판정은 FormReceiptPolicy 하나가 하며 이 코드를 쓰는 쪽이 다시 따지지 않는다.
+     *
+     * 네 경우를 한 코드로 묶은 것은 응답자가 할 수 있는 일이 전부 같기 때문이다 — 어느 쪽이든
+     * 지금은 답을 낼 수 없고, 언제 열리는지는 응답 본문이 아니라 폼 상세(운영자용)가 갖는다.
+     * 반대로 코드를 넷으로 쪼개면 DRAFT 폼의 존재 여부보다 더 많은 것(아직 열지 않은 폼인지,
+     * 이미 닫은 폼인지)이 링크만 가진 사람에게 새어 나간다.
+     *
+     * 400이 아니라 409인 것은 요청 자체는 올바르고 폼의 현재 상태가 거절 이유이기 때문이다.
+     */
+    FORM_NOT_ACCEPTING(HttpStatus.CONFLICT, "FORM_NOT_ACCEPTING", "지금은 응답을 받지 않는 폼입니다."),
+
+    /*
+     * 400 — 폼에 없는 qitemId가 응답에 섞여 있을 때 (#35).
+     *
+     * 조용히 버리지 않는 것은 이것이 "낡은 화면에서 제출됐다"는 신호이기 때문이다. 문항이 바뀐
+     * 뒤 열어 둔 탭에서 제출하면 응답자는 성공했다고 믿지만 실제로 저장된 답은 화면에서 본 것과
+     * 다르다. 버리면 그 어긋남이 접수 마감 후 집계에서야 드러난다.
+     */
+    UNKNOWN_QUESTION_ITEM(
+            HttpStatus.BAD_REQUEST, "UNKNOWN_QUESTION_ITEM", "폼에 없는 문항에 대한 응답이 포함되어 있습니다."),
+
+    // 400 — 도달한 페이지의 필수 문항에 답이 없을 때 (#35). 분기로 건너뛴 페이지는 검사 대상이 아니다
+    REQUIRED_ANSWER_MISSING(
+            HttpStatus.BAD_REQUEST, "REQUIRED_ANSWER_MISSING", "필수 문항에 대한 응답이 없습니다."),
+
+    // 400 — 문항의 입력 형식(ptrnCn)과 답이 맞지 않을 때 (#35)
+    ANSWER_PATTERN_MISMATCH(
+            HttpStatus.BAD_REQUEST, "ANSWER_PATTERN_MISMATCH", "문항의 입력 형식과 맞지 않는 응답입니다."),
+
+    // 400 — 다중선택 문항의 최대 선택 수(maxSlctCnt)를 넘겼을 때 (#35)
+    ANSWER_SELECTION_LIMIT_EXCEEDED(
+            HttpStatus.BAD_REQUEST, "ANSWER_SELECTION_LIMIT_EXCEEDED", "선택할 수 있는 개수를 초과했습니다."),
+
+    /*
+     * 400 — 답의 모양이 문항 유형과 맞지 않을 때 (#35). 이슈 초안의 계약표에는 없지만, 없으면
+     * 서버가 최종 방어선이라는 전제가 깨져서 넣는다.
+     *
+     * rspns_cn은 JSONB라 값에 무엇이든 들어갈 수 있다. 다중선택이 아닌데 배열이 오거나, 답 자리에
+     * 객체·숫자가 오거나, 선택지 목록에 없는 값이 오면 저장은 되지만 응답 조회(#37)와 집계가
+     * 그 행 하나 때문에 깨진다. 형식(정규식) 불일치와 코드를 나눈 것은 프론트가 할 일이 다르기
+     * 때문이다 — 이쪽은 입력란 문제가 아니라 화면과 폼이 어긋났다는 뜻이다.
+     */
+    INVALID_ANSWER_VALUE(HttpStatus.BAD_REQUEST, "INVALID_ANSWER_VALUE", "문항 유형과 맞지 않는 응답 값입니다."),
+
+    /*
+     * 409 — 이미 제출한 폼에 다시 제출하려 할 때 (#35).
+     *
+     * 한 회원은 한 폼에 1건만 낸다. 선조회로 대부분 걸리지만 같은 사람이 두 탭에서 동시에 누르면
+     * 둘 다 선조회를 통과하므로 (form_id, mbr_id) UNIQUE 위반도 같은 코드로 옮긴다
+     * (#21 학번 중복·#34 라벨 이름 중복과 같은 방식).
+     *
+     * 재제출·수정 제출은 이번 범위 밖이라 400(요청이 틀렸다)이 아니라 409(지금 상태에서 할 수 없다)다.
+     */
+    RESPONSE_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "RESPONSE_ALREADY_SUBMITTED", "이미 제출한 폼입니다."),
 
     /*
      * 409 — 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 이름을 바꾸려 할 때.

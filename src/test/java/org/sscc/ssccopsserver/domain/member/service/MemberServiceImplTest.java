@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.member.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Clock;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -10,9 +11,11 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
@@ -24,9 +27,18 @@ class MemberServiceImplTest {
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
+    @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
 
     private MemberService memberService() {
-        return new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
+        return new MemberServiceImpl(
+                memberRepository,
+                memberRoleAssignmentRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                memberGradeHistoryRepository,
+                memberStatusHistoryRepository,
+                Clock.systemDefaultZone());
     }
 
     @Test

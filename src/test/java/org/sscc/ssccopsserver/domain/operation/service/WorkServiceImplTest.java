@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -20,9 +21,11 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
@@ -78,6 +81,8 @@ class WorkServiceImplTest {
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
+    @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private TestEntityManager entityManager;
 
     private WorkService workService;
@@ -88,7 +93,14 @@ class WorkServiceImplTest {
     @BeforeEach
     void setUp() {
         MemberService memberService =
-                new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
+                new MemberServiceImpl(
+                        memberRepository,
+                        memberRoleAssignmentRepository,
+                        memberGradeRepository,
+                        memberStatusRepository,
+                        memberGradeHistoryRepository,
+                        memberStatusHistoryRepository,
+                        Clock.systemDefaultZone());
         workService =
                 new WorkServiceImpl(
                         operationRepository,

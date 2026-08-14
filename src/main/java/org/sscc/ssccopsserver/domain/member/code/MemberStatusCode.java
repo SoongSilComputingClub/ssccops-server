@@ -20,4 +20,21 @@ public enum MemberStatusCode {
     public String code() {
         return name();
     }
+
+    /*
+     * 회원가입 화면에서 고를 수 있는 상태인지. 화면이 재학·졸업 두 가지만 제시하고 있으며,
+     * 탈퇴·제명 상태로 가입을 신청한다는 것 자체가 성립하지 않는다.
+     * 휴학은 가입 후 상태 변경으로 다룬다 — 가입 시점에 학적 증빙을 받지 않기 때문이다.
+     */
+    public boolean isSignupSelectable() {
+        return this == ENROLLED || this == GRADUATED;
+    }
+
+    /*
+     * 학번·학과·학년을 필수로 요구하는 상태인지. 졸업 회원은 학번이 기억나지 않을 수 있고
+     * 학과·학년도 현재 사실이 아니라 선택 입력이다.
+     */
+    public boolean requiresAcademicProfile() {
+        return this == ENROLLED;
+    }
 }

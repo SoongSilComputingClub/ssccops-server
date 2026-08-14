@@ -25,8 +25,35 @@ public enum MemberErrorCode implements ErrorCode {
      */
     SIGNUP_REQUIRED(HttpStatus.FORBIDDEN, "SIGNUP_REQUIRED", "회원 가입이 필요합니다."),
 
+    /*
+     * 400 — 가입 시 선택할 수 없는 회원 상태(휴학·졸업 외의 학적, 탈퇴·제명 등).
+     *
+     * 기준 코드에는 있으나 가입 경로에서만 막히는 값이라 INVALID_CODE_VALUE와 구분한다.
+     * 코드 문자열을 VALIDATION_FAILED로 두는 것은 프론트 입장에서 입력값 오류이기 때문이다
+     * (OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER와 같은 방식).
+     */
+    SIGNUP_STATUS_NOT_ALLOWED(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "가입 시 선택할 수 없는 회원 상태입니다."),
+
     // 404 — 인증 이후 회원이 삭제된 경우처럼, 주체는 있으나 회원 레코드를 못 찾을 때
-    MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "회원을 찾을 수 없습니다.");
+    MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "회원을 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 가입을 마친 인증 계정이 가입을 다시 요청했을 때.
+     *
+     * 프론트는 이 코드를 오류 화면이 아니라 "이미 가입됨"으로 읽고 세션을 다시 조회해야 한다.
+     * 선조회로도 대부분 걸리지만, 같은 계정의 동시 요청은 uk_mbr_auth_user_id 위반으로만
+     * 드러나므로 그 경로에서도 같은 코드로 내린다.
+     */
+    ALREADY_SIGNED_UP(HttpStatus.CONFLICT, "ALREADY_SIGNED_UP", "이미 가입된 계정입니다."),
+
+    /*
+     * 409 — 다른 회원이 이미 쓰고 있는 학번. CSV로 이관된 회원의 학번도 여기에 걸린다.
+     *
+     * 학번이 일치한다고 그 행에 자동으로 연결하지 않는다 — 학번만 알면 남의 계정을 가로챌 수
+     * 있어서다. 안전한 연결 절차는 명부 이관 기능을 설계할 때 함께 다룬다 (#21).
+     */
+    STUDENT_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

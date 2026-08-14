@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
@@ -98,7 +100,94 @@ public class FormResponseServiceImpl implements FormResponseService {
         return FormResponseSubmitResponse.from(
                 saveOrTranslateConflict(
                         FormResponseHistoryEntity.createSubmitted(
-                                form, respondent, content, submittedAt)));
+                                form, respondent, content, submittedAt),
+                        FormErrorCode.RESPONSE_ALREADY_SUBMITTED));
+    }
+
+    /*
+     * 작성 중 응답 저장 (#36). upsert다 — 행이 있으면 내용만 갈고, 없으면 DRAFT로 만든다.
+     *
+     * 검사 순서는 폼 → 제출 여부 → 답이다. 답의 모양을 먼저 따져 400을 돌려주면 응답자(정확히는
+     * 웹의 자동 저장)는 답을 고치면 저장될 것처럼 안내받지만, 접수가 끝났거나 이미 제출한 폼에서는
+     * 무엇을 고쳐도 저장되지 않는다 (#35의 제출 경로와 같은 이유).
+     *
+     * 상태·제출 일시는 여기서 건드리지 않는다. DRAFT 행의 sbmsn_dt는 NULL이어야 하고 그 값을
+     * 채우는 유일한 자리는 제출(submitResponse)이다 — 자동 저장이 그 둘을 함께 만질 수 있게 두면
+     * "낸 적 없는데 제출 일시가 있는" 행이 생기는 경로가 열린다.
+     */
+    @Override
+    @Transactional
+    public FormResponseDraftResponse saveDraft(
+            Long formId, FormResponseDraftRequest request, MemberEntity respondent) {
+
+        FormEntity form = findAcceptingForm(formId);
+
+        Optional<FormResponseHistoryEntity> existing =
+                formResponseHistoryRepository.findByFormAndMember(form, respondent);
+        existing.ifPresent(FormResponseServiceImpl::requireStillDraft);
+
+        /*
+         * 자동 저장 전용 검증. 필수·정규식·최대 선택 수·선택지 실재 여부는 보지 않고, 폼에 없는
+         * qitemId와 저장 형태·크기만 본다 (ResponseAnswerValidator 주석).
+         */
+        ResponseContent content =
+                responseAnswerValidator.validateDraft(
+                        form.getQuestionComposition(), request.rspnsCn());
+
+        FormResponseHistoryEntity draft =
+                existing.map(found -> updateDraft(found, content))
+                        .orElseGet(
+                                () ->
+                                        saveOrTranslateConflict(
+                                                FormResponseHistoryEntity.createDraft(
+                                                        form, respondent, content),
+                                                FormErrorCode.RESPONSE_SAVE_CONFLICT));
+
+        return FormResponseDraftResponse.from(draft);
+    }
+
+    /*
+     * 내 작성 중 응답 조회 (#36). 대상은 언제나 인증 주체 본인이라 회원 식별자를 받지 않는다.
+     *
+     * 접수 가능 여부를 여기서도 따지는 것은 응답자용 폼 조회와 짝을 맞추기 위해서다. 웹은 두
+     * 요청을 나란히 보내는데, 한쪽은 409로 "지금은 쓸 수 없는 폼"이라 하고 다른 쪽은 작성 중인
+     * 내용을 돌려주면 화면은 복원은 되지만 제출은 되지 않는 상태에 놓인다.
+     *
+     * 이미 제출한 응답은 작성 중이 아니므로 비어 있는 것으로 답한다 — 오류가 아니다. "제출을
+     * 마쳤다"는 사실은 응답자용 폼 조회(alreadySubmitted)가 이미 전하고, 여기까지 409로 끊으면
+     * 웹은 같은 사실을 두 경로에서 각각 처리해야 한다.
+     */
+    @Override
+    public Optional<FormResponseDraftResponse> findMyDraft(Long formId, MemberEntity respondent) {
+        FormEntity form = findAcceptingForm(formId);
+        return formResponseHistoryRepository
+                .findByFormAndMember(form, respondent)
+                .filter(response -> response.getStatus() == ResponseStatus.DRAFT)
+                .map(FormResponseDraftResponse::from);
+    }
+
+    /*
+     * 이미 낸 응답은 자동 저장으로 덮어쓸 수 없다. 제출 뒤에도 저장이 통하면 운영진이 심사한
+     * 내용과 응답자가 들고 있는 화면이 소리 없이 갈라진다 — 수정 제출은 별도로 정할 규칙이다(#37).
+     */
+    private static void requireStillDraft(FormResponseHistoryEntity response) {
+        if (response.getStatus() != ResponseStatus.DRAFT) {
+            throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
+        }
+    }
+
+    /*
+     * 기존 DRAFT 행 갱신. 새 행을 만들지 않으므로 자동 저장을 아무리 자주 불러도 행 수는 그대로다.
+     *
+     * flush를 명시하는 것은 mdfcn_dt 때문이다. @LastModifiedDate는 UPDATE가 나가는 시점에
+     * 채워지므로, 트랜잭션이 끝나기 전에 응답 DTO를 만들면 웹이 받는 '마지막 저장 시각'이 이번
+     * 저장이 아니라 직전 저장의 값이 된다.
+     */
+    private FormResponseHistoryEntity updateDraft(
+            FormResponseHistoryEntity draft, ResponseContent content) {
+        draft.updateContent(content);
+        formResponseHistoryRepository.flush();
+        return draft;
     }
 
     private FormEntity findAcceptingForm(Long formId) {
@@ -131,12 +220,17 @@ public class FormResponseServiceImpl implements FormResponseService {
      * 보는 결과가 타이밍에 따라 500과 409를 오가지 않게 한다 (#21 학번 중복과 같은 방식).
      *
      * 제약 위반은 flush 시점에야 드러나므로 saveAndFlush로 이 메서드 안에서 잡는다.
+     *
+     * 옮길 코드를 인자로 받는 것은 경합의 뜻이 경로마다 다르기 때문이다. 제출끼리 부딪히면
+     * "이미 냈다"(RESPONSE_ALREADY_SUBMITTED)가 맞지만, 자동 저장이 부딪힌 상대는 같은 사람의
+     * 다른 임시저장일 수 있어 그렇게 답하면 거짓말이 된다 (RESPONSE_SAVE_CONFLICT).
      */
-    private FormResponseHistoryEntity saveOrTranslateConflict(FormResponseHistoryEntity response) {
+    private FormResponseHistoryEntity saveOrTranslateConflict(
+            FormResponseHistoryEntity response, FormErrorCode conflictCode) {
         try {
             return formResponseHistoryRepository.saveAndFlush(response);
         } catch (DataIntegrityViolationException ex) {
-            throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
+            throw new GeneralException(conflictCode);
         }
     }
 }

@@ -36,16 +36,21 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 @Component
 public class QuestionCompositionValidator {
 
+    /*
+     * 유형별 어휘. private이 아니라 패키지 범위인 것은 응답 검증(ResponseAnswerValidator · #35)이
+     * 같은 어휘를 반대 방향으로 쓰기 때문이다 — "이 유형이 정규식을 갖는가"를 두 곳에서 각자
+     * 정의하면 저장은 통과하는데 제출은 거부되는(또는 그 반대의) 상태가 생긴다.
+     */
+
     /** branchMap을 가질 수 있는 유일한 유형 — 다중선택은 답이 여러 개라 갈 곳을 하나로 못 정한다 */
-    private static final Set<QuestionItemType> BRANCHABLE_TYPES =
-            Set.of(QuestionItemType.SINGLE_CHOICE);
+    static final Set<QuestionItemType> BRANCHABLE_TYPES = Set.of(QuestionItemType.SINGLE_CHOICE);
 
     /** 선택지(optionList)를 요구하는 유형 */
-    private static final Set<QuestionItemType> CHOICE_TYPES =
+    static final Set<QuestionItemType> CHOICE_TYPES =
             Set.of(QuestionItemType.SINGLE_CHOICE, QuestionItemType.MULTI_CHOICE);
 
     /** 정규식(ptrnCn) 검증 대상 유형. 날짜는 형식이 고정이라 정규식을 두지 않는다 */
-    private static final Set<QuestionItemType> TEXT_TYPES =
+    static final Set<QuestionItemType> TEXT_TYPES =
             Set.of(QuestionItemType.SHORT_TEXT, QuestionItemType.LONG_TEXT);
 
     /*

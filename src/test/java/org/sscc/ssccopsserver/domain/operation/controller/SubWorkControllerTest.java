@@ -242,7 +242,9 @@ class SubWorkControllerTest {
                 .andExpect(jsonPath("$.data.checklistSummary.completedCount").value(0))
                 .andExpect(jsonPath("$.data.checklistSummary.totalCount").value(4))
                 // 기수는 프론트 디자인에서 빠져 응답에도 두지 않는다
-                .andExpect(jsonPath("$.data.owner.generationNumber").doesNotExist());
+                .andExpect(jsonPath("$.data.owner.generationNumber").doesNotExist())
+                // 목록 봉투는 단건 응답에 실리지 않는다 (AP-11)
+                .andExpect(jsonPath("$.page").doesNotExist());
     }
 
     @Test
@@ -256,6 +258,128 @@ class SubWorkControllerTest {
     @Test
     void getSubWorkWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/v1/sub-works/{subWorkId}", 1)).andExpect(status().isUnauthorized());
+    }
+
+    // 목록 화면(하위 업무)이 진입 시 호출하는 조회. 목록 응답은 data 배열 + page 봉투다 (AP-11)
+    @Test
+    void searchSubWorksReturns200WithListEnvelope() throws Exception {
+        Long firstId = createSubWork();
+        createSubWork();
+
+        searchSubWorks()
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].subWorkId").value(firstId))
+                .andExpect(jsonPath("$.data[0].title").value("부스 배치도 확정"))
+                .andExpect(jsonPath("$.data[0].work.workId").value(parentWorkId))
+                .andExpect(jsonPath("$.data[0].work.title").value("2026 동아리 박람회"))
+                .andExpect(jsonPath("$.data[0].subWorkTypeName").value("예산지출"))
+                .andExpect(jsonPath("$.data[0].owner.memberId").value(ownerId))
+                .andExpect(jsonPath("$.data[0].workStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data[0].approvalStatus").value("PENDING"))
+                .andExpect(jsonPath("$.data[0].progressRate").isNumber())
+                .andExpect(jsonPath("$.data[0].isDelayed").value(false))
+                .andExpect(jsonPath("$.page.size").value(20))
+                .andExpect(jsonPath("$.page.sort").value("dueAt"))
+                .andExpect(jsonPath("$.page.hasNext").value(false))
+                .andExpect(jsonPath("$.page.totalCount").value(2))
+                .andExpect(jsonPath("$.page.overallCount").value(2));
+    }
+
+    // 필터를 걸면 걸러진 건수만 줄고 전체 건수는 그대로다 — 화면의 'N건 · 전체 M건'
+    @Test
+    void searchSubWorksAppliesFilterAndKeepsOverallCount() throws Exception {
+        createSubWork();
+
+        searchSubWorks("workStatus", "DONE")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty())
+                .andExpect(jsonPath("$.page.totalCount").value(0))
+                .andExpect(jsonPath("$.page.overallCount").value(1));
+    }
+
+    // 커서를 그대로 되돌려 보내면 다음 페이지가 이어진다
+    @Test
+    void searchSubWorksFollowsCursorToNextPage() throws Exception {
+        createSubWork();
+        Long secondId = createSubWork();
+
+        String firstPage =
+                searchSubWorks("size", "1")
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.length()").value(1))
+                        .andExpect(jsonPath("$.page.hasNext").value(true))
+                        .andExpect(jsonPath("$.page.nextCursor").isNotEmpty())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        String cursor = JsonPath.parse(firstPage).read("$.page.nextCursor", String.class);
+
+        searchSubWorks("size", "1", "cursor", cursor)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].subWorkId").value(secondId))
+                .andExpect(jsonPath("$.page.hasNext").value(false))
+                .andExpect(jsonPath("$.page.nextCursor").doesNotExist());
+    }
+
+    /*
+     * 화면 '승인대기' 칩. 승인 상태를 여러 개 넘겨야 대기와 재승인필요를 함께 볼 수 있다.
+     * 반복 파라미터(approvalStatus=A&approvalStatus=B)와 쉼표 표기 둘 다 같게 받는다.
+     */
+    @Test
+    void searchSubWorksAcceptsMultipleApprovalStatuses() throws Exception {
+        Long subWorkId = createSubWork();
+        transition(subWorkId, "START", null).andExpect(status().isOk());
+        transition(subWorkId, "REQUEST_REVIEW", null).andExpect(status().isOk());
+
+        searchSubWorks(
+                        "workStatus", "REVIEW",
+                        "approvalStatus", "PENDING",
+                        "approvalStatus", "REAPPROVAL_REQUIRED")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].subWorkId").value(subWorkId))
+                .andExpect(jsonPath("$.data[0].approvalStatus").value("PENDING"));
+
+        searchSubWorks("workStatus", "REVIEW", "approvalStatus", "PENDING,REAPPROVAL_REQUIRED")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    // 기준 코드 밖의 값은 형식 오류와 구분해 돌려준다 (03_오류_코드)
+    @Test
+    void searchSubWorksWithUnknownStatusReturns400() throws Exception {
+        searchSubWorks("workStatus", "진행")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    @Test
+    void searchSubWorksWithUnknownSortReturns400() throws Exception {
+        searchSubWorks("sort", "dueDate")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    // AP-13 — size 최대 100
+    @Test
+    void searchSubWorksOverMaxSizeReturns400() throws Exception {
+        searchSubWorks("size", "101")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void searchSubWorksWithMalformedCursorReturns400() throws Exception {
+        searchSubWorks("cursor", "!!not-a-cursor!!")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void searchSubWorksWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/v1/sub-works")).andExpect(status().isUnauthorized());
     }
 
     /*
@@ -427,6 +551,19 @@ class SubWorkControllerTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"isCompleted\": true}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /*
+     * 쿼리 파라미터는 이름·값을 짝으로 받아 붙인다. 목록 테스트마다 파라미터 조합이 하나씩만
+     * 달라서, 조합마다 헬퍼를 두는 것보다 이 편이 어떤 조건을 보는 테스트인지 잘 드러난다.
+     */
+    private ResultActions searchSubWorks(String... nameAndValuePairs) throws Exception {
+        MockHttpServletRequestBuilder request =
+                get("/v1/sub-works").header("Authorization", "Bearer any-token");
+        for (int index = 0; index < nameAndValuePairs.length; index += 2) {
+            request = request.param(nameAndValuePairs[index], nameAndValuePairs[index + 1]);
+        }
+        return mockMvc.perform(request);
     }
 
     private ResultActions updateChecklistItem(Long subWorkId, Long itemId, String isCompleted)

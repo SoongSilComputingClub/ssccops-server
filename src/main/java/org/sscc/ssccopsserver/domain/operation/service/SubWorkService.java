@@ -6,6 +6,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRes
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchCondition;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 
@@ -23,6 +25,14 @@ public interface SubWorkService {
      * 존재하지 않는 것으로 보고 SUB_WORK_NOT_FOUND(404)를 던진다.
      */
     SubWorkDetailResponse getSubWork(Long subWorkId);
+
+    /*
+     * 조건에 맞는 하위 업무를 상위 업무를 가로질러 조회한다 (OPS-008 · REQ-025).
+     * 소프트 삭제된 건은 목록에도 건수에도 들어가지 않으며, 결과가 없으면 빈 목록이다(404가 아니다).
+     *
+     * 지연·마감임박 판정은 조회 시점을 기준으로 하며 어떤 상태도 바꾸지 않는다 (AP-07).
+     */
+    SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition);
 
     /*
      * 하위 업무의 상태를 전이시킨다 (OPS-010). 전이표(TR-01~TR-04)에 있는 조합만 통과하며,

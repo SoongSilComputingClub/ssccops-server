@@ -28,6 +28,13 @@ public enum OperationErrorCode implements ErrorCode {
     INVALID_OPERATION_PERIOD(
             HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "종료 일시는 시작 일시보다 빠를 수 없습니다."),
 
+    /*
+     * 400 — 목록 조회(OPS-008)의 커서를 해독할 수 없을 때. 형식이 깨졌거나 다른 정렬 기준으로
+     * 받은 커서다. 정의서 03_오류_코드에 커서 전용 코드가 없어 코드 문자열은 VALIDATION_FAILED를
+     * 쓴다 — 프론트가 코드 문자열로 분기하므로 정의서에 없는 코드를 새로 만들지 않는다.
+     */
+    INVALID_CURSOR(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "잘못된 커서입니다."),
+
     // 403 — 국장 미만 권한. 역할 인가가 AOP로 붙기 전까지는 사용처가 없다
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "권한이 없습니다."),
 

@@ -34,7 +34,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 @Transactional
 class SupabaseJwtAuthenticationIntegrationTest {
 
-    private static final UUID SPB_USER_ID = UUID.randomUUID();
+    private static final UUID AUTH_USER_ID = UUID.randomUUID();
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
@@ -50,7 +50,7 @@ class SupabaseJwtAuthenticationIntegrationTest {
         mockMvc.perform(get("/examples/1").header("Authorization", "Bearer any-token"))
                 .andExpect(status().isNotFound());
 
-        assertThat(memberRepository.findBySpbUserId(SPB_USER_ID)).isPresent();
+        assertThat(memberRepository.findByAuthUserId(AUTH_USER_ID)).isPresent();
     }
 
     @TestConfiguration
@@ -62,7 +62,7 @@ class SupabaseJwtAuthenticationIntegrationTest {
             return token ->
                     Jwt.withTokenValue(token)
                             .header("alg", "none")
-                            .subject(SPB_USER_ID.toString())
+                            .subject(AUTH_USER_ID.toString())
                             .claim("email", "test@sscc.org")
                             .issuedAt(Instant.now())
                             .expiresAt(Instant.now().plusSeconds(60))

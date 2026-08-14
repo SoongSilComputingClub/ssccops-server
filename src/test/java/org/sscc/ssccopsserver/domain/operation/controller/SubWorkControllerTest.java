@@ -45,7 +45,7 @@ import com.jayway.jsonpath.JsonPath;
 @Transactional
 class SubWorkControllerTest {
 
-    private static final UUID SPB_USER_ID = UUID.randomUUID();
+    private static final UUID AUTH_USER_ID = UUID.randomUUID();
 
     // data.sql이 넣는 유형. 1=예산지출(승인 필요)
     private static final long SUB_WORK_TYPE_ID = 1L;
@@ -61,11 +61,11 @@ class SubWorkControllerTest {
     @BeforeEach
     void setUp() {
         MemberEntity owner =
-                memberService.findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org");
+                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org");
         ownerId = owner.getId();
-        // 등록자는 토큰의 sub(SPB_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
+        // 등록자는 토큰의 sub(AUTH_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
         MemberEntity registrant =
-                memberService.findOrProvisionBySpbUserId(SPB_USER_ID, "actor@sscc.org");
+                memberService.findOrProvisionByAuthUserId(AUTH_USER_ID, "actor@sscc.org");
         registrantId = registrant.getId();
         parentWorkId =
                 workService
@@ -378,7 +378,7 @@ class SubWorkControllerTest {
             return token ->
                     Jwt.withTokenValue(token)
                             .header("alg", "none")
-                            .subject(SPB_USER_ID.toString())
+                            .subject(AUTH_USER_ID.toString())
                             .claim("email", "actor@sscc.org")
                             .issuedAt(Instant.now())
                             .expiresAt(Instant.now().plusSeconds(60))

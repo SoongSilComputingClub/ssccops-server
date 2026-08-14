@@ -26,10 +26,10 @@ public class MemberServiceImpl implements MemberService {
     private final MemberStatusRepository memberStatusRepository;
 
     @Transactional
-    public MemberEntity findOrProvisionBySpbUserId(UUID spbUserId, String email) {
+    public MemberEntity findOrProvisionByAuthUserId(UUID authUserId, String email) {
         return memberRepository
-                .findBySpbUserId(spbUserId)
-                .orElseGet(() -> provisionTemporaryMember(spbUserId, email));
+                .findByAuthUserId(authUserId)
+                .orElseGet(() -> provisionTemporaryMember(authUserId, email));
     }
 
     /*
@@ -48,7 +48,7 @@ public class MemberServiceImpl implements MemberService {
 
     // 최초 로그인 시 학번 등 실제 프로필 정보 없이 임시회원으로 즉시 가입시킨다 (JIT 프로비저닝).
     // stdnt_no/gen_no/mbr_nm 등 NOT NULL 컬럼은 플레이스홀더로 채우고, 정식 가입 절차에서 실제 값으로 갱신한다.
-    private MemberEntity provisionTemporaryMember(UUID spbUserId, String email) {
+    private MemberEntity provisionTemporaryMember(UUID authUserId, String email) {
         MemberGradeEntity temporaryGrade =
                 memberGradeRepository
                         .findById(MemberGradeEntity.TEMPORARY_CODE)
@@ -62,7 +62,7 @@ public class MemberServiceImpl implements MemberService {
 
         MemberEntity member =
                 MemberEntity.create(
-                        placeholderStudentNumber(spbUserId),
+                        placeholderStudentNumber(authUserId),
                         0,
                         placeholderName(email),
                         null,
@@ -72,14 +72,14 @@ public class MemberServiceImpl implements MemberService {
                         temporaryGrade,
                         enrolledStatus,
                         LocalDate.now());
-        member.assignSpbUserId(spbUserId);
+        member.assignAuthUserId(authUserId);
 
         return memberRepository.save(member);
     }
 
     // stdnt_no는 VARCHAR(20) + UNIQUE라 UUID 원문은 못 담는다. 접두사 "T" + 대시 제거한 UUID 앞 19자리로 대체
-    private String placeholderStudentNumber(UUID spbUserId) {
-        return "T" + spbUserId.toString().replace("-", "").substring(0, 19);
+    private String placeholderStudentNumber(UUID authUserId) {
+        return "T" + authUserId.toString().replace("-", "").substring(0, 19);
     }
 
     private String placeholderName(String email) {

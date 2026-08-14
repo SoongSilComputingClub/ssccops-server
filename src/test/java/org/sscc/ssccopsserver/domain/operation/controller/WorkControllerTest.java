@@ -37,7 +37,7 @@ import org.sscc.ssccopsserver.domain.member.service.MemberService;
 @Transactional
 class WorkControllerTest {
 
-    private static final UUID SPB_USER_ID = UUID.randomUUID();
+    private static final UUID AUTH_USER_ID = UUID.randomUUID();
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberService memberService;
@@ -49,11 +49,11 @@ class WorkControllerTest {
     void setUp() {
         ownerId =
                 memberService
-                        .findOrProvisionBySpbUserId(UUID.randomUUID(), "owner@sscc.org")
+                        .findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org")
                         .getId();
-        // 등록자는 토큰의 sub(SPB_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
+        // 등록자는 토큰의 sub(AUTH_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
         registrantId =
-                memberService.findOrProvisionBySpbUserId(SPB_USER_ID, "actor@sscc.org").getId();
+                memberService.findOrProvisionByAuthUserId(AUTH_USER_ID, "actor@sscc.org").getId();
     }
 
     @Test
@@ -197,7 +197,7 @@ class WorkControllerTest {
             return token ->
                     Jwt.withTokenValue(token)
                             .header("alg", "none")
-                            .subject(SPB_USER_ID.toString())
+                            .subject(AUTH_USER_ID.toString())
                             .claim("email", "actor@sscc.org")
                             .issuedAt(Instant.now())
                             .expiresAt(Instant.now().plusSeconds(60))

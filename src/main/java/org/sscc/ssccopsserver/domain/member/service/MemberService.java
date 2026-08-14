@@ -8,7 +8,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 public interface MemberService {
 
     // Supabase 식별자로 회원을 조회하고, 없으면 임시회원으로 즉시 프로비저닝한다.
-    MemberEntity findOrProvisionBySpbUserId(UUID spbUserId, String email);
+    MemberEntity findOrProvisionByAuthUserId(UUID authUserId, String email);
 
     /*
      * 다른 도메인이 담당자·작성자 등으로 지정할 수 있는 회원인지 확인해 반환한다.

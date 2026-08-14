@@ -8,6 +8,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 
@@ -40,4 +42,28 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      */
     @EntityGraph(attributePaths = "creator")
     List<FormEntity> findAllByIdInOrderByIdDesc(Collection<Long> ids);
+
+    /*
+     * 관리자 폼 목록의 실제 조회 (#32 · GET /v1/forms). 상태·라벨 두 필터가 각각 선택이고
+     * 둘 다 주면 AND라, 조합마다 파생 메서드를 두면 네 개가 된다. Specification을 쓰지 않은 것은
+     * 필터가 두 개로 고정돼 있어 동적 조립의 이득이 없고, JPQL이면 조인·페치 전략이 한눈에
+     * 보이기 때문이다.
+     *
+     * 상태는 집합으로 받아 "전체"를 전체 상태로 표현한다 — 열거형 파라미터에 NULL을 넣고
+     * :status is null로 분기하면 Hibernate가 파라미터 타입을 추론하지 못해 방언에 따라 깨진다.
+     * 반대로 라벨 식별자는 Long이라 NULL 비교가 안전해 그대로 선택 필터로 둔다.
+     *
+     * 라벨 필터를 조인이 아니라 EXISTS 하위 질의로 쓴 것은, 한 폼에 라벨이 여러 개 달려 있을 때
+     * 조인이 폼을 라벨 수만큼 중복시키기 때문이다. distinct로 지우면 join fetch와 함께 쓸 때
+     * 페이징이 메모리로 넘어간다. 생성자는 목록에 필요하므로 함께 페치한다 (DB-13).
+     */
+    @Query(
+            "select f from FormEntity f join fetch f.creator"
+                    + " where f.status in :statuses"
+                    + " and (:labelId is null or exists ("
+                    + "   select 1 from FormLabelRelationEntity r"
+                    + "   where r.form = f and r.label.id = :labelId))"
+                    + " order by f.id desc")
+    List<FormEntity> findAllForAdminList(
+            @Param("statuses") Collection<FormStatus> statuses, @Param("labelId") Long labelId);
 }

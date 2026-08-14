@@ -30,6 +30,13 @@ public interface FormResponseHistoryRepository
     boolean existsByFormAndMember(FormEntity form, MemberEntity member);
 
     /*
+     * 문항 식별자 보호(#32 수정)의 판단 근거. 상태를 가리지 않고 한 건이라도 있으면 참이다 —
+     * 임시저장(DRAFT) 응답의 rspns_cn도 key가 qitemId라, 제출 전이라고 해서 문항을 지워도
+     * 되는 것은 아니다. 목록의 responseCount가 DRAFT를 빼는 것과는 판단 기준이 다르다.
+     */
+    boolean existsByForm(FormEntity form);
+
+    /*
      * 폼별 응답 목록(#37). 목록에 응답자 이름이 필요하므로 회원을 함께 끌어온다.
      * 상태 필터가 선택 사항이라 FormRepository와 같은 이유로 상태 집합을 받는다.
      */

@@ -113,15 +113,54 @@ public class FormEntity {
             QuestionCompositionContent questionComposition,
             Instant receiptBeginAt,
             Instant receiptEndAt) {
+        return create(
+                creator, title, questionComposition, receiptBeginAt, receiptEndAt, FormStatus.DRAFT);
+    }
+
+    /*
+     * 상태를 지정해 만드는 생성 팩토리 (#32). 폼 편집 화면의 '바로 접수 시작'이 만들자마자
+     * OPEN인 폼을 요구해서 열어 둔다 — 만들고 나서 상태를 한 번 더 바꾸게 하면 두 번째 호출이
+     * 실패했을 때 사용자가 의도하지 않은 DRAFT 폼이 남는다.
+     *
+     * 상태를 자유롭게 넣을 수 있게 된 만큼 어떤 상태가 허용되는지는 호출부(서비스)가 정한다.
+     * 상태 전이 규칙 자체는 접수 상태 전이 API(#33)의 범위다.
+     */
+    public static FormEntity create(
+            MemberEntity creator,
+            String title,
+            QuestionCompositionContent questionComposition,
+            Instant receiptBeginAt,
+            Instant receiptEndAt,
+            FormStatus status) {
         return new FormEntity(
                 null,
                 creator,
                 title,
-                FormStatus.DRAFT,
+                status,
                 receiptBeginAt,
                 receiptEndAt,
                 questionComposition,
                 null,
                 null);
+    }
+
+    /*
+     * 폼 수정 (#32 · PUT). 문항 구성은 부분 갱신이 아니라 통째로 교체한다 —
+     * QuestionCompositionContent가 모르는 필드를 보존하지 못하므로(ignoreUnknown) 병합하면
+     * 클라이언트가 보내지 않은 항목이 조용히 사라진 채 반쯤 남는다.
+     *
+     * 생성자(creator)는 바꾸지 않는다. 폼을 넘겨받는 개념이 없어 컬럼 자체가 updatable = false다.
+     */
+    public void update(
+            String title,
+            FormStatus status,
+            QuestionCompositionContent questionComposition,
+            Instant receiptBeginAt,
+            Instant receiptEndAt) {
+        this.title = title;
+        this.status = status;
+        this.questionComposition = questionComposition;
+        this.receiptBeginAt = receiptBeginAt;
+        this.receiptEndAt = receiptEndAt;
     }
 }

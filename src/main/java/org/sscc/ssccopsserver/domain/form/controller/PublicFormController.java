@@ -8,9 +8,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
@@ -93,5 +96,62 @@ public class PublicFormController {
                 formResponseService.submitResponse(formId, request, respondent);
         URI location = URI.create("/v1/forms/" + formId + "/responses/" + response.formRspnsId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 내 작성 중 응답 조회 (#36). 재접속했을 때 이어서 쓰기 위한 복원 경로다.
+     *
+     * 경로에 mbrId가 없다. 대상은 언제나 인증 주체 본인이며, 식별자를 받지 않는 것이 아니라 받을
+     * 자리를 만들지 않는 것이 요점이다 — 자리가 있으면 남의 작성 중 응답에 닿는 경로가 생기고,
+     * 그때부터 그 경로를 막는 일은 인가 검사 한 줄이 빠지지 않는지에 달린다. 지원서 초안은 제출
+     * 전이라 응답자 본인 말고는 아무도 볼 이유가 없는 개인정보다.
+     *
+     * 작성 중인 응답이 없으면 204가 아니라 data가 null인 200이다. 이 API의 모든 응답은
+     * ApiResponse 봉투를 쓰는데 204는 본문 자체가 없어, 웹의 공통 응답 처리(봉투를 벗겨
+     * data를 꺼낸다)가 이 엔드포인트 하나만 예외로 다뤄야 한다. '작성 중인 것이 없다'는 것도
+     * 오류가 아니라 정상적인 조회 결과이므로 다른 조회와 같은 모양으로 답한다.
+     */
+    @Operation(
+            summary = "내 작성 중 응답 조회",
+            description =
+                    "재접속한 응답자가 임시저장(DRAFT)해 둔 내용을 받아 이어서 작성한다. 대상은 언제나 인증 주체 본인이라"
+                            + " 경로에 회원 식별자를 두지 않는다. 작성 중인 응답이 없으면 data가 null인 200으로"
+                            + " 응답한다 — 이미 제출을 마친 경우도 '작성 중인 것이 없다'로 같다(제출 여부는 공개 폼"
+                            + " 조회의 alreadySubmitted가 전한다). 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING,"
+                            + " 없는 폼은 404 NOT_FOUND다.")
+    @GetMapping("/{formId}/responses/draft")
+    public ApiResponse<FormResponseDraftResponse> getMyDraft(
+            @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(
+                formResponseService.findMyDraft(formId, respondent).orElse(null));
+    }
+
+    /*
+     * 작성 중 응답 저장 (#36). 자동 저장이 매 입력마다 부르는 경로다.
+     *
+     * POST가 아니라 PUT인 것은 이 요청이 몇 번을 보내도 결과가 같기 때문이다 — 회원당 폼당 행은
+     * 하나이고 본문은 그 행의 내용을 통째로 대체한다. POST로 두면 자동 저장이 도는 동안 응답이
+     * 계속 만들어지는 것처럼 읽히고, 201/Location을 매번 돌려줄지 같은 답 없는 질문이 따라온다.
+     *
+     * 저장 빈도(디바운스)는 웹이 조절한다. 서버는 매 요청을 그대로 처리하되 본문 크기에만 상한을
+     * 둔다 (RESPONSE_CONTENT_TOO_LARGE).
+     */
+    @Operation(
+            summary = "작성 중 응답 저장(자동 저장)",
+            description =
+                    "본문의 rspnsCn으로 작성 중인 응답을 통째로 대체한다(upsert) — 임시저장 행이 있으면 내용만 갱신하고, 없으면 DRAFT 상태로"
+                        + " 새로 만든다. 회원당 폼당 행은 하나라 몇 번을 불러도 늘지 않는다. **자동 저장은 필수·형식(정규식)·최대 선택 수를"
+                        + " 검사하지 않는다** — 작성 중에는 비어 있거나 형식이 맞지 않는 것이 정상이고, 그 검사는 제출 시점의 몫이다. 다만 폼에"
+                        + " 없는 문항이 섞이면 400 UNKNOWN_QUESTION_ITEM, 문항 유형과 맞지 않는 값은 400"
+                        + " INVALID_ANSWER_VALUE, 응답 내용이 상한을 넘기면 413 RESPONSE_CONTENT_TOO_LARGE다."
+                        + " 이미 제출한 폼은 409 RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409"
+                        + " FORM_NOT_ACCEPTING이며, 첫 저장이 동시에 도착해 부딪히면 409 RESPONSE_SAVE_CONFLICT로"
+                        + " 재시도를 알린다.")
+    @PutMapping("/{formId}/responses/draft")
+    public ApiResponse<FormResponseDraftResponse> saveMyDraft(
+            @PathVariable Long formId,
+            @Valid @RequestBody FormResponseDraftRequest request,
+            @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(formResponseService.saveDraft(formId, request, respondent));
     }
 }

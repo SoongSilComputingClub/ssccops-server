@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -51,6 +52,44 @@ class MemberServiceImplTest {
         assertThat(memberService().findByAuthUserId(null)).isEmpty();
     }
 
+    @Test
+    void enrolledMemberIsAssignable() {
+        MemberEntity member = saveMember(MemberStatusCode.ENROLLED);
+
+        assertThat(memberService().findAssignableMember(member.getId())).isPresent();
+    }
+
+    /*
+     * 탈퇴·제명 회원의 mbr 행은 이력 보존을 위해 남아 있다. "회원이 존재한다"만 보면 통과해 버리므로
+     * 행이 남아 있다는 사실까지 함께 확인한다 — 걸러진 이유가 상태 조건임을 못 박기 위해서다.
+     */
+    @Test
+    void withdrawnOrExpelledMemberIsNotAssignable() {
+        MemberEntity withdrawn = saveMember(MemberStatusCode.WITHDRAWN);
+        MemberEntity expelled = saveMember(MemberStatusCode.EXPELLED);
+
+        assertThat(memberRepository.findById(withdrawn.getId())).isPresent();
+        assertThat(memberRepository.findById(expelled.getId())).isPresent();
+
+        assertThat(memberService().findAssignableMember(withdrawn.getId())).isEmpty();
+        assertThat(memberService().findAssignableMember(expelled.getId())).isEmpty();
+    }
+
+    // 휴학·졸업은 회원 자격이 유지되므로 배정에서 빠지지 않는다
+    @Test
+    void memberOnLeaveOrGraduatedStaysAssignable() {
+        MemberEntity onLeave = saveMember(MemberStatusCode.MIL_LEAVE);
+        MemberEntity graduated = saveMember(MemberStatusCode.GRADUATED);
+
+        assertThat(memberService().findAssignableMember(onLeave.getId())).isPresent();
+        assertThat(memberService().findAssignableMember(graduated.getId())).isPresent();
+    }
+
+    @Test
+    void nullMemberIdIsNotAssignable() {
+        assertThat(memberService().findAssignableMember(null)).isEmpty();
+    }
+
     private MemberEntity saveMember(UUID authUserId) {
         return MemberFixture.save(
                 memberRepository,
@@ -60,5 +99,17 @@ class MemberServiceImplTest {
                 "20200001",
                 "김도현",
                 "test@sscc.org");
+    }
+
+    private MemberEntity saveMember(MemberStatusCode statusCode) {
+        return MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                UUID.randomUUID(),
+                "2020" + statusCode.ordinal() + "999",
+                "김도현",
+                "test@sscc.org",
+                statusCode);
     }
 }

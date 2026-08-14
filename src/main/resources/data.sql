@@ -164,3 +164,11 @@ WHERE sub_work_type_id = 1 AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
 
 UPDATE sub_work_type SET autzr_role_cd = 'PRESIDENT'
 WHERE sub_work_type_id = 2 AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
+
+-- 폼 라벨(form_lbl)은 일부러 시드하지 않는다 (#31에서 결정).
+-- 후보로 거론된 어휘(신규모집·회원연장·행사·스터디·연도·학기) 중 연도·학기는 해마다 값이
+-- 달라져(2026 → 2027, 1학기 → 2학기) 시드로 굳히면 매년 이 파일을 고쳐야 하고, 고치지 않으면
+-- 화면에는 지난해 라벨만 남는다. 나머지도 라벨 관리 화면(#34)에서 추가·비활성화하는 운영
+-- 데이터라 초기값을 서버가 정할 근거가 없다 — 기준 코드(mbr_grd·mbr_stts)와 다른 성격이다.
+-- 폼 상태(form_stts_cd)는 FormStatus enum이 코드값을 갖고 명칭은 화면이 갖는 어휘라
+-- 별도 코드 테이블이 없어 여기 시드할 것도 없다.

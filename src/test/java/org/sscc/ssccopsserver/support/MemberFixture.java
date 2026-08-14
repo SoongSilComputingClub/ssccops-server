@@ -3,6 +3,8 @@ package org.sscc.ssccopsserver.support;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
+import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
@@ -29,10 +31,32 @@ public final class MemberFixture {
             String name,
             String email) {
 
+        return save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                authUserId,
+                studentNumber,
+                name,
+                email,
+                MemberStatusCode.ENROLLED);
+    }
+
+    /** 회원 상태에 따라 동작이 갈리는 테스트(담당자 배정 등)를 위해 상태를 지정해 만든다. */
+    public static MemberEntity save(
+            MemberRepository memberRepository,
+            MemberGradeRepository memberGradeRepository,
+            MemberStatusRepository memberStatusRepository,
+            UUID authUserId,
+            String studentNumber,
+            String name,
+            String email,
+            MemberStatusCode statusCode) {
+
         MemberGradeEntity grade =
-                memberGradeRepository.findById(MemberGradeEntity.TEMPORARY_CODE).orElseThrow();
+                memberGradeRepository.findById(MemberGradeCode.TEMP.code()).orElseThrow();
         MemberStatusEntity status =
-                memberStatusRepository.findById(MemberStatusEntity.ENROLLED_CODE).orElseThrow();
+                memberStatusRepository.findById(statusCode.code()).orElseThrow();
 
         MemberEntity member =
                 MemberEntity.create(

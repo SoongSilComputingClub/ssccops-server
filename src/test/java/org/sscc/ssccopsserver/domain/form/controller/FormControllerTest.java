@@ -388,6 +388,50 @@ class FormControllerTest {
     }
 
     /*
+     * 폼 저장의 labelIds와 라벨 지정 API(#34)는 같은 규칙을 태워야 한다. 한동안 이 경로에만
+     * 비활성 검사가 없어, 편집 화면에서는 비활성 라벨이 그대로 달리고 지정 API로는 막히는
+     * 상태였다. 폼 편집 화면이 labelIds를 폼 저장에 실어 보내므로 사용자가 마주치는 것은
+     * 이 경로다 — 규칙이 갈리지 않도록 고정한다.
+     */
+    @Test
+    void createFormWithInactiveLabelReturns400() throws Exception {
+        Long inactiveLabelId = saveInactiveLabel("지난학기").getId();
+
+        mockMvc.perform(
+                        authenticatedPost(
+                                "/v1/forms",
+                                saveBody(
+                                        "비활성 라벨을 단 폼",
+                                        null,
+                                        null,
+                                        null,
+                                        "[" + inactiveLabelId + "]")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FORM_LABEL_NOT_USABLE"));
+    }
+
+    /*
+     * 비활성은 "새로 달 수 없다"는 뜻이지 "달려 있던 것을 떼라"는 뜻이 아니다. 이미 달린
+     * 라벨을 그대로 다시 보내는 저장(편집 화면이 늘 하는 일)은 통과해야 한다.
+     */
+    @Test
+    void updateFormKeepsAlreadyAssignedLabelAfterItIsDeactivated() throws Exception {
+        FormLabelEntity label = saveLabel("신규모집");
+        Long formId = createForm("라벨 유지 폼", null, "[" + label.getId() + "]");
+
+        label.changeActive(false);
+        formLabelRepository.saveAndFlush(label);
+
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId,
+                                saveBody("라벨 유지 폼", null, null, null, "[" + label.getId() + "]")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.labels.length()").value(1))
+                .andExpect(jsonPath("$.data.labels[0].lblNm").value("신규모집"));
+    }
+
+    /*
      * rspns_cn의 key가 qitemId라, 응답이 있는 폼에서 문항 식별자가 사라지면 과거 응답이 어느
      * 문항의 답인지 알 수 없게 된다. 되돌릴 수 없는 손실이라 400이 아니라 409다.
      */
@@ -636,6 +680,12 @@ class FormControllerTest {
                         .getResponse()
                         .getContentAsString();
         return JsonPath.parse(response).read("$.data.formId", Long.class);
+    }
+
+    private FormLabelEntity saveInactiveLabel(String name) {
+        FormLabelEntity label = FormLabelEntity.create(name);
+        label.changeActive(false);
+        return formLabelRepository.saveAndFlush(label);
     }
 
     private FormLabelEntity saveLabel(String name) {

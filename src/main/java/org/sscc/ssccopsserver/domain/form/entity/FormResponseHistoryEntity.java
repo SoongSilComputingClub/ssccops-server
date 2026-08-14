@@ -22,7 +22,9 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
+import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -144,5 +146,30 @@ public class FormResponseHistoryEntity {
         this.content = content;
         this.status = ResponseStatus.SUBMITTED;
         this.submittedAt = submittedAt;
+    }
+
+    /*
+     * 심사 결과 반영 (#37). 전이 규칙을 서비스가 아니라 여기에 두는 것은 FormEntity.changeStatus와
+     * 같은 이유다 — 상태를 바꾸는 경로가 늘어날 때 규칙이 호출부마다 복제되면 갈린다 (LY-02).
+     *
+     * 규칙은 "DRAFT가 얽히면 안 된다" 하나다. SUBMITTED·ACCEPTED·REJECTED 사이는 전부 열어 둔다
+     * (심사 번복이 실제 운영에서 일어난다). 같은 상태로의 재지정도 막지 않는다 — 웹의 상태 변경
+     * 시트는 현재 값을 고른 채로도 저장을 누를 수 있고, 그 요청은 아무것도 바꾸지 않을 뿐 잘못된
+     * 요청이 아니다. 폼 상태(OPEN → OPEN을 막는다)와 갈리는 것은 그쪽이 '접수를 연다'는 사건인
+     * 반면 이쪽은 '심사 결과'라는 값이기 때문이다.
+     *
+     * DRAFT → SUBMITTED가 여기서도 막히는 것이 요점이다. 제출은 응답자만 할 수 있는 일이며
+     * 그 자리는 submit() 하나뿐이다 — 운영자가 상태만 SUBMITTED로 올려 두면 응답자가 낸 적 없는
+     * 응답에 sbmsn_dt가 NULL인 채로 심사가 시작된다.
+     *
+     * **누가 이 변경을 했는지는 남지 않는다.** 데이터사전에 응답 상태 이력 테이블이 없어
+     * mdfcn_dt만 갱신되며, 수행자 기록은 감사 로그(#8)가 확정되면 그쪽에 얹는다. 이 이슈에서
+     * 이력 테이블을 새로 만들지 않기로 한 결정이다 (폼 상태 전이 #33과 같다).
+     */
+    public void changeStatus(ResponseStatus next) {
+        if (this.status == ResponseStatus.DRAFT || next == ResponseStatus.DRAFT) {
+            throw new GeneralException(FormErrorCode.INVALID_RESPONSE_STATUS_TRANSITION);
+        }
+        this.status = next;
     }
 }

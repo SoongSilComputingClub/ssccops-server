@@ -170,6 +170,31 @@ public enum FormErrorCode implements ErrorCode {
     RESPONSE_CONTENT_MALFORMED(
             HttpStatus.UNPROCESSABLE_ENTITY, "RESPONSE_CONTENT_MALFORMED", "폼 응답 내용을 읽을 수 없습니다."),
 
+    /*
+     * 404 — 존재하지 않는 응답 (#37).
+     *
+     * **다른 폼의 응답 식별자도 같은 코드로 내린다.** 경로에 formId와 formRspnsId가 둘 다 있는데
+     * 응답 식별자만 보고 조회하면 폼 간 데이터가 그대로 새어 나가므로, 조회는 반드시 두 값을 함께
+     * 건다. 그 결과 "없는 응답"과 "남의 폼 응답"이 한 코드로 합쳐지는데, 이것은 의도된 것이다 —
+     * 코드를 나누면 그 폼에 그 번호의 응답이 있는지 없는지가 권한 없는 운영자에게 새어 나간다.
+     */
+    FORM_RESPONSE_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_RESPONSE_NOT_FOUND", "폼 응답을 찾을 수 없습니다."),
+
+    /*
+     * 400 — 허용되지 않는 응답 상태 전이 (#37).
+     *
+     * SUBMITTED ↔ ACCEPTED ↔ REJECTED는 자유롭게 오간다(심사 번복). 여기에 걸리는 것은 DRAFT가
+     * 얽힌 전이뿐이다 — 작성 중인 응답을 운영자가 승인하면 응답자가 아직 쓰고 있던 내용이 그대로
+     * 심사 결과로 굳고, 반대로 제출된 응답을 DRAFT로 되돌리면 sbmsn_dt가 남아 있는 '미제출'
+     * 응답이 생겨 데이터가 스스로 모순된다. DRAFT → SUBMITTED는 오직 응답자의 제출로만 일어난다.
+     *
+     * 400인 것은 폼 상태 전이(INVALID_FORM_STATUS_TRANSITION)와 같은 이유다 — 웹은 현재 상태를
+     * 이미 화면에 들고 있어 보낼 수 있는 값이 정해지므로 "지금 할 수 없는 일"보다 "보내면 안 되는
+     * 요청"에 가깝다.
+     */
+    INVALID_RESPONSE_STATUS_TRANSITION(
+            HttpStatus.BAD_REQUEST, "INVALID_RESPONSE_STATUS_TRANSITION", "허용되지 않는 응답 상태 전이입니다."),
+
     // 404 — 존재하지 않는 라벨. 비활성 라벨은 여기에 걸리지 않는다 (지워지지 않고 살아 있다)
     FORM_LABEL_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_LABEL_NOT_FOUND", "폼 라벨을 찾을 수 없습니다."),
 

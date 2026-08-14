@@ -12,6 +12,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.support.MemberFixture;
 
 @DataJpaTest
 @ActiveProfiles("test")
@@ -22,34 +23,40 @@ class MemberServiceImplTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
 
     private MemberService memberService() {
-        return new MemberServiceImpl(
-                memberRepository, memberGradeRepository, memberStatusRepository);
+        return new MemberServiceImpl(memberRepository);
     }
 
     @Test
-    void firstLoginProvisionsTemporaryMember() {
+    void findsMemberLinkedToAuthUser() {
         UUID authUserId = UUID.randomUUID();
+        MemberEntity saved = saveMember(authUserId);
 
-        MemberEntity created =
-                memberService().findOrProvisionByAuthUserId(authUserId, "test@sscc.org");
+        assertThat(memberService().findByAuthUserId(authUserId))
+                .get()
+                .extracting(MemberEntity::getId)
+                .isEqualTo(saved.getId());
+    }
 
-        assertThat(created.getId()).isNotNull();
-        assertThat(created.getAuthUserId()).isEqualTo(authUserId);
-        assertThat(created.getEmail()).isEqualTo("test@sscc.org");
-        assertThat(created.getName()).isEqualTo("test");
-        assertThat(created.getMembershipGrade().getCode()).isEqualTo("TEMP");
-        assertThat(created.getMembershipStatus().getCode()).isEqualTo("ENROLLED");
+    // 로그인은 했지만 아직 가입하지 않은 사용자 — 조회는 비어 있고, 회원이 생기지도 않는다
+    @Test
+    void lookupOfUnknownAuthUserIsEmptyAndCreatesNothing() {
+        assertThat(memberService().findByAuthUserId(UUID.randomUUID())).isEmpty();
+        assertThat(memberRepository.count()).isZero();
     }
 
     @Test
-    void existingMappingDoesNotCreateDuplicate() {
-        UUID authUserId = UUID.randomUUID();
-        MemberService service = memberService();
+    void nullAuthUserIdIsEmpty() {
+        assertThat(memberService().findByAuthUserId(null)).isEmpty();
+    }
 
-        MemberEntity first = service.findOrProvisionByAuthUserId(authUserId, "test@sscc.org");
-        MemberEntity second = service.findOrProvisionByAuthUserId(authUserId, "test@sscc.org");
-
-        assertThat(second.getId()).isEqualTo(first.getId());
-        assertThat(memberRepository.count()).isEqualTo(1);
+    private MemberEntity saveMember(UUID authUserId) {
+        return MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                authUserId,
+                "20200001",
+                "김도현",
+                "test@sscc.org");
     }
 }

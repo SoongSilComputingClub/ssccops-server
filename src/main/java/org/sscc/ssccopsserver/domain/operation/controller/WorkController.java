@@ -5,7 +5,6 @@ import java.net.URI;
 import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,6 +14,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import lombok.RequiredArgsConstructor;
 
@@ -34,8 +34,7 @@ public class WorkController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<WorkCreateResponse>> create(
-            @Valid @RequestBody WorkCreateRequest request,
-            @AuthenticationPrincipal MemberEntity registrant) {
+            @Valid @RequestBody WorkCreateRequest request, @CurrentMember MemberEntity registrant) {
         WorkCreateResponse response = workService.createWork(request, registrant);
         URI location = URI.create("/v1/works/" + response.workId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));

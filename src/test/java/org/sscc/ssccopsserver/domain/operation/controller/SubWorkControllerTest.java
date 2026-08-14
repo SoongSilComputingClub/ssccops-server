@@ -27,10 +27,13 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
-import org.sscc.ssccopsserver.domain.member.service.MemberService;
+import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
+import org.sscc.ssccopsserver.support.MemberFixture;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -51,7 +54,9 @@ class SubWorkControllerTest {
     private static final long SUB_WORK_TYPE_ID = 1L;
 
     @Autowired private MockMvc mockMvc;
-    @Autowired private MemberService memberService;
+    @Autowired private MemberRepository memberRepository;
+    @Autowired private MemberGradeRepository memberGradeRepository;
+    @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private WorkService workService;
 
     private Long ownerId;
@@ -60,12 +65,10 @@ class SubWorkControllerTest {
 
     @BeforeEach
     void setUp() {
-        MemberEntity owner =
-                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org");
+        MemberEntity owner = saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org");
         ownerId = owner.getId();
-        // 등록자는 토큰의 sub(AUTH_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
-        MemberEntity registrant =
-                memberService.findOrProvisionByAuthUserId(AUTH_USER_ID, "actor@sscc.org");
+        // 등록자는 토큰의 sub(AUTH_USER_ID)와 연결된 회원이며 담당자와 다른 사람이다
+        MemberEntity registrant = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org");
         registrantId = registrant.getId();
         parentWorkId =
                 workService
@@ -80,6 +83,18 @@ class SubWorkControllerTest {
                                         null),
                                 registrant)
                         .workId();
+    }
+
+    private MemberEntity saveMember(
+            UUID authUserId, String studentNumber, String name, String email) {
+        return MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                authUserId,
+                studentNumber,
+                name,
+                email);
     }
 
     @Test

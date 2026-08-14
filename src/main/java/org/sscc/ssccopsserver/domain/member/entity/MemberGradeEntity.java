@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class MemberGradeEntity {
 
-    // Supabase JWT 최초 로그인 시 자동 프로비저닝되는 임시회원 등급 코드 (data.sql로 시드됨)
+    // 회원가입 직후 부여되는 임시회원 등급 코드 (data.sql로 시드됨)
     public static final String TEMPORARY_CODE = "TEMP";
 
     @Id

@@ -4,28 +4,32 @@ import java.util.List;
 
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
 /*
- * Supabase JWT 인증 결과. principal은 원본 Jwt가 아니라 매핑된 MemberEntity로 둔다 —
- * 이후 계층(향후 AOP 기반 role 인가 등)이 SecurityContext에서 바로 MemberEntity를 꺼내 쓸 수 있게 하기 위함.
- * 권한(GrantedAuthority)은 비워둔다 — role 인가는 별도 AOP에서 처리할 예정이다.
+ * Supabase JWT 인증 결과. principal은 원본 Jwt가 아니라 AuthenticatedUser다 —
+ * 이후 계층이 SecurityContext에서 바로 인증 사용자와 연결된 회원을 꺼내 쓸 수 있게 하기 위함이다.
+ *
+ * 회원이 필요한 엔드포인트는 principal을 직접 캐스팅하지 말고 @CurrentMember로 받는다.
+ * 미가입 사용자를 SIGNUP_REQUIRED로 걸러내는 책임이 그 리졸버 한 곳에 모여 있다.
+ *
+ * 권한(GrantedAuthority)은 비워둔다 — 역할 인가는 별도 이슈에서 처리할 예정이다.
  */
 public class SupabaseAuthenticationToken extends AbstractAuthenticationToken {
 
-    private final MemberEntity member;
+    private final AuthenticatedUser principal;
     private final Jwt jwt;
 
-    public SupabaseAuthenticationToken(MemberEntity member, Jwt jwt) {
+    public SupabaseAuthenticationToken(AuthenticatedUser principal, Jwt jwt) {
         super(List.of());
-        this.member = member;
+        this.principal = principal;
         this.jwt = jwt;
         setAuthenticated(true);
     }
 
     @Override
     public Object getPrincipal() {
-        return member;
+        return principal;
     }
 
     @Override
@@ -33,8 +37,12 @@ public class SupabaseAuthenticationToken extends AbstractAuthenticationToken {
         return jwt;
     }
 
+    /*
+     * 미가입 사용자는 mbr_id가 없으므로 회원 식별자가 아니라 인증 사용자 식별자를 이름으로 쓴다.
+     * 가입 여부와 무관하게 항상 값이 있어야 로그·감사 추적이 끊기지 않는다.
+     */
     @Override
     public String getName() {
-        return String.valueOf(member.getId());
+        return principal.authUserId().toString();
     }
 }

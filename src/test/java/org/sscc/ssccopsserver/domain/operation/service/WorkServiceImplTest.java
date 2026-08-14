@@ -32,6 +32,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
+import org.sscc.ssccopsserver.support.MemberFixture;
 
 /*
  * @DataJpaTest는 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다.
@@ -60,16 +61,12 @@ class WorkServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        MemberService memberService =
-                new MemberServiceImpl(
-                        memberRepository, memberGradeRepository, memberStatusRepository);
+        MemberService memberService = new MemberServiceImpl(memberRepository);
         workService = new WorkServiceImpl(operationRepository, workRepository, memberService);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
-        registrant =
-                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "registrant@sscc.org");
-        MemberEntity owner =
-                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org");
+        registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
+        MemberEntity owner = saveMember("20200002", "이서연", "owner@sscc.org");
         ownerId = owner.getId();
     }
 
@@ -177,5 +174,16 @@ class WorkServiceImplTest {
                 .isEqualTo(OperationErrorCode.INVALID_OPERATION_PERIOD);
 
         assertThat(operationRepository.count()).isZero();
+    }
+
+    private MemberEntity saveMember(String studentNumber, String name, String email) {
+        return MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                UUID.randomUUID(),
+                studentNumber,
+                name,
+                email);
     }
 }

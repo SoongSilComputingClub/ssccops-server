@@ -23,7 +23,11 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.member.service.MemberService;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.support.MemberFixture;
 
 /*
  * 실제 JWKS 없이 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
@@ -40,20 +44,18 @@ class WorkControllerTest {
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
 
     @Autowired private MockMvc mockMvc;
-    @Autowired private MemberService memberService;
+    @Autowired private MemberRepository memberRepository;
+    @Autowired private MemberGradeRepository memberGradeRepository;
+    @Autowired private MemberStatusRepository memberStatusRepository;
 
     private Long ownerId;
     private Long registrantId;
 
     @BeforeEach
     void setUp() {
-        ownerId =
-                memberService
-                        .findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org")
-                        .getId();
-        // 등록자는 토큰의 sub(AUTH_USER_ID)로 프로비저닝된 회원이며 담당자와 다른 사람이다
-        registrantId =
-                memberService.findOrProvisionByAuthUserId(AUTH_USER_ID, "actor@sscc.org").getId();
+        ownerId = saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org").getId();
+        // 등록자는 토큰의 sub(AUTH_USER_ID)와 연결된 회원이며 담당자와 다른 사람이다
+        registrantId = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org").getId();
     }
 
     @Test
@@ -178,6 +180,18 @@ class WorkControllerTest {
     void requestWithoutTokenReturns401() throws Exception {
         mockMvc.perform(post("/v1/works").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    private MemberEntity saveMember(
+            UUID authUserId, String studentNumber, String name, String email) {
+        return MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                authUserId,
+                studentNumber,
+                name,
+                email);
     }
 
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder

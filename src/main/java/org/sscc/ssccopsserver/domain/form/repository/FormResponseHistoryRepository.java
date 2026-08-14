@@ -77,16 +77,22 @@ public interface FormResponseHistoryRepository
             @Param("form") FormEntity form, @Param("statuses") Collection<ResponseStatus> statuses);
 
     /*
-     * 폼 목록(#32)의 응답 건수 일괄 집계. 임시저장을 포함할지 갈리므로 셀 상태를 인자로 받는다.
+     * 폼별·상태별 응답 건수 일괄 집계 (#32 폼 목록 · #37 폼 상세의 응답 요약).
+     *
+     * 상태를 GROUP BY에 넣은 것은 #37에서다. 폼 상세가 전체·제출·승인·반려 네 숫자를 보여주는데,
+     * 총합용 질의와 상태별 질의를 따로 두면 폼 목록이 폼마다 두 번씩 집계하게 되고 두 결과가
+     * 어긋날 여지도 생긴다. 호출부가 필요한 만큼 접어 쓴다 — 목록은 합으로, 상세는 그대로.
+     *
+     * 어떤 상태를 셀지는 여전히 호출부가 정한다(임시저장 제외 여부가 갈린다).
      *
      * 폼 식별자를 직접 꺼내는 것은(f.id) 연관을 타면 프로젝션 이름이 form.id가 되어
      * getFormId()와 맞지 않기 때문이다.
      */
     @Query(
-            "select f.id as formId, count(r) as responseCount"
+            "select f.id as formId, r.status as status, count(r) as responseCount"
                     + " from FormResponseHistoryEntity r join r.form f"
                     + " where f.id in :formIds and r.status in :statuses"
-                    + " group by f.id")
+                    + " group by f.id, r.status")
     List<FormResponseCount> countByFormIds(
             @Param("formIds") Collection<Long> formIds,
             @Param("statuses") Collection<ResponseStatus> statuses);

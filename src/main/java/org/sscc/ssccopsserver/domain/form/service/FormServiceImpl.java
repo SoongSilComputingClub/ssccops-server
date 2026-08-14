@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.form.service;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -18,6 +19,7 @@ import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormDuplicateResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormLabelSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseStatusSummary;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
@@ -43,13 +45,6 @@ public class FormServiceImpl implements FormService {
 
     /** 복제본 제목 접미. 웹 목 스토어(duplicateForm)가 이미 쓰던 표기를 그대로 굳힌다 */
     private static final String COPY_SUFFIX = " (복사본)";
-
-    /*
-     * 목록의 responseCount가 세는 상태. 임시저장(DRAFT)은 아직 응답자가 낸 것이 아니라
-     * 빠진다 — 세면 운영진이 보는 접수 건수가 부풀어 마감 판단이 어긋난다.
-     */
-    private static final Collection<ResponseStatus> SUBMITTED_OR_LATER =
-            EnumSet.of(ResponseStatus.SUBMITTED, ResponseStatus.ACCEPTED, ResponseStatus.REJECTED);
 
     private final FormRepository formRepository;
     private final FormLabelRepository formLabelRepository;
@@ -86,7 +81,7 @@ public class FormServiceImpl implements FormService {
 
         List<Long> formIds = forms.stream().map(FormEntity::getId).toList();
         Map<Long, List<FormLabelSummaryResponse>> labelsByFormId = labelsOf(formIds);
-        Map<Long, Long> responseCountByFormId = responseCountsOf(formIds);
+        Map<Long, FormResponseStatusSummary> summaryByFormId = responseSummariesOf(formIds);
 
         return forms.stream()
                 .map(
@@ -95,10 +90,21 @@ public class FormServiceImpl implements FormService {
                                         form,
                                         formReceiptPolicy.receiptStatusOf(form),
                                         labelsByFormId.getOrDefault(form.getId(), List.of()),
-                                        responseCountByFormId.getOrDefault(form.getId(), 0L)))
+                                        summaryByFormId
+                                                .getOrDefault(
+                                                        form.getId(),
+                                                        FormResponseStatusSummary.empty())
+                                                .total()))
                 .toList();
     }
 
+    /*
+     * 폼 상세. 응답 요약(#37)이 목록의 responseCount와 같은 집계에서 나온다 — 상세 화면은
+     * '전체 · 제출 · 승인 · 반려' 네 숫자를 보여주고 목록은 그중 전체만 쓴다.
+     *
+     * 상태별 집계를 위해 질의를 하나 더 두지 않는다. 두 벌이 되면 폼 목록이 폼마다 두 번씩
+     * 집계하게 되고, 무엇보다 총합과 상태별 합이 어긋날 여지가 생긴다 (FormResponseCount 주석).
+     */
     @Override
     public FormDetailResponse getForm(Long formId) {
         FormEntity form = findForm(formId);
@@ -106,7 +112,7 @@ public class FormServiceImpl implements FormService {
                 form,
                 formReceiptPolicy.receiptStatusOf(form),
                 labelsOf(form),
-                responseCountOf(form));
+                responseSummaryOf(form));
     }
 
     /*
@@ -298,20 +304,34 @@ public class FormServiceImpl implements FormService {
     }
 
     /*
+     * 폼별 응답 요약을 한 번의 집계 질의로 모은다. 폼이 몇 건이든 질의는 하나다 — 폼마다 세면
+     * 그대로 N+1이고(DB-13), 상태별로 나뉘었다고 해서 그 수가 늘어나서는 안 된다.
+     *
      * 응답이 한 건도 없는 폼은 GROUP BY 결과에 나오지 않는다. 조회되지 않았다는 사실과 0건이라는
-     * 사실이 같은 뜻이므로 호출부에서 0으로 채운다 (FormResponseCount 주석).
+     * 사실이 같은 뜻이므로 호출부에서 빈 요약으로 채운다 (FormResponseCount 주석).
+     *
+     * 세는 상태는 제출 이상뿐이다 — 작성 중(DRAFT)은 접수 건수에도, 상세의 요약 상자에도 들어가지
+     * 않는다 (#36에서 정한 규칙, ResponseStatus.submittedOrLater 주석).
      */
-    private Map<Long, Long> responseCountsOf(List<Long> formIds) {
-        Map<Long, Long> counts = new HashMap<>();
+    private Map<Long, FormResponseStatusSummary> responseSummariesOf(List<Long> formIds) {
+        Map<Long, Map<ResponseStatus, Long>> countsByFormId = new HashMap<>();
         for (FormResponseCount count :
-                formResponseHistoryRepository.countByFormIds(formIds, SUBMITTED_OR_LATER)) {
-            counts.put(count.getFormId(), count.getResponseCount());
+                formResponseHistoryRepository.countByFormIds(
+                        formIds, ResponseStatus.submittedOrLater())) {
+            countsByFormId
+                    .computeIfAbsent(count.getFormId(), key -> new EnumMap<>(ResponseStatus.class))
+                    .put(count.getStatus(), count.getResponseCount());
         }
-        return counts;
+
+        Map<Long, FormResponseStatusSummary> summaries = new HashMap<>();
+        countsByFormId.forEach(
+                (formId, counts) -> summaries.put(formId, FormResponseStatusSummary.from(counts)));
+        return summaries;
     }
 
-    private long responseCountOf(FormEntity form) {
-        return responseCountsOf(List.of(form.getId())).getOrDefault(form.getId(), 0L);
+    private FormResponseStatusSummary responseSummaryOf(FormEntity form) {
+        return responseSummariesOf(List.of(form.getId()))
+                .getOrDefault(form.getId(), FormResponseStatusSummary.empty());
     }
 
     private Instant toInstant(OffsetDateTime dateTime) {

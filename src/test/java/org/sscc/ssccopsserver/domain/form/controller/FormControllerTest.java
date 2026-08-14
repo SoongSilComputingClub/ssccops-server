@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -18,6 +19,8 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
 import org.hamcrest.Matchers;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +38,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
+import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormLabelEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
@@ -42,6 +46,7 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -58,7 +63,7 @@ import com.jayway.jsonpath.JsonPath;
  * 문항 구성의 규칙별 검증은 QuestionCompositionValidatorTest가 다루고, 여기서는 그 위반이
  * 실제로 400 INVALID_QUESTION_COMPOSITION으로 나가는지와 나머지 계약을 본다.
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(FormControllerTest.StubJwtDecoderConfig.class)
@@ -111,6 +116,7 @@ class FormControllerTest {
     @Autowired private FormRepository formRepository;
     @Autowired private FormLabelRepository formLabelRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormService formService;
 
     private Long actorId;
 
@@ -351,6 +357,100 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.data[0].responseCount").value(3));
         mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
                 .andExpect(jsonPath("$.data.responseCount").value(3));
+    }
+
+    /*
+     * 폼 상세의 응답 요약 (#37). 상세 화면은 '전체 · 제출 · 승인 · 반려' 네 숫자를 보여주는데,
+     * 서버가 responseCount 한 숫자만 내려주던 동안 웹은 res.responseSummary를 찾지 못해 요약
+     * 상자를 늘 0으로 그렸다 — 터지지 않고 조용히 틀리는 종류라 화면만 보고는 알 수 없었다.
+     *
+     * 네 숫자가 서로 다른 값이 되도록 상태별 건수를 다르게 넣는다. 같은 수로 두면 집계가 상태를
+     * 실제로 갈라 세는지, 아니면 같은 값을 네 번 실은 것인지 구별되지 않는다.
+     */
+    @Test
+    void getFormDetailBreaksResponseCountDownByStatus() throws Exception {
+        Long formId = createForm("응답 요약 폼", "OPEN", "[]");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+
+        saveResponse(form, "20260021", ResponseStatus.SUBMITTED);
+        saveResponse(form, "20260022", ResponseStatus.ACCEPTED);
+        saveResponse(form, "20260023", ResponseStatus.ACCEPTED);
+        saveResponse(form, "20260024", ResponseStatus.REJECTED);
+        saveResponse(form, "20260025", ResponseStatus.REJECTED);
+        saveResponse(form, "20260026", ResponseStatus.REJECTED);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseSummary.total").value(6))
+                .andExpect(jsonPath("$.data.responseSummary.submitted").value(1))
+                .andExpect(jsonPath("$.data.responseSummary.accepted").value(2))
+                .andExpect(jsonPath("$.data.responseSummary.rejected").value(3))
+                // 목록과 같은 집계에서 나오므로 total과 responseCount는 언제나 같다
+                .andExpect(jsonPath("$.data.responseCount").value(6));
+    }
+
+    /*
+     * 작성 중(DRAFT)은 요약 어디에도 들어가지 않는다 — #36이 정한 "작성 중 응답은 집계·목록에서
+     * 뺀다"와 같은 기준이며, total을 DRAFT까지 세는 '전부'로 읽으면 상세의 전체와 목록의
+     * 응답 건수가 갈려 같은 폼이 화면마다 다른 접수 건수를 갖는다.
+     */
+    @Test
+    void getFormDetailResponseSummaryExcludesDraft() throws Exception {
+        Long formId = createForm("작성 중 제외 확인 폼", "OPEN", "[]");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+
+        saveResponse(form, "20260031", ResponseStatus.SUBMITTED);
+        saveResponse(form, "20260032", ResponseStatus.DRAFT);
+        saveResponse(form, "20260033", ResponseStatus.DRAFT);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseSummary.total").value(1))
+                .andExpect(jsonPath("$.data.responseSummary.submitted").value(1));
+    }
+
+    /*
+     * N+1 회귀 방지. 응답 집계가 상태별로 나뉘었다고 해서(#37) 폼 목록의 쿼리 수가 늘어나서는
+     * 안 된다 — 폼 1 + 라벨 1 + 응답 집계 1로 끝나고, 폼이 몇 건이든 그 아래 응답이 몇 건이든
+     * 이 수는 그대로다 (DB-13).
+     */
+    @Test
+    void getFormsRunsThreeQueriesRegardlessOfFormAndResponseCount() throws Exception {
+        for (int index = 0; index < 3; index++) {
+            Long formId = createForm("집계 폼 " + index, "OPEN", "[]");
+            FormEntity form = formRepository.findById(formId).orElseThrow();
+            saveResponse(form, "2026010" + index, ResponseStatus.SUBMITTED);
+            saveResponse(form, "2026020" + index, ResponseStatus.ACCEPTED);
+            saveResponse(form, "2026030" + index, ResponseStatus.REJECTED);
+        }
+        entityManager.flush();
+        entityManager.clear();
+
+        Statistics statistics =
+                entityManager
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        List<FormSummaryResponse> forms = formService.getForms(null, null);
+
+        assertThat(forms).hasSize(3);
+        assertThat(forms).allSatisfy(form -> assertThat(form.responseCount()).isEqualTo(3));
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
+    }
+
+    // 응답이 한 건도 없는 폼은 GROUP BY 결과에 나오지 않는다. 그것과 0건은 같은 뜻이다
+    @Test
+    void getFormDetailResponseSummaryIsZeroWithoutResponses() throws Exception {
+        Long formId = createForm("응답 없는 폼", "DRAFT", "[]");
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseSummary.total").value(0))
+                .andExpect(jsonPath("$.data.responseSummary.submitted").value(0))
+                .andExpect(jsonPath("$.data.responseSummary.accepted").value(0))
+                .andExpect(jsonPath("$.data.responseSummary.rejected").value(0));
     }
 
     @Test

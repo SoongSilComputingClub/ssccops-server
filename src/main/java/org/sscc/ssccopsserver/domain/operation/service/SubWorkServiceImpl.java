@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,7 +18,12 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRes
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCursor;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchCondition;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchQuery;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
@@ -33,11 +40,13 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
+import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.RequiredArgsConstructor;
@@ -139,6 +148,73 @@ public class SubWorkServiceImpl implements SubWorkService {
                 subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);
 
         return SubWorkDetailResponse.of(subWork, checklist, subWork.isDelayedAt(clock.instant()));
+    }
+
+    /*
+     * 목록 조회(OPS-008). 화면의 필터 칩 하나가 이 호출 하나다.
+     *
+     * 쿼리는 네 번이다 — 목록 · 체크리스트 진행률 집계 · 필터 건수 · 전체 건수. 하위 업무가
+     * 몇 건이든 이 수는 변하지 않는다 (DB-13). 진행률 집계는 이번 페이지에 실린 건에 대해서만
+     * 돌리며, 목록이 비면 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라 문법 오류다.
+     *
+     * 지연·마감임박 판정 시각은 한 번만 읽어 목록과 건수가 같은 '지금'을 보게 한다.
+     */
+    @Override
+    public SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition) {
+        Instant now = clock.instant();
+        SubWorkSearchQuery query = condition.toQuery(now);
+
+        // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
+        List<SubWorkEntity> fetched = subWorkRepository.search(query);
+        boolean hasNext = fetched.size() > query.size();
+        List<SubWorkEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
+
+        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
+        List<SubWorkSummaryResponse> subWorks =
+                rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
+
+        PageResponse page =
+                new PageResponse(
+                        query.size(),
+                        query.sort().getParameter(),
+                        nextCursorOf(query, rows, hasNext),
+                        hasNext,
+                        subWorkRepository.countMatching(query),
+                        subWorkRepository.countByOperationDeletedAtIsNull());
+        return new SubWorkSearchResponse(subWorks, page);
+    }
+
+    // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다
+    private String nextCursorOf(
+            SubWorkSearchQuery query, List<SubWorkEntity> rows, boolean hasNext) {
+        return hasNext ? SubWorkCursor.of(query.sort(), rows.get(rows.size() - 1)).encode() : null;
+    }
+
+    /*
+     * 이번 페이지에 실린 하위 업무들의 체크리스트 완료 개수. 행마다 세면 그대로 N+1이라
+     * 한 번에 집계한다 (DB-13). 체크리스트가 없는 하위 업무는 결과에 나오지 않으므로
+     * 여기서는 담기지 않고, 진행률을 만들 때 0/0으로 채운다.
+     */
+    private Map<Long, SubWorkChecklistProgress> checklistProgressOf(List<SubWorkEntity> rows) {
+        if (rows.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> subWorkIds = rows.stream().map(SubWorkEntity::getId).toList();
+        return subWorkChecklistItemRepository.findProgressBySubWorkIds(subWorkIds).stream()
+                .collect(
+                        Collectors.toMap(
+                                SubWorkChecklistProgress::getSubWorkId, progress -> progress));
+    }
+
+    private SubWorkSummaryResponse toSummary(
+            SubWorkEntity subWork,
+            Map<Long, SubWorkChecklistProgress> progressBySubWorkId,
+            Instant now) {
+        SubWorkChecklistProgress progress = progressBySubWorkId.get(subWork.getId());
+        long completedItems = progress == null ? 0L : progress.getCompletedCount();
+        long totalItems = progress == null ? 0L : progress.getTotalCount();
+        return SubWorkSummaryResponse.of(
+                subWork, completedItems, totalItems, subWork.isDelayedAt(now));
     }
 
     /*

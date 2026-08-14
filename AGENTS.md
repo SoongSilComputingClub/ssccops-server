@@ -25,7 +25,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 패키지 루트는 `org.sscc.ssccopsserver` (Gradle group도 `org.sscc`) — SSCC 동아리 프로젝트이므로 Spring Initializr 기본값(`com.example`)을 쓰지 않는다.
 
-- `domain/{member,...}` — 도메인별로 `controller/service/repository/entity/dto/code` 하위 구조를 반복하는 계층형 패키지. 새 도메인을 추가할 때 이 구조를 그대로 따른다. (`admin`/`applyform`/`user`는 Supabase 인증 전환에 맞춰 재설계 예정이라 제거됨 — 잔재를 찾는 코드가 있다면 지우면 된다.)
+- `domain/{member,auth,operation,...}` — 도메인별로 `controller/service/repository/entity/dto/code` 하위 구조를 반복하는 계층형 패키지. 새 도메인을 추가할 때 이 구조를 그대로 따른다. (`admin`/`applyform`/`user`는 Supabase 인증 전환에 맞춰 재설계 예정이라 제거됨 — 잔재를 찾는 코드가 있다면 지우면 된다.)
 - `domain/example` — 위 6계층 구조를 보여주는 참고용 템플릿 도메인(실제 기능 아님). 새 도메인을 추가할 때 이 구조를 복사해서 시작하면 된다.
 - `global/apipayload` — 모든 API 응답의 공통 껍데기.
   - `ApiResponse<T>` — 생성자는 private, `success`/`successWithNoData`/`created`/`fail` 정적 팩토리로만 생성.
@@ -33,11 +33,15 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
   - `exception/GeneralException` — 서비스 레이어에서 던지는 표준 예외, `ErrorCode`를 감싼다.
   - `handler/GlobalExceptionHandler` — `@RestControllerAdvice`. `GeneralException`은 감싼 `ErrorCode` 그대로, `MethodArgumentNotValidException`/`HttpMessageNotReadableException` 등 스프링 기본 예외는 `CommonErrorCode`로 변환해 항상 `ApiResponse.fail(...)` 포맷으로 응답한다. 컨트롤러 레벨에서 별도 try/catch를 추가하지 않는다.
 - `global/security` — 인증/인가. 구글 OAuth2 로그인과 자체 JWT 발급 스택은 제거됐고, 지금은 Supabase Auth가 발급한 JWT를 `spring-boot-starter-oauth2-resource-server`로 검증한다. JWKS URI(`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`)는 프로필별로 다른 Supabase 프로젝트를 가리키도록 `application-{profile}.yaml`에 분리돼 있다.
-  - `global/security/jwt/SupabaseJwtAuthenticationConverter` — JWT의 `sub`(UUID)/`email` 클레임으로 `domain/member`의 `MemberService.findOrProvisionByAuthUserId(...)`를 호출해 `MemberEntity`를 찾거나, 매칭되는 회원이 없으면(최초 로그인) 임시회원(`mbr_grd_cd = 'TEMP'`, `mbr_stts_cd = 'ENROLLED'` — `data.sql`로 시드)으로 즉시 생성한다(JIT 프로비저닝). `MemberEntity`가 ASIS의 `UserEntity`에 대응하는 계정 엔티티다. `MemberEntity.authUserId`(컬럼 `auth_user_id`)는 특정 인증 벤더 이름을 쓰지 않는다 — 지금은 Supabase Auth의 사용자 ID를 담지만 인증 수단이 바뀌어도 이 컬럼명은 유지된다. JWT의 `role` 클레임은 RLS용 Postgres 역할이라 인가 판단에 쓰지 않는다.
-  - 매칭/생성된 `MemberEntity`가 `SupabaseAuthenticationToken`의 principal이 된다. `GrantedAuthority`는 아직 부여하지 않는다 — 역할(ADMIN/USER/PREUSER) 기반 인가는 별도로 AOP를 통해 구현할 예정이라, 현재 `hasRole` 기반 규칙(`/admin/**`)은 사실상 항상 거부된다.
+  - `global/security/jwt/SupabaseJwtAuthenticationConverter` — JWT의 `sub`(UUID)로 `MemberService.findByAuthUserId(...)`를 호출해 회원을 **조회만** 한다. **인증 시점에 회원을 만들지 않는다** — 만들어 버리면 "로그인은 했지만 아직 가입하지 않은 사용자"라는 상태가 존재할 수 없고, 조회 요청 하나에도 쓰기 트랜잭션이 열린다. `mbr` 행이 생기는 유일한 경로는 회원가입 API다. `MemberEntity.authUserId`(컬럼 `auth_user_id`)는 특정 인증 벤더 이름을 쓰지 않는다 — 지금은 Supabase Auth의 사용자 ID를 담지만 인증 수단이 바뀌어도 이 컬럼명은 유지된다. JWT의 `role` 클레임은 RLS용 Postgres 역할이라 인가 판단에 쓰지 않는다.
+  - principal은 `MemberEntity`가 아니라 `global/security/AuthenticatedUser`다 — `authUserId`·`email`·`name`(`user_metadata.full_name`/`name`)·`provider`(`app_metadata.provider`)와 **nullable한 `MemberEntity`**를 담는다. 가입 여부는 별도 등급 코드가 아니라 `member == null`로 표현된다.
+  - 회원이 필요한 엔드포인트는 principal을 캐스팅하지 말고 **`@CurrentMember MemberEntity`**로 받는다(`global/security/resolver`). 미가입 주체는 이 리졸버 한 곳에서 **403 `SIGNUP_REQUIRED`**(`MemberErrorCode`)로 끊기므로 주입된 값은 항상 non-null이다. 401(토큰 없음·무효)과 구분되며, 프론트는 이 코드를 받으면 재로그인이 아니라 가입 화면으로 보낸다. 리졸버 등록은 `global/config/WebConfig`.
+  - principal에 실린 `MemberEntity`는 **준영속**이다(인증 필터는 트랜잭션 밖). 등급·상태 같은 지연 로딩 필드를 꺼내려면 식별자만 쓰고 회원 도메인 Service로 다시 조회해야 한다 — `MemberService.getProfile(memberId)`가 조회 트랜잭션 안에서 DTO로 굳혀 돌려준다.
+  - `GrantedAuthority`는 아직 부여하지 않는다 — 역할(ADMIN/USER/PREUSER) 기반 인가는 별도로 AOP를 통해 구현할 예정이라, 현재 `hasRole` 기반 규칙(`/admin/**`)은 사실상 항상 거부된다.
   - 인증 실패(서명/만료 오류 등)는 `CustomAuthenticationEntryPoint`, 권한 부족은 `CustomAccessDeniedHandler`가 `ApiResponse` 포맷으로 응답한다.
-  - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER — 실제 부여 로직은 미구현), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로만 permitAll, 나머지는 인증 필요.
-  - CORS는 `SecurityConfig.corsConfigurationSource()` 한 곳에서만 정의한다(허용 오리진은 `frontend.url`). 시큐리티 필터체인이 먼저 처리하므로 `WebMvcConfigurer.addCorsMappings()`로 중복 정의하지 말 것.
+  - `SecurityConfig`가 필터체인을 구성: CSRF/formLogin/httpBasic/logout 비활성화, `SessionCreationPolicy.STATELESS`, `RoleHierarchy`(ADMIN ⊃ USER ⊃ PREUSER — 실제 부여 로직은 미구현), `/admin/**`은 ADMIN 전용, 비prod Swagger 경로와 `/actuator/health`·`/actuator/info`만 permitAll(배포 헬스 프로브는 토큰을 붙일 수 없다 — `prometheus`·`metrics`·`loggers`는 계속 보호), 나머지는 인증 필요.
+  - CORS는 `SecurityConfig.corsConfigurationSource()` 한 곳에서만 정의한다. 허용 오리진은 `frontend.url`이며 **쉼표로 여러 개**를 넣을 수 있다(Cloudflare Workers 프리뷰 도메인 대응). 시큐리티 필터체인이 먼저 처리하므로 `WebMvcConfigurer.addCorsMappings()`로 중복 정의하지 말 것 — `WebConfig`는 인자 리졸버 등록에만 쓴다.
+- `domain/auth` — 로그인·로그아웃 자체는 Supabase(클라이언트) 책임이라 서버에 엔드포인트가 없다. 서버가 답하는 것은 "이 토큰이 우리 서비스의 누구인가" 하나뿐이고 그게 `GET /v1/auth/session`이다. **미가입 사용자에게도 200**으로 응답한다(`signedUp: false`, `member: null`) — 가입이 필요하다는 것도 정상적인 세션 상태이지 오류가 아니며, 403으로 끊으면 프론트가 가입 화면으로 갈 근거를 얻지 못한다. 응답의 `member` 블록(`MemberProfileResponse`)은 회원가입 응답과 같은 모양을 쓴다.
 - 관측성: OpenTelemetry(OTLP) + Micrometer(Prometheus/OTLP) + Logstash JSON 로깅(`prod` 프로파일에서만 JSON, 그 외 텍스트 — `logback-spring.xml`)이 이미 연결돼 있다. 로컬에 OTLP collector가 없으면 애플리케이션 종료 시 `Connection refused` 경고가 뜨는데 무해하다.
 
 ## 커밋 · 브랜치 · PR 컨벤션

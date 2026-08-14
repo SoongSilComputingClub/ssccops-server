@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.global.security.config;
 
+import java.util.Arrays;
 import java.util.List;
 
 import jakarta.annotation.PostConstruct;
@@ -27,9 +28,12 @@ import lombok.extern.slf4j.Slf4j;
 /*
  * Supabase Auth가 발급한 JWT를 검증하는 리소스 서버 필터체인.
  *
- * SupabaseJwtAuthenticationConverter가 JWT의 sub/email로 MemberEntity를 찾거나 임시회원으로
- * 프로비저닝해 인증 주체로 설정한다. 아직 권한(GrantedAuthority)을 채우지 않으므로 hasRole 기반
- * 인가(/admin/** 등)는 role 판별 로직이 붙기 전까지 사실상 항상 거부된다 — 별도 이슈에서 처리한다.
+ * SupabaseJwtAuthenticationConverter가 JWT의 sub로 회원을 찾아 AuthenticatedUser를 인증 주체로
+ * 설정한다. 회원이 없어도(가입 전) 인증 자체는 통과하며, 회원이 필요한 엔드포인트를 막는 것은
+ * 여기가 아니라 @CurrentMember 리졸버의 책임이다(403 SIGNUP_REQUIRED).
+ *
+ * 아직 권한(GrantedAuthority)을 채우지 않으므로 hasRole 기반 인가(/admin/** 등)는 role 판별
+ * 로직이 붙기 전까지 사실상 항상 거부된다 — 별도 이슈에서 처리한다.
  */
 @Slf4j
 @Configuration
@@ -75,20 +79,35 @@ public class SecurityConfig {
                 .build();
     }
 
-    // CORS 빈 등록
+    /*
+     * CORS 빈 등록.
+     *
+     * 허용 오리진은 frontend.url 하나지만 쉼표로 여러 개를 넣을 수 있다 — 웹이 Cloudflare
+     * Workers에 배포되면서 프로덕션 도메인 외에 프리뷰 도메인이 함께 생기기 때문이다.
+     * 프로퍼티 이름을 바꾸지 않아 프로필 yaml과 배포 환경변수는 그대로 둔다.
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of(frontendUrl));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedOrigins(allowedOrigins());
+        // PATCH는 회원 정보 부분 수정에 쓰인다. 빠뜨리면 프리플라이트에서 막힌다
+        configuration.setAllowedMethods(
+                List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
-        configuration.setExposedHeaders(List.of("Authorization"));
+        // 토큰은 Supabase가 발급하고 서버는 되돌려주지 않으므로 노출할 응답 헤더가 없다
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;
+    }
+
+    private List<String> allowedOrigins() {
+        return Arrays.stream(frontendUrl.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList();
     }
 
     // 시큐리티 필터체인 설정
@@ -118,19 +137,31 @@ public class SecurityConfig {
                                         "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html")
                                 .permitAll(); // Swagger UI : 비 prod 환경에서만 허용
                     }
+                    // 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없다. 지표·로그 레벨 조회
+                    // (prometheus·metrics·loggers)는 계속 인증을 요구한다
+                    auth.requestMatchers("/actuator/health/**", "/actuator/info").permitAll();
                     auth.requestMatchers("/admin/**")
                             .hasRole(UserRoleType.ADMIN.name())
                             .anyRequest()
                             .authenticated();
                 });
 
-        // Supabase JWT 검증 (JWKS) 및 인증 컨텍스트 구성
+        /*
+         * Supabase JWT 검증 (JWKS) 및 인증 컨텍스트 구성.
+         *
+         * 리소스 서버는 자체 EntryPoint(BearerTokenAuthenticationEntryPoint)를 갖고 있어서,
+         * exceptionHandling()에만 걸어 두면 토큰이 무효할 때(서명·만료·sub 형식 오류) 본문 없이
+         * WWW-Authenticate 헤더만 나간다. 토큰이 아예 없을 때만 우리 핸들러를 타 응답 포맷이
+         * 갈리므로, 여기에도 같은 핸들러를 명시해 항상 ApiResponse 포맷으로 내보낸다.
+         */
         http.oauth2ResourceServer(
                 oauth2 ->
-                        oauth2.jwt(
-                                jwt ->
-                                        jwt.jwtAuthenticationConverter(
-                                                supabaseJwtAuthenticationConverter)));
+                        oauth2.authenticationEntryPoint(authenticationEntryPoint)
+                                .accessDeniedHandler(accessDeniedHandler)
+                                .jwt(
+                                        jwt ->
+                                                jwt.jwtAuthenticationConverter(
+                                                        supabaseJwtAuthenticationConverter)));
 
         // 예외 처리
         http.exceptionHandling(

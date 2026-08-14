@@ -23,6 +23,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
@@ -59,6 +60,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
+import org.sscc.ssccopsserver.support.MemberFixture;
 
 /*
  * @DataJpaTest는 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다.
@@ -97,6 +99,7 @@ class SubWorkServiceImplTest {
     @Autowired private SubWorkApprovalRepository subWorkApprovalRepository;
     @Autowired private SubWorkRejectionRepository subWorkRejectionRepository;
     @Autowired private MemberRepository memberRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private TestEntityManager entityManager;
@@ -109,8 +112,7 @@ class SubWorkServiceImplTest {
     @BeforeEach
     void setUp() {
         MemberService memberService =
-                new MemberServiceImpl(
-                        memberRepository, memberGradeRepository, memberStatusRepository);
+                new MemberServiceImpl(memberRepository, memberRoleAssignmentRepository);
         WorkService workService =
                 new WorkServiceImpl(
                         operationRepository,
@@ -132,10 +134,8 @@ class SubWorkServiceImplTest {
                         FIXED_CLOCK);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
-        registrant =
-                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "registrant@sscc.org");
-        MemberEntity owner =
-                memberService.findOrProvisionByAuthUserId(UUID.randomUUID(), "owner@sscc.org");
+        registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
+        MemberEntity owner = saveMember("20200002", "이서연", "owner@sscc.org");
         ownerId = owner.getId();
         parentWorkId =
                 workService
@@ -989,5 +989,16 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
         return subWorkService.getSubWork(subWorkId);
+    }
+
+    private MemberEntity saveMember(String studentNumber, String name, String email) {
+        return MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                UUID.randomUUID(),
+                studentNumber,
+                name,
+                email);
     }
 }

@@ -17,7 +17,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class MemberStatusEntity {
 
-    // 임시회원 자동 프로비저닝 시 기본으로 부여하는 재학 상태 코드 (data.sql로 시드됨)
+    // 회원가입 시 기본으로 쓰는 재학 상태 코드 (data.sql로 시드됨)
     public static final String ENROLLED_CODE = "ENROLLED";
 
     @Id

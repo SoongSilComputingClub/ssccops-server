@@ -5,7 +5,6 @@ import java.net.URI;
 import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,6 +22,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import lombok.RequiredArgsConstructor;
 
@@ -43,7 +43,7 @@ public class SubWorkController {
     @PostMapping
     public ResponseEntity<ApiResponse<SubWorkCreateResponse>> create(
             @Valid @RequestBody SubWorkCreateRequest request,
-            @AuthenticationPrincipal MemberEntity registrant) {
+            @CurrentMember MemberEntity registrant) {
         SubWorkCreateResponse response = subWorkService.createSubWork(request, registrant);
         URI location = URI.create("/v1/sub-works/" + response.subWorkId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
@@ -70,7 +70,7 @@ public class SubWorkController {
     public ApiResponse<SubWorkTransitionResponse> transition(
             @PathVariable Long subWorkId,
             @Valid @RequestBody SubWorkTransitionRequest request,
-            @AuthenticationPrincipal MemberEntity performer) {
+            @CurrentMember MemberEntity performer) {
         return ApiResponse.success(subWorkService.transitionSubWork(subWorkId, request, performer));
     }
 
@@ -88,7 +88,7 @@ public class SubWorkController {
             @PathVariable Long subWorkId,
             @PathVariable Long checklistItemId,
             @Valid @RequestBody SubWorkChecklistItemUpdateRequest request,
-            @AuthenticationPrincipal MemberEntity performer) {
+            @CurrentMember MemberEntity performer) {
         return ApiResponse.success(
                 subWorkService.updateChecklistItem(subWorkId, checklistItemId, request, performer));
     }

@@ -10,9 +10,11 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 - 단일 테스트 메서드: `./gradlew test --tests "*.MemberServiceImplTest.메서드명"`
 - 포맷 검사: `./gradlew spotlessCheck` / 자동 정렬·수정: `./gradlew spotlessApply`
 - 스타일 검사: `./gradlew checkstyleMain checkstyleTest` (설정: `config/checkstyle/checkstyle.xml`, Naver 컨벤션 변형 — 상단 주석에 원본과의 차이가 정리되어 있음)
-- 로컬 실행: `local` 프로필(`-Dspring.profiles.active=local`)이 PostgreSQL 접속 정보(`db-url`/`db-username`/`db-password`)와 Supabase JWKS URI(`supabase-url`)를 요구한다. 두 가지 방식이 있다:
-  - `docker-compose up`으로 `backend`(local 프로필)와 `postgres`를 함께 띄운다. `.env`(`cp .env.example .env` 후 값 채우기)를 `docker-compose.yml`이 그대로 읽고, `./gradlew bootRun`도 `.env`를 읽어 JVM 환경변수로 주입한다.
-  - `docker-compose up postgres`로 DB만 띄우고(호스트 포트 `15432`) 앱은 `./gradlew bootJar` 후 `java -jar build/libs/*.jar` 또는 IDE에서 `SsccopsServerApplication`을 직접 실행한다. 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `jdbc:postgresql://localhost:5432/ssccops_server_db`로 접속한다.
+- 로컬 실행: `local` 프로필(`-Dspring.profiles.active=local`)이 PostgreSQL 접속 정보(`DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD`)와 Supabase JWKS URI(`SUPABASE_URL`), CORS 허용 오리진(`FRONTEND_URL`)을 요구한다. **`.env` 한 벌을 `docker compose`와 `./gradlew bootRun`이 함께 읽는다**(`cp .env.example .env` 후 값 채우기 — compose는 이 디렉터리의 `.env`를 자동으로, `bootRun`은 `build.gradle`이 파싱해 JVM 환경변수로 주입). 두 가지 방식이 있다:
+  - `docker compose up`으로 `backend`(local 프로필)와 `postgres`를 함께 띄운다. 컨테이너 안에서는 DB 주소가 달라야 하므로 `docker-compose.yml`이 `DB_HOST=postgres`·`DB_PORT=5432`로 덮어쓴다.
+  - `docker compose up postgres`로 DB만 띄우고(호스트 포트 `DB_PORT`, 기본 `15432`) 앱은 `./gradlew bootRun`으로 실행한다. `.env`의 `DB_HOST=localhost`·`DB_PORT=15432`가 그대로 쓰인다. 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `DB_PORT=5432`로 바꾼다.
+
+  **주의**: `.env`와 `docker-compose.yml`의 변수 이름에 하이픈(`-`)을 쓰지 않는다. Compose의 변수 치환은 셸 파라미터 확장 문법을 따르므로 `${db-username}`은 이름이 아니라 "`db`가 없으면 문자열 `username`"으로 읽힌다 — 실제로 이 때문에 `.env` 값이 통째로 무시된 채 `POSTGRES_USER=username`·`POSTGRES_DB=name:-ssccops_server_db`로 DB가 만들어지고 앱이 인증 실패로 죽는 일이 있었다(#59). Spring 프로퍼티 키(`db-username`)를 환경변수 이름으로 그대로 쓸 수 없다.
 - 프로필: `local`(PostgreSQL, OTel 비활성) / `dev` / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create-drop — 테스트 실행 시 자동 적용).
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.

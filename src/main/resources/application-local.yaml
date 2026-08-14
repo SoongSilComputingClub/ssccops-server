@@ -1,24 +1,32 @@
 spring:
   datasource:
-    url: ${db-url}
+    # JDBC URL을 통째로 받지 않고 조각으로 조립한다. 접속 주소가 실행 방식에 따라 갈리기
+    # 때문이다 — `./gradlew bootRun`은 호스트에서 도니 localhost:15432(compose가 게시한
+    # 포트)를, docker compose의 backend 컨테이너는 같은 네트워크의 postgres:5432를 본다.
+    # URL 한 덩어리로 받으면 두 값이 충돌해 실행 방식을 바꿀 때마다 .env를 고쳐야 한다.
+    # 조각으로 두면 compose가 DB_HOST/DB_PORT만 덮어써서 .env 한 벌로 양쪽이 동작한다.
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:15432}/${DB_NAME:ssccops_server_db}
     driver-class-name: org.postgresql.Driver
-    username: ${db-username}
-    password: ${db-password}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
 
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${supabase-url}/auth/v1/.well-known/jwks.json
+          jwk-set-uri: ${SUPABASE_URL}/auth/v1/.well-known/jwks.json
 
   jpa:
     hibernate:
       ddl-auto: create-drop
     show-sql: true
 
-# Frontend Configuration (CORS 허용 오리진)
+# Frontend Configuration (CORS 허용 오리진 · 쉼표로 여러 개)
+# 예전에는 여기에 http://localhost:3000 이 하드코딩돼 있어, docker-compose가 넘기던
+# frontend-url 이 아무 데도 쓰이지 않았다. 웹을 다른 포트로 띄우면 CORS가 막히는데
+# .env 를 고쳐도 반영되지 않아 원인을 찾기 어려웠다.
 frontend:
-  url: http://localhost:3000
+  url: ${FRONTEND_URL:http://localhost:3000}
 
 
 logging:

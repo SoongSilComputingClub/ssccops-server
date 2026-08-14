@@ -22,6 +22,7 @@ public interface MemberService {
 
     /*
      * 다른 도메인이 담당자·작성자 등으로 지정할 수 있는 회원인지 확인해 반환한다.
+     * 탈퇴·제명 회원은 존재하더라도 비어 있는 값으로 돌아간다.
      * 지정 불가 사유를 어떤 오류로 볼지는 호출하는 도메인이 정하므로 예외 대신 Optional을 준다.
      */
     Optional<MemberEntity> findAssignableMember(Long memberId);

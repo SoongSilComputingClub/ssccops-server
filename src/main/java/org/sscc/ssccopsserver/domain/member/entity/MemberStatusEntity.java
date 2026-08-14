@@ -17,8 +17,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class MemberStatusEntity {
 
-    // 회원가입 시 기본으로 쓰는 재학 상태 코드 (data.sql로 시드됨)
-    public static final String ENROLLED_CODE = "ENROLLED";
+    // 코드 문자열은 MemberStatusCode enum에 모아 두었다 (MemberGradeEntity와 같은 이유).
 
     @Id
     @Column(name = "mbr_stts_cd", length = 20)

@@ -17,8 +17,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class MemberGradeEntity {
 
-    // 회원가입 직후 부여되는 임시회원 등급 코드 (data.sql로 시드됨)
-    public static final String TEMPORARY_CODE = "TEMP";
+    // 코드 문자열은 MemberGradeCode enum에 모아 두었다 — 엔티티마다 상수를 하나씩 두면
+    // 코드가 늘어날수록 어디에 무엇이 있는지 알 수 없게 된다.
 
     @Id
     @Column(name = "mbr_grd_cd", length = 20)

@@ -48,8 +48,9 @@ public class SubWorkTypeEntity {
     private boolean approvalNeeded;
 
     /*
-     * 승인 주체 역할 코드. 역할 기준 코드 집합이 아직 확정되지 않아 문자열로 두고
-     * 시드 데이터에서도 비워 둔다. 역할 관리 기능이 붙을 때 role 도메인 코드로 맞춘다.
+     * 승인 주체 역할 코드(PRESIDENT/VICE_PRESIDENT/TREASURER/DIRECTOR). 승인이 필요 없는
+     * 유형(aprv_need_yn = FALSE)에서는 NULL이다 — 승인 주체만 있고 승인은 거치지 않는
+     * 모순된 상태를 만들지 않기 위해서다. 실제 승인자 판정은 승인 처리(OPS-014)에서 붙는다.
      */
     @Column(name = "autzr_role_cd", length = 20)
     private String authorizerRoleCode;

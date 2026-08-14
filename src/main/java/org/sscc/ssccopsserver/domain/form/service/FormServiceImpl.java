@@ -20,6 +20,8 @@ import org.sscc.ssccopsserver.domain.form.dto.FormDuplicateResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormLabelSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
+import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
@@ -57,6 +59,12 @@ public class FormServiceImpl implements FormService {
     private final FormLabelService formLabelService;
 
     /*
+     * 접수 가능 판정·표시용 접수 상태의 유일한 구현 (#33). 여기서 직접 상태와 기간을 비교하지
+     * 않는 것은 #35·#36이 같은 판정을 다시 옮겨 적는 것을 막기 위해서다.
+     */
+    private final FormReceiptPolicy formReceiptPolicy;
+
+    /*
      * 폼 목록. 쿼리는 폼 1 + 라벨 1 + 응답 집계 1로 3회다 — 폼마다 라벨을 조회하거나 응답을
      * 세면 그대로 N+1이 된다 (DB-13).
      *
@@ -85,6 +93,7 @@ public class FormServiceImpl implements FormService {
                         form ->
                                 FormSummaryResponse.of(
                                         form,
+                                        formReceiptPolicy.receiptStatusOf(form),
                                         labelsByFormId.getOrDefault(form.getId(), List.of()),
                                         responseCountByFormId.getOrDefault(form.getId(), 0L)))
                 .toList();
@@ -93,7 +102,11 @@ public class FormServiceImpl implements FormService {
     @Override
     public FormDetailResponse getForm(Long formId) {
         FormEntity form = findForm(formId);
-        return FormDetailResponse.of(form, labelsOf(form), responseCountOf(form));
+        return FormDetailResponse.of(
+                form,
+                formReceiptPolicy.receiptStatusOf(form),
+                labelsOf(form),
+                responseCountOf(form));
     }
 
     /*
@@ -110,7 +123,7 @@ public class FormServiceImpl implements FormService {
                 questionCompositionValidator.validate(request.qitemCpstCn());
         Instant receiptBeginAt = toInstant(request.rcptBgngDt());
         Instant receiptEndAt = toInstant(request.rcptEndDt());
-        validateReceiptPeriod(receiptBeginAt, receiptEndAt);
+        FormEntity.requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
 
         /*
          * 상태 미지정은 DRAFT다. 편집 화면의 '바로 접수 시작'이 OPEN을 그대로 보내므로 값을
@@ -145,18 +158,21 @@ public class FormServiceImpl implements FormService {
                 questionCompositionValidator.validate(request.qitemCpstCn());
         Instant receiptBeginAt = toInstant(request.rcptBgngDt());
         Instant receiptEndAt = toInstant(request.rcptEndDt());
-        validateReceiptPeriod(receiptBeginAt, receiptEndAt);
+        FormEntity.requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
         // 교체 전 구성과 비교해야 하므로 update() 호출보다 먼저 검사한다
         ensureExistingQuestionItemsKept(form, composition);
 
         /*
-         * 상태 미지정은 "그대로 두기"다. 라벨(labelIds)과 해석이 갈리는데, 라벨은 전체 교체가
-         * 곧 화면의 동작이라 생략이 "전부 떼기"인 반면 상태는 편집 화면에 입력란이 없어
-         * 생략이 기본값이다. 자동 저장이 상태를 지우고 DRAFT로 되돌리면 접수 중인 폼이 닫힌다.
+         * 본문에 formSttsCd가 실려 와도 무시한다 (#33). 라벨(labelIds)과 해석이 갈리는데, 라벨은
+         * 전체 교체가 곧 화면의 동작이라 생략이 "전부 떼기"인 반면 상태는 이 엔드포인트가 아예
+         * 건드리지 않는 값이다.
+         *
+         * 값을 무시하는 대신 400으로 거절하지 않는 것은 편집 자동 저장(ssccops #63)이 상세
+         * 조회 응답을 초안으로 받아 그대로 되돌려 보내기 때문이다 — 그 본문에는 formSttsCd가
+         * 늘 실려 있어, 거절하면 자동 저장이 통째로 멈춘다. 반대로 그 값을 받아 쓰면 타이핑
+         * 한 번이 접수 상태를 덮어쓴다. 상태를 바꾸는 길은 POST /v1/forms/{formId}/status뿐이다.
          */
-        FormStatus status = request.formSttsCd() == null ? form.getStatus() : request.formSttsCd();
-
-        form.update(request.formTtlNm(), status, composition, receiptBeginAt, receiptEndAt);
+        form.update(request.formTtlNm(), composition, receiptBeginAt, receiptEndAt);
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
         formRepository.flush();
 
@@ -191,19 +207,30 @@ public class FormServiceImpl implements FormService {
         return FormDuplicateResponse.of(copy, source.getId());
     }
 
+    /*
+     * 접수 상태 전이 (#33). 전이표·사전 검증은 FormEntity.changeStatus가 갖고 여기서는 조회와
+     * 응답 조립만 한다 — 서비스에 if 분기로 옮겨 적으면 폼을 OPEN으로 만드는 생성 경로와
+     * 규칙이 갈린다 (LY-02·AR-10).
+     *
+     * 상태를 PUT /v1/forms/{formId}가 아니라 전용 액션 경로로 분리한 이유는 편집 자동 저장이
+     * 매 타이핑마다 PUT을 쏘기 때문이다 (updateForm 주석 · SubWorkController 선례).
+     */
+    @Override
+    @Transactional
+    public FormStatusChangeResponse changeStatus(Long formId, FormStatusChangeRequest request) {
+        FormEntity form = findForm(formId);
+        form.changeStatus(request.action());
+
+        // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
+        formRepository.flush();
+
+        return FormStatusChangeResponse.of(form, formReceiptPolicy.receiptStatusOf(form));
+    }
+
     private FormEntity findForm(Long formId) {
         return formRepository
                 .findById(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
-    }
-
-    private void validateReceiptPeriod(Instant receiptBeginAt, Instant receiptEndAt) {
-        // 한쪽만 주어진 경우는 검사 대상이 아니다 — 기간 제한 없이 여는 폼이 정상이다
-        if (receiptBeginAt != null
-                && receiptEndAt != null
-                && receiptEndAt.isBefore(receiptBeginAt)) {
-            throw new GeneralException(FormErrorCode.INVALID_RECEIPT_PERIOD);
-        }
     }
 
     /*

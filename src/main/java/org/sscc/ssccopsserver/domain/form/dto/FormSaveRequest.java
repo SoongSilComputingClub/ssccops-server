@@ -20,6 +20,12 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * creatrMbrId는 여기에 없다. 생성자는 인증 주체에서 서버가 채우며, 클라이언트가 지정할 수
  * 있게 하면 남의 이름으로 폼을 만들 수 있다.
  *
+ * formSttsCd는 생성(POST)에서만 쓰인다 — 편집 화면의 '바로 접수 시작'이 만들자마자 OPEN인 폼을
+ * 요구하기 때문이다. 수정(PUT)은 이 값을 무시한다 (#33): 편집 자동 저장(ssccops #63)이 상세
+ * 응답을 초안으로 받아 그대로 되돌려 보내므로 본문에는 늘 현재 상태가 실려 있고, 그 값을 받아
+ * 쓰면 타이핑 한 번이 접수 상태를 덮어쓴다. 필드를 지우지 않고 남겨 둔 것은 자동 저장이 보내는
+ * 본문을 거절하지 않기 위해서다. 상태를 바꾸는 길은 POST /v1/forms/{formId}/status 하나다.
+ *
  * 접수 기간 역전을 @AssertTrue로 잡지 않는 것은 의도된 것이다. Bean Validation 실패는 전역
  * 핸들러가 VALIDATION_FAILED(400)로 바꾸는데, 계약표는 이 조건에 INVALID_RECEIPT_PERIOD를
  * 요구한다. 그래서 판단을 서비스로 넘긴다 — 운영 도메인(WorkCreateRequest)과 갈리는 지점이다.

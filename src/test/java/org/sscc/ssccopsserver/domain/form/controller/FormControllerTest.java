@@ -8,7 +8,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.Map;
 import java.util.UUID;
 
@@ -64,6 +66,15 @@ import com.jayway.jsonpath.JsonPath;
 class FormControllerTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
+
+    /** 고정 기준 시각 (2026-03-15 KST). 접수 기간 표본은 이 값을 사이에 두고 앞뒤로 잡는다 */
+    private static final Instant NOW = Instant.parse("2026-03-14T15:00:00Z");
+
+    /** 문항이 하나도 없는 구성. 저장은 통과하지만 접수 시작은 막혀야 한다 */
+    private static final String EMPTY_COMPOSITION =
+            """
+            {"pages": [{"pageTtl": "한 장", "pageDescCn": null}], "qitems": []}
+            """;
 
     /*
      * 두 페이지·두 문항짜리 표본. 정규식·선택지·분기를 한 번에 담아 두어야 저장 왕복에서
@@ -625,6 +636,184 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
+    /* ── 접수 상태 전이 (#33) ─────────────────────────────── */
+
+    /*
+     * DRAFT → OPEN. 상세 화면의 '접수 시작' 버튼이다. 기간을 3/1~3/31로 두었고 고정 시각이
+     * 3/15이므로 열자마자 실제로 접수 중(ACCEPTING)이 되어야 한다.
+     */
+    @Test
+    void draftFormOpensReceipt() throws Exception {
+        Long formId =
+                createFormWithPeriod(
+                        "접수 시작 대상 폼",
+                        null,
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-31T00:00:00+09:00",
+                        "[]");
+
+        mockMvc.perform(statusPost(formId, "OPEN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").value(formId))
+                .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"))
+                .andExpect(jsonPath("$.data.receiptStatus").value("ACCEPTING"))
+                .andExpect(jsonPath("$.data.rcptBgngDt").value("2026-03-01T00:00:00+09:00"))
+                .andExpect(jsonPath("$.data.mdfcnDt").isNotEmpty());
+    }
+
+    /*
+     * 접수 기간이 아직 오지 않았는데 여는 경우. 상태는 OPEN이지만 화면에는 '접수 예정'으로
+     * 나가야 한다 — 버튼을 누른 직후 목록이 '접수 중'이라 잘못 말하면 안 된다.
+     */
+    @Test
+    void openingFormBeforeReceiptPeriodReportsScheduled() throws Exception {
+        Long formId =
+                createFormWithPeriod("접수 예정 폼", null, "2026-04-01T00:00:00+09:00", null, "[]");
+
+        mockMvc.perform(statusPost(formId, "OPEN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"))
+                .andExpect(jsonPath("$.data.receiptStatus").value("SCHEDULED"));
+    }
+
+    // OPEN → CLOSED. 상세 화면의 '마감' 버튼이다
+    @Test
+    void openFormClosesReceipt() throws Exception {
+        Long formId = createForm("마감 대상 폼", "OPEN", "[]");
+
+        mockMvc.perform(statusPost(formId, "CLOSE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formSttsCd").value("CLOSED"))
+                .andExpect(jsonPath("$.data.receiptStatus").value("CLOSED"));
+    }
+
+    /*
+     * CLOSED → OPEN(마감 철회). 마감 버튼을 잘못 누른 운영자가 되돌릴 수 있어야 한다 —
+     * 되돌릴 수 없으면 폼을 복제해 새로 여는 우회가 생기고 응답이 두 폼으로 갈린다.
+     */
+    @Test
+    void closedFormCanReopenReceipt() throws Exception {
+        Long formId = createForm("마감 철회 대상 폼", "OPEN", "[]");
+        mockMvc.perform(statusPost(formId, "CLOSE")).andExpect(status().isOk());
+
+        mockMvc.perform(statusPost(formId, "OPEN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"))
+                .andExpect(jsonPath("$.data.receiptStatus").value("ACCEPTING"));
+    }
+
+    /*
+     * 전이표에 없는 세 조합. 각각 따로 폼을 만들어야 하지만 확인하려는 것("표에 없으면 전부
+     * 같은 코드로 거절한다")은 조합 간 비교라 한 자리에 둔다.
+     */
+    @Test
+    void transitionsOutsideTheTableReturn400() throws Exception {
+        Long openForm = createForm("이미 열린 폼", "OPEN", "[]");
+        Long draftForm = createForm("작성 중인 폼", null, "[]");
+        Long closedForm = createForm("마감된 폼", "OPEN", "[]");
+        mockMvc.perform(statusPost(closedForm, "CLOSE")).andExpect(status().isOk());
+
+        assertTransitionRejected(openForm, "OPEN"); // 이미 열림
+        assertTransitionRejected(draftForm, "CLOSE"); // 열린 적이 없어 닫을 것이 없다
+        assertTransitionRejected(closedForm, "CLOSE"); // 이미 마감
+    }
+
+    private void assertTransitionRejected(Long formId, String action) throws Exception {
+        mockMvc.perform(statusPost(formId, action))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("INVALID_FORM_STATUS_TRANSITION"));
+    }
+
+    /*
+     * 문항 0개인 폼은 열 수 없다. 저장 시점에는 정상인 상태(편집을 막 시작한 DRAFT)라
+     * QuestionCompositionValidator는 통과시키므로, 막는 자리는 공개되는 지점이어야 한다.
+     */
+    @Test
+    void openingFormWithoutQuestionReturns400() throws Exception {
+        Long formId = createEmptyForm("문항 없는 폼", null);
+
+        mockMvc.perform(statusPost(formId, "OPEN"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FORM_HAS_NO_QUESTION"));
+    }
+
+    /*
+     * 같은 규칙이 생성 경로('바로 접수 시작')에도 걸려야 한다. 전이 경로에만 두면 만들자마자
+     * OPEN인 폼만 문항 0개로 공개되는 구멍이 남는다.
+     */
+    @Test
+    void creatingOpenFormWithoutQuestionReturns400() throws Exception {
+        mockMvc.perform(authenticatedPost("/v1/forms", emptyFormBody("문항 없는 폼", "OPEN")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("FORM_HAS_NO_QUESTION"));
+    }
+
+    @Test
+    void changingStatusOfUnknownFormReturns404() throws Exception {
+        mockMvc.perform(statusPost(999999L, "OPEN"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * 상태를 PUT으로 바꿀 수 없다는 것이 이 엔드포인트를 따로 둔 이유다. 편집 자동 저장은
+     * 상세 응답을 초안으로 받아 그대로 되돌려 보내므로 본문에 formSttsCd가 늘 실려 있다 —
+     * 그 값을 받아 쓰면 타이핑 한 번이 접수 상태를 덮어쓴다. 요청은 거절하지 않고 값만 무시한다.
+     */
+    @Test
+    void updateFormIgnoresStatusInBody() throws Exception {
+        Long formId = createForm("자동 저장 대상 폼", null, "[]");
+
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId,
+                                saveBody("자동 저장 대상 폼", "OPEN", null, null, "[]")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formSttsCd").value("DRAFT"));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.formSttsCd").value("DRAFT"));
+    }
+
+    // 반대 방향도 마찬가지다 — 접수 중인 폼에 DRAFT를 실어 보내도 닫히지 않아야 한다
+    @Test
+    void updateFormCannotCloseOpenFormThroughBody() throws Exception {
+        Long formId = createForm("접수 중인 폼", "OPEN", "[]");
+
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId,
+                                saveBody("접수 중인 폼", "DRAFT", null, null, "[]")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"));
+    }
+
+    /*
+     * 이 이슈에서 내린 결정이 응답으로 드러나는 자리다. 접수 기간이 끝나도 자동 마감 배치를
+     * 두지 않으므로 form_stts_cd는 OPEN으로 남고, 목록·상세는 receiptStatus로 '기간 종료'를
+     * 구분해 내린다 (웹 #9는 이 값으로 배지를 고른다).
+     */
+    @Test
+    void formWithExpiredReceiptPeriodStaysOpenButIsReportedExpired() throws Exception {
+        Long formId =
+                createFormWithPeriod(
+                        "기간이 끝난 폼",
+                        "OPEN",
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-10T00:00:00+09:00",
+                        "[]");
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"))
+                .andExpect(jsonPath("$.data.receiptStatus").value("EXPIRED"));
+
+        mockMvc.perform(authenticatedGet("/v1/forms?statusCode=OPEN"))
+                .andExpect(jsonPath("$.data[0].formId").value(formId))
+                .andExpect(jsonPath("$.data[0].formSttsCd").value("OPEN"))
+                .andExpect(jsonPath("$.data[0].receiptStatus").value("EXPIRED"));
+    }
+
     /* ── 인증 ─────────────────────────────────────────────── */
 
     @Test
@@ -634,6 +823,11 @@ class FormControllerTest {
         mockMvc.perform(post("/v1/forms").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/v1/forms/1/duplicate")).andExpect(status().isUnauthorized());
+        mockMvc.perform(
+                        post("/v1/forms/1/status")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"action\": \"OPEN\"}"))
+                .andExpect(status().isUnauthorized());
     }
 
     /* ── 헬퍼 ─────────────────────────────────────────────── */
@@ -680,6 +874,29 @@ class FormControllerTest {
                         .getResponse()
                         .getContentAsString();
         return JsonPath.parse(response).read("$.data.formId", Long.class);
+    }
+
+    /** 문항이 하나도 없는 폼 본문. 접수 시작 사전 검증(FORM_HAS_NO_QUESTION)을 확인할 때만 쓴다 */
+    private String emptyFormBody(String title, String status) {
+        return """
+               {"formTtlNm": "%s", "formSttsCd": %s, "qitemCpstCn": %s}
+               """
+                .formatted(title, quoteOrNull(status), EMPTY_COMPOSITION);
+    }
+
+    private Long createEmptyForm(String title, String status) throws Exception {
+        String response =
+                mockMvc.perform(authenticatedPost("/v1/forms", emptyFormBody(title, status)))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.formId", Long.class);
+    }
+
+    private MockHttpServletRequestBuilder statusPost(Long formId, String action) {
+        return authenticatedPost(
+                "/v1/forms/" + formId + "/status", "{\"action\": \"" + action + "\"}");
     }
 
     private FormLabelEntity saveInactiveLabel(String name) {
@@ -755,6 +972,18 @@ class FormControllerTest {
 
     @TestConfiguration
     static class StubJwtDecoderConfig {
+
+        /*
+         * 접수 상태 표시(receiptStatus)가 주입된 Clock에서 오는지 확인해야 하므로 시각도 고정한다.
+         * 시스템 시각을 그대로 쓰면 '기간 종료' 케이스가 달력에 따라 통과·실패를 오간다.
+         *
+         * ClockConfig가 정의한 clock 빈과 이름이 겹치지 않게 다른 이름으로 둔다 (MemberControllerTest 선례).
+         */
+        @Bean
+        @Primary
+        Clock fixedClock() {
+            return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
+        }
 
         @Bean
         @Primary

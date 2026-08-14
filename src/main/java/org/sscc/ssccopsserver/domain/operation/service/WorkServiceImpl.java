@@ -1,7 +1,10 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -13,16 +16,25 @@ import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCursor;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchQuery;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.ProgressRate;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.WorkSubWorkAggregate;
+import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.RequiredArgsConstructor;
@@ -98,12 +110,100 @@ public class WorkServiceImpl implements WorkService {
         return WorkDetailResponse.of(work, summaries);
     }
 
+    /*
+     * 목록 조회(OPS-020). 카드 그리드 한 장이 이 호출 하나다.
+     *
+     * 쿼리는 다섯 번이다 — 목록 · 하위 업무 집계 · 체크리스트 진행률 집계 · 필터 건수 ·
+     * 전체 건수. 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 변하지 않는다
+     * (DB-13). 집계는 이번 페이지에 실린 업무에 대해서만 돌리며, 목록이 비거나 하위 업무가
+     * 하나도 없으면 그 쿼리는 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라
+     * 문법 오류다.
+     */
+    @Override
+    public WorkSearchResponse searchWorks(WorkSearchCondition condition) {
+        WorkSearchQuery query = condition.toQuery();
+
+        // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
+        List<WorkEntity> fetched = workRepository.search(query);
+        boolean hasNext = fetched.size() > query.size();
+        List<WorkEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
+
+        Map<Long, List<BigDecimal>> ratesByWorkId = subWorkRatesOf(rows);
+        List<WorkListItemResponse> works =
+                rows.stream()
+                        .map(
+                                work ->
+                                        WorkListItemResponse.of(
+                                                work,
+                                                ratesByWorkId.getOrDefault(
+                                                        work.getId(), List.of())))
+                        .toList();
+
+        PageResponse page =
+                new PageResponse(
+                        query.size(),
+                        query.sort().getParameter(),
+                        nextCursorOf(query, rows, hasNext),
+                        hasNext,
+                        workRepository.countMatching(query),
+                        workRepository.countByOperationDeletedAtIsNull());
+        return new WorkSearchResponse(works, page);
+    }
+
+    // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다
+    private String nextCursorOf(WorkSearchQuery query, List<WorkEntity> rows, boolean hasNext) {
+        return hasNext ? WorkCursor.of(query.sort(), rows.get(rows.size() - 1)).encode() : null;
+    }
+
+    /*
+     * 이번 페이지에 실린 업무별 하위 업무 진행률 목록. 카드의 진행률(AGG-01)은 이 값들의
+     * 평균이고 하위 업무 건수는 이 목록의 크기라, 둘이 같은 집계에서 나와야 분모가 어긋나지
+     * 않는다.
+     *
+     * 하위 업무 진행률(AGG-02)을 SQL로 옮겨 쓰지 않는 것은 '완료면 항목과 무관하게 100'이라는
+     * 규칙이 두 곳으로 갈라지기 때문이다. 개수만 받아와 도메인 값(ProgressRate)이 판정한다.
+     */
+    private Map<Long, List<BigDecimal>> subWorkRatesOf(List<WorkEntity> rows) {
+        if (rows.isEmpty()) {
+            return Map.of();
+        }
+        List<WorkSubWorkAggregate> aggregates =
+                subWorkRepository.findAggregatesByWorkIds(
+                        rows.stream().map(WorkEntity::getId).toList());
+        if (aggregates.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, SubWorkChecklistProgress> progressBySubWorkId =
+                checklistProgressByIds(
+                        aggregates.stream().map(WorkSubWorkAggregate::getSubWorkId).toList());
+
+        Map<Long, List<BigDecimal>> ratesByWorkId = new LinkedHashMap<>();
+        for (WorkSubWorkAggregate aggregate : aggregates) {
+            SubWorkChecklistProgress progress = progressBySubWorkId.get(aggregate.getSubWorkId());
+            long completedItems = progress == null ? 0L : progress.getCompletedCount();
+            long totalItems = progress == null ? 0L : progress.getTotalCount();
+            ratesByWorkId
+                    .computeIfAbsent(aggregate.getWorkId(), workId -> new ArrayList<>())
+                    .add(
+                            ProgressRate.ofChecklist(
+                                    aggregate.getWorkStatus() == WorkStatus.DONE,
+                                    completedItems,
+                                    totalItems));
+        }
+        return ratesByWorkId;
+    }
+
     private Map<Long, SubWorkChecklistProgress> checklistProgressOf(List<SubWorkEntity> subWorks) {
-        if (subWorks.isEmpty()) {
+        return checklistProgressByIds(subWorks.stream().map(SubWorkEntity::getId).toList());
+    }
+
+    // 이름을 나눈 것은 지우기 전 습관이 아니라 문법 때문이다 — 제네릭이 지워지면 두 List가 같아진다
+    private Map<Long, SubWorkChecklistProgress> checklistProgressByIds(List<Long> subWorkIds) {
+        if (subWorkIds.isEmpty()) {
             // IN () 은 DB에 따라 문법 오류이므로 애초에 쿼리를 보내지 않는다
             return Map.of();
         }
-        List<Long> subWorkIds = subWorks.stream().map(SubWorkEntity::getId).toList();
         return subWorkChecklistItemRepository.findProgressBySubWorkIds(subWorkIds).stream()
                 .collect(
                         Collectors.toMap(

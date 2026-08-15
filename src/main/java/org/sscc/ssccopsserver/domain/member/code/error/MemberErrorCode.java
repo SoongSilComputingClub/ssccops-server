@@ -71,7 +71,7 @@ public enum MemberErrorCode implements ErrorCode {
     ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "역할을 찾을 수 없습니다."),
 
     /*
-     * 404 — 없는 역할 분류를 수정·삭제하려 할 때 (#80).
+     * 404 — 없는 역할 분류를 수정·삭제하려 할 때(#80), 없는 분류로 역할을 만들거나 옮기려 할 때(#79).
      *
      * 코드를 감추지 않고 404로 내리는 것은 분류가 조직 구조를 드러내지 않기 때문이다 —
      * 목록 조회 자체가 인증만으로 열려 있으므로 존재 여부를 숨길 이유가 없다.
@@ -180,10 +180,6 @@ public enum MemberErrorCode implements ErrorCode {
      * 있어서다. 안전한 연결 절차는 명부 이관 기능을 설계할 때 함께 다룬다 (#21).
      */
     STUDENT_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다."),
-
-    // 404 — 없는 역할 분류로 역할을 만들거나 옮기려 할 때 (#79)
-    ROLE_CLASSIFICATION_NOT_FOUND(
-            HttpStatus.NOT_FOUND, "ROLE_CLASSIFICATION_NOT_FOUND", "역할 분류를 찾을 수 없습니다."),
 
     /*
      * 409 — 이미 있는 이름으로 역할을 만들거나 이름을 바꾸려 할 때 (#79).

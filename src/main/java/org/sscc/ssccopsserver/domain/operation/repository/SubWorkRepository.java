@@ -21,6 +21,10 @@ public interface SubWorkRepository
      *
      * 상세 응답이 담당자·등록자 이름과 유형명·상위 업무 식별자를 모두 쓰므로 연관을 한 번에
      * 끌어온다 — LAZY 그대로 두면 응답 조립 단계에서 연관마다 쿼리가 더 나간다 (DB-13).
+     *
+     * work.operation까지 실는 것은 상위 업무의 **이름**이 work가 아니라 그 상위 oper에 있기
+     * 때문이다 (#70의 workTitle). EntityGraph에 넣은 연관은 같은 SELECT의 조인이 되므로
+     * 조회 횟수는 그대로다 — 테스트가 3회·4회로 못 박아 둔다.
      */
     @EntityGraph(
             attributePaths = {
@@ -28,7 +32,8 @@ public interface SubWorkRepository
                 "operation.personInCharge",
                 "operation.registrant",
                 "subWorkType",
-                "work"
+                "work",
+                "work.operation"
             })
     Optional<SubWorkEntity> findByIdAndOperationDeletedAtIsNull(Long id);
 

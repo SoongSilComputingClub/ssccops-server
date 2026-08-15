@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -21,6 +22,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
@@ -62,6 +64,22 @@ public class WorkController {
     @GetMapping("/{workId}")
     public ApiResponse<WorkDetailResponse> getWork(@PathVariable Long workId) {
         return ApiResponse.success(workService.getWork(workId));
+    }
+
+    /*
+     * 업무 기본 정보 수정 (OPS-004). '업무 상세' 화면의 '수정' 액션이 부른다.
+     *
+     * 본문은 등록(OPS-002)과 같은 필드 구성이며 **전체 교체**다 — review 같은 선택 입력도
+     * 생략하면 지운 것으로 본다(WorkUpdateRequest 주석). workStatus는 요청 DTO에 아예 없어
+     * 이 경로로 바꿀 수 없다(POL-003) — 상태는 전이 액션 엔드포인트(OPS-005)만의 몫이다.
+     *
+     * 응답이 상세 조회와 같은 WorkDetailResponse인 것은 화면이 수정 직후 재조회 없이 같은
+     * 화면을 그대로 갱신할 수 있어야 하기 때문이다(다른 PATCH 엔드포인트들과 같은 판단).
+     */
+    @PatchMapping("/{workId}")
+    public ApiResponse<WorkDetailResponse> updateWork(
+            @PathVariable Long workId, @Valid @RequestBody WorkUpdateRequest request) {
+        return ApiResponse.success(workService.updateWork(workId, request));
     }
 
     /*

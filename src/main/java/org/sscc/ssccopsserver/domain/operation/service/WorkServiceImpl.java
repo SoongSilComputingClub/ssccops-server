@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import jakarta.persistence.EntityManager;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -23,7 +25,9 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
 import org.sscc.ssccopsserver.domain.operation.entity.ProgressRate;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
@@ -49,6 +53,13 @@ public class WorkServiceImpl implements WorkService {
     private final SubWorkRepository subWorkRepository;
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     private final MemberService memberService;
+
+    /*
+     * 수정(updateWork)이 mdfcn_dt를 바로 응답에 실어야 해서 필요하다 — @LastModifiedDate는
+     * flush 시점(JPA @PreUpdate 콜백)에야 in-memory 엔티티에 채워지므로, flush 없이 바로
+     * WorkDetailResponse를 만들면 방금 바꾼 값인데도 updatedAt이 직전 값 그대로 나간다.
+     */
+    private final EntityManager entityManager;
 
     /*
      * oper(공통)와 work(확장)를 한 트랜잭션에서 INSERT 한다. 둘 중 하나만 남으면
@@ -96,11 +107,56 @@ public class WorkServiceImpl implements WorkService {
      */
     @Override
     public WorkDetailResponse getWork(Long workId) {
-        WorkEntity work =
-                workRepository
-                        .findByIdAndOperationDeletedAtIsNull(workId)
-                        .orElseThrow(() -> new GeneralException(OperationErrorCode.WORK_NOT_FOUND));
+        return buildDetail(findWork(workId));
+    }
 
+    /*
+     * 기본 정보 수정(OPS-004). oper(제목·기간·우선순위·담당자)와 work(업무 유형·총평)를
+     * 한 트랜잭션에서 함께 바꾼다 — 등록이 두 행을 함께 만드는 것과 같은 경계다(AR-11).
+     *
+     * workStatus·진행률은 손대지 않는다. 요청 DTO에 그 필드가 아예 없어(POL-003) 여기서
+     * 막을 것도 없다.
+     */
+    @Override
+    @Transactional
+    public WorkDetailResponse updateWork(Long workId, WorkUpdateRequest request) {
+        WorkEntity work = findWork(workId);
+
+        // 담당자 실재 여부는 등록과 같은 규칙이다 (AR-07·LY-10)
+        MemberEntity owner =
+                memberService
+                        .findAssignableMember(request.ownerId())
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER));
+
+        Instant beginAt = toInstant(request.startAt());
+        Instant endAt = toInstant(request.endAt());
+        validatePeriod(beginAt, endAt);
+
+        OperationEntity operation = work.getOperation();
+        operation.changeTitle(request.title());
+        operation.changeSchedule(beginAt, endAt);
+        // 등록 팩토리(createForWork)와 같은 기본값 — 생략하면 NORMAL이다
+        operation.changePriority(orNormalPriority(request.priority()));
+        operation.changePersonInCharge(owner);
+        work.changeWorkType(request.itemType());
+        work.writeGeneralReview(request.review());
+
+        // mdfcn_dt를 지금 바꾼 값으로 응답에 실으려면 flush로 감사 필드를 먼저 채워야 한다
+        entityManager.flush();
+
+        return buildDetail(work);
+    }
+
+    private WorkEntity findWork(Long workId) {
+        return workRepository
+                .findByIdAndOperationDeletedAtIsNull(workId)
+                .orElseThrow(() -> new GeneralException(OperationErrorCode.WORK_NOT_FOUND));
+    }
+
+    private WorkDetailResponse buildDetail(WorkEntity work) {
         List<SubWorkEntity> subWorks = subWorkRepository.findAllByWorkWithOwner(work);
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(subWorks);
 
@@ -108,6 +164,10 @@ public class WorkServiceImpl implements WorkService {
                 subWorks.stream().map(subWork -> summarize(subWork, progressBySubWorkId)).toList();
 
         return WorkDetailResponse.of(work, summaries);
+    }
+
+    private OperationPriority orNormalPriority(OperationPriority priority) {
+        return priority == null ? OperationPriority.NORMAL : priority;
     }
 
     /*

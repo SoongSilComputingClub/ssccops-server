@@ -125,7 +125,8 @@ class WorkServiceImplSearchTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService);
+                        memberService,
+                        entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -139,7 +140,8 @@ class WorkServiceImplSearchTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        entityManager.getEntityManager());
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");

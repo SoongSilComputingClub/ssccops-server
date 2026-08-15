@@ -6,6 +6,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 
 public interface WorkService {
 
@@ -20,6 +21,13 @@ public interface WorkService {
      * 소프트 삭제된 업무는 없는 것으로 보고 WORK_NOT_FOUND를 던진다.
      */
     WorkDetailResponse getWork(Long workId);
+
+    /*
+     * 업무 기본 정보를 수정한다 (OPS-004). workStatus는 이 경로로 바꿀 수 없다(POL-003) —
+     * 요청 DTO 자체에 그 필드가 없다. 소프트 삭제된 업무는 없는 것으로 보고 WORK_NOT_FOUND를
+     * 던진다. 응답은 조회(getWork)와 같은 WorkDetailResponse다.
+     */
+    WorkDetailResponse updateWork(Long workId, WorkUpdateRequest request);
 
     /*
      * 상위 업무 목록을 조건에 따라 조회한다 (OPS-020). '운영 통합 › 업무' 화면의 카드 그리드가

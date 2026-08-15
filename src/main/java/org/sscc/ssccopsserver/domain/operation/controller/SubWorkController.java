@@ -26,6 +26,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
@@ -90,6 +91,25 @@ public class SubWorkController {
     public ApiResponse<SubWorkDetailResponse> getSubWork(
             @PathVariable Long subWorkId, @CurrentMember MemberEntity viewer) {
         return ApiResponse.success(subWorkService.getSubWork(subWorkId, viewer));
+    }
+
+    /*
+     * 하위 업무 기본 정보 수정 (OPS-030). 상세 화면(OPS-SCR-002)의 '수정' 액션이 부른다.
+     *
+     * 본문은 등록(OPS-007)과 같은 확장 속성 필드에서 workId·subWorkTypeId를 뺀 구성이며
+     * **전체 교체**다 — content·completionCriteria·externalLink 같은 선택 입력도 생략하면
+     * 지운 것으로 본다(SubWorkUpdateRequest 주석). workStatus는 요청 DTO에 아예 없어 이
+     * 경로로 바꿀 수 없다(POL-003) — 상태는 전이 액션 엔드포인트(OPS-010)만의 몫이다.
+     *
+     * 응답이 상세 조회와 같은 SubWorkDetailResponse인 것도 같은 이유다 — canApprove·
+     * canReject·quorum·myVote까지 함께 실려야 화면이 수정 직후 재조회 없이 그대로 갱신된다.
+     */
+    @PatchMapping("/{subWorkId}")
+    public ApiResponse<SubWorkDetailResponse> updateSubWork(
+            @PathVariable Long subWorkId,
+            @Valid @RequestBody SubWorkUpdateRequest request,
+            @CurrentMember MemberEntity viewer) {
+        return ApiResponse.success(subWorkService.updateSubWork(subWorkId, request, viewer));
     }
 
     /*

@@ -133,7 +133,8 @@ class ApprovalServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService);
+                        memberService,
+                        entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -147,7 +148,8 @@ class ApprovalServiceImplTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        entityManager.getEntityManager());
         approvalService =
                 new ApprovalServiceImpl(
                         subWorkRepository,

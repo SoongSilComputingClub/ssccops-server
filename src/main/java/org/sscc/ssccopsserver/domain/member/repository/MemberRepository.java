@@ -1,15 +1,18 @@
 package org.sscc.ssccopsserver.domain.member.repository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
-public interface MemberRepository extends JpaRepository<MemberEntity, Long> {
+public interface MemberRepository
+        extends JpaRepository<MemberEntity, Long>, MemberRepositoryCustom {
 
     Optional<MemberEntity> findByAuthUserId(UUID authUserId);
 
@@ -33,4 +36,29 @@ public interface MemberRepository extends JpaRepository<MemberEntity, Long> {
     Optional<MemberEntity> findAssignableById(
             @Param("memberId") Long memberId,
             @Param("excludedStatusCodes") Collection<String> excludedStatusCodes);
+
+    /*
+     * 담당자 후보 목록 (#76). 단건판(findAssignableById)과 **같은 제외 규칙**을 쓰며 서비스가
+     * 같은 상수를 넘긴다 — 규칙을 두 벌로 두면 "업무 등록에서는 고를 수 있는데 목록에는 없는
+     * 회원"이 생긴다.
+     *
+     * 등급을 함께 끌어온다. 응답이 등급 코드와 명칭을 내리므로 지연 로딩 그대로 두면 회원
+     * 수만큼 쿼리가 더 나간다 (DB-13). 상태는 이 응답에 실리지 않으니 끌어오지 않는다.
+     *
+     * 정렬은 이름 오름차순이다 — 선택 칩의 드롭다운이라 사람을 눈으로 찾는 목록이고,
+     * 대표 역할 여부(rprs_role_yn)는 표시용이라 정렬에 쓰지 않는다 (BR-M26).
+     */
+    @EntityGraph(attributePaths = "membershipGrade")
+    @Query(
+            "select m from MemberEntity m where m.membershipStatus.code not in"
+                    + " :excludedStatusCodes order by m.name asc, m.id asc")
+    List<MemberEntity> findAllAssignable(
+            @Param("excludedStatusCodes") Collection<String> excludedStatusCodes);
+
+    /*
+     * 회원 단건 조회 (#76). 등급·상태를 함께 끌어와 상세 응답 조립 중에 지연 로딩이 터지지
+     * 않게 한다 — findById는 그 둘을 프록시로 남겨 두어 응답 DTO를 만들 때마다 쿼리가 붙는다.
+     */
+    @EntityGraph(attributePaths = {"membershipGrade", "membershipStatus"})
+    Optional<MemberEntity> findWithGradeAndStatusById(Long id);
 }

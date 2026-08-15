@@ -81,7 +81,7 @@ public interface MemberService {
      * API가 따로 있고(#78), 학번은 updatable = false로 잠겨 있다. **막는 방법이 DTO에 필드를
      * 두지 않는 것**이라 이 메서드에는 무시하는 분기가 없다.
      *
-     * 재학 회원의 학과·학년 필수는 가입과 같은 규칙(MemberStatusCode.isAcademicProfileSatisfied)을
+     * 재학 회원의 학과·학년 필수는 가입·CSV 이관과 같은 규칙(AcademicProfilePolicy)을
      * 쓴다. 요청에는 상태가 없으므로 회원을 읽어 그 상태로 판정한다 — 없는 회원은 404,
      * 어긴 값은 400 VALIDATION_FAILED다.
      *

@@ -411,12 +411,16 @@ public class MemberServiceImpl implements MemberService {
     }
 
     /*
-     * 재학 회원의 학과·학년 필수 (#77). 판정은 가입과 **같은 한 벌**
-     * (MemberStatusCode.isAcademicProfileSatisfied)이며 여기서 규칙을 다시 적지 않는다 —
-     * 두 벌이 되면 가입에서 막히는 값이 수정에서 통과한다.
+     * 재학 회원의 학과·학년 필수 (#77). 판정은 가입·CSV 이관과 **같은 한 벌**
+     * (AcademicProfilePolicy)이며 여기서 규칙을 다시 적지 않는다 — 두 벌이 되면 가입에서
+     * 막히는 값이 수정에서 통과한다.
      *
      * 상태를 요청이 아니라 회원 행에서 읽는 것이 가입과 갈리는 유일한 지점이다. 상태는 이
      * API로 바꿀 수 없으므로 요청 본문에 없고, 따라서 요청 DTO의 @AssertTrue로는 닿지 않는다.
+     *
+     * **학번 누락은 이 경로에서 보지 않는다.** mbr.stdnt_no는 updatable = false라 수정 요청에
+     * 필드가 없고(데이터사전 ssccops#74 '가입 후 변경 불가'), 학번 없이 이관된 재학 회원의
+     * 연락처를 고치려는 정상 요청까지 막게 된다 — 고칠 수 없는 값을 이유로 거절하는 셈이다.
      *
      * 기준 코드 테이블에 enum 밖의 상태가 늘어난 경우(from이 null)는 규칙 밖으로 둔다 —
      * 조건부 필수는 재학 하나에만 걸리는 규칙이라 모르는 상태를 재학처럼 다룰 근거가 없다.
@@ -424,8 +428,21 @@ public class MemberServiceImpl implements MemberService {
     private static void validateAcademicProfile(
             MemberEntity member, String departmentName, Integer academicYear) {
         MemberStatusCode statusCode = MemberStatusCode.from(member.getMembershipStatus().getCode());
-        if (statusCode != null
-                && !statusCode.isAcademicProfileSatisfied(departmentName, academicYear)) {
+        if (statusCode == null) {
+            return;
+        }
+
+        boolean missingUpdatableField =
+                AcademicProfilePolicy.missingRequiredFields(
+                                statusCode, member.getStudentNumber(), departmentName, academicYear)
+                        .stream()
+                        .anyMatch(
+                                field ->
+                                        field
+                                                != AcademicProfilePolicy.AcademicField
+                                                        .STUDENT_NUMBER);
+
+        if (missingUpdatableField) {
             throw new GeneralException(MemberErrorCode.ACADEMIC_PROFILE_REQUIRED);
         }
     }

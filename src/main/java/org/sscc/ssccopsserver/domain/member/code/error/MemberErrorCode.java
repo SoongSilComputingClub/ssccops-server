@@ -273,7 +273,7 @@ public enum MemberErrorCode implements ErrorCode {
      * 400 — 재학 회원의 학과·학년을 비우는 수정 (#77).
      *
      * 가입에서 @AssertTrue가 막는 것과 같은 규칙이며 판정도 같은 자리
-     * (MemberStatusCode.isAcademicProfileSatisfied)에서 한다. 수정 요청에는 회원 상태가 실려
+     * (AcademicProfilePolicy)에서 한다. 수정 요청에는 회원 상태가 실려
      * 있지 않아(상태는 전용 API로만 바뀐다) 요청 DTO 혼자서는 판단할 수 없고, 회원을 읽은 뒤
      * 서비스가 던진다.
      *

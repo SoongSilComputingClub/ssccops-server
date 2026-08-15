@@ -51,7 +51,7 @@ import jakarta.validation.constraints.Size;
  * ── 재학 회원의 학과·학년 필수는 여기서 검사하지 않는다 ─────────
  * 그 규칙은 회원의 현재 상태(mbr_stts_cd)를 봐야 하는데, 상태는 이 API로 바꿀 수 없어
  * 요청 본문에 없다. 그래서 @AssertTrue로는 판단할 수 없고 회원을 읽은 뒤 서비스가
- * MemberStatusCode.isAcademicProfileSatisfied(가입과 같은 규칙)로 본다 —
+ * AcademicProfilePolicy(가입·CSV 이관과 같은 규칙)로 본다 —
  * 400 VALIDATION_FAILED(ACADEMIC_PROFILE_REQUIRED)다.
  */
 public record MemberUpdateRequest(

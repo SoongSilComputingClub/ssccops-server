@@ -207,7 +207,34 @@ public enum MemberErrorCode implements ErrorCode {
      * 데이터사전의 role에는 use_yn이 없으므로 '비활성화'라는 도피처를 만들지 않는다 — 필요해지면
      * 데이터사전 등재가 먼저다.
      */
-    ROLE_IN_USE(HttpStatus.CONFLICT, "ROLE_IN_USE", "배정 이력이나 권한이 있는 역할은 삭제할 수 없습니다.");
+    ROLE_IN_USE(HttpStatus.CONFLICT, "ROLE_IN_USE", "배정 이력이나 권한이 있는 역할은 삭제할 수 없습니다."),
+
+    /*
+     * 400 — 이관용 CSV로 읽을 수 없는 파일 (#84).
+     *
+     * 확장자·크기(5MB)·인코딩(UTF-8, BOM 허용)이 한 코드에 묶여 있다. 셋을 나누지 않는 것은
+     * 운영자가 할 일이 셋 다 "다른 파일을 내보내 다시 올린다" 하나이기 때문이다 — 무엇이 어긋났는지는
+     * 코드가 아니라 message가 전한다. **파싱 전에** 끊으므로 여기 걸린 파일은 한 줄도 읽지 않는다.
+     */
+    INVALID_CSV_FILE(HttpStatus.BAD_REQUEST, "INVALID_CSV_FILE", "CSV 파일을 읽을 수 없습니다."),
+
+    /*
+     * 400 — 컬럼 매핑이 성립하지 않을 때 (#84).
+     *
+     * 필수 필드(mbrNm·mbrGrdCd·mbrSttsCd)가 매핑되지 않았거나, 파일에 없는 헤더를 가리키거나,
+     * 한 필드에 두 컬럼이 매핑된 경우다. 행별 오류로 내리지 않고 요청 전체를 거절하는 것은
+     * 매핑이 어긋나면 모든 행이 같은 이유로 틀려 128건짜리 오류 목록이 되기 때문이다.
+     */
+    CSV_MAPPING_INVALID(HttpStatus.BAD_REQUEST, "CSV_MAPPING_INVALID", "컬럼 매핑이 올바르지 않습니다."),
+
+    /*
+     * 400 — 헤더가 없거나 데이터 행이 0건인 CSV (#84).
+     *
+     * INVALID_CSV_FILE과 나누는 것은 파일 자체는 멀쩡하다는 사실이 다르기 때문이다 — 운영자는
+     * 파일을 바꾸는 것이 아니라 내보내기 범위를 다시 잡아야 한다. 빈 결과를 200으로 돌려주지
+     * 않는 것은 위저드가 "0건 검증 완료"를 성공으로 읽고 다음 단계로 넘어가기 때문이다.
+     */
+    EMPTY_CSV_FILE(HttpStatus.BAD_REQUEST, "EMPTY_CSV_FILE", "데이터가 없는 CSV 파일입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

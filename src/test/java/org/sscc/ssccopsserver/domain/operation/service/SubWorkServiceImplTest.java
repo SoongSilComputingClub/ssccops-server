@@ -1227,6 +1227,28 @@ class SubWorkServiceImplTest {
         assertThat(updated.quorum()).isEqualTo(fetched.quorum());
     }
 
+    /*
+     * 회원 상태 변경(#78)의 경고에 실리는 '담당 중인 하위 업무' 건수.
+     *
+     * 완료된 건을 세면 오래 활동한 회원일수록 경고가 영영 남아, 실제로 인수인계가 필요한
+     * 상황과 구별되지 않는다. 담당자가 아닌 등록자에게 잡히지 않는 것도 함께 확인한다 —
+     * 두 자리를 헷갈리면 "업무를 만든 사람"이 탈퇴할 때마다 경고가 뜬다.
+     */
+    @Test
+    void countOngoingByOwnerCountsOnlyUnfinishedSubWorksOfThatOwner() {
+        createSubWork(approvalFreeTypeId);
+
+        Long doneSubWorkId = subWorkInReview(approvalFreeTypeId);
+        completeChecklist(doneSubWorkId);
+        transition(doneSubWorkId, TransitionAction.APPROVE_COMPLETE, null);
+
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(subWorkService.countOngoingByOwner(ownerId)).isEqualTo(1);
+        assertThat(subWorkService.countOngoingByOwner(registrant.getId())).isZero();
+    }
+
     private Long createSubWork(long subWorkTypeId) {
         return subWorkService.createSubWork(request(subWorkTypeId), registrant).subWorkId();
     }

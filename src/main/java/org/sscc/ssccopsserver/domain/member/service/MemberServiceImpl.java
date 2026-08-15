@@ -38,11 +38,9 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
-import org.sscc.ssccopsserver.domain.member.entity.MemberGradeHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
-import org.sscc.ssccopsserver.domain.member.entity.MemberStatusHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -104,6 +102,12 @@ public class MemberServiceImpl implements MemberService {
     private final MemberStatusRepository memberStatusRepository;
     private final MemberGradeHistoryRepository memberGradeHistoryRepository;
     private final MemberStatusHistoryRepository memberStatusHistoryRepository;
+
+    /*
+     * 등급·상태의 최초 이력 기록 (BR-M47). 가입과 CSV 이관(#85)이 **같은 한 벌**을 쓴다 —
+     * 복제하면 한쪽만 이력을 남기거나 bfr_*의 뜻이 갈린다.
+     */
+    private final MemberInitialHistoryRecorder initialHistoryRecorder;
 
     // 프로필의 capabilities는 인가 애스펙트와 같은 정책으로 계산한다 (#9) — 두 벌로 두면 갈린다
     private final AuthorityPolicy authorityPolicy;
@@ -596,19 +600,15 @@ public class MemberServiceImpl implements MemberService {
      * 등급·상태의 최초 부여도 이력에 남긴다. 이후 변경만 기록하면 회원 상세의 변경이력이
      * "언제 무엇으로 시작했는지"를 보여줄 수 없고, 첫 승급 이력의 이전 등급이 근거 없이 떠 있게 된다.
      *
-     * 이전 값은 NULL이다 — 가입 전에는 등급도 상태도 없었다는 사실 그대로다.
-     * 변경자는 본인이다. 운영진이 개입한 변경이 아니라 본인 신청으로 생긴 값이기 때문이다.
+     * **기록 자체는 MemberInitialHistoryRecorder가 한다** — CSV 이관(#85)도 같은 이력을 남겨야
+     * 해서 꺼냈다. 여기 남는 것은 가입 경로가 정하는 두 값뿐이다: 변경자는 **본인**이고(운영진이
+     * 개입한 변경이 아니라 본인 신청으로 생긴 값이다) 사유는 '회원가입'이다. 이관은 같은 자리에
+     * 요청한 운영자와 'CSV 이관'을 넣는다.
      */
     private void recordInitialHistories(
             MemberEntity member, MemberGradeEntity grade, MemberStatusEntity status) {
-        LocalDate appliedDate = member.getJoinDate();
-
-        memberGradeHistoryRepository.save(
-                MemberGradeHistoryEntity.create(
-                        member, null, grade, appliedDate, SIGNUP_HISTORY_REASON, member));
-        memberStatusHistoryRepository.save(
-                MemberStatusHistoryEntity.create(
-                        member, null, status, appliedDate, null, SIGNUP_HISTORY_REASON, member));
+        initialHistoryRecorder.record(
+                member, grade, status, member.getJoinDate(), SIGNUP_HISTORY_REASON, member);
     }
 
     private MemberEntity saveOrTranslateConflict(MemberEntity member) {

@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.member.repository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -36,4 +37,46 @@ public interface MemberRoleAssignmentRepository
                     + " where a.member.id = :memberId and a.roleStartDate <= :today"
                     + " and (a.roleEndDate is null or a.roleEndDate >= :today)")
     List<Long> findValidRoleIds(@Param("memberId") Long memberId, @Param("today") LocalDate today);
+
+    /*
+     * 역할별 현재 보유 회원 수를 **한 번에 모아** 센다 (#79 역할 목록).
+     *
+     * 역할마다 count를 돌리면 역할 수에 비례해 쿼리가 늘어난다. 목록은 역할 조회 1 + 이 집계
+     * 1로 끝나야 하며 RoleControllerTest가 그것을 못 박아 둔다.
+     *
+     * 기준은 findValidRoleIds와 같다 — role_bgng_ymd <= 오늘 <= role_end_ymd, 종료일 NULL이면
+     * 무기한. 인가가 보는 '유효한 역할'과 화면이 세는 '지금 이 역할인 사람'이 갈리면 "권한은
+     * 있는데 목록에는 0명"이 된다.
+     *
+     * 한 회원에게 같은 역할이 기간이 겹치게 두 번 배정된 데이터에서도 한 명으로 세도록
+     * count(distinct)를 쓴다 — 세는 단위는 배정이 아니라 사람이다.
+     */
+    @Query(
+            "select a.role.id as roleId, count(distinct a.member.id) as memberCount"
+                    + " from MemberRoleAssignmentEntity a"
+                    + " where a.role.id in :roleIds and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)"
+                    + " group by a.role.id")
+    List<RoleMemberCount> countCurrentMembersByRoleIds(
+            @Param("roleIds") Collection<Long> roleIds, @Param("today") LocalDate today);
+
+    /*
+     * 역할 상세의 재임 회원 목록 (#79). 이름·학번을 쓰므로 회원을 join fetch로 함께 가져온다.
+     * 정렬은 이름 → 회원 식별자다(동명이인을 식별자로 끊는다).
+     */
+    @Query(
+            "select a from MemberRoleAssignmentEntity a join fetch a.member m"
+                    + " where a.role.id = :roleId and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)"
+                    + " order by m.name asc, m.id asc")
+    List<MemberRoleAssignmentEntity> findCurrentByRoleId(
+            @Param("roleId") Long roleId, @Param("today") LocalDate today);
+
+    /*
+     * 이 역할에 배정된 적이 **한 번이라도** 있는가 (#79 삭제 가드).
+     *
+     * 위의 질의들과 달리 기간을 보지 않는다. 종료된 배정을 빼면 "작년 국장이 누구였는지"가
+     * 삭제 한 번으로 사라지기 때문이다 — 지울 수 있는 역할은 아무에게도 붙은 적 없는 역할뿐이다.
+     */
+    boolean existsByRoleId(Long roleId);
 }

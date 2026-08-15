@@ -32,4 +32,12 @@ public interface RoleAuthorityRelationRepository
 
     /** 어느 역할엔가 부여돼 있는지. 부여된 권한은 지울 수 없으므로 삭제 전에 본다 (#65) */
     boolean existsByAuthority(AuthorityEntity authority);
+
+    /*
+     * 이 역할에 권한이 붙어 있는지 (#79 삭제 가드).
+     *
+     * existsByAuthority의 반대 방향이며 태도는 같다 — 매핑을 함께 지워 주지 않고 회수를 먼저
+     * 하게 한다. 조용히 지우면 삭제 한 번으로 무엇이 사라졌는지 화면에서 보이지 않는다.
+     */
+    boolean existsByRoleId(Long roleId);
 }

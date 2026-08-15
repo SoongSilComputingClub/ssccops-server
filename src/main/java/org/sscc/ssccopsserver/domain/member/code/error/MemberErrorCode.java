@@ -185,9 +185,18 @@ public enum MemberErrorCode implements ErrorCode {
      * 409 — 다른 회원이 이미 쓰고 있는 학번. CSV로 이관된 회원의 학번도 여기에 걸린다.
      *
      * 학번이 일치한다고 그 행에 자동으로 연결하지 않는다 — 학번만 알면 남의 계정을 가로챌 수
-     * 있어서다. 안전한 연결 절차는 명부 이관 기능을 설계할 때 함께 다룬다 (#21).
+     * 있어서다. #21에서 "안전한 연결 절차는 명부 이관 기능을 설계할 때 함께 다룬다"고 미뤄
+     * 두었던 그 절차가 **POST /v1/members/link**다 (#86 · ssccops#78 A안). 학번·회원명·연락처
+     * 3종이 모두 일치해야 연결되며, 연락처는 MEMBER_MANAGE 없이는 조회되지 않는 값이라
+     * 명부를 봤다는 것만으로는 알 수 없다.
+     *
+     * 그래서 메시지가 "중복이다"에서 끝나지 않고 **연결 경로를 안내**한다 — 이관된 본인이
+     * 여기 걸렸을 때 화면이 막다른 길이 아니라 다음 단계를 보여줄 수 있어야 한다.
      */
-    STUDENT_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다."),
+    STUDENT_NUMBER_DUPLICATED(
+            HttpStatus.CONFLICT,
+            "STUDENT_NUMBER_DUPLICATED",
+            "이미 등록된 학번입니다. 명부에 등록된 본인이라면 계정 연결을 진행하십시오."),
 
     /*
      * 409 — 이미 있는 이름으로 역할을 만들거나 이름을 바꾸려 할 때 (#79).
@@ -331,7 +340,45 @@ public enum MemberErrorCode implements ErrorCode {
      * 때문이다 — 운영자가 할 일도 "값을 고친다"가 아니라 "검증을 다시 받는다"이다.
      */
     IMPORT_FILE_MISMATCH(
-            HttpStatus.CONFLICT, "IMPORT_FILE_MISMATCH", "검증한 파일과 다른 파일입니다. 검증을 다시 수행하십시오.");
+            HttpStatus.CONFLICT, "IMPORT_FILE_MISMATCH", "검증한 파일과 다른 파일입니다. 검증을 다시 수행하십시오."),
+
+    /*
+     * 404 — 이관 회원 계정 연결이 본인 확인에 실패했을 때 (#86 · VR-M23).
+     *
+     * **어느 항목이 틀렸는지 밝히지 않는다.** "학번은 맞고 이름이 틀립니다"를 내려 주면 이
+     * 엔드포인트가 곧 명부 조회 도구가 된다 — 학번을 바꿔 가며 부르면 누가 명부에 있는지,
+     * 그 사람의 이름이 무엇인지가 응답으로 새어 나간다. 그래서 세 가지 실패(명부에 없는 학번 ·
+     * 이름 불일치 · 연락처 불일치)가 **한 코드 한 문구**다. 연락처가 NULL인 이관 회원도 여기로
+     * 떨어진다 — 비교할 값이 없으면 어떤 입력도 일치로 볼 수 없다.
+     *
+     * 400이 아니라 404인 것은 요청의 모양이 틀린 것이 아니라 **가리키는 회원을 찾지 못한**
+     * 것이기 때문이다.
+     */
+    MEMBER_LINK_FAILED(HttpStatus.NOT_FOUND, "MEMBER_LINK_FAILED", "일치하는 회원 정보를 찾을 수 없습니다."),
+
+    /*
+     * 409 — 연결하려는 명부 회원이 이미 다른 계정과 연결돼 있을 때 (#86).
+     *
+     * MEMBER_LINK_FAILED와 나누는 근거는 **이 코드에 닿은 사람은 이미 본인 확인을 통과했다**는
+     * 점이다. 학번·이름·연락처 3종이 모두 맞았다는 뜻이고, 연락처는 명부를 봐서는 알 수 없는
+     * 값이라 이 응답이 새로 알려 주는 사실이 없다. 대신 화면은 "정보가 틀렸다"가 아니라
+     * "다른 계정이 이미 쓰고 있으니 운영진에게 문의하라"고 안내해야 한다.
+     *
+     * 선조회로도 대부분 걸리지만, 같은 회원 행에 두 계정이 동시에 연결을 시도하면
+     * uk_mbr_auth_user_id 위반으로만 드러나므로 그 경로에서도 같은 코드로 내린다
+     * (가입의 ALREADY_SIGNED_UP과 같은 방식).
+     */
+    MEMBER_ALREADY_LINKED(HttpStatus.CONFLICT, "MEMBER_ALREADY_LINKED", "이미 다른 계정과 연결된 회원입니다."),
+
+    /*
+     * 429 — 계정 연결 시도 횟수를 넘겼을 때 (#86 · VR-M24).
+     *
+     * 제한이 없으면 학번을 바꿔 가며 부르는 것만으로 명부 전체를 훑을 수 있다 — 실패가 한
+     * 코드로 뭉뚱그려져 있어도 "성공했는가"는 그 자체로 명부의 존재 여부를 알려 준다.
+     * 제한 단위·잠금 시간과 그 근거는 MemberLinkAttemptLimiter의 주석에 있다.
+     */
+    TOO_MANY_LINK_ATTEMPTS(
+            HttpStatus.TOO_MANY_REQUESTS, "TOO_MANY_LINK_ATTEMPTS", "연결 시도가 너무 많습니다. 잠시 후 다시 시도하십시오.");
 
     private final HttpStatus httpStatus;
     private final String code;

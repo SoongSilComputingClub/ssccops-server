@@ -152,8 +152,15 @@ public class MemberRoleAssignmentServiceImpl implements MemberRoleAssignmentServ
             assignment.end(request.roleEndYmd());
         }
 
+        /*
+         * 대표를 내리는 것은 이 배정이 **지금 유효할 때만**이다(부여 경로와 같은 기준). 이미
+         * 끝났거나 아직 시작하지 않은 배정을 대표로 표시했다고 오늘의 대표를 내리면, 사이드바에
+         * 아무 역할도 걸리지 않는 구간이 생긴다. 단일성은 '유효한 것 중 최대 1건'이므로 그
+         * 사이에도 둘이 되지 않는다. 종료일 변경을 먼저 반영한 뒤 판정하는 순서가 중요하다 —
+         * 같은 요청이 임기를 끝내면서 대표로 올리는 경우가 여기서 갈린다.
+         */
         if (request.rprsRoleYn() != null) {
-            if (Boolean.TRUE.equals(request.rprsRoleYn())) {
+            if (Boolean.TRUE.equals(request.rprsRoleYn()) && assignment.isValidOn(today)) {
                 demoteOtherRepresentatives(memberId, assignmentId, today);
             }
             assignment.changeRepresentative(request.rprsRoleYn());

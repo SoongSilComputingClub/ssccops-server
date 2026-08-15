@@ -232,6 +232,26 @@ class MemberRoleAssignmentControllerTest {
         assertThat(representativeOf(second)).isFalse();
     }
 
+    /*
+     * 이미 끝난 배정을 대표로 표시해도 **지금의 대표는 내려가지 않는다.** 단일성은 '유효한 것 중
+     * 최대 1건'이라 지난 임기에 붙은 표시는 오늘의 사이드바와 겨루지 않는다 — 여기서 내리면
+     * 대표가 하나도 없는 구간이 생긴다.
+     */
+    @Test
+    void designatingAnEndedAssignmentDoesNotDemoteTheCurrentRepresentative() throws Exception {
+        Long ended = assign(staff.getId(), plainRoleId, LocalDate.now().minusDays(30), null);
+        end(staff.getId(), ended, LocalDate.now().minusDays(1));
+        Long current = assign(staff.getId(), workRoleId, LocalDate.now().minusDays(10), true);
+
+        mockMvc.perform(
+                        authorized(patch(rolesOf(staff) + "/" + ended), adminToken)
+                                .content("{\"rprsRoleYn\": true}"))
+                .andExpect(status().isOk());
+
+        flushAndClear();
+        assertThat(representativeOf(current)).isTrue();
+    }
+
     // ------------------------------------------------------------------ 목록
 
     /*

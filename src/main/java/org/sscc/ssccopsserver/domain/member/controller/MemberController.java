@@ -197,6 +197,7 @@ public class MemberController {
     public ApiResponse<MemberDetailResponse> updateMember(
             @PathVariable Long memberId, @Valid @RequestBody MemberUpdateRequest request) {
         return ApiResponse.success(memberService.updateMember(memberId, request));
+    }
 
     /*
      * 회원 등급 변경 (#78). mbr 갱신과 mbr_grd_hstry INSERT가 한 트랜잭션이다.

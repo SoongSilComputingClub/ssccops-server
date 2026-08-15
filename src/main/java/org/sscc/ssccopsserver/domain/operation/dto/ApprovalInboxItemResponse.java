@@ -29,6 +29,13 @@ import org.sscc.ssccopsserver.domain.operation.entity.VoteChoice;
  * 반려 탭에서만 채우지 않고 **탭과 무관하게** 직전 반려의 사유를 싣는다. 반려 후 다시 올라온
  * 건(REAPPROVAL_REQUIRED)은 대기 탭에 있는데, 승인자가 "무엇이 걸려서 되돌아왔던 건인지"를
  * 알아야 하는 자리가 바로 거기다. 반려된 적이 없으면 NULL이다.
+ *
+ * canApprove·canReject는 상세(OPS-009)와 같은 값을 같은 의미로 싣는다 (#62) — **권한만** 답하고
+ * "지금 누르면 성공하는가"는 답하지 않는다. 카드가 승인·반려 버튼을 그릴지 정하는 값이며,
+ * 누를 수 있는지는 quorum.met·checklistSummary로 화면이 따로 판단한다. 없으면 화면은 카드마다
+ * 버튼을 그릴 근거가 없어 운영진 전원에게 그리게 되고, 승인자가 아닌 사람은 누른 뒤에야 403을
+ * 본다. 지금은 두 값이 항상 같지만(승인·반려의 권한 규칙이 하나다) 필드를 하나로 합치지 않는
+ * 것은 상세가 이미 둘로 나가 있어서다.
  */
 public record ApprovalInboxItemResponse(
         Long subWorkId,
@@ -42,7 +49,9 @@ public record ApprovalInboxItemResponse(
         ApprovalQuorumResponse quorum,
         SubWorkChecklistSummaryResponse checklistSummary,
         VoteChoice myVote,
-        String latestRejectionReason) {
+        String latestRejectionReason,
+        boolean canApprove,
+        boolean canReject) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -53,7 +62,8 @@ public record ApprovalInboxItemResponse(
             long completedItems,
             long totalItems,
             VoteChoice myVote,
-            String latestRejectionReason) {
+            String latestRejectionReason,
+            boolean canDecide) {
         MemberEntity registrant = subWork.getOperation().getRegistrant();
         return new ApprovalInboxItemResponse(
                 subWork.getId(),
@@ -67,7 +77,10 @@ public record ApprovalInboxItemResponse(
                 ApprovalQuorumResponse.of(subWork.getSubWorkType(), agreedVoteCount),
                 new SubWorkChecklistSummaryResponse(completedItems, totalItems),
                 myVote,
-                latestRejectionReason);
+                latestRejectionReason,
+                // 승인과 반려의 권한 규칙이 하나라 canDecide 하나로 두 값을 채운다 (상세와 같다)
+                canDecide,
+                canDecide);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

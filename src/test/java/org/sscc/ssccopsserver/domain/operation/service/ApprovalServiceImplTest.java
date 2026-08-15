@@ -149,6 +149,7 @@ class ApprovalServiceImplTest {
                         subWorkStatusHistoryRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
+                        new ApprovalAuthorityPolicy(memberService),
                         FIXED_CLOCK);
 
         registrant = saveMember("20200001", "김도현", null);
@@ -325,12 +326,48 @@ class ApprovalServiceImplTest {
     }
 
     /*
+     * 카드가 승인·반려 버튼을 그릴지 정하는 값 (#62). 유형이 지정한 승인자 역할(PRESIDENT)을
+     * 가진 사람만 true다 — 없으면 화면은 운영진 전원에게 버튼을 그리고, 승인자가 아닌 사람은
+     * 누른 뒤에야 403을 본다.
+     */
+    @Test
+    void cardTellsWhetherTheViewerMayDecide() {
+        subWorkInReview(quorumTypeId, "9월 신입 모집 포스터");
+
+        ApprovalInboxItemResponse forPresident = search(null, president).approvals().get(0);
+        ApprovalInboxItemResponse forStaff = search(null, staff).approvals().get(0);
+
+        assertThat(forPresident.canApprove()).isTrue();
+        assertThat(forPresident.canReject()).isTrue();
+        // 투표는 할 수 있지만 최종 승인·반려는 승인자 역할의 몫이다
+        assertThat(forStaff.canApprove()).isFalse();
+        assertThat(forStaff.canReject()).isFalse();
+    }
+
+    /*
+     * 권한 판정은 상세(OPS-009)와 같은 정책 하나에서 나와야 한다. 두 벌이 되면 승인함에는
+     * 버튼이 보이는데 상세에서는 사라지거나, 눌렀을 때 403이 나는 상태가 된다.
+     */
+    @Test
+    void cardAuthorityMatchesTheDetailScreen() {
+        Long subWorkId = subWorkInReview(quorumTypeId, "9월 신입 모집 포스터");
+
+        for (MemberEntity viewer : List.of(president, staff, registrant)) {
+            ApprovalInboxItemResponse card = search(null, viewer).approvals().get(0);
+            entityManager.flush();
+            entityManager.clear();
+            assertThat(card.canApprove())
+                    .isEqualTo(subWorkService.getSubWork(subWorkId, viewer).canApprove());
+        }
+    }
+
+    /*
      * 파생 값은 전부 목록 전체를 한 번에 집계해 붙인다 (DB-13). 카드마다 조회하면 페이지가
      * 커질수록 쿼리가 함께 늘어나는데, 그 회귀는 응답 내용이 같아 테스트로 못 박지 않으면
      * 드러나지 않는다.
      */
     @Test
-    void searchRunsEightQueriesRegardlessOfRowCount() {
+    void searchRunsNineQueriesRegardlessOfRowCount() {
         for (int index = 0; index < 5; index++) {
             /*
              * 카드마다 요청자가 다르고, 그 요청자가 담당자와도 다르다. 등록자와 담당자가 같으면
@@ -360,7 +397,7 @@ class ApprovalServiceImplTest {
         assertThat(response.approvals())
                 .extracting(ApprovalInboxItemResponse::latestRejectionReason)
                 .doesNotContainNull();
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(8);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(9);
     }
 
     /*

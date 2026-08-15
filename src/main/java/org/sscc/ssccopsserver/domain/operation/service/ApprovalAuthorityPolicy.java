@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.operation.service;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
@@ -104,16 +105,35 @@ public class ApprovalAuthorityPolicy {
      * 실제 거절과 섞이기 때문이다.
      */
     public boolean canDecide(SubWorkEntity subWork, MemberEntity member) {
-        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
-        if (!subWorkType.isApprovalNeeded()) {
+        if (!subWork.getSubWorkType().isApprovalNeeded()) {
             // 승인 단계가 없는 유형은 승인자도 없다. 막으면 저위험 업무를 아무도 완료할 수 없다
             return true;
         }
         if (member == null) {
             return false;
         }
+        return canDecide(subWork, roleNamesOf(member));
+    }
+
+    /*
+     * 목록의 카드마다 같은 판정을 묻기 위한 형태 (승인함 OPS-017의 canApprove·canReject · #62).
+     *
+     * 역할은 회원의 것이지 하위 업무의 것이 아니므로 **한 번만 읽어 재사용한다** — 카드마다
+     * canDecide를 부르면 판정 자체는 맞지만 회원 역할 조회가 카드 수만큼 따라붙는다 (DB-13).
+     * 규칙은 아래 canDecide 한 곳에만 있어 상세(#58)·전이 검사와 갈리지 않는다.
+     */
+    public Predicate<SubWorkEntity> decidableBy(MemberEntity member) {
+        List<String> roleNames = member == null ? List.of() : roleNamesOf(member);
+        return subWork -> canDecide(subWork, roleNames);
+    }
+
+    private boolean canDecide(SubWorkEntity subWork, List<String> roleNames) {
+        SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
+        if (!subWorkType.isApprovalNeeded()) {
+            return true;
+        }
         return AuthorizerRole.from(subWorkType.getAuthorizerRoleCode())
-                .filter(required -> roleNamesOf(member).stream().anyMatch(required::matches))
+                .filter(required -> roleNames.stream().anyMatch(required::matches))
                 .isPresent();
     }
 

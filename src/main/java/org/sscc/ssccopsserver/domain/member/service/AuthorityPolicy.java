@@ -94,6 +94,22 @@ public class AuthorityPolicy {
     }
 
     /*
+     * 직접 부여된 권한 목록을 자손까지 펼친 결과 (#65).
+     *
+     * capabilitiesOf가 '회원'에서 출발한다면 이쪽은 '이미 손에 든 권한 목록'에서 출발한다.
+     * 역할별 권한 관리 화면이 "상위를 부여하면 자손도 부여된 것으로 보인다"를 그리려면 회원이
+     * 아니라 역할의 부여 목록을 펼쳐야 하는데, 그 계산을 화면이나 다른 서비스가 다시 구현하면
+     * 체크 상태와 실제 인가가 갈린다 (BR-M28과 같은 이유).
+     */
+    @Transactional(readOnly = true)
+    public Set<String> expandOf(Collection<String> grantedCodes) {
+        if (grantedCodes == null || grantedCodes.isEmpty()) {
+            return Set.of();
+        }
+        return expandDownwards(grantedCodes);
+    }
+
+    /*
      * 부여받은 권한에서 자손까지 내려가며 펼친다.
      *
      * 방문 집합으로 같은 코드를 두 번 넣지 않으므로, 상위 지정 시의 순환 검사(AuthorityEntity)를

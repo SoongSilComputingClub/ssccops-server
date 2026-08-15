@@ -75,6 +75,12 @@ INSERT INTO role_clsf (role_clsf_cd, role_clsf_nm, indct_seqno)
 SELECT 'EVENT', '행사', 5
 WHERE NOT EXISTS (SELECT 1 FROM role_clsf WHERE role_clsf_cd = 'EVENT');
 
+-- 시스템 분류는 조직이 만든 자리가 아니라 시스템이 쓰는 역할을 담는 칸이다(#71).
+-- '최고관리자'를 POSITION에 넣으면 역할 목록에서 회장·부회장 옆에 직책인 것처럼 서게 된다.
+INSERT INTO role_clsf (role_clsf_cd, role_clsf_nm, indct_seqno)
+SELECT 'SYSTEM', '시스템', 6
+WHERE NOT EXISTS (SELECT 1 FROM role_clsf WHERE role_clsf_cd = 'SYSTEM');
+
 -- 조직 역할(role) 마스터.
 --
 -- indct_seqno는 화면 정렬 순번이다. **서열로 쓰지 않는다** — 분류(role_clsf)마다 1번부터
@@ -111,16 +117,27 @@ INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
 SELECT 7, '스터디장', 'POSITION'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
 
+-- 최초 가입자에게 배정되는 역할(#71). 이 역할만이 SUPER 권한을 갖는다.
+-- indct_seqno는 분류마다 1부터 다시 시작하므로 SYSTEM 안에서 1이다 — POSITION의 '회장'과
+-- 값이 같지만 서열이 아니라 분류 안의 표시 순번이라 비교 대상이 아니다.
+--
+-- 이 역할을 특별히 잠그지 않는다. 부여·회수는 역할 관리 화면에서 하는 평범한 조작이며,
+-- 그것이 최초 가입자가 최고관리자를 다른 사람에게 넘겨주는 정상 경로다.
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
+SELECT 1, '최고관리자', 'SYSTEM'
+WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
+
 -- 권한(authrt) 트리. 코드가 @RequireAuthority로 직접 가리키는 값이라 전부 sys_yn = TRUE다 (#9).
 --
 -- 단일 부모 트리이며 부여는 위→아래 한 방향으로만 펼쳐진다. 상위를 부여하면 자손 전부를
 -- 부여한 것이지만, 자손을 가졌다고 상위가 생기지는 않는다.
 --
---   EXECUTIVE 임원
---   ├── OPERATOR 운영자
---   │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW
---   │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
---   ├── SUB_WORK_TYPE_MANAGE · FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
+--   SUPER 최고 관리자
+--   └── EXECUTIVE 임원
+--       ├── OPERATOR 운영자
+--       │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW
+--       │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
+--       ├── SUB_WORK_TYPE_MANAGE · FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
 --
 -- indct_seqno는 형제들 사이의 표시 순번이다(각 부모 아래에서 1부터). 서열이 아니다 —
 -- 인가는 순번이 아니라 트리의 부모-자식 관계로만 판정한다.
@@ -128,7 +145,11 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
 -- 상위(up_authrt_cd)가 FK라 부모를 먼저 넣어야 한다. 감사 컬럼(crt_dt·mdfcn_dt)은 이 파일이
 -- JPA를 거치지 않는 순수 SQL이라 직접 적는다 — 빠뜨리면 NOT NULL 위반으로 기동이 깨진다.
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
-SELECT 'EXECUTIVE', '임원', NULL, '운영 전반의 최상위 권한. 아래 모든 권한을 포함한다.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+SELECT 'SUPER', '최고 관리자', NULL, '시스템의 모든 권한. 회원이 한 명도 없을 때 최초 가입자에게 부여된다.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUPER');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'EXECUTIVE', '임원', 'SUPER', '운영 전반의 권한. 아래 모든 권한을 포함한다.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'EXECUTIVE');
 
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
@@ -179,6 +200,13 @@ INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, in
 SELECT 'FORM_STATUS_CHANGE', '폼 접수 상태 변경', 'FORM_MANAGE', '폼의 접수 시작·마감 전이.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_STATUS_CHANGE');
 
+-- 이미 시드된 DB(dev·prod)에는 EXECUTIVE가 최상위(up_authrt_cd IS NULL)로 들어가 있다.
+-- 위 INSERT는 건너뛰므로 여기서 SUPER 아래로 옮긴다 — sub_work_type.autzr_role_cd와 같은
+-- 가드 UPDATE다. IS NULL 조건이 멱등성과 "화면에서 손댄 값은 건드리지 않는다"를 함께 지킨다:
+-- 운영진이 EXECUTIVE를 어딘가로 옮겨 두었다면 그 판단을 되돌리지 않는다.
+UPDATE authrt SET up_authrt_cd = 'SUPER', mdfcn_dt = CURRENT_TIMESTAMP
+WHERE authrt_cd = 'EXECUTIVE' AND up_authrt_cd IS NULL;
+
 -- 역할↔권한 초기 매핑(role_authrt_rel). 회장·부회장·총무 → EXECUTIVE · 국장 → OPERATOR이며
 -- 국원·프로젝트장·스터디장은 부여하지 않는다 — "권한 없는 역할은 아무것도 못 한다"가 기본값이다.
 --
@@ -200,6 +228,16 @@ FROM role r
 WHERE r.role_nm = '국장'
   AND NOT EXISTS (
     SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'OPERATOR');
+
+-- 최고관리자 → SUPER (#71). 최초 가입자가 배정받는 역할이며, 이 매핑이 부트스트랩의 전부다.
+-- 회원에게 권한을 직접 붙이는 테이블을 새로 만들지 않는 것은 인가 판정 경로를 하나로 두기
+-- 위해서다(BR-M28) — AuthorityPolicy는 언제나 '회원 → 역할 → 권한'만 본다.
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'SUPER', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '최고관리자'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUPER');
 
 -- 하위 업무 유형(sub_work_type). 운영 등록 화면의 업무 유형 4종과 1:1로 대응한다.
 -- 유형은 코드가 아니라 기준 데이터라서 여기서 넣는다 (REQ-010 · POL-005 — 승인 정책의 데이터화).

@@ -25,6 +25,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryReposit
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
@@ -84,6 +85,7 @@ class WorkServiceImplTest {
     @Autowired private SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
@@ -101,6 +103,7 @@ class WorkServiceImplTest {
         MemberService memberService =
                 new MemberServiceImpl(
                         memberRepository,
+                        memberRoleRepository,
                         memberRoleAssignmentRepository,
                         memberGradeRepository,
                         memberStatusRepository,

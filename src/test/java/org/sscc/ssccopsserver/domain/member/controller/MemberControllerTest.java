@@ -12,6 +12,7 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -67,6 +68,32 @@ class MemberControllerTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
 
+    /**
+     * @BeforeEach가 만든 회원까지 센 값. "가입으로 회원이 늘었는가"는 이 값과 비교해 본다
+     */
+    private long baselineMemberCount;
+
+    /*
+     * 이 클래스가 검증하는 것은 **평상시 가입**이다. 회원이 한 명도 없으면 최초 가입자
+     * 부트스트랩(#71)이 걸려 가입자가 최고관리자 역할을 받으므로, 무관한 회원을 하나 두어
+     * 그 창구를 닫고 시작한다. 부트스트랩 자체는 MemberSignupBootstrapTest가 맡는다.
+     *
+     * 가입 API가 검증해야 하는 '미가입 상태'는 mbr 테이블이 비어 있는 것이 아니라 **이 토큰의
+     * 주체(AUTH_USER_ID)에 해당하는 행이 없는 것**이다 — 그 조건은 그대로 유지된다.
+     */
+    @BeforeEach
+    void seedExistingMemberSoSignupIsNotTheFirst() {
+        MemberFixture.save(
+                memberRepository,
+                memberGradeRepository,
+                memberStatusRepository,
+                UUID.randomUUID(),
+                "20180001",
+                "박준호",
+                "existing@sscc.org");
+        baselineMemberCount = memberRepository.count();
+    }
+
     @Test
     void enrolledMemberSignsUpAsTemporaryMember() throws Exception {
         mockMvc.perform(
@@ -95,8 +122,9 @@ class MemberControllerTest {
                 .andExpect(jsonPath("$.data.membershipGradeName").value("임시회원"))
                 .andExpect(jsonPath("$.data.membershipStatusCode").value("ENROLLED"))
                 .andExpect(jsonPath("$.data.membershipStatusName").value("재학"))
-                // 가입 직후에는 역할이 없다 (#9 역할 인가의 전제)
-                .andExpect(jsonPath("$.data.roles").isEmpty());
+                // 가입 직후에는 역할이 없다 (#9 역할 인가의 전제). 최초 가입자만 예외다 (#71)
+                .andExpect(jsonPath("$.data.roles").isEmpty())
+                .andExpect(jsonPath("$.data.capabilities").isEmpty());
 
         MemberEntity member = memberRepository.findByAuthUserId(AUTH_USER_ID).orElseThrow();
         assertThat(member.getEmail()).isEqualTo(EMAIL);
@@ -186,7 +214,7 @@ class MemberControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-        assertThat(memberRepository.count()).isZero();
+        assertThat(memberRepository.count()).isEqualTo(baselineMemberCount);
     }
 
     @Test
@@ -219,7 +247,8 @@ class MemberControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ALREADY_SIGNED_UP"));
 
-        assertThat(memberRepository.count()).isEqualTo(1);
+        // 위에서 만든 픽스처 한 건만 늘었을 뿐, 가입 API는 아무것도 만들지 않았다
+        assertThat(memberRepository.count()).isEqualTo(baselineMemberCount + 1);
     }
 
     /*
@@ -260,7 +289,7 @@ class MemberControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
-        assertThat(memberRepository.count()).isZero();
+        assertThat(memberRepository.count()).isEqualTo(baselineMemberCount);
     }
 
     // 기준 코드 자체에 없는 값. 입력값 형식 오류와 구분해 안내할 수 있어야 한다

@@ -120,6 +120,7 @@ class ApprovalServiceImplTest {
         MemberService memberService =
                 new MemberServiceImpl(
                         memberRepository,
+                        memberRoleRepository,
                         memberRoleAssignmentRepository,
                         memberGradeRepository,
                         memberStatusRepository,

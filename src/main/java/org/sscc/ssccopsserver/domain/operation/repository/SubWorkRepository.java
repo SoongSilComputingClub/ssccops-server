@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.repository;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -85,4 +86,41 @@ public interface SubWorkRepository
                     + " join s.operation o"
                     + " where w.id in :workIds and o.deletedAt is null")
     List<WorkSubWorkAggregate> findAggregatesByWorkIds(@Param("workIds") Collection<Long> workIds);
+
+    /*
+     * 운영 대시보드(OPS-038) '내 업무 목록'. 담당자(oper.pic_id)가 본인인 하위 업무 전량이다.
+     * 개인 스코프라 목록(OPS-008)의 커서 페이징을 쓰지 않는다 — 회의 목록(OPS-031)과 같은 판단.
+     * 완료 건도 포함한다 — '전체' 필터가 화면에서 그 값을 그대로 보여준다.
+     *
+     * 정렬은 AGG-04와 같다(마감 오름차순, 마감 없는 건은 뒤, 동률은 식별자 오름차순).
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where o.personInCharge.id = :ownerId and o.deletedAt is null"
+                    + " order by s.dueAt asc nulls last, s.id asc")
+    List<SubWorkEntity> findAllByOwnerId(@Param("ownerId") Long ownerId);
+
+    /*
+     * 운영 대시보드(OPS-038) '다가오는 마감'. 조회 시점 기준 ±5일 범위에 마감이 있는 하위
+     * 업무다(이슈#60). 이미 끝난 건은 뺀다 — 완료된 일의 마감을 다시 알릴 이유가 없다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where s.dueAt >= :from and s.dueAt <= :to"
+                    + " and s.workStatus <> :doneStatus and o.deletedAt is null"
+                    + " order by s.dueAt asc, s.id asc")
+    List<SubWorkEntity> findAllDueBetweenExcludingStatus(
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            @Param("doneStatus") WorkStatus doneStatus);
 }

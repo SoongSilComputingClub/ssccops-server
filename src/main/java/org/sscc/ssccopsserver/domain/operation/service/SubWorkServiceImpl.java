@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -521,6 +522,38 @@ public class SubWorkServiceImpl implements SubWorkService {
         item.updateCompletion(request.isCompleted());
 
         return SubWorkChecklistItemUpdateResponse.of(subWorkId, item, checklistSummaryOf(subWork));
+    }
+
+    // 운영 대시보드(OPS-038) '다가오는 마감'의 폭. 조회 시점 기준 ±5일이다(이슈#60)
+    private static final Duration UPCOMING_DEADLINE_WINDOW = Duration.ofDays(5);
+
+    /*
+     * 대시보드 '내 업무 목록' (OPS-038). owner가 담당자인 하위 업무 전량이며, 개인 스코프라
+     * 목록 조회(OPS-008)의 커서 페이징을 쓰지 않는다. 진행률·지연 여부는 목록 조회와 같은
+     * 방식으로 한 번에 집계한다(DB-13).
+     */
+    @Override
+    public List<SubWorkSummaryResponse> findMyTasks(MemberEntity owner) {
+        Instant now = clock.instant();
+        List<SubWorkEntity> rows = subWorkRepository.findAllByOwnerId(owner.getId());
+        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
+        return rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
+    }
+
+    /*
+     * 대시보드 '다가오는 마감' (OPS-038). 조회 시점 기준 ±5일 범위에 마감이 있고 아직
+     * 완료되지 않은 하위 업무다(이슈#60).
+     */
+    @Override
+    public List<SubWorkSummaryResponse> findUpcomingDeadlines() {
+        Instant now = clock.instant();
+        List<SubWorkEntity> rows =
+                subWorkRepository.findAllDueBetweenExcludingStatus(
+                        now.minus(UPCOMING_DEADLINE_WINDOW),
+                        now.plus(UPCOMING_DEADLINE_WINDOW),
+                        WorkStatus.DONE);
+        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
+        return rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
     }
 
     /*

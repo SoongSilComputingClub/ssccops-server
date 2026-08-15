@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
@@ -19,12 +20,15 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeHistoryEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
@@ -48,6 +52,15 @@ public class MemberServiceImpl implements MemberService {
     // 기수 미배정. 운영진이 사후에 배정하므로 가입 시점에는 0으로 둔다 (gen_no는 NOT NULL)
     private static final int UNASSIGNED_GENERATION_NUMBER = 0;
 
+    /*
+     * 최초 가입자에게 배정되는 역할의 이름 (#71 · ssccops#71). data.sql이 SYSTEM 분류로 넣고
+     * SUPER 권한을 붙여 둔다.
+     *
+     * role_id가 아니라 이름을 상수로 두는 것은 role_id가 IDENTITY라 환경마다 다르기 때문이다 —
+     * data.sql의 매핑 시드가 역할명으로 조회해 넣는 것과 같은 이유다.
+     */
+    private static final String BOOTSTRAP_ROLE_NAME = "최고관리자";
+
     // 최초 등급·상태 이력의 변경 사유. 이력만 봐도 운영진의 조정이 아니라 가입임을 알 수 있어야 한다
     private static final String SIGNUP_HISTORY_REASON = "회원가입";
 
@@ -59,6 +72,7 @@ public class MemberServiceImpl implements MemberService {
     private static final String STUDENT_NUMBER_CONSTRAINT = "uk_mbr_student_number";
 
     private final MemberRepository memberRepository;
+    private final MemberRoleRepository memberRoleRepository;
     private final MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     private final MemberGradeRepository memberGradeRepository;
     private final MemberStatusRepository memberStatusRepository;
@@ -102,6 +116,12 @@ public class MemberServiceImpl implements MemberService {
         MemberGradeEntity grade = findGrade(MemberGradeCode.TEMP);
         MemberStatusEntity status = findStatus(statusCode);
 
+        /*
+         * 부트스트랩 판정은 회원을 만들기 **전에** 한다 — 만든 뒤에 세면 방금 넣은 본인이
+         * 세어져 언제나 1이라 아무도 최초 가입자가 되지 못한다.
+         */
+        MemberRoleEntity bootstrapRole = claimBootstrapRole();
+
         MemberEntity member =
                 MemberEntity.create(
                         studentNumber,
@@ -122,11 +142,14 @@ public class MemberServiceImpl implements MemberService {
         MemberEntity saved = saveOrTranslateConflict(member);
         recordInitialHistories(saved, grade, status);
 
-        /*
-         * 가입 직후에는 어떤 역할도 부여되지 않는다 — 역할 배정은 운영진의 별도 절차다.
-         * 역할이 없으면 권한도 없으므로 capabilities도 빈 목록이다(굳이 조회하지 않는다).
-         */
-        return MemberProfileResponse.of(saved, List.of(), List.of());
+        if (bootstrapRole == null) {
+            /*
+             * 평상시 가입에는 어떤 역할도 부여되지 않는다 — 역할 배정은 운영진의 별도 절차다.
+             * 역할이 없으면 권한도 없으므로 capabilities도 빈 목록이다(굳이 조회하지 않는다).
+             */
+            return MemberProfileResponse.of(saved, List.of(), List.of());
+        }
+        return grantBootstrapRole(saved, bootstrapRole);
     }
 
     @Override
@@ -178,6 +201,70 @@ public class MemberServiceImpl implements MemberService {
             return Optional.empty();
         }
         return memberRepository.findAssignableById(memberId, UNASSIGNABLE_STATUS_CODES);
+    }
+
+    /*
+     * 최초 가입자 부트스트랩 창구가 열려 있으면 배정할 역할을, 닫혀 있으면 null을 돌려준다 (#71).
+     *
+     * ── 왜 '회원이 한 명도 없는가'인가 ─────────────────────────────
+     * 'SUPER를 가진 사람이 없는가'가 아니다(BR-M37). 그 기준이면 최고관리자가 탈퇴할 때마다
+     * 창구가 다시 열려, 가입 순서만으로 시스템 전체를 가져가는 길이 생긴다. 빈 회원 테이블은
+     * 한 번뿐이고 되돌아오지 않는 사실이라 창구로 쓸 수 있다.
+     *
+     * ── 왜 두 번 세는가 ────────────────────────────────────────
+     * 1차 검사는 잠금 없이 한다. 평상시 가입은 여기서 끝나므로 회원이 한 명이라도 있으면
+     * 비관적 잠금이 아예 걸리지 않는다. 창구가 열려 있어 보일 때만 역할 행을 잠그고
+     * **그 뒤에** 다시 센다 — 순서를 뒤집으면 잠금을 기다리는 사이 앞선 트랜잭션이 커밋해
+     * 버려 이미 낡은 숫자를 손에 쥔 채 통과한다(VR-M14). 잠금은 트랜잭션이 끝날 때까지
+     * 유지되므로 회원 INSERT까지가 한 줄로 직렬화된다.
+     */
+    private MemberRoleEntity claimBootstrapRole() {
+        if (memberRepository.count() > 0) {
+            return null;
+        }
+
+        MemberRoleEntity role =
+                memberRoleRepository.findAllByNameForUpdate(BOOTSTRAP_ROLE_NAME).stream()
+                        .findFirst()
+                        .orElseThrow(() -> missingSeed("부트스트랩 역할", BOOTSTRAP_ROLE_NAME));
+
+        return memberRepository.count() == 0 ? role : null;
+    }
+
+    /*
+     * 최초 가입자에게 부트스트랩 역할을 배정하고, 그로써 열린 권한을 응답에 실어 돌려준다.
+     *
+     * 회원에게 권한을 직접 붙이지 않고 역할을 배정한다(BR-M38). 회원↔권한 관계를 따로 만들면
+     * 인가 판정 경로가 두 벌이 되고, AuthorityPolicy가 보는 '회원 → 역할 → 권한' 한 줄이
+     * 더는 전부가 아니게 된다(BR-M28).
+     *
+     * ── 응답에 역할과 capabilities를 싣는 이유 ─────────────────────
+     * 평상시 가입은 둘 다 비어 있는 것이 맞다(역할이 없으니까). 그런데 최초 가입자에게도 빈
+     * 목록을 주면 화면은 방금 최고관리자가 된 사람을 권한 없는 회원으로 그린다 — 새로고침해야
+     * 메뉴가 나타나는 상태가 된다.
+     *
+     * ── 부여 결과를 되물어 확인한다 ────────────────────────────────
+     * capabilities에 SUPER가 없다면 시드가 깨진 것이다(권한 행이 없거나 역할↔권한 매핑이
+     * 지워졌거나). 그대로 통과시키면 권한 없는 첫 회원이 남아 mbr이 더는 비어 있지 않게 되고
+     * **부트스트랩 창구가 영영 닫힌다** — 복구는 다시 수동 SQL이다(VR-M15). 예외로 끊어
+     * 트랜잭션째 되돌린다. 사용자 입력 문제가 아니므로 400이 아니라 500이다.
+     *
+     * 확인에 인가 애스펙트와 같은 AuthorityPolicy를 쓰는 것이 중요하다. 매핑 행의 존재만 따로
+     * 확인하면 "응답에는 권한이 보이는데 실제 요청은 403"이 될 자리가 생긴다.
+     */
+    private MemberProfileResponse grantBootstrapRole(MemberEntity member, MemberRoleEntity role) {
+        MemberRoleAssignmentEntity assignment =
+                memberRoleAssignmentRepository.saveAndFlush(
+                        MemberRoleAssignmentEntity.create(
+                                member, role, member.getJoinDate(), true));
+
+        List<String> capabilities = authorityPolicy.capabilityListOf(member.getId());
+        if (!capabilities.contains(AuthorityCode.SUPER.code())) {
+            throw missingSeed("최고 관리자 권한", AuthorityCode.SUPER.code());
+        }
+
+        return MemberProfileResponse.of(
+                member, List.of(MemberRoleResponse.from(assignment)), capabilities);
     }
 
     /*
@@ -242,12 +329,11 @@ public class MemberServiceImpl implements MemberService {
     }
 
     /*
-     * 기준 코드는 data.sql이 매 기동마다 시드하므로 없을 수 없다. 없다면 사용자 입력 문제가
-     * 아니라 시드가 깨진 것이라 400이 아니라 500으로 드러나야 한다.
+     * 기준 코드·기준 데이터는 data.sql이 매 기동마다 시드하므로 없을 수 없다. 없다면 사용자
+     * 입력 문제가 아니라 시드가 깨진 것이라 400이 아니라 500으로 드러나야 한다.
      */
-    private static IllegalStateException missingSeed(String codeGroupName, String code) {
-        return new IllegalStateException(
-                "%s 기준 코드가 시드되어 있지 않습니다: %s".formatted(codeGroupName, code));
+    private static IllegalStateException missingSeed(String seedName, String code) {
+        return new IllegalStateException("%s 시드가 없습니다: %s".formatted(seedName, code));
     }
 
     private static String trimToNull(String value) {

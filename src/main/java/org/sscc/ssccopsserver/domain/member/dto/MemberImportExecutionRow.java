@@ -15,11 +15,7 @@ import org.sscc.ssccopsserver.domain.member.code.MemberImportExecutionStatus;
  * 링크로 다른 하나는 문장으로 그리기 때문이다.
  */
 public record MemberImportExecutionRow(
-        long rowNo,
-        String target,
-        MemberImportExecutionStatus status,
-        Long mbrId,
-        String reason) {
+        long rowNo, String target, MemberImportExecutionStatus status, Long mbrId, String reason) {
 
     public static MemberImportExecutionRow created(long rowNo, String target, Long memberId) {
         return new MemberImportExecutionRow(

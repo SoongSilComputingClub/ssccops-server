@@ -61,6 +61,14 @@ public enum MemberErrorCode implements ErrorCode {
     SIGNUP_STATUS_NOT_ALLOWED(
             HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "가입 시 선택할 수 없는 회원 상태입니다."),
 
+    /*
+     * 400 — 회원 목록 조회(#76)의 커서를 해독할 수 없을 때. 형식이 깨졌거나 다른 정렬 기준으로
+     * 받은 커서다. 코드 문자열을 VALIDATION_FAILED로 두는 것은 운영 도메인의 INVALID_CURSOR와
+     * 같은 이유다 — 정의서 03_오류_코드에 커서 전용 코드가 없고, 프론트가 코드 문자열로
+     * 분기하므로 정의서에 없는 코드를 새로 만들지 않는다.
+     */
+    INVALID_CURSOR(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "잘못된 커서입니다."),
+
     // 404 — 인증 이후 회원이 삭제된 경우처럼, 주체는 있으나 회원 레코드를 못 찾을 때
     MEMBER_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "회원을 찾을 수 없습니다."),
 

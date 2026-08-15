@@ -179,7 +179,31 @@ public enum MemberErrorCode implements ErrorCode {
      * 학번이 일치한다고 그 행에 자동으로 연결하지 않는다 — 학번만 알면 남의 계정을 가로챌 수
      * 있어서다. 안전한 연결 절차는 명부 이관 기능을 설계할 때 함께 다룬다 (#21).
      */
-    STUDENT_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다.");
+    STUDENT_NUMBER_DUPLICATED(HttpStatus.CONFLICT, "STUDENT_NUMBER_DUPLICATED", "이미 등록된 학번입니다."),
+
+    // 404 — 없는 역할 분류로 역할을 만들거나 옮기려 할 때 (#79)
+    ROLE_CLASSIFICATION_NOT_FOUND(
+            HttpStatus.NOT_FOUND, "ROLE_CLASSIFICATION_NOT_FOUND", "역할 분류를 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 있는 이름으로 역할을 만들거나 이름을 바꾸려 할 때 (#79).
+     *
+     * role_nm에는 UNIQUE 제약이 없다(데이터사전 Not Null = N, UNIQUE 아님). 그런데도 거절하는
+     * 이유와 제약을 새로 걸지 않는 이유는 RoleServiceImpl의 주석에 적어 두었다.
+     */
+    ROLE_NAME_DUPLICATED(HttpStatus.CONFLICT, "ROLE_NAME_DUPLICATED", "이미 존재하는 역할명입니다."),
+
+    /*
+     * 409 — 이미 쓰이고 있는 역할을 지우려 할 때 (#79).
+     *
+     * '쓰이고 있다'는 두 가지다: 누군가에게 배정된 적이 있거나(mbr_role_rel, **종료된 배정도
+     * 포함한다**), 권한이 붙어 있거나(role_authrt_rel). 앞은 지우면 "그 사람이 언제 국장이었는지"가
+     * 함께 사라지기 때문이고, 뒤는 회수를 먼저 하도록 안내하기 위해서다(AUTHORITY_IN_USE와 같은 태도).
+     *
+     * 데이터사전의 role에는 use_yn이 없으므로 '비활성화'라는 도피처를 만들지 않는다 — 필요해지면
+     * 데이터사전 등재가 먼저다.
+     */
+    ROLE_IN_USE(HttpStatus.CONFLICT, "ROLE_IN_USE", "배정 이력이나 권한이 있는 역할은 삭제할 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

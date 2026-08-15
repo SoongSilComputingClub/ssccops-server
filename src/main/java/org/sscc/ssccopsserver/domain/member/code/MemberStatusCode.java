@@ -37,4 +37,18 @@ public enum MemberStatusCode {
     public boolean requiresAcademicProfile() {
         return this == ENROLLED;
     }
+
+    /*
+     * 기준 코드 문자열을 enum으로 되돌린다. mbr_stts는 기준 코드 테이블이라 운영 중에 행이
+     * 늘어날 수 있어, enum에 없는 코드를 만나면 예외 대신 null이다 — 학적 필수 규칙은 재학
+     * 하나에만 걸리므로 모르는 상태는 규칙 밖으로 두는 것이 맞다.
+     */
+    public static MemberStatusCode from(String code) {
+        for (MemberStatusCode value : values()) {
+            if (value.name().equals(code)) {
+                return value;
+            }
+        }
+        return null;
+    }
 }

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
@@ -88,6 +89,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
         ErrorCode errorCode = CommonErrorCode.INVALID_BODY;
         return handleExceptionInternal(errorCode, CommonErrorCode.INVALID_BODY.getMessage());
+    }
+
+    /*
+     * 서블릿 계층의 업로드 상한(spring.servlet.multipart)을 넘긴 요청 (#84).
+     *
+     * 잡지 않으면 handleAll이 500으로 내린다 — 파일이 큰 것은 서버 잘못이 아니라 요청 잘못이다.
+     * 업무 상한(이관 CSV 5MB 등)은 각 도메인이 자기 오류 코드로 먼저 끊으므로, 여기 닿는 것은
+     * 그 판정에 다다르지도 못할 만큼 큰 요청뿐이다.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Object> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
+        log.warn("MaxUploadSizeExceededException: {}", ex.getMessage());
+        return handleExceptionInternal(CommonErrorCode.BAD_REQUEST, "업로드 가능한 크기를 초과했습니다.");
     }
 
     @ExceptionHandler(Exception.class)

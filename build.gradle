@@ -81,6 +81,10 @@ dependencies {
     // Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
 
+    // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
+    // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
+    implementation 'org.apache.commons:commons-csv:1.12.0'
+
     // Lombok
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'

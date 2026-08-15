@@ -31,9 +31,11 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchQuery;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSelfUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberStatusResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeHistoryEntity;
@@ -289,6 +291,85 @@ public class MemberServiceImpl implements MemberService {
     }
 
     /*
+     * 운영진의 회원 정보 수정 (#77).
+     *
+     * 바꿀 수 있는 것은 요청 DTO가 담은 여섯 필드뿐이라 여기에 "이 필드는 무시한다"는 분기가
+     * 없다 — 등급·상태·학번은 애초에 손에 들어오지 않는다. 그것이 이 API의 계약이며, 학번은
+     * 엔티티까지 updatable = false로 잠겨 있어 두 겹으로 막힌다.
+     *
+     * 조회를 findWithGradeAndStatusById로 하는 것은 응답이 상세와 같은 모양이라 등급·상태의
+     * 코드·명칭이 필요하기 때문이다(단건 조회와 같은 이유).
+     *
+     * **flush를 명시적으로 부른다.** mdfcn_dt는 JPA Auditing이 UPDATE 직전에 채우는데,
+     * 트랜잭션이 끝날 때까지 flush가 미뤄지면 응답에 실리는 updatedAt이 수정 전 값이 된다 —
+     * 화면이 방금 저장한 항목만 예전 시각으로 그리게 된다.
+     */
+    @Override
+    @Transactional
+    public MemberDetailResponse updateMember(Long memberId, MemberUpdateRequest request) {
+        MemberEntity member =
+                memberRepository
+                        .findWithGradeAndStatusById(memberId)
+                        .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
+
+        String departmentName = trimToNull(request.departmentName());
+        validateAcademicProfile(member, departmentName, request.academicYear());
+
+        member.updateBasicInfo(
+                // gen_no는 NOT NULL이라 '지움'이 없다. 미배정은 가입과 같은 0 센티널이다
+                request.generationNumber() == null
+                        ? UNASSIGNED_GENERATION_NUMBER
+                        : request.generationNumber(),
+                request.name().trim(),
+                departmentName,
+                request.academicYear(),
+                trimToNull(request.phoneNumber()),
+                trimToNull(request.email()));
+        memberRepository.flush();
+
+        return MemberDetailResponse.of(
+                member,
+                currentRolesOf(List.of(member)).getOrDefault(memberId, List.of()),
+                recentChangesOf(memberId));
+    }
+
+    /*
+     * 본인의 회원 정보 수정 (#77).
+     *
+     * memberId는 컨트롤러가 @CurrentMember에서 꺼내 넘긴 값이라 **언제나 인증 주체 본인**이다.
+     * 요청에도 경로에도 대상을 지정할 자리가 없으므로 여기서 '본인인가'를 다시 검사하지 않는다 —
+     * 검사할 다른 값 자체가 들어오지 않는다.
+     *
+     * 기수·이메일은 요청에 없으므로 현재 값을 그대로 다시 넣는다. updateBasicInfo가 여섯 필드를
+     * 한꺼번에 받는 메서드라 두 값을 '건드리지 않음'으로 표현하는 방법이 이것뿐이며, 엔티티에
+     * 본인용 부분 수정 메서드를 하나 더 두면 '어느 필드를 바꿀 수 있는가'가 DTO와 엔티티 두
+     * 곳에 적히게 된다.
+     */
+    @Override
+    @Transactional
+    public MemberProfileResponse updateMyProfile(Long memberId, MemberSelfUpdateRequest request) {
+        MemberEntity member =
+                memberRepository
+                        .findById(memberId)
+                        .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
+
+        String departmentName = trimToNull(request.departmentName());
+        validateAcademicProfile(member, departmentName, request.academicYear());
+
+        member.updateBasicInfo(
+                member.getGenerationNumber(),
+                request.name().trim(),
+                departmentName,
+                request.academicYear(),
+                trimToNull(request.phoneNumber()),
+                member.getEmail());
+        memberRepository.flush();
+
+        return MemberProfileResponse.of(
+                member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
+    }
+
+    /*
      * 담당자 후보 목록 (#76). 대상 판정은 단건판(findAssignableMember)과 같은
      * UNASSIGNABLE_STATUS_CODES를 쓴다 — 규칙이 두 벌이 되면 목록과 등록이 갈린다.
      *
@@ -327,6 +408,43 @@ public class MemberServiceImpl implements MemberService {
         return memberStatusRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
                 .map(MemberStatusResponse::from)
                 .toList();
+    }
+
+    /*
+     * 재학 회원의 학과·학년 필수 (#77). 판정은 가입·CSV 이관과 **같은 한 벌**
+     * (AcademicProfilePolicy)이며 여기서 규칙을 다시 적지 않는다 — 두 벌이 되면 가입에서
+     * 막히는 값이 수정에서 통과한다.
+     *
+     * 상태를 요청이 아니라 회원 행에서 읽는 것이 가입과 갈리는 유일한 지점이다. 상태는 이
+     * API로 바꿀 수 없으므로 요청 본문에 없고, 따라서 요청 DTO의 @AssertTrue로는 닿지 않는다.
+     *
+     * **학번 누락은 이 경로에서 보지 않는다.** mbr.stdnt_no는 updatable = false라 수정 요청에
+     * 필드가 없고(데이터사전 ssccops#74 '가입 후 변경 불가'), 학번 없이 이관된 재학 회원의
+     * 연락처를 고치려는 정상 요청까지 막게 된다 — 고칠 수 없는 값을 이유로 거절하는 셈이다.
+     *
+     * 기준 코드 테이블에 enum 밖의 상태가 늘어난 경우(from이 null)는 규칙 밖으로 둔다 —
+     * 조건부 필수는 재학 하나에만 걸리는 규칙이라 모르는 상태를 재학처럼 다룰 근거가 없다.
+     */
+    private static void validateAcademicProfile(
+            MemberEntity member, String departmentName, Integer academicYear) {
+        MemberStatusCode statusCode = MemberStatusCode.from(member.getMembershipStatus().getCode());
+        if (statusCode == null) {
+            return;
+        }
+
+        boolean missingUpdatableField =
+                AcademicProfilePolicy.missingRequiredFields(
+                                statusCode, member.getStudentNumber(), departmentName, academicYear)
+                        .stream()
+                        .anyMatch(
+                                field ->
+                                        field
+                                                != AcademicProfilePolicy.AcademicField
+                                                        .STUDENT_NUMBER);
+
+        if (missingUpdatableField) {
+            throw new GeneralException(MemberErrorCode.ACADEMIC_PROFILE_REQUIRED);
+        }
     }
 
     // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다

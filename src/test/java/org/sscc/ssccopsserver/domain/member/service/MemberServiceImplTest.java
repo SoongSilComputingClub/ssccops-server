@@ -47,6 +47,8 @@ class MemberServiceImplTest {
                 memberStatusRepository,
                 memberGradeHistoryRepository,
                 memberStatusHistoryRepository,
+                new MemberInitialHistoryRecorder(
+                        memberGradeHistoryRepository, memberStatusHistoryRepository),
                 authorityPolicy,
                 Clock.systemDefaultZone());
     }

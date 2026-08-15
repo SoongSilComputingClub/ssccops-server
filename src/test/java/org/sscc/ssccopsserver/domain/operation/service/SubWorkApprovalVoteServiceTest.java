@@ -27,6 +27,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
+import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
@@ -132,6 +133,8 @@ class SubWorkApprovalVoteServiceTest {
                         memberStatusRepository,
                         memberGradeHistoryRepository,
                         memberStatusHistoryRepository,
+                        new MemberInitialHistoryRecorder(
+                                memberGradeHistoryRepository, memberStatusHistoryRepository),
                         authorityPolicy,
                         FIXED_CLOCK);
         WorkService workService =

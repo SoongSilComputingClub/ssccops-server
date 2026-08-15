@@ -54,4 +54,11 @@ public interface MemberRoleRepository extends JpaRepository<MemberRoleEntity, Lo
      * 역할이 갈 곳을 잃는다 — 목록의 집계와 달리 여기서는 한 분류만 보면 되므로 exists다.
      */
     boolean existsByRoleClassification(MemberRoleClassificationEntity roleClassification);
+
+    /*
+     * 한 분류의 소속 역할 수(#80 생성·수정 응답). 관리 화면이 저장 직후에도 "소속 역할 N건"을
+     * 그대로 보여주므로 응답에 건수를 다시 실어야 한다 — 목록의 집계를 부르면 한 건을 위해
+     * 전량을 GROUP BY 하게 된다.
+     */
+    long countByRoleClassification(MemberRoleClassificationEntity roleClassification);
 }

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
@@ -29,6 +30,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import lombok.RequiredArgsConstructor;
@@ -36,12 +38,13 @@ import lombok.RequiredArgsConstructor;
 /*
  * 하위 업무 API (OPS-007). 경로 버전 /v1을 쓰고 컨텍스트 경로에 /api를 두지 않는다 (AP-01).
  *
- * 정의서상 권한은 '국장 이상'이나 역할 인가가 아직 구현되지 않아 현재는 인증만 요구한다.
- * 인증 주체에 GrantedAuthority가 부여되지 않아 hasRole 계열이 항상 실패하기 때문이며,
- * 역할 인가가 AOP로 붙을 때 이 엔드포인트에 함께 적용한다.
+ * 인가는 WORK_MANAGE 권한이다 (#9, WorkController와 같은 권한 — 상위 업무와 하위 업무를 나눠
+ * 부여할 이유가 없다). 승인·투표 자격은 이 권한과 별개로 ApprovalAuthorityPolicy가 본다 —
+ * 그쪽은 '무슨 일을 하는 사람인가'가 아니라 '이 건의 승인자 본인인가'라 성질이 다르다.
  */
 @RestController
 @RequiredArgsConstructor
+@RequireAuthority(AuthorityCode.WORK_MANAGE)
 @RequestMapping("/v1/sub-works")
 public class SubWorkController {
 

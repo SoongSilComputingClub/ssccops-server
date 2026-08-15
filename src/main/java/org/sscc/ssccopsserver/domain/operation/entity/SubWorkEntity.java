@@ -158,8 +158,8 @@ public class SubWorkEntity {
      * 다른 테이블(sub_work_chck_list·sub_work_aprv_vote)에 있어 엔티티가 스스로 셀 수 없다.
      * 사실만 넘겨받고, 그 사실로 전이를 막을지는 여기서 정한다.
      *
-     * 수행자가 승인자인지는 여기서 보지 않는다 — 회원의 역할은 회원 도메인에 있고, 그 판정은
-     * 역할 인가(#9)가 붙으면 통째로 옮겨갈 관심사라 서비스의 ApprovalAuthorityPolicy가 맡는다.
+     * 수행자가 승인자인지는 여기서 보지 않는다 — 회원의 역할은 회원 도메인에 있고, '이 건의
+     * 승인자 본인인가'는 권한 인가(#9)가 다루는 종류가 아니라 서비스의 ApprovalAuthorityPolicy가 맡는다.
      */
     public void applyTransition(
             TransitionAction action,

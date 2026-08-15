@@ -20,8 +20,10 @@ import org.sscc.ssccopsserver.domain.form.dto.FormLabelCreateRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormLabelResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormLabelUpdateRequest;
 import org.sscc.ssccopsserver.domain.form.service.FormLabelService;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -36,9 +38,11 @@ import lombok.RequiredArgsConstructor;
  * 경로상 폼의 하위 자원이지만 규칙은 전부 라벨 쪽에 있어서, 폼 컨트롤러(#32)에 두면 같은 규칙이
  * 두 컨트롤러로 갈라진다. 경로는 이슈의 계약대로 두고 핸들러만 여기 모았다.
  *
- * 정의서상 라벨 생성·비활성화는 '최고운영자'이나 역할 인가(#9)가 아직 없어 현재는 인증만
- * 요구한다. 인증 주체에 GrantedAuthority가 부여되지 않아 hasRole 계열이 항상 실패하기 때문이며,
- * @PreAuthorize를 붙일 자리는 각 핸들러 위에 주석으로 남겨 두었다.
+ * 인가는 핸들러마다 갈린다 (#9). 라벨 생성·사용 여부 변경은 FORM_LABEL_MANAGE이며 시드에서
+ * EXECUTIVE 직속이라 회장·부회장·총무만 닿는다(정의서의 '최고운영자'를 권한으로 옮긴 것이다).
+ * **목록 조회는 권한을 요구하지 않는다** — 폼 편집 화면의 라벨 선택기가 부르는 값이라 막으면
+ * 폼을 만들 수 있는 사람이 라벨을 고르지 못한다. 폼의 라벨 지정 교체는 FORM_LABEL_MANAGE가
+ * 아니라 FORM_WRITE다 — 바뀌는 것이 라벨 자체가 아니라 그 폼이기 때문이다.
  *
  * 모든 핸들러가 @CurrentMember를 받되 값을 쓰지 않는 것은 의도된 것이다. 라벨은 운영 데이터라
  * 미가입 사용자가 만질 수 없어야 하는데, 시큐리티 설정은 토큰 유효성(401)까지만 보고 가입
@@ -69,12 +73,12 @@ public class FormLabelController {
         return ApiResponse.success(formLabelService.getLabels(useYn));
     }
 
-    // TODO(#9): 최고운영자 전용. 역할 인가가 붙으면 @PreAuthorize("hasRole('PRESIDENT')")를 여기에 건다
     @Operation(
             summary = "폼 라벨 생성",
             description =
                     "새 라벨을 만든다. 생성된 라벨은 항상 활성(useYn=true)이며, 같은 이름이 이미 있으면"
                             + " 409 FORM_LABEL_NAME_DUPLICATED로 응답한다.")
+    @RequireAuthority(AuthorityCode.FORM_LABEL_MANAGE)
     @PostMapping("/v1/form-labels")
     public ResponseEntity<ApiResponse<FormLabelResponse>> createLabel(
             @Valid @RequestBody FormLabelCreateRequest request,
@@ -84,12 +88,12 @@ public class FormLabelController {
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 
-    // TODO(#9): 최고운영자 전용. 역할 인가가 붙으면 @PreAuthorize("hasRole('PRESIDENT')")를 여기에 건다
     @Operation(
             summary = "폼 라벨 사용 여부 변경",
             description =
                     "라벨을 활성/비활성으로 전환한다. 비활성 라벨은 새로 지정할 수 없고 필터 목록에서 빠지지만,"
                             + " 이미 폼에 걸린 지정은 그대로 유지된다. 삭제 API는 두지 않는다.")
+    @RequireAuthority(AuthorityCode.FORM_LABEL_MANAGE)
     @PatchMapping("/v1/form-labels/{formLblId}")
     public ApiResponse<FormLabelResponse> updateLabelUsage(
             @PathVariable Long formLblId,
@@ -111,6 +115,7 @@ public class FormLabelController {
                             + " 전부 해제된다. 유지되는 지정은 지정 시각(crtDt)이 보존되며, 같은 요청을 두 번 보내도"
                             + " 결과가 같다. 비활성 라벨은 새로 추가할 때만 400 FORM_LABEL_NOT_USABLE로 막히고"
                             + " 이미 지정돼 있던 것은 유지된다.")
+    @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PutMapping("/v1/forms/{formId}/labels")
     public ApiResponse<List<FormLabelAssignmentResponse>> replaceFormLabels(
             @PathVariable Long formId,

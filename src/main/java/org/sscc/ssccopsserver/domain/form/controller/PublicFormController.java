@@ -41,6 +41,10 @@ import lombok.RequiredArgsConstructor;
  *
  * 등급 제한은 두지 않는다. 가입 직후의 임시회원(TEMP)도 응답할 수 있어야 하며, 미가입 주체는
  * @CurrentMember 리졸버가 403 SIGNUP_REQUIRED로 끊는다.
+ *
+ * **권한(@RequireAuthority)도 요구하지 않는다** (#9). 여기는 응답자용이고 권한은 운영자의
+ * 어휘라, 하나라도 걸면 지원자 전원이 지원서를 낼 수 없게 된다. 운영자용 FormController·
+ * FormResponseController와 경로 접두사가 겹치므로 이쪽에 잘못 옮겨 붙이지 않도록 적어 둔다.
  */
 @RestController
 @RequiredArgsConstructor

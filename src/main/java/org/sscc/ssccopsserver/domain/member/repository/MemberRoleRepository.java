@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleClassificationEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 
 public interface MemberRoleRepository extends JpaRepository<MemberRoleEntity, Long> {
@@ -29,4 +30,35 @@ public interface MemberRoleRepository extends JpaRepository<MemberRoleEntity, Lo
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from MemberRoleEntity r where r.name = :name order by r.id asc")
     List<MemberRoleEntity> findAllByNameForUpdate(@Param("name") String name);
+
+    /*
+     * 분류별 소속 역할 수(#80 역할 분류 목록). 분류마다 count를 부르면 그대로 N+1이 되므로
+     * GROUP BY 한 번으로 받아 호출부에서 분류별로 나눈다 (DB-13).
+     *
+     * 분류 식별자를 인자로 받지 않는 것은 목록이 언제나 role_clsf 전량이기 때문이다 — 필터가
+     * 없는데 in 절에 모든 코드를 실어 보내면 하는 일은 같고 바인딩만 는다.
+     *
+     * 조인이 아니라 FK 컬럼(r.roleClassification.code)으로 묶는다. 연관을 타고 들어가면
+     * role_clsf를 한 번 더 읽는데 이름은 호출부가 이미 들고 있다.
+     */
+    @Query(
+            """
+            select r.roleClassification.code as roleClsfCd, count(r) as roleCount
+            from MemberRoleEntity r
+            group by r.roleClassification.code
+            """)
+    List<RoleClassificationRoleCount> countRolesByClassification();
+
+    /*
+     * 분류 삭제 가드(#80). role.role_clsf_cd가 NOT NULL FK라 소속 역할이 있는 분류를 지우면
+     * 역할이 갈 곳을 잃는다 — 목록의 집계와 달리 여기서는 한 분류만 보면 되므로 exists다.
+     */
+    boolean existsByRoleClassification(MemberRoleClassificationEntity roleClassification);
+
+    /*
+     * 한 분류의 소속 역할 수(#80 생성·수정 응답). 관리 화면이 저장 직후에도 "소속 역할 N건"을
+     * 그대로 보여주므로 응답에 건수를 다시 실어야 한다 — 목록의 집계를 부르면 한 건을 위해
+     * 전량을 GROUP BY 하게 된다.
+     */
+    long countByRoleClassification(MemberRoleClassificationEntity roleClassification);
 }

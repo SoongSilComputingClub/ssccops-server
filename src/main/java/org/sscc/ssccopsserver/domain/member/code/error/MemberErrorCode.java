@@ -71,6 +71,15 @@ public enum MemberErrorCode implements ErrorCode {
     ROLE_NOT_FOUND(HttpStatus.NOT_FOUND, "ROLE_NOT_FOUND", "역할을 찾을 수 없습니다."),
 
     /*
+     * 404 — 없는 역할 분류를 수정·삭제하려 할 때 (#80).
+     *
+     * 코드를 감추지 않고 404로 내리는 것은 분류가 조직 구조를 드러내지 않기 때문이다 —
+     * 목록 조회 자체가 인증만으로 열려 있으므로 존재 여부를 숨길 이유가 없다.
+     */
+    ROLE_CLASSIFICATION_NOT_FOUND(
+            HttpStatus.NOT_FOUND, "ROLE_CLASSIFICATION_NOT_FOUND", "역할 분류를 찾을 수 없습니다."),
+
+    /*
      * 409 — sys_yn = true인 권한을 지우거나 코드를 바꾸려 할 때 (#65 · BR-M33).
      *
      * 코드(@RequireAuthority)가 이 값을 직접 가리키므로 지워지는 순간 그 코드를 요구하는
@@ -104,6 +113,46 @@ public enum MemberErrorCode implements ErrorCode {
             HttpStatus.CONFLICT,
             "AUTHORITY_CODE_IMMUTABLE",
             "권한 코드는 바꿀 수 없습니다. 새로 만든 뒤 기존 권한을 삭제하십시오."),
+
+    /*
+     * 409 — SYSTEM 역할 분류를 지우거나 이름을 바꾸려 할 때 (#80).
+     *
+     * data.sql이 '최고관리자' 역할을 이 분류에 두고, 그 역할만이 SUPER 권한을 갖는다 —
+     * 분류가 사라지면 최초 가입자 부트스트랩(#71)의 시드가 통째로 깨져 새 환경에서 아무도
+     * ROLE_MANAGE를 얻지 못하는 닫힌 고리로 되돌아간다. 시스템 권한을 sys_yn으로 지키는 것과
+     * 같은 자리다.
+     *
+     * **이름까지 막는 것이 시스템 권한(SYSTEM_AUTHORITY_IMMUTABLE)과 갈리는 지점이다.** 저쪽은
+     * 조직이 부르는 이름과 코드가 참조하는 값이 따로 있어 이름 변경이 무해했지만, 이쪽의
+     * '시스템'은 조직이 만든 자리가 아니라 시스템이 쓰는 역할을 담는 칸이라는 표시 그 자체다 —
+     * 이름을 '홍보국'으로 바꾸면 최고관리자가 조직 직책인 것처럼 화면에 서게 된다.
+     *
+     * 표준코드에 등재된 5종(POSITION·DEPT·PROJECT·STUDY·EVENT)은 여기 걸리지 않는다.
+     * 코드값이 유지되면 참조가 깨지지 않고, 표시명은 조직이 정할 일이다.
+     */
+    SYSTEM_ROLE_CLASSIFICATION_IMMUTABLE(
+            HttpStatus.CONFLICT,
+            "SYSTEM_ROLE_CLASSIFICATION_IMMUTABLE",
+            "시스템 역할 분류는 삭제하거나 이름을 바꿀 수 없습니다."),
+
+    /*
+     * 409 — 소속 역할이 있는 역할 분류를 지우려 할 때 (#80).
+     *
+     * role.role_clsf_cd가 NOT NULL FK라 지우면 역할이 갈 곳을 잃는다. 소속 역할을 함께 지우거나
+     * 다른 분류로 조용히 옮기지 않는 것은 AUTHORITY_IN_USE와 같은 이유다 — 삭제 한 번으로
+     * 조직도가 바뀌는 것을 화면에서 보이게 하려면 옮기는 일을 먼저 하게 해야 한다.
+     */
+    ROLE_CLASSIFICATION_IN_USE(
+            HttpStatus.CONFLICT, "ROLE_CLASSIFICATION_IN_USE", "소속 역할이 있는 역할 분류는 삭제할 수 없습니다."),
+
+    /*
+     * 409 — 이미 있는 코드로 역할 분류를 만들려 할 때 (#80).
+     *
+     * 코드는 운영진이 직접 정하므로(RoleClassificationCreateRequest 주석) 중복은 흔한 실수다.
+     * 덮어쓰지 않고 거절해야 남이 만든 분류가 이름만 바뀌어 사라지지 않는다.
+     */
+    ROLE_CLASSIFICATION_CODE_DUPLICATED(
+            HttpStatus.CONFLICT, "ROLE_CLASSIFICATION_CODE_DUPLICATED", "이미 존재하는 역할 분류 코드입니다."),
 
     /*
      * 409 — 요청자 자신이 ROLE_MANAGE를 잃게 되는 권한 교체 (#65 · VR-M13).

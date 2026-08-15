@@ -26,6 +26,19 @@ public interface MemberRepository
     boolean existsByStudentNumber(String studentNumber);
 
     /*
+     * 넘긴 학번 중 이미 mbr에 있는 것만 골라 돌려준다 (#84 CSV 이관 검증).
+     *
+     * existsByStudentNumber를 행마다 부르지 않는 것이 요점이다 — 128건짜리 명부면 조회가 128번이
+     * 되고, 그 값들은 한 트랜잭션 안에서 변하지도 않는다. 학번 전체를 한 번에 모아 묻는다.
+     *
+     * 회원 자체가 아니라 학번 문자열만 가져오는 것은 중복 판정에 필요한 것이 존재 여부뿐이기
+     * 때문이다. 이미 있는 회원의 이름·연락처를 응답에 싣지 않는다(BR-M40 — 자동 병합은 없고,
+     * 어느 회원과 겹치는지는 검증 응답이 알려 줄 일이 아니다).
+     */
+    @Query("select m.studentNumber from MemberEntity m where m.studentNumber in :studentNumbers")
+    List<String> findStudentNumbersIn(@Param("studentNumbers") Collection<String> studentNumbers);
+
+    /*
      * 제외할 상태 코드를 파라미터로 받는다. 어떤 상태를 배정에서 뺄지는 조회 조건이 아니라
      * 회원 도메인의 정책이라, 저장소에 박아 두지 않고 서비스가 넘기게 했다.
      * 파생 쿼리로 쓰면 메서드명에 상태 프로퍼티 경로가 그대로 드러나 길어져 JPQL로 적는다.

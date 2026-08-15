@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -23,6 +24,8 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkAgreedVoteCount
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkLatestRejection;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkReviewRequest;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
@@ -35,10 +38,13 @@ import lombok.RequiredArgsConstructor;
  *
  * 목록 자체는 하위 업무 목록(OPS-008)의 커서 검색을 그대로 쓴다 — 필터가 '업무 상태 + 승인 상태'
  * 조합이라 이미 있는 조건으로 표현되고, 두 번째 조회 엔진을 만들면 정렬·커서 규칙이 갈린다.
- * 이 서비스가 더하는 것은 카드가 필요로 하는 파생 값(검토요청 일시·정족수 진행·체크리스트·내 표)이며,
- * 전부 목록 전체를 한 번에 집계해 붙인다 (DB-13 — 카드마다 조회하면 N+1이다).
+ * 이 서비스가 더하는 것은 카드가 필요로 하는 파생 값(검토요청 일시·정족수 진행·체크리스트·내 표·
+ * 직전 반려 사유·승인 권한)이며, 전부 목록 전체를 한 번에 집계해 붙인다 (DB-13 — 카드마다
+ * 조회하면 N+1이다).
  *
- * 쿼리 수는 페이지 크기와 무관하게 6회다: 목록 1 + 건수 2(필터·전체) + 이력 1 + 투표 집계 1 + 내 표 1.
+ * 쿼리 수는 페이지 크기와 무관하게 9회다: 목록 1 + 건수 2(필터·전체) + 이력 1 + 체크리스트 1 +
+ * 투표 집계 1 + 내 표 1 + 반려 1 + 보는 사람의 역할 1. 테스트가 이 숫자를 못 박는다 — 이전 주석은
+ * 체크리스트 집계를 빠뜨린 6회였고, 세지 않은 쿼리는 늘어도 아무도 모른다 (#62).
  */
 @Service
 @RequiredArgsConstructor
@@ -49,6 +55,8 @@ public class ApprovalServiceImpl implements ApprovalService {
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     private final SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     private final SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
+    private final SubWorkRejectionRepository subWorkRejectionRepository;
+    private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
 
     private final Clock clock;
 
@@ -123,6 +131,27 @@ public class ApprovalServiceImpl implements ApprovalService {
                                                                 >= older.getApprovalSequence()
                                                         ? newer
                                                         : older));
+        Map<Long, SubWorkLatestRejection> latestRejections =
+                subWorkRejectionRepository.findLatestRejectionsBySubWorkIds(subWorkIds).stream()
+                        .collect(
+                                Collectors.toMap(
+                                        SubWorkLatestRejection::getSubWorkId,
+                                        Function.identity(),
+                                        /*
+                                         * 같은 시각에 기록된 반려가 둘이면 식별자가 큰 쪽이
+                                         * 최신이다 — 상세(OPS-009)가 쓰는 정렬
+                                         * (반려 일시 desc, 식별자 desc)과 같은 기준이라야
+                                         * 두 화면이 서로 다른 사유를 보여주지 않는다.
+                                         */
+                                        (older, newer) ->
+                                                newer.getRejectionId() >= older.getRejectionId()
+                                                        ? newer
+                                                        : older));
+        /*
+         * 승인 권한은 보는 사람의 역할과 유형의 승인자 역할만으로 갈린다. 역할은 카드마다
+         * 달라지지 않으므로 한 번만 읽어 재사용한다 (판정 규칙 자체는 정책 한 곳에 있다).
+         */
+        Predicate<SubWorkEntity> decidable = approvalAuthorityPolicy.decidableBy(viewer);
 
         return rows.stream()
                 .map(
@@ -132,7 +161,9 @@ public class ApprovalServiceImpl implements ApprovalService {
                                         reviewRequests.get(subWork.getId()),
                                         progresses.get(subWork.getId()),
                                         agreedCounts.getOrDefault(subWork.getId(), Map.of()),
-                                        myVotes.get(subWork.getId())))
+                                        myVotes.get(subWork.getId()),
+                                        latestRejections.get(subWork.getId()),
+                                        decidable.test(subWork)))
                 .toList();
     }
 
@@ -141,7 +172,9 @@ public class ApprovalServiceImpl implements ApprovalService {
             SubWorkReviewRequest reviewRequest,
             SubWorkChecklistProgress progress,
             Map<Integer, Long> agreedCountBySequence,
-            SubWorkApprovalVoteEntity myVote) {
+            SubWorkApprovalVoteEntity myVote,
+            SubWorkLatestRejection latestRejection,
+            boolean canDecide) {
         /*
          * 회차는 검토 진입 횟수다. 검토요청을 한 번도 하지 않은 건은 이력이 없어 0인데,
          * 대기 탭은 검토 상태만 담으므로 실제로는 승인·반려 탭에서만 그런 행이 나올 수 있다.
@@ -159,6 +192,13 @@ public class ApprovalServiceImpl implements ApprovalService {
                         : null;
 
         return ApprovalInboxItemResponse.of(
-                subWork, requestedAt, agreedCount, completedItems, totalItems, choice);
+                subWork,
+                requestedAt,
+                agreedCount,
+                completedItems,
+                totalItems,
+                choice,
+                latestRejection == null ? null : latestRejection.getReason(),
+                canDecide);
     }
 }

@@ -29,6 +29,11 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
      * 목록 한 행이 상위 업무 제목·유형명·담당자 이름까지 쓰므로 연관을 한 번에 끌어온다 (DB-13).
      * 상위 업무의 제목은 work가 아니라 그 oper에 있어 work.operation까지 따라간다.
      *
+     * 등록자(o.registrant)까지 끌어오는 것은 같은 조회를 쓰는 승인함 카드(OPS-017)가 요청자
+     * 이름을 그리기 때문이다. 담당자와 등록자가 같은 건에서는 티가 나지 않지만 다른 건이 섞이면
+     * 카드 수만큼 회원 조회가 따라붙는다. **left join**인 것은 등록자가 NULL일 수 있어서다
+     * (이관 데이터 대비로 nullable) — inner join이면 그 행이 목록에서 통째로 사라진다.
+     *
      * 체크리스트는 컬렉션이라 여기서 fetch join 하지 않는다 (DB-14) — 페이징과 함께 쓰면
      * Hibernate가 전체를 메모리로 읽은 뒤 자른다. 진행률은 집계 쿼리로 따로 센다.
      */
@@ -36,6 +41,7 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
             "select s from SubWorkEntity s"
                     + " join fetch s.operation o"
                     + " join fetch o.personInCharge"
+                    + " left join fetch o.registrant"
                     + " join fetch s.subWorkType"
                     + " join fetch s.work w"
                     + " join fetch w.operation";

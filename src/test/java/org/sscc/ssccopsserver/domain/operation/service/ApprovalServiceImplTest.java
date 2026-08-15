@@ -9,6 +9,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,7 +67,7 @@ import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
  * 승인함이 목록 화면(OPS-008)과 다른 점을 고정한다 — 탭이 승인 상태로 갈리고, 대기 탭은
  * 검토 단계의 건만 담으며, 카드가 정족수 진행·체크리스트·내 표까지 함께 싣는다.
  */
-@DataJpaTest
+@DataJpaTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @Import(JpaAuditingConfig.class)
 @ActiveProfiles("test")
 class ApprovalServiceImplTest {
@@ -146,6 +148,7 @@ class ApprovalServiceImplTest {
                         subWorkChecklistItemRepository,
                         subWorkStatusHistoryRepository,
                         subWorkApprovalVoteRepository,
+                        subWorkRejectionRepository,
                         FIXED_CLOCK);
 
         registrant = saveMember("20200001", "김도현", null);
@@ -268,6 +271,99 @@ class ApprovalServiceImplTest {
     }
 
     /*
+     * 반려 카드는 사유를 함께 싣는다 (#62). 없으면 카드가 '반려됨'만 말하고 끝나, 반려 사유를
+     * 요청자에게 전달하겠다는 약속(반려 모달)이 화면 어디에서도 지켜지지 않는다.
+     */
+    @Test
+    void rejectedCardCarriesTheRejectionReason() {
+        Long subWorkId = subWorkInReview(quorumTypeId, "7월 월간 활동보고서");
+        transition(subWorkId, TransitionAction.REJECT, "부서별 활동 누락", president);
+
+        ApprovalInboxItemResponse card = search("REJECTED").approvals().get(0);
+
+        assertThat(card.approvalStatus()).isEqualTo(ApprovalStatus.REJECTED);
+        assertThat(card.latestRejectionReason()).isEqualTo("부서별 활동 누락");
+    }
+
+    /*
+     * 반려 탭에서만 채우지 않는다. 반려 후 다시 올라온 건은 대기 탭에 있고, 승인자가 '무엇이
+     * 걸려서 되돌아왔던 건인지'를 알아야 하는 자리가 바로 거기다.
+     */
+    @Test
+    void reapprovalRequiredCardKeepsTheLastRejectionReason() {
+        Long subWorkId = subWorkInReview(quorumTypeId, "반려 후 다시 올린 건");
+        transition(subWorkId, TransitionAction.REJECT, "문안 재검토 필요", president);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
+
+        ApprovalInboxItemResponse card = search(null).approvals().get(0);
+
+        assertThat(card.approvalStatus()).isEqualTo(ApprovalStatus.REAPPROVAL_REQUIRED);
+        assertThat(card.latestRejectionReason()).isEqualTo("문안 재검토 필요");
+    }
+
+    /*
+     * 여러 번 반려된 건은 직전 사유만 싣는다. 고정 시계라 두 반려의 일시가 같은데, 그때
+     * 식별자로 동률을 끊지 않으면 어느 사유가 실릴지 실행할 때마다 달라진다.
+     */
+    @Test
+    void repeatedlyRejectedCardCarriesOnlyTheMostRecentReason() {
+        Long subWorkId = subWorkInReview(quorumTypeId, "7월 월간 활동보고서");
+        transition(subWorkId, TransitionAction.REJECT, "부서별 활동 누락", president);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
+        transition(subWorkId, TransitionAction.REJECT, "예산 집행 내역 불일치", president);
+
+        assertThat(search("REJECTED").approvals().get(0).latestRejectionReason())
+                .isEqualTo("예산 집행 내역 불일치");
+    }
+
+    // 반려된 적이 없으면 NULL이다 — 화면이 사유 줄 자체를 그리지 않는다
+    @Test
+    void neverRejectedCardHasNoReason() {
+        subWorkInReview(quorumTypeId, "9월 신입 모집 포스터");
+
+        assertThat(search(null).approvals().get(0).latestRejectionReason()).isNull();
+    }
+
+    /*
+     * 파생 값은 전부 목록 전체를 한 번에 집계해 붙인다 (DB-13). 카드마다 조회하면 페이지가
+     * 커질수록 쿼리가 함께 늘어나는데, 그 회귀는 응답 내용이 같아 테스트로 못 박지 않으면
+     * 드러나지 않는다.
+     */
+    @Test
+    void searchRunsEightQueriesRegardlessOfRowCount() {
+        for (int index = 0; index < 5; index++) {
+            /*
+             * 카드마다 요청자가 다르고, 그 요청자가 담당자와도 다르다. 등록자와 담당자가 같으면
+             * 담당자 연관이 이미 끌어온 회원을 등록자가 재사용해 N+1이 가려진다.
+             */
+            MemberEntity otherRegistrant = saveMember("2021000" + index, "요청자 " + index, null);
+            Long subWorkId = subWorkInReview(quorumTypeId, "검토 중 " + index, otherRegistrant);
+            transition(subWorkId, TransitionAction.REJECT, "보완 필요 " + index, president);
+            transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, otherRegistrant);
+        }
+        entityManager.flush();
+        entityManager.clear();
+
+        Statistics statistics =
+                entityManager
+                        .getEntityManager()
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        ApprovalInboxResponse response =
+                approvalService.searchApprovals(
+                        new ApprovalInboxSearchCondition(null, null, null), president);
+
+        assertThat(response.approvals()).hasSize(5);
+        assertThat(response.approvals())
+                .extracting(ApprovalInboxItemResponse::latestRejectionReason)
+                .doesNotContainNull();
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(8);
+    }
+
+    /*
      * 단독 유형은 진행바를 그리지 않는다. 0으로 채우면 '정족수가 있는데 아무도 찬성하지 않은
      * 상태'와 구분되지 않으므로 NULL로 둔다.
      */
@@ -383,6 +479,14 @@ class ApprovalServiceImplTest {
     }
 
     private Long createSubWork(long subWorkTypeId, String title) {
+        return createSubWork(subWorkTypeId, title, registrant);
+    }
+
+    /*
+     * 요청자(등록자)만 갈아 끼운다 — 담당자는 언제나 registrant다. 카드의 '요청 …'은 등록자이고,
+     * 둘이 같은 사람이면 등록자 연관이 담당자 것을 재사용해 조회 횟수가 실제와 달라진다.
+     */
+    private Long createSubWork(long subWorkTypeId, String title, MemberEntity requester) {
         return subWorkService
                 .createSubWork(
                         new SubWorkCreateRequest(
@@ -396,14 +500,18 @@ class ApprovalServiceImplTest {
                                 OperationPriority.NORMAL,
                                 null,
                                 null),
-                        registrant)
+                        requester)
                 .subWorkId();
     }
 
     private Long subWorkInReview(long subWorkTypeId, String title) {
-        Long subWorkId = createSubWork(subWorkTypeId, title);
-        transition(subWorkId, TransitionAction.START, null, registrant);
-        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
+        return subWorkInReview(subWorkTypeId, title, registrant);
+    }
+
+    private Long subWorkInReview(long subWorkTypeId, String title, MemberEntity requester) {
+        Long subWorkId = createSubWork(subWorkTypeId, title, requester);
+        transition(subWorkId, TransitionAction.START, null, requester);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, requester);
         return subWorkId;
     }
 

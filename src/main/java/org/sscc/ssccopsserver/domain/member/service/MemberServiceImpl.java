@@ -2,21 +2,38 @@ package org.sscc.ssccopsserver.domain.member.service;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
+import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberChangeHistoryResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberCursor;
+import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchQuery;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberStatusResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeHistoryEntity;
@@ -31,6 +48,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepos
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
@@ -63,6 +81,12 @@ public class MemberServiceImpl implements MemberService {
 
     // 최초 등급·상태 이력의 변경 사유. 이력만 봐도 운영진의 조정이 아니라 가입임을 알 수 있어야 한다
     private static final String SIGNUP_HISTORY_REASON = "회원가입";
+
+    /*
+     * 회원 상세에 싣는 최근 변경 이력의 건수 (#76). 상세 진입 한 번에 이력 전량을 실으면
+     * 오래된 회원일수록 응답이 무한정 커진다 — 전체 이력은 별도 이슈(회원 변경 이력 통합 조회)다.
+     */
+    private static final int RECENT_CHANGE_LIMIT = 3;
 
     /*
      * 동시 가입 요청이 UNIQUE 제약에 걸렸을 때 어느 쪽인지 가리기 위한 제약명.
@@ -201,6 +225,182 @@ public class MemberServiceImpl implements MemberService {
             return Optional.empty();
         }
         return memberRepository.findAssignableById(memberId, UNASSIGNABLE_STATUS_CODES);
+    }
+
+    /*
+     * 회원 관리 목록 (#76). 화면의 표 한 장이 이 호출 하나다.
+     *
+     * 쿼리는 네 번이다 — 목록 · 현재 역할 · 필터 건수 · 전체 건수. **회원이 몇 명이든 이 수는
+     * 변하지 않는다** (DB-13). 등급·상태는 목록 쿼리가 조인으로 함께 끌어오고, 회원마다 여러
+     * 건인 현재 역할만 이번 페이지의 식별자로 한 번에 모아 온다. 목록이 비면 역할 쿼리는
+     * 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라 문법 오류다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public MemberSearchResponse searchMembers(MemberSearchCondition condition) {
+        MemberSearchQuery query = condition.toQuery();
+
+        // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
+        List<MemberEntity> fetched = memberRepository.search(query);
+        boolean hasNext = fetched.size() > query.size();
+        List<MemberEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
+
+        Map<Long, List<MemberRoleResponse>> rolesByMemberId = currentRolesOf(rows);
+        List<MemberSummaryResponse> members =
+                rows.stream()
+                        .map(
+                                member ->
+                                        MemberSummaryResponse.of(
+                                                member,
+                                                rolesByMemberId.getOrDefault(
+                                                        member.getId(), List.of())))
+                        .toList();
+
+        PageResponse page =
+                new PageResponse(
+                        query.size(),
+                        query.sort().getParameter(),
+                        nextCursorOf(query, rows, hasNext),
+                        hasNext,
+                        memberRepository.countMatching(query),
+                        memberRepository.count());
+        return new MemberSearchResponse(members, page);
+    }
+
+    /*
+     * 회원 단건 (#76). 쿼리는 네 번이다 — 회원(등급·상태 포함) · 현재 역할 · 등급 이력 ·
+     * 상태 이력.
+     *
+     * 이력 두 벌을 각각 세 건씩만 읽어 합친 뒤 다시 세 건으로 자른다. 한쪽이 최근 세 건을
+     * 독차지할 수 있으므로 양쪽에서 세 건씩 읽어야 합친 결과의 상위 세 건이 옳다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public MemberDetailResponse getMemberDetail(Long memberId) {
+        MemberEntity member =
+                memberRepository
+                        .findWithGradeAndStatusById(memberId)
+                        .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
+
+        return MemberDetailResponse.of(
+                member,
+                currentRolesOf(List.of(member)).getOrDefault(memberId, List.of()),
+                recentChangesOf(memberId));
+    }
+
+    /*
+     * 담당자 후보 목록 (#76). 대상 판정은 단건판(findAssignableMember)과 같은
+     * UNASSIGNABLE_STATUS_CODES를 쓴다 — 규칙이 두 벌이 되면 목록과 등록이 갈린다.
+     *
+     * 쿼리는 두 번이다(후보 목록 · 현재 역할). 대표 역할명을 채우려면 역할이 필요한데,
+     * 후보마다 조회하면 그대로 N+1이라 목록과 같은 방식으로 한 번에 모아 온다.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<AssignableMemberResponse> findAssignableMembers() {
+        List<MemberEntity> candidates =
+                memberRepository.findAllAssignable(UNASSIGNABLE_STATUS_CODES);
+        Map<Long, List<MemberRoleResponse>> rolesByMemberId = currentRolesOf(candidates);
+
+        return candidates.stream()
+                .map(
+                        member ->
+                                AssignableMemberResponse.of(
+                                        member,
+                                        representativeRoleNameOf(
+                                                rolesByMemberId.getOrDefault(
+                                                        member.getId(), List.of()))))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<MemberGradeResponse> findAllGrades() {
+        return memberGradeRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
+                .map(MemberGradeResponse::from)
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<MemberStatusResponse> findAllStatuses() {
+        return memberStatusRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
+                .map(MemberStatusResponse::from)
+                .toList();
+    }
+
+    // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다
+    private String nextCursorOf(MemberSearchQuery query, List<MemberEntity> rows, boolean hasNext) {
+        return hasNext ? MemberCursor.of(query.sort(), rows.get(rows.size() - 1)).encode() : null;
+    }
+
+    /*
+     * 여러 회원의 현재 역할을 한 번에 모아 회원별로 나눈다 (#76).
+     *
+     * 판정 규칙은 BR-M25다 — role_bgng_ymd <= 오늘 <= role_end_ymd이며 종료일이 NULL이면
+     * 무기한이고, 오늘은 주입된 Clock에서 온다. 인가 판정(AuthorityPolicy)이 보는 '유효한
+     * 역할'과 같은 기준이라 화면의 역할 배지와 실제 권한이 갈리지 않는다.
+     *
+     * 대표 역할 여부(rprs_role_yn)로 걸러내거나 정렬하지 않는다 (BR-M26). 표시용 값이라
+     * 응답에 실릴 뿐이며, 순서는 역할의 표시 순번이 정한다.
+     */
+    private Map<Long, List<MemberRoleResponse>> currentRolesOf(List<MemberEntity> members) {
+        if (members.isEmpty()) {
+            // IN () 은 DB에 따라 문법 오류이므로 애초에 쿼리를 보내지 않는다
+            return Map.of();
+        }
+        List<Long> memberIds = members.stream().map(MemberEntity::getId).toList();
+        return memberRoleAssignmentRepository
+                .findValidByMemberIds(memberIds, LocalDate.now(clock))
+                .stream()
+                .collect(
+                        Collectors.groupingBy(
+                                assignment -> assignment.getMember().getId(),
+                                LinkedHashMap::new,
+                                Collectors.mapping(MemberRoleResponse::from, Collectors.toList())));
+    }
+
+    /*
+     * 등급 이력과 상태 이력을 합쳐 기록 시각 역순으로 자른다 (#76).
+     *
+     * 같은 시각의 두 이력(한 트랜잭션에서 등급과 상태를 함께 바꾼 경우)은 순서를 못 박을
+     * 근거가 없으므로 종류로 끊는다 — 근거 없는 흔들림보다 임의라도 고정된 순서가 낫다.
+     */
+    private List<MemberChangeHistoryResponse> recentChangesOf(Long memberId) {
+        Pageable limit = PageRequest.of(0, RECENT_CHANGE_LIMIT);
+
+        Stream<MemberChangeHistoryResponse> gradeChanges =
+                memberGradeHistoryRepository
+                        .findByMemberIdOrderByCreatedAtDescIdDesc(memberId, limit)
+                        .stream()
+                        .map(MemberChangeHistoryResponse::from);
+        Stream<MemberChangeHistoryResponse> statusChanges =
+                memberStatusHistoryRepository
+                        .findByMemberIdOrderByCreatedAtDescIdDesc(memberId, limit)
+                        .stream()
+                        .map(MemberChangeHistoryResponse::from);
+
+        return Stream.concat(gradeChanges, statusChanges)
+                .sorted(
+                        Comparator.comparing(
+                                        MemberChangeHistoryResponse::createdAt,
+                                        Comparator.reverseOrder())
+                                .thenComparing(MemberChangeHistoryResponse::changeType))
+                .limit(RECENT_CHANGE_LIMIT)
+                .toList();
+    }
+
+    /*
+     * 대표 역할의 이름. 대표로 지정된 역할이 없으면 null이며 화면은 그 자리를 비워 둔다.
+     * 여러 역할이 대표로 지정돼 있는 데이터를 만나면 목록 순서(역할 표시 순번)의 첫 번째를
+     * 고른다 — 대표는 하나뿐이어야 하지만 DB가 그것을 보장하지는 않는다.
+     */
+    private static String representativeRoleNameOf(List<MemberRoleResponse> roles) {
+        return roles.stream()
+                .filter(MemberRoleResponse::representative)
+                .map(MemberRoleResponse::roleName)
+                .findFirst()
+                .orElse(null);
     }
 
     /*

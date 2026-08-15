@@ -1,20 +1,31 @@
 package org.sscc.ssccopsserver.domain.member.controller;
 
 import java.net.URI;
+import java.util.List;
 
 import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 
 import io.swagger.v3.oas.annotations.Operation;
 
@@ -26,6 +37,11 @@ import lombok.RequiredArgsConstructor;
  * 가입은 회원이 필요한 다른 엔드포인트와 달리 @CurrentMember를 쓸 수 없다 — 그 리졸버는
  * 미가입 주체를 403 SIGNUP_REQUIRED로 끊기 때문에, 그대로 두면 가입 자체가 불가능해진다.
  * 그래서 인증 주체를 @AuthenticationPrincipal로 직접 받는다.
+ *
+ * **@RequireAuthority는 클래스가 아니라 메서드에 건다** (#76). 이 컨트롤러에는 요구 권한이
+ * 서로 다른 핸들러가 섞여 있다 — 가입(/signup)은 아직 회원이 아닌 사람이 부르고, 담당자
+ * 후보(/assignable)는 회원 관리 권한 없이 업무를 등록하는 사람이 부른다. 클래스에 걸면
+ * 그 둘이 함께 막히고, 가입은 아예 통과할 수 없는 엔드포인트가 된다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -50,5 +66,68 @@ public class MemberController {
         MemberProfileResponse response = memberService.signUp(user, request);
         URI location = URI.create("/v1/members/" + response.memberId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 회원 목록 조회 (#76). 회원 관리 화면의 표가 이 호출 하나로 채워진다.
+     *
+     * 조건은 개별 @RequestParam으로 늘어놓지 않고 record 하나로 받는다 — 필터가 늘 때마다
+     * 시그니처가 자라는 것을 막는다. 값 해석(기준 코드·커서)은 DTO와 서비스가 맡으므로
+     * 여기서 분기하지 않는다 (LY-02 · WorkController와 같은 방식).
+     *
+     * 목록이므로 응답은 data 배열과 page 봉투 두 갈래다 (AP-11).
+     */
+    @Operation(
+            summary = "회원 목록 조회",
+            description =
+                    "이름·학번 부분일치 검색과 등급·상태 필터, 정렬(mbrNm·genNo·joinYmd·mdfcnDt, '-'는 내림차순),"
+                            + " 커서 페이징을 지원한다. 등급·상태는 코드와 명칭을 함께 내리며 현재 역할도 함께"
+                            + " 싣는다. 기준 코드 밖의 필터 값은 400 INVALID_CODE_VALUE다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @GetMapping
+    public ApiResponse<List<MemberSummaryResponse>> searchMembers(
+            @Valid @ModelAttribute MemberSearchCondition condition) {
+        MemberSearchResponse result = memberService.searchMembers(condition);
+        return ApiResponse.success(result.members(), result.page());
+    }
+
+    /*
+     * 담당자 후보 조회 (#76). 업무·회의 등록 화면의 담당자 선택 칩이 쓴다.
+     *
+     * **경로가 /{mbrId}보다 먼저 선언돼 있어야 하는 것은 아니다** — 스프링은 리터럴 세그먼트를
+     * 경로 변수보다 우선하므로 'assignable'이 단건 조회로 새지 않는다.
+     *
+     * 목록·단건과 달리 MEMBER_MANAGE를 요구하지 않는다. 담당자를 고르는 일은 회원 관리와
+     * 다른 권한 축이고, 업무를 등록할 수 있는 사람이 회원 관리 권한까지 가질 이유가 없다.
+     * 그 대신 응답에서 연락처·이메일·학번을 뺀다 (AssignableMemberResponse 주석).
+     *
+     * 페이징을 두지 않는다 — 선택 칩의 드롭다운이라 한 번에 받아 그 자리에서 걸러 쓰는
+     * 목록이고, 동아리 회원 수 규모에서 나누어 받을 이유가 없다 (#37의 응답 목록과 같은 판단).
+     */
+    @Operation(
+            summary = "담당자 후보 조회",
+            description =
+                    "담당자·회의 책임자로 지정할 수 있는 회원 목록. 탈퇴·제명 회원은 빠진다."
+                            + " 권한 없이 부를 수 있는 목록이라 연락처·이메일·학번은 내리지 않는다.")
+    @GetMapping("/assignable")
+    public ApiResponse<List<AssignableMemberResponse>> findAssignableMembers() {
+        return ApiResponse.success(memberService.findAssignableMembers());
+    }
+
+    /*
+     * 회원 단건 조회 (#76). 프로필·현재 역할·최근 변경 이력 3건을 한 번에 내린다.
+     *
+     * 없는 회원은 404 MEMBER_NOT_FOUND이며 권한이 없으면 403이다 — 404로 감추지 않는다
+     * (VR-M10). 내부 운영 도구라 자원의 존재를 숨길 이유가 없다.
+     */
+    @Operation(
+            summary = "회원 단건 조회",
+            description =
+                    "회원 프로필과 현재 역할, 최근 변경 이력 3건(등급·상태를 섞어 기록 시각 역순)을 내린다."
+                            + " 현재 역할은 역할 시작일 <= 오늘 <= 종료일(NULL이면 무기한)인 배정이다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @GetMapping("/{memberId}")
+    public ApiResponse<MemberDetailResponse> getMember(@PathVariable Long memberId) {
+        return ApiResponse.success(memberService.getMemberDetail(memberId));
     }
 }

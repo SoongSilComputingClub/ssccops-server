@@ -4,9 +4,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberStatusResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
@@ -48,4 +54,44 @@ public interface MemberService {
      * 지정 불가 사유를 어떤 오류로 볼지는 호출하는 도메인이 정하므로 예외 대신 Optional을 준다.
      */
     Optional<MemberEntity> findAssignableMember(Long memberId);
+
+    /*
+     * 회원 관리 목록 (GET /v1/members, #76). 검색·필터·정렬·커서 페이징을 한 번에 다룬다.
+     *
+     * 조건 해석(기준 코드 검증·커서 해독)은 요청 DTO가 이미 마친 상태로 들어온다 — 조회
+     * 코드가 400을 던지지 않게 하기 위해서다 (LY-02).
+     */
+    MemberSearchResponse searchMembers(MemberSearchCondition condition);
+
+    /*
+     * 회원 단건 (GET /v1/members/{mbrId}, #76). 프로필에 현재 역할과 최근 변경 이력 3건을
+     * 더해 돌려준다. 없는 회원은 404 MEMBER_NOT_FOUND다.
+     *
+     * 본인용 getProfile과 응답을 나눈 것은 담기는 것이 다르기 때문이다 (LY-03) —
+     * capabilities는 본인 세션에서만 뜻이 있는 값이라 여기에는 없다.
+     */
+    MemberDetailResponse getMemberDetail(Long memberId);
+
+    /*
+     * 담당자·책임자로 지정할 수 있는 회원 목록 (GET /v1/members/assignable, #76).
+     *
+     * 대상 판정은 단건판(findAssignableMember)과 **같은 규칙**을 쓴다. 호출하는 쪽에서
+     * 탈퇴·제명 제외를 다시 구현하면 "목록에는 있는데 등록하면 거절되는 회원"이 생기므로
+     * 목록 메서드를 여기 하나 더 두어 규칙을 한 곳에 남긴다.
+     *
+     * 응답에 연락처·이메일·학번이 없는 것은 이 목록이 MEMBER_MANAGE 없이 불리기 때문이다.
+     */
+    List<AssignableMemberResponse> findAssignableMembers();
+
+    /*
+     * 회원 등급 기준 코드 전체 (GET /v1/member-grades, #76). 표시 순번 오름차순이다.
+     * 등급 필터·등급 변경 셀렉트가 이 목록으로 채워진다.
+     */
+    List<MemberGradeResponse> findAllGrades();
+
+    /*
+     * 회원 상태 기준 코드 전체 (GET /v1/member-statuses, #76). 가입 시 고를 수 없는 상태도
+     * 포함한다 — 기준 코드 전체를 내리는 엔드포인트이기 때문이다.
+     */
+    List<MemberStatusResponse> findAllStatuses();
 }

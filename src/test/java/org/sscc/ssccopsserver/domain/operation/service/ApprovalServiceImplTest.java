@@ -25,6 +25,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxItemResponse;
@@ -54,6 +55,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
@@ -66,7 +68,9 @@ import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
  * 검토 단계의 건만 담으며, 카드가 정족수 진행·체크리스트·내 표까지 함께 싣는다.
  */
 @DataJpaTest
-@Import(JpaAuditingConfig.class)
+// AuthorityPolicy는 @Service라 @DataJpaTest 슬라이스에 없다. MemberServiceImpl이 프로필의
+// capabilities를 계산하는 데 쓰므로(#9) 정책과 그 Clock만 슬라이스에 들여온다.
+@Import({JpaAuditingConfig.class, AuthorityPolicy.class, ClockConfig.class})
 @ActiveProfiles("test")
 class ApprovalServiceImplTest {
 
@@ -95,6 +99,7 @@ class ApprovalServiceImplTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private AuthorityPolicy authorityPolicy;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -118,6 +123,7 @@ class ApprovalServiceImplTest {
                         memberStatusRepository,
                         memberGradeHistoryRepository,
                         memberStatusHistoryRepository,
+                        authorityPolicy,
                         FIXED_CLOCK);
         WorkService workService =
                 new WorkServiceImpl(

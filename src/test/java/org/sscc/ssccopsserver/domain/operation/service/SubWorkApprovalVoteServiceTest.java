@@ -26,6 +26,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
@@ -56,6 +57,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRe
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
@@ -70,7 +72,9 @@ import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
  *  3. 사전에 운영진 권한을 가진 운영자는 누구나 찬반 투표를 할 수 있다.
  */
 @DataJpaTest
-@Import(JpaAuditingConfig.class)
+// AuthorityPolicy는 @Service라 @DataJpaTest 슬라이스에 없다. MemberServiceImpl이 프로필의
+// capabilities를 계산하는 데 쓰므로(#9) 정책과 그 Clock만 슬라이스에 들여온다.
+@Import({JpaAuditingConfig.class, AuthorityPolicy.class, ClockConfig.class})
 @ActiveProfiles("test")
 class SubWorkApprovalVoteServiceTest {
 
@@ -100,6 +104,7 @@ class SubWorkApprovalVoteServiceTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private AuthorityPolicy authorityPolicy;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -126,6 +131,7 @@ class SubWorkApprovalVoteServiceTest {
                         memberStatusRepository,
                         memberGradeHistoryRepository,
                         memberStatusHistoryRepository,
+                        authorityPolicy,
                         FIXED_CLOCK);
         WorkService workService =
                 new WorkServiceImpl(

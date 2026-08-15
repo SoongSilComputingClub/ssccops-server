@@ -79,4 +79,26 @@ public interface MemberRoleAssignmentRepository
      * 삭제 한 번으로 사라지기 때문이다 — 지울 수 있는 역할은 아무에게도 붙은 적 없는 역할뿐이다.
      */
     boolean existsByRoleId(Long roleId);
+
+    /*
+     * 여러 회원의 현재 역할을 **한 번에** 모아 온다 (#76). 회원 목록·상세가 역할을 함께
+     * 표시하므로, 회원마다 findCurrentByMemberId를 부르면 그대로 N+1이 된다 (DB-13 ·
+     * 폼 응답 목록 #37의 선례). 이번 페이지에 실린 식별자만 넘긴다.
+     *
+     * 판정 규칙은 findValidRoleIds와 같은 BR-M25다 — role_bgng_ymd <= 오늘 <= role_end_ymd이며
+     * 종료일이 NULL이면 무기한이고, 오늘은 주입된 Clock에서 온다. 화면용 findCurrentByMemberId가
+     * '종료일이 비어 있는 것만' 보는 것과 갈리는데, 그쪽 기준으로는 종료일이 미래로 채워진
+     * 배정(임기가 정해진 국장 등)이 아직 유효한데도 목록에서 사라진다. 이슈 #76이 BR-M25를
+     * 명시하고 있어 새 조회 경로는 인가 판정과 같은 규칙을 쓴다.
+     *
+     * 역할명을 함께 쓰므로 join fetch로 가져온다 — 없으면 배정 건수만큼 추가 쿼리가 나간다.
+     * rprs_role_yn은 정렬·판정에 쓰지 않는다 (BR-M26). 표시용으로만 응답에 실린다.
+     */
+    @Query(
+            "select a from MemberRoleAssignmentEntity a join fetch a.role"
+                    + " where a.member.id in :memberIds and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)"
+                    + " order by a.member.id asc, a.role.displayOrder asc, a.role.id asc")
+    List<MemberRoleAssignmentEntity> findValidByMemberIds(
+            @Param("memberIds") Collection<Long> memberIds, @Param("today") LocalDate today);
 }

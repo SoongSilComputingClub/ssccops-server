@@ -1,9 +1,12 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.util.List;
+
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
@@ -34,4 +37,11 @@ public interface WorkService {
      * 이 결과로 채워지며, 소프트 삭제된 업무는 목록에도 건수에도 없다 (AGG-03).
      */
     WorkSearchResponse searchWorks(WorkSearchCondition condition);
+
+    /*
+     * 운영 통합(OPS-001)의 업무 전량 목록. 목록 조회(OPS-020)와 같은 카드 요약이지만
+     * 화면이 목록과 트리를 한 번에 그리므로 커서 페이징 없이 전량을 돌려준다.
+     * 정렬은 OPS-020의 기본값과 같은 등록 최신순이다.
+     */
+    List<WorkListItemResponse> listWorks();
 }

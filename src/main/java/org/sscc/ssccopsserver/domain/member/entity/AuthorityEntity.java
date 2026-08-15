@@ -118,7 +118,7 @@ public class AuthorityEntity {
             return;
         }
         if (wouldCycle(parent)) {
-            throw new GeneralException(MemberErrorCode.AUTHORITY_PARENT_CYCLE);
+            throw new GeneralException(MemberErrorCode.AUTHORITY_CYCLE_DETECTED);
         }
         this.parent = parent;
     }

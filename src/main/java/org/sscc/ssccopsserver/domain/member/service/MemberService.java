@@ -11,8 +11,10 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSelfUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberStatusResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
@@ -71,6 +73,34 @@ public interface MemberService {
      * capabilities는 본인 세션에서만 뜻이 있는 값이라 여기에는 없다.
      */
     MemberDetailResponse getMemberDetail(Long memberId);
+
+    /*
+     * 운영진의 회원 정보 수정 (PATCH /v1/members/{mbrId}, #77).
+     *
+     * 바꾸는 것은 요청 DTO에 있는 여섯 필드뿐이다 — 등급·상태는 이력을 함께 남겨야 해 전용
+     * API가 따로 있고(#78), 학번은 updatable = false로 잠겨 있다. **막는 방법이 DTO에 필드를
+     * 두지 않는 것**이라 이 메서드에는 무시하는 분기가 없다.
+     *
+     * 재학 회원의 학과·학년 필수는 가입과 같은 규칙(MemberStatusCode.isAcademicProfileSatisfied)을
+     * 쓴다. 요청에는 상태가 없으므로 회원을 읽어 그 상태로 판정한다 — 없는 회원은 404,
+     * 어긴 값은 400 VALIDATION_FAILED다.
+     *
+     * 응답이 조회(getMemberDetail)와 같은 MemberDetailResponse인 것은 수정 화면이 저장 직후
+     * 상세를 다시 조회하지 않아도 되게 하기 위해서다.
+     */
+    MemberDetailResponse updateMember(Long memberId, MemberUpdateRequest request);
+
+    /*
+     * 본인의 회원 정보 수정 (PATCH /v1/members/me, #77).
+     *
+     * 대상은 인증 주체 본인이며 memberId는 컨트롤러가 @CurrentMember에서 꺼내 넘긴다 —
+     * 경로에도 본문에도 대상을 넣을 자리가 없다는 것이 '남의 행을 고칠 수 없다'의 근거다.
+     *
+     * 운영진 경로와 달리 기수·이메일은 바꾸지 않는다(MemberSelfUpdateRequest 주석).
+     * 응답은 세션 조회·가입과 같은 MemberProfileResponse다 — 저장 직후 웹이 세션을 다시
+     * 조회하지 않아도 되게 하는 것이 그 설계의 의도이고, 프로필 수정도 같은 자리다.
+     */
+    MemberProfileResponse updateMyProfile(Long memberId, MemberSelfUpdateRequest request);
 
     /*
      * 담당자·책임자로 지정할 수 있는 회원 목록 (GET /v1/members/assignable, #76).

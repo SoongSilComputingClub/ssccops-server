@@ -267,7 +267,21 @@ public enum MemberErrorCode implements ErrorCode {
      *
      * 종료일이 NULL인 배정은 무기한이므로 이후의 어떤 시작일과도 겹친다.
      */
-    ROLE_ALREADY_ASSIGNED(HttpStatus.CONFLICT, "ROLE_ALREADY_ASSIGNED", "이미 같은 기간에 부여된 역할입니다.");
+    ROLE_ALREADY_ASSIGNED(HttpStatus.CONFLICT, "ROLE_ALREADY_ASSIGNED", "이미 같은 기간에 부여된 역할입니다."),
+
+    /*
+     * 400 — 재학 회원의 학과·학년을 비우는 수정 (#77).
+     *
+     * 가입에서 @AssertTrue가 막는 것과 같은 규칙이며 판정도 같은 자리
+     * (MemberStatusCode.isAcademicProfileSatisfied)에서 한다. 수정 요청에는 회원 상태가 실려
+     * 있지 않아(상태는 전용 API로만 바뀐다) 요청 DTO 혼자서는 판단할 수 없고, 회원을 읽은 뒤
+     * 서비스가 던진다.
+     *
+     * 코드 문자열을 VALIDATION_FAILED로 두는 것은 SIGNUP_STATUS_NOT_ALLOWED와 같은 이유다 —
+     * 프론트에게는 입력값 오류이고, 정의서 03_오류_코드에 없는 코드를 새로 만들지 않는다.
+     */
+    ACADEMIC_PROFILE_REQUIRED(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "재학 회원은 학과·학년을 입력해야 합니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

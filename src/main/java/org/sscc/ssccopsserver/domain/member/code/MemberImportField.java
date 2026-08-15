@@ -21,48 +21,55 @@ import java.util.Optional;
  * aliases는 preview의 **추천** 매핑에만 쓰인다. 여기 있는 한글 낱말은 위의 '명칭 하드코딩 금지'에
  * 걸리지 않는다 — 기준정보가 아니라 남의 엑셀 파일 머리글을 짐작하는 값이고, 운영자가 화면에서
  * 확인·수정한 매핑만 검증에 쓰이기 때문이다. 짐작이 빗나가도 매핑이 비어 나올 뿐 검증은 틀리지 않는다.
+ *
+ * label도 같은 이유로 걸리지 않는다 (#85). 이관 실행 결과의 reason이 "필수값 누락 · 회원명"처럼
+ * 어느 칸이 문제인지 말하려면 사람이 읽는 이름이 필요한데, 이것은 **mbr 컬럼이 가리키는 개념의
+ * 이름**이지 기준정보(mbr_grd_nm·mbr_stts_nm)의 값이 아니다 — 운영자가 화면에서 바꿀 수 있는
+ * 값이 아니므로 코드에 두어도 어긋날 자리가 없다.
  */
 public enum MemberImportField {
 
     /** 회원명. 이름 없는 행은 사람을 가리키지 못하므로 매핑도 값도 필수다 */
-    MEMBER_NAME("mbrNm", true, List.of("이름", "회원명", "성명", "회원이름", "name")),
+    MEMBER_NAME("mbrNm", "회원명", true, List.of("이름", "회원명", "성명", "회원이름", "name")),
 
     /** 학번. 재학 회원은 필수이고 졸업 회원은 선택이다(가입 규칙과 같다) */
-    STUDENT_NUMBER("stdntNo", false, List.of("학번", "학생번호", "studentnumber")),
+    STUDENT_NUMBER("stdntNo", "학번", false, List.of("학번", "학생번호", "studentnumber")),
 
     /** 기수. 미입력은 0(미배정)이며 **학번으로 추정하지 않는다** (BR-M43) */
-    GENERATION_NUMBER("genNo", false, List.of("기수", "generation")),
+    GENERATION_NUMBER("genNo", "기수", false, List.of("기수", "generation")),
 
-    DEPARTMENT_NAME("scsbjtNm", false, List.of("학과", "전공", "학부", "department")),
+    DEPARTMENT_NAME("scsbjtNm", "학과", false, List.of("학과", "전공", "학부", "department")),
 
     /*
      * 영문 별칭에 grade를 두지 않는다 — 학년과 등급 양쪽을 가리키는 낱말이라, 어느 쪽으로 추천해도
      * 절반은 틀린다. 틀린 추천을 그대로 확인 버튼으로 넘기면 등급 컬럼이 학년으로 들어간다.
      */
-    ACADEMIC_YEAR("scyrNo", false, List.of("학년", "year", "schoolyear")),
+    ACADEMIC_YEAR("scyrNo", "학년", false, List.of("학년", "year", "schoolyear")),
 
     /** 연락처. 비어 있어도 오류가 아니라 경고다 (ssccops#78 A안 — 계정 연결에 필요하다) */
-    PHONE_NUMBER("telno", false, List.of("전화번호", "연락처", "휴대폰", "핸드폰", "전화", "phone")),
+    PHONE_NUMBER("telno", "연락처", false, List.of("전화번호", "연락처", "휴대폰", "핸드폰", "전화", "phone")),
 
-    EMAIL("eml", false, List.of("이메일", "메일", "email", "mail")),
+    EMAIL("eml", "이메일", false, List.of("이메일", "메일", "email", "mail")),
 
-    JOIN_DATE("joinYmd", false, List.of("가입일", "가입일자", "가입년월일", "joindate")),
+    JOIN_DATE("joinYmd", "가입일", false, List.of("가입일", "가입일자", "가입년월일", "joindate")),
 
     /*
      * 등급·상태는 mbr에서 NOT NULL이고 서버가 정할 근거가 없어 **매핑이 필수**다.
      * 기수(0)·가입일(이관일)처럼 기본값을 둘 수 없다 — 어느 등급으로 넣을지는 명부가 아는 사실이지
      * 서버가 고를 값이 아니다. 가입 API가 TEMP로 고정하는 것과는 상황이 다르다(그쪽은 본인 신청이다).
      */
-    GRADE_NAME("mbrGrdCd", true, List.of("등급", "회원등급", "membergrade")),
+    GRADE_NAME("mbrGrdCd", "회원등급", true, List.of("등급", "회원등급", "membergrade")),
 
-    STATUS_NAME("mbrSttsCd", true, List.of("상태", "회원상태", "학적", "학적상태", "status"));
+    STATUS_NAME("mbrSttsCd", "회원상태", true, List.of("상태", "회원상태", "학적", "학적상태", "status"));
 
     private final String key;
+    private final String label;
     private final boolean mappingRequired;
     private final List<String> aliases;
 
-    MemberImportField(String key, boolean mappingRequired, List<String> aliases) {
+    MemberImportField(String key, String label, boolean mappingRequired, List<String> aliases) {
         this.key = key;
+        this.label = label;
         this.mappingRequired = mappingRequired;
         this.aliases = aliases;
     }
@@ -70,6 +77,16 @@ public enum MemberImportField {
     /** mapping JSON의 값이자 행별 결과의 field로 내려가는 문자열 */
     public String key() {
         return key;
+    }
+
+    /** 사람이 읽는 컬럼 이름. 이관 실행 결과의 reason이 어느 칸인지 말하는 데 쓴다 (#85) */
+    public String label() {
+        return label;
+    }
+
+    /** field key로 사람이 읽는 이름을 찾는다. 모르는 key는 빈 Optional이다 */
+    public static Optional<String> labelOfKey(String key) {
+        return fromKey(key).map(MemberImportField::label);
     }
 
     /** 매핑되지 않으면 400 CSV_MAPPING_INVALID로 끊는 필드인지 */

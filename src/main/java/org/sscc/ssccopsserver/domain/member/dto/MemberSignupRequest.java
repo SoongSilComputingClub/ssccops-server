@@ -9,6 +9,7 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
+import org.sscc.ssccopsserver.domain.member.service.AcademicProfilePolicy;
 
 /*
  * 회원가입 요청 (POST /v1/members/signup). 필드 구성은 가입 화면의 입력란을 그대로 따른다.
@@ -42,16 +43,13 @@ public record MemberSignupRequest(
     /*
      * 재학 회원만 학번·학과·학년이 필수다. 필드마다 @NotBlank를 걸 수 없어(졸업이면 비어 있어야
      * 한다) 클래스 레벨에서 상태와 함께 본다.
+     *
+     * 규칙 자체는 AcademicProfilePolicy가 갖는다 (#84) — CSV 이관 검증이 같은 판단을 해야 하는데,
+     * 여기에 두면 두 벌이 되어 가입에서 막히는 값이 이관에서는 통과한다.
      */
     @AssertTrue(message = "재학 회원은 학번·학과·학년을 모두 입력해야 합니다.")
     public boolean isAcademicProfileComplete() {
-        if (memberStatusCode == null || !memberStatusCode.requiresAcademicProfile()) {
-            return true;
-        }
-        return hasText(studentNumber) && hasText(departmentName) && academicYear != null;
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
+        return AcademicProfilePolicy.isComplete(
+                memberStatusCode, studentNumber, departmentName, academicYear);
     }
 }

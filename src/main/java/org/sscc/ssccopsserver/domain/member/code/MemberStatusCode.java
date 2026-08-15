@@ -51,4 +51,26 @@ public enum MemberStatusCode {
         }
         return null;
     }
+
+    /*
+     * 종료 예정일(stts_end_prnmnt_ymd)을 함께 기록할 수 있는 상태인지 (#78).
+     *
+     * 휴학·군휴학처럼 **끝이 정해진** 상태에만 뜻이 있다. 재학·졸업은 언제 끝날지 정해져 있지
+     * 않고, 탈퇴·제명은 끝난 상태 자체다 — 그런 상태에 실려 온 날짜는 화면의 오작동이거나
+     * 운영자의 착각이므로 거절한다 (MemberStatusChangeRequest 주석).
+     */
+    public boolean allowsExpectedEndDate() {
+        return this == LEAVE || this == MIL_LEAVE;
+    }
+
+    /*
+     * 조직을 떠난 상태인지 (#78). 휴학·졸업은 회원 자격이 유지되므로 여기 걸리지 않는다.
+     *
+     * 이 판정으로 나뉘는 것은 등급·상태 변경 응답에 경고를 실을지 여부뿐이다 —
+     * 역할을 자동으로 끝내거나 담당 업무를 정리하는 부수 효과는 넣지 않는다
+     * (MemberChangeWarningResponse 주석).
+     */
+    public boolean isOrganizationExit() {
+        return this == WITHDRAWN || this == EXPELLED;
+    }
 }

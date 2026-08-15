@@ -570,6 +570,20 @@ public class SubWorkServiceImpl implements SubWorkService {
     }
 
     /*
+     * 회원 상태 변경(#78)의 경고용 건수. 완료된 건과 삭제된 건은 빠진다(SubWorkRepository 주석).
+     *
+     * 식별자가 없으면 0이다 — 부르는 쪽(회원 도메인)이 회원을 손에 쥔 채 호출하므로 실제로는
+     * 일어나지 않지만, null을 그대로 흘려보내면 조건이 조용히 아무것도 세지 않는 쪽으로 무너진다.
+     */
+    @Override
+    public long countOngoingByOwner(Long ownerId) {
+        if (ownerId == null) {
+            return 0L;
+        }
+        return subWorkRepository.countByOwnerIdExcludingStatus(ownerId, WorkStatus.DONE);
+    }
+
+    /*
      * 갱신 후 '2/4 완료' 표기값. 항목 전체를 다시 로딩하지 않고 등록·상위 상세가 쓰는 집계
      * 쿼리를 단건으로 재사용한다. 같은 트랜잭션이라 JPQL 실행 전 flush가 일어나 방금 바꾼
      * 값이 반영된다.

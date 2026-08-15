@@ -12,7 +12,16 @@ spring:
           jwk-set-uri: http://localhost/auth/v1/.well-known/jwks.json
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      # create-drop이 아니라 create다. 모든 테스트 컨텍스트가 위의 testdb 하나를 공유하는데,
+      # create-drop은 EntityManagerFactory가 닫힐 때 스키마를 통째로 지운다 — 스프링
+      # 테스트 컨텍스트 캐시가 한계(기본 32개)를 넘어 컨텍스트 하나를 evict 하는 순간
+      # 공유 DB의 테이블이 사라져, 그 뒤 캐시된 다른 컨텍스트를 쓰는 테스트가
+      # "Table MBR not found (this database is empty)"로 떨어진다. 실행 순서에 따라
+      # 나타났다 사라지는 종류라 테스트 클래스를 하나 더할 때마다 다시 터진다.
+      # create는 컨텍스트가 뜰 때만 drop+create 하고 닫을 때는 아무것도 하지 않으므로
+      # 파괴 시점이 하나 줄어든다(뜰 때 지우는 것은 create-drop도 똑같이 한다).
+      # 인메모리라 남은 스키마는 JVM이 끝나면 함께 사라진다.
+      ddl-auto: create
     database-platform: org.hibernate.dialect.H2Dialect
 
 # Frontend Configuration (CORS 허용 오리진)

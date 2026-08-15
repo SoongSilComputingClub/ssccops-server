@@ -15,7 +15,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
   - `docker compose up postgres`로 DB만 띄우고(호스트 포트 `DB_PORT`, 기본 `15432`) 앱은 `./gradlew bootRun`으로 실행한다. `.env`의 `DB_HOST=localhost`·`DB_PORT=15432`가 그대로 쓰인다. 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `DB_PORT=5432`로 바꾼다.
 
   **주의**: `.env`와 `docker-compose.yml`의 변수 이름에 하이픈(`-`)을 쓰지 않는다. Compose의 변수 치환은 셸 파라미터 확장 문법을 따르므로 `${db-username}`은 이름이 아니라 "`db`가 없으면 문자열 `username`"으로 읽힌다 — 실제로 이 때문에 `.env` 값이 통째로 무시된 채 `POSTGRES_USER=username`·`POSTGRES_DB=name:-ssccops_server_db`로 DB가 만들어지고 앱이 인증 실패로 죽는 일이 있었다(#59). Spring 프로퍼티 키(`db-username`)를 환경변수 이름으로 그대로 쓸 수 없다.
-- 프로필: `local`(PostgreSQL, OTel 비활성) / `dev` / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create-drop — 테스트 실행 시 자동 적용).
+- 프로필: `local`(PostgreSQL, OTel 비활성) / `dev` / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create — 테스트 실행 시 자동 적용). **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 모든 테스트 컨텍스트가 `testdb` 하나를 공유하는데 `create-drop`은 컨텍스트가 닫힐 때 스키마를 지워, 테스트 컨텍스트 캐시가 evict 하는 순간 남은 테스트가 "Table MBR not found"로 떨어진다.
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.
 

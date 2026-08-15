@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.member.repository;
 
 import java.util.List;
+import java.util.Optional;
 
 import jakarta.persistence.LockModeType;
 
@@ -61,4 +62,49 @@ public interface MemberRoleRepository extends JpaRepository<MemberRoleEntity, Lo
      * 전량을 GROUP BY 하게 된다.
      */
     long countByRoleClassification(MemberRoleClassificationEntity roleClassification);
+
+    /*
+     * 역할 목록 (#79 GET /v1/roles).
+     *
+     * 분류를 join fetch로 함께 끌어온다 — 응답에 roleClsfNm이 실리므로 없으면 역할 수만큼
+     * 분류 조회가 따라붙는다.
+     *
+     * 정렬은 분류 순번 → 역할 순번 → role_id다. indct_seqno가 분류 안의 표시 순번이라
+     * (VR-M11) 분류를 가르지 않고 정렬하면 서로 다른 분류의 1번들이 뒤섞인다. 마지막에
+     * role_id를 두는 것은 같은 분류 안에 같은 순번이 여럿일 수 있어서다 — 자동 채번을
+     * 쓰더라도 값을 직접 지정하는 길이 열려 있어 순번은 UNIQUE가 아니다.
+     */
+    @Query(
+            "select r from MemberRoleEntity r join fetch r.roleClassification c"
+                    + " order by c.displayOrder asc, r.displayOrder asc, r.id asc")
+    List<MemberRoleEntity> findAllForList();
+
+    @Query(
+            "select r from MemberRoleEntity r join fetch r.roleClassification c"
+                    + " where c.code = :roleClsfCd"
+                    + " order by r.displayOrder asc, r.id asc")
+    List<MemberRoleEntity> findAllForListByClassification(@Param("roleClsfCd") String roleClsfCd);
+
+    /** 단건 조회. 응답에 분류명이 실리므로 목록과 같이 분류를 함께 가져온다 (#79) */
+    @Query("select r from MemberRoleEntity r join fetch r.roleClassification where r.id = :roleId")
+    Optional<MemberRoleEntity> findByIdWithClassification(@Param("roleId") Long roleId);
+
+    /*
+     * 이름 중복 검사 (#79). role_nm에 UNIQUE 제약이 없어 애플리케이션이 판정한다 —
+     * 근거는 RoleServiceImpl의 주석에 있다.
+     */
+    boolean existsByName(String name);
+
+    boolean existsByNameAndIdNot(String name, Long id);
+
+    /*
+     * 같은 분류 안의 최대 표시 순번 (#79 indct_seqno 자동 채번).
+     *
+     * 분류로 좁히지 않으면 '프로젝트' 분류의 새 역할이 '직책'의 순번 뒤로 밀려 분류마다 1부터
+     * 다시 시작한다는 규칙이 깨진다. 그 분류에 역할이 하나도 없으면 0이라 첫 역할은 1이 된다.
+     */
+    @Query(
+            "select coalesce(max(r.displayOrder), 0) from MemberRoleEntity r"
+                    + " where r.roleClassification.code = :roleClsfCd")
+    int findMaxDisplayOrderByClassification(@Param("roleClsfCd") String roleClsfCd);
 }

@@ -101,4 +101,11 @@ public interface SubWorkService {
      * 업무를 마감 오름차순으로 돌려준다(이슈#60). 완료 건은 빠진다.
      */
     List<SubWorkSummaryResponse> findUpcomingDeadlines();
+
+    /*
+     * 운영 통합(OPS-001)의 하위 업무 전량 목록. 목록 조회(OPS-008)와 같은 행 요약이지만
+     * 좌측 목록과 우측 트리를 한 화면이 함께 그리므로 커서 페이징 없이 전량을 돌려준다.
+     * 정렬은 OPS-008 기본값과 같다(마감 오름차순, 마감 없는 건은 뒤).
+     */
+    List<SubWorkSummaryResponse> listSubWorks();
 }

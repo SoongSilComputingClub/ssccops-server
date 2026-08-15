@@ -210,6 +210,28 @@ public class WorkServiceImpl implements WorkService {
         return new WorkSearchResponse(works, page);
     }
 
+    /*
+     * 운영 통합(OPS-001)의 업무 전량 목록. 커서 페이징만 없을 뿐 카드 한 장의 값은 목록
+     * 조회(OPS-020)와 같아야 하므로, 집계(subWorkRatesOf)와 DTO 조립을 그대로 공유한다 —
+     * 여기서 산식을 다시 적으면 통합 화면과 업무 화면이 같은 업무를 다른 %로 그린다.
+     *
+     * 쿼리는 목록 1 + 하위 업무 집계 1 + 체크리스트 진행률 집계 1로 3회이며, 업무·하위
+     * 업무가 몇 건이든 이 수는 변하지 않는다 (DB-13).
+     */
+    @Override
+    public List<WorkListItemResponse> listWorks() {
+        List<WorkEntity> rows =
+                workRepository
+                        .findAllByOperationDeletedAtIsNullOrderByOperationCreatedAtDescIdDesc();
+        Map<Long, List<BigDecimal>> ratesByWorkId = subWorkRatesOf(rows);
+        return rows.stream()
+                .map(
+                        work ->
+                                WorkListItemResponse.of(
+                                        work, ratesByWorkId.getOrDefault(work.getId(), List.of())))
+                .toList();
+    }
+
     // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다
     private String nextCursorOf(WorkSearchQuery query, List<WorkEntity> rows, boolean hasNext) {
         return hasNext ? WorkCursor.of(query.sort(), rows.get(rows.size() - 1)).encode() : null;

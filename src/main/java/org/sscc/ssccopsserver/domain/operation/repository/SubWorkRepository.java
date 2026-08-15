@@ -123,4 +123,21 @@ public interface SubWorkRepository
             @Param("from") Instant from,
             @Param("to") Instant to,
             @Param("doneStatus") WorkStatus doneStatus);
+
+    /*
+     * 운영 통합(OPS-001)의 하위 업무 전량. 좌측 목록과 우측 트리(상위 업무별 묶음)를 한 화면이
+     * 함께 그리므로 커서 페이징을 쓰지 않는다 — 회의 목록(OPS-031)과 같은 판단. fetch join
+     * 구성과 정렬(AGG-04: 마감 오름차순, 마감 없는 건은 뒤, 동률은 식별자)은 대시보드의
+     * findAllByOwnerId와 같다 — 스코프만 계정에서 전체로 넓힌 것이다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where o.deletedAt is null"
+                    + " order by s.dueAt asc nulls last, s.id asc")
+    List<SubWorkEntity> findAllAlive();
 }

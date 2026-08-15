@@ -289,6 +289,96 @@ class SubWorkControllerTest {
         mockMvc.perform(get("/v1/sub-works/{subWorkId}", 1)).andExpect(status().isUnauthorized());
     }
 
+    /*
+     * 기본 정보 수정(OPS-030). 값이 실제로 바뀌는지·응답이 조회와 같은 승인 판단 근거를
+     * 싣는지는 서비스 테스트가 다루므로 여기서는 응답 형태·상태 코드만 확인한다.
+     */
+    @Test
+    void updateSubWorkReturns200WithUpdatedDetail() throws Exception {
+        Long subWorkId = createSubWork();
+        String body =
+                """
+                {
+                  "title": "부스 배치도 확정 (수정)",
+                  "ownerId": %d,
+                  "dueAt": "2099-02-01T23:59:00+09:00",
+                  "priority": "HIGH",
+                  "content": "동선을 다시 확정한다",
+                  "completionCriteria": "동선도 확정 및 배치 승인",
+                  "externalLink": "https://docs.example.com/updated"
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(
+                        patch("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.subWorkId").value(subWorkId))
+                .andExpect(jsonPath("$.data.title").value("부스 배치도 확정 (수정)"))
+                .andExpect(jsonPath("$.data.priority").value("HIGH"))
+                .andExpect(jsonPath("$.data.content").value("동선을 다시 확정한다"))
+                .andExpect(jsonPath("$.data.completionCriteria").value("동선도 확정 및 배치 승인"))
+                .andExpect(
+                        jsonPath("$.data.externalLink").value("https://docs.example.com/updated"))
+                // 상태·유형·상위 업무는 요청 본문에 필드가 없어 바뀌지 않는다 (POL-003)
+                .andExpect(jsonPath("$.data.workStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data.subWorkTypeName").value("예산지출"))
+                .andExpect(jsonPath("$.data.workId").value(parentWorkId));
+    }
+
+    @Test
+    void updateSubWorkWithUnknownOwnerReturnsValidationFailed() throws Exception {
+        Long subWorkId = createSubWork();
+        String body =
+                """
+                {
+                  "title": "담당자 없는 수정",
+                  "ownerId": %d
+                }
+                """
+                        .formatted(ownerId + 999);
+
+        mockMvc.perform(
+                        patch("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void updateUnknownSubWorkReturns404() throws Exception {
+        String body =
+                """
+                {
+                  "title": "없는 하위 업무 수정",
+                  "ownerId": %d
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(
+                        patch("/v1/sub-works/{subWorkId}", 999_999L)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void updateSubWorkWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(
+                        patch("/v1/sub-works/{subWorkId}", 1L)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                .andExpect(status().isUnauthorized());
+    }
+
     // 목록 화면(하위 업무)이 진입 시 호출하는 조회. 목록 응답은 data 배열 + page 봉투다 (AP-11)
     @Test
     void searchSubWorksReturns200WithListEnvelope() throws Exception {

@@ -151,6 +151,38 @@ public class SubWorkEntity {
     }
 
     /*
+     * 기본 정보 수정(OPS-030). 여기서 바꾸는 것은 하위 업무의 확장 속성뿐이다 —
+     * work_stts_cd·aprv_stts_cd·dly_yn·cmptn_dt는 전이(applyTransition)만의 몫이라 이 자리에
+     * 없고, sub_work_type_id도 없다: 유형이 바뀌면 승인 필요 여부·승인자·정족수·완료 점검
+     * 항목이 통째로 달라지는데 그 값들은 등록 시점에 이미 복사돼 있어(#43 소급 금지) 유형
+     * 재지정을 여기서 반영할 방법이 없다. 담당자·기간·우선순위는 sub_work가 아니라 자기 oper의
+     * 값이라 이 엔티티가 아니라 OperationEntity의 기존 mutator(changeTitle 등)로 바꾼다.
+     *
+     * title은 예외다 — sub_work_ttl이 oper_ttl과 값만 같을 뿐 별도 컬럼이라(위 클래스 주석)
+     * 여기서도 함께 바꿔야 두 컬럼이 어긋나지 않는다. 서비스가 operation.changeTitle(title)을
+     * 나란히 호출한다.
+     */
+    public void changeTitle(String title) {
+        this.title = title;
+    }
+
+    public void writeContent(String content) {
+        this.content = content;
+    }
+
+    public void writeCompletionCriteria(String completionCriteria) {
+        this.completionCriteria = completionCriteria;
+    }
+
+    public void changeExternalLink(String externalLink) {
+        this.externalLink = externalLink;
+    }
+
+    public void changeDueAt(Instant dueAt) {
+        this.dueAt = dueAt;
+    }
+
+    /*
      * 상태 전이(OPS-010). 전이표(TR-01~TR-04)에 있는 조합만 통과하고 나머지는 전부 막는다
      * (BR-O03·VR-O04·LY-14). 상태를 직접 쓰는 setter를 열지 않는 것이 이 통제의 전제다 (AR-10).
      *

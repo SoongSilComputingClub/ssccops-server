@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -256,6 +257,102 @@ class WorkControllerTest {
     @Test
     void getWorkWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/v1/works/{workId}", 1L)).andExpect(status().isUnauthorized());
+    }
+
+    /*
+     * 기본 정보 수정(OPS-004). 값이 실제로 바뀌는지는 서비스 테스트가 다루므로 여기서는
+     * 응답 형태·상태 코드만 확인한다.
+     */
+    @Test
+    void updateWorkReturns200WithUpdatedDetail() throws Exception {
+        Long workId = createWork();
+        String body =
+                """
+                {
+                  "title": "동아리 박람회 부스 운영 (수정)",
+                  "itemType": "ROUTINE",
+                  "ownerId": %d,
+                  "startAt": "2026-09-02T18:00:00+09:00",
+                  "endAt": "2026-09-02T20:00:00+09:00",
+                  "priority": "HIGH",
+                  "review": "부스 위치 확정"
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(
+                        patch("/v1/works/{workId}", workId)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.workId").value(workId))
+                .andExpect(jsonPath("$.data.title").value("동아리 박람회 부스 운영 (수정)"))
+                .andExpect(jsonPath("$.data.workType").value("ROUTINE"))
+                .andExpect(jsonPath("$.data.priority").value("HIGH"))
+                .andExpect(jsonPath("$.data.generalReview").value("부스 위치 확정"))
+                // workStatus는 요청 본문에 필드가 없어 바뀌지 않는다 (POL-003)
+                .andExpect(jsonPath("$.data.workStatus").value("PLANNING"));
+    }
+
+    /*
+     * workStatus는 요청 DTO에 필드가 없다(POL-003). Jackson이 미인식 필드를 기본적으로
+     * 조용히 무시하므로(폼 도메인의 formSttsCd와 같은 규칙) 요청은 그대로 성공하고,
+     * 실려 보낸 workStatus는 응답에 반영되지 않는다 — 거절이 아니라 무시다.
+     */
+    @Test
+    void updateWorkIgnoresUnknownStatusField() throws Exception {
+        Long workId = createWork();
+        String body =
+                """
+                {
+                  "title": "상태 변경 시도",
+                  "itemType": "EVENT",
+                  "ownerId": %d,
+                  "workStatus": "DONE"
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(
+                        patch("/v1/works/{workId}", workId)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.title").value("상태 변경 시도"))
+                .andExpect(jsonPath("$.data.workStatus").value("PLANNING"));
+    }
+
+    @Test
+    void updateUnknownWorkReturns404() throws Exception {
+        String body =
+                """
+                {
+                  "title": "없는 업무 수정",
+                  "itemType": "EVENT",
+                  "ownerId": %d
+                }
+                """
+                        .formatted(ownerId);
+
+        mockMvc.perform(
+                        patch("/v1/works/{workId}", 999_999L)
+                                .header("Authorization", "Bearer any-token")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void updateWorkWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(
+                        patch("/v1/works/{workId}", 1L)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{}"))
+                .andExpect(status().isUnauthorized());
     }
 
     /*

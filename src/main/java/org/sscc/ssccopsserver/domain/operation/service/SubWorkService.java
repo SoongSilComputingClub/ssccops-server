@@ -10,6 +10,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 
@@ -31,6 +32,18 @@ public interface SubWorkService {
      * (canApprove·canReject)와 내가 이번 회차에 던진 표(myVote) (#58).
      */
     SubWorkDetailResponse getSubWork(Long subWorkId, MemberEntity viewer);
+
+    /*
+     * 하위 업무 기본 정보를 수정한다 (OPS-030). oper(제목·기간·우선순위·담당자)와 sub_work
+     * (제목·업무 내용·완료 기준 내용·외부 링크·마감 일시)를 한 트랜잭션에서 함께 바꾼다.
+     *
+     * workId(상위 업무)·subWorkTypeId(유형)·workStatus·approvalStatus는 바꾸지 않는다 —
+     * 요청 DTO에 그 필드들이 아예 없다(SubWorkUpdateRequest 주석). viewer는 응답을 좁히는 데
+     * 쓴다 — 조회(getSubWork)와 같은 SubWorkDetailResponse를 돌려주므로 canApprove·canReject·
+     * myVote가 함께 실리고, 그 값들은 '누가 보는가'에 따라 갈린다.
+     */
+    SubWorkDetailResponse updateSubWork(
+            Long subWorkId, SubWorkUpdateRequest request, MemberEntity viewer);
 
     /*
      * 조건에 맞는 하위 업무를 상위 업무를 가로질러 조회한다 (OPS-008 · REQ-025).

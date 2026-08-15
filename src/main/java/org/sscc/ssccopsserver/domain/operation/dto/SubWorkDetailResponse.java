@@ -20,12 +20,21 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * 한 번의 호출로 채운다 — 단계 스테퍼(workStatus)·공통 속성(oper)·확장 속성(sub_work)·
  * 완료 체크리스트가 모두 여기서 나온다.
  *
+ * completionCriteria(cmptn_crtr_cn)는 등록 화면에 입력란이 없어 지금은 늘 NULL이다. 그래도
+ * 내리는 것은 값이 없어도 필드는 유지한다는 AP-15 때문이며, 완료 판정은 이 서술이 아니라
+ * 체크리스트가 맡는다 — 화면은 이 칸이 비어 있어도 '완료 조건이 없다'로 읽으면 안 된다.
+ *
  * 등록 응답(SubWorkCreateResponse)과 필드가 겹치지만 통합하지 않는다. 상세는 담당자를
  * 이름까지 내려야 해서 등록 응답의 ownerId(숫자)를 owner(객체)로 바꿔야 하는데, 그러면
  * 이미 나간 등록 API 계약이 깨진다. 목록·단건의 DTO를 나누는 AP-14와도 같은 방향이다.
  *
  * approvalRequired·authorizerRoleCode는 화면의 "완료 전환은 회장·국장 승인이 필요합니다"
  * 안내를 그리기 위한 값으로, 하위 업무가 아니라 그 유형(sub_work_type)이 갖고 있다.
+ *
+ * workTitle은 상세 화면의 '상위 업무' 행이다 (#70). 식별자만 내리면 화면이 이름을 얻으려고
+ * OPS-003을 한 번 더 불러야 하는데, 그 응답에는 하위 업무 목록까지 실려 있어 이름 한 줄을
+ * 위해 상위 업무 한 벌을 통째로 받게 된다. work의 제목은 그 자신이 아니라 상위 oper가 갖고
+ * 있으므로 연관을 EntityGraph에 함께 실어 조회 횟수는 그대로 둔다 (DB-13).
  *
  * canApprove·canReject는 **권한만** 답한다 (#58) — "이 사람이 승인·반려할 수 있는 사람인가"이지
  * "지금 누르면 성공하는가"가 아니다. 화면은 이 값으로 버튼을 그릴지 정하고, 누를 수 있는지는
@@ -43,6 +52,7 @@ public record SubWorkDetailResponse(
         Long subWorkId,
         Long operationId,
         Long workId,
+        String workTitle,
         OperationType operationType,
         String title,
         Long subWorkTypeId,
@@ -59,6 +69,7 @@ public record SubWorkDetailResponse(
         OffsetDateTime dueAt,
         OperationPriority priority,
         String content,
+        String completionCriteria,
         String externalLink,
         boolean isDelayed,
         OffsetDateTime completedAt,
@@ -107,6 +118,7 @@ public record SubWorkDetailResponse(
                 subWork.getId(),
                 operation.getId(),
                 subWork.getWork().getId(),
+                subWork.getWork().getOperation().getTitle(),
                 operation.getOperationType(),
                 subWork.getTitle(),
                 subWorkType.getId(),
@@ -123,6 +135,7 @@ public record SubWorkDetailResponse(
                 toOffsetDateTime(subWork.getDueAt()),
                 operation.getPriority(),
                 subWork.getContent(),
+                subWork.getCompletionCriteria(),
                 subWork.getExternalLink(),
                 delayed,
                 toOffsetDateTime(subWork.getCompletedAt()),

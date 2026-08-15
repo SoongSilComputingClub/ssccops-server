@@ -139,7 +139,8 @@ class SubWorkApprovalVoteServiceTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService);
+                        memberService,
+                        entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -153,7 +154,8 @@ class SubWorkApprovalVoteServiceTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        entityManager.getEntityManager());
 
         registrant = saveMember("20200001", "김도현", null);
         president = saveMember("20200002", "백승우", MemberRoleFixture.PRESIDENT);

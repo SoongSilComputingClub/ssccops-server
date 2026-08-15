@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.tuple;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -41,6 +42,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
@@ -152,7 +154,8 @@ class SubWorkServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService);
+                        memberService,
+                        entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -166,7 +169,8 @@ class SubWorkServiceImplTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        entityManager.getEntityManager());
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
@@ -443,12 +447,19 @@ class SubWorkServiceImplTest {
 
         assertThat(detail.subWorkId()).isEqualTo(subWorkId);
         assertThat(detail.workId()).isEqualTo(parentWorkId);
+        /*
+         * 상위 업무는 식별자만으로 화면의 '상위 업무' 행을 그릴 수 없다 (#70). 제목은 work가
+         * 아니라 그 상위 oper가 갖고 있으므로, 연관 하나를 빠뜨리면 여기서 드러난다.
+         */
+        assertThat(detail.workTitle()).isEqualTo("2026 동아리 박람회");
         assertThat(detail.operationType()).isEqualTo(OperationType.SUB_WORK);
         assertThat(detail.title()).isEqualTo("부스 배치도 확정");
         assertThat(detail.subWorkTypeName()).isEqualTo("내부행사");
         assertThat(detail.workStatus()).isEqualTo(WorkStatus.PLANNING);
         assertThat(detail.priority()).isEqualTo(OperationPriority.HIGH);
         assertThat(detail.content()).isEqualTo("박람회 부스 위치와 동선을 확정한다");
+        // 완료 기준 서술은 입력란이 없어 늘 비어 있다. 필드 자체는 유지한다 (AP-15)
+        assertThat(detail.completionCriteria()).isNull();
         assertThat(detail.externalLink()).isEqualTo("https://docs.example.com/booth");
         assertThat(detail.startAt().toInstant()).isEqualTo(START.toInstant());
         assertThat(detail.dueAt().toInstant()).isEqualTo(END.toInstant());
@@ -1030,6 +1041,189 @@ class SubWorkServiceImplTest {
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
+    // ---------------------------------------------------------------- OPS-030 수정
+
+    @Test
+    void updateSubWorkChangesAllEditableFields() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        MemberEntity newOwner = saveMember("20200003", "박준호", "new-owner@sscc.org");
+        OffsetDateTime newStart = START.plusDays(1);
+        OffsetDateTime newEnd = END.plusDays(1);
+        OffsetDateTime newDueAt = newEnd;
+
+        SubWorkDetailResponse updated =
+                subWorkService.updateSubWork(
+                        subWorkId,
+                        new SubWorkUpdateRequest(
+                                "수정 후 제목",
+                                newOwner.getId(),
+                                newStart,
+                                newEnd,
+                                newDueAt,
+                                OperationPriority.LOW,
+                                "수정 후 업무 내용",
+                                "수정 후 완료 기준",
+                                "https://docs.example.com/updated"),
+                        registrant);
+
+        assertThat(updated.subWorkId()).isEqualTo(subWorkId);
+        assertThat(updated.title()).isEqualTo("수정 후 제목");
+        assertThat(updated.owner().memberId()).isEqualTo(newOwner.getId());
+        assertThat(updated.startAt().toInstant()).isEqualTo(newStart.toInstant());
+        assertThat(updated.endAt().toInstant()).isEqualTo(newEnd.toInstant());
+        assertThat(updated.dueAt().toInstant()).isEqualTo(newDueAt.toInstant());
+        assertThat(updated.priority()).isEqualTo(OperationPriority.LOW);
+        assertThat(updated.content()).isEqualTo("수정 후 업무 내용");
+        // 등록 화면에 입력란이 없어 늘 NULL이던 값을 처음으로 채울 수 있는 경로다 (#70)
+        assertThat(updated.completionCriteria()).isEqualTo("수정 후 완료 기준");
+        assertThat(updated.externalLink()).isEqualTo("https://docs.example.com/updated");
+        // 상태·유형·상위 업무는 이 경로로 바꿀 방법이 없다(요청 DTO에 필드가 아예 없다)
+        assertThat(updated.workStatus()).isEqualTo(WorkStatus.PLANNING);
+        assertThat(updated.subWorkTypeId()).isEqualTo(approvalFreeTypeId);
+        assertThat(updated.workId()).isEqualTo(parentWorkId);
+
+        // sub_work_ttl은 oper_ttl과 값이 같아야 한다 — 서비스가 둘을 나란히 바꿔야 성립한다
+        SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
+        assertThat(subWork.getOperation().getTitle()).isEqualTo("수정 후 제목");
+
+        assertThat(detailOf(subWorkId).title()).isEqualTo("수정 후 제목");
+    }
+
+    // 화면 기본값이 '보통'이라 우선순위가 빠진 요청도 NORMAL로 저장돼야 한다 (등록과 같은 규칙)
+    @Test
+    void updateSubWorkWithoutPriorityDefaultsToNormal() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        SubWorkDetailResponse updated =
+                subWorkService.updateSubWork(
+                        subWorkId,
+                        new SubWorkUpdateRequest(
+                                "우선순위 미지정 수정", ownerId, START, END, null, null, null, null, null),
+                        registrant);
+
+        assertThat(updated.priority()).isEqualTo(OperationPriority.NORMAL);
+        // content·completionCriteria·externalLink도 생략하면 지워진다 — 전체 교체다
+        assertThat(updated.content()).isNull();
+        assertThat(updated.completionCriteria()).isNull();
+        assertThat(updated.externalLink()).isNull();
+        assertThat(updated.dueAt()).isNull();
+    }
+
+    @Test
+    void updateSubWorkWithUnknownOwnerIsRejected() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        SubWorkUpdateRequest request =
+                new SubWorkUpdateRequest(
+                        "담당자 교체 실패", ownerId + 999, START, END, null, null, null, null, null);
+
+        assertThatThrownBy(() -> subWorkService.updateSubWork(subWorkId, request, registrant))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER);
+
+        // 실패한 수정은 아무것도 바꾸지 않는다
+        assertThat(detailOf(subWorkId).title()).isNotEqualTo("담당자 교체 실패");
+    }
+
+    @Test
+    void updateSubWorkWithInvertedPeriodIsRejected() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        SubWorkUpdateRequest request =
+                new SubWorkUpdateRequest(
+                        "기간 역전 수정", ownerId, END, START, null, null, null, null, null);
+
+        assertThatThrownBy(() -> subWorkService.updateSubWork(subWorkId, request, registrant))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.INVALID_OPERATION_PERIOD);
+    }
+
+    @Test
+    void updateSubWorkWithUnknownIdIsRejected() {
+        SubWorkUpdateRequest request =
+                new SubWorkUpdateRequest(
+                        "존재 확인용 수정", ownerId, START, END, null, null, null, null, null);
+
+        assertThatThrownBy(() -> subWorkService.updateSubWork(999L, request, registrant))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
+    // 소프트 삭제된 건은 조회·전이·체크와 마찬가지로 존재하지 않는 것처럼 다룬다
+    @Test
+    void updateSubWorkOnSoftDeletedSubWorkIsRejected() {
+        SubWorkCreateResponse created =
+                subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
+        operationRepository
+                .findById(created.operationId())
+                .orElseThrow()
+                .softDelete(NOW.toInstant());
+        entityManager.flush();
+        entityManager.clear();
+
+        SubWorkUpdateRequest request =
+                new SubWorkUpdateRequest(
+                        "삭제된 건 수정", ownerId, START, END, null, null, null, null, null);
+
+        assertThatThrownBy(
+                        () ->
+                                subWorkService.updateSubWork(
+                                        created.subWorkId(), request, registrant))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
+    /*
+     * updatedAt(mdfcn_dt)은 @LastModifiedDate라 flush 시점에야 채워진다. 응답을 만들기 전에
+     * flush하지 않으면 방금 바꾼 값인데도 직전 수정 시각이 그대로 나간다 — 응답이 실제
+     * 저장값과 같은지로 그 회귀를 잡는다.
+     */
+    @Test
+    void updateSubWorkResponseReflectsFlushedUpdatedAt() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        SubWorkDetailResponse updated =
+                subWorkService.updateSubWork(
+                        subWorkId,
+                        new SubWorkUpdateRequest(
+                                "갱신 시각 확인", ownerId, START, END, null, null, null, null, null),
+                        registrant);
+
+        Instant persistedUpdatedAt =
+                operationRepository
+                        .findById(
+                                subWorkRepository
+                                        .findById(subWorkId)
+                                        .orElseThrow()
+                                        .getOperation()
+                                        .getId())
+                        .orElseThrow()
+                        .getUpdatedAt();
+        assertThat(updated.updatedAt().toInstant()).isEqualTo(persistedUpdatedAt);
+    }
+
+    // 승인·정족수 등 '보는 사람에 따라 갈리는 값'은 수정 후에도 조회(getSubWork)와 같은 규칙을 쓴다
+    @Test
+    void updateSubWorkResponseCarriesSameApprovalDerivedValuesAsGet() {
+        Long subWorkId = createSubWork(approvalNeededTypeId);
+
+        SubWorkDetailResponse updated =
+                subWorkService.updateSubWork(
+                        subWorkId,
+                        new SubWorkUpdateRequest(
+                                "승인 값 확인", ownerId, START, END, null, null, null, null, null),
+                        registrant);
+
+        SubWorkDetailResponse fetched = detailOf(subWorkId);
+        assertThat(updated.canApprove()).isEqualTo(fetched.canApprove());
+        assertThat(updated.canReject()).isEqualTo(fetched.canReject());
+        assertThat(updated.quorum()).isEqualTo(fetched.quorum());
     }
 
     private Long createSubWork(long subWorkTypeId) {

@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import jakarta.persistence.EntityManager;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -28,10 +30,12 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkVoteResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalVoteEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
@@ -79,6 +83,13 @@ public class SubWorkServiceImpl implements SubWorkService {
 
     // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
+
+    /*
+     * 수정(updateSubWork)이 mdfcn_dt를 바로 응답에 실어야 해서 필요하다 — @LastModifiedDate는
+     * flush 시점(JPA @PreUpdate 콜백)에야 in-memory 엔티티에 채워지므로, flush 없이 바로
+     * SubWorkDetailResponse를 만들면 방금 바꾼 값인데도 updatedAt이 직전 값 그대로 나간다.
+     */
+    private final EntityManager entityManager;
 
     /*
      * oper(공통)·sub_work(확장)·체크리스트를 한 트랜잭션에서 INSERT 한다. 체크리스트 없이
@@ -162,12 +173,63 @@ public class SubWorkServiceImpl implements SubWorkService {
      */
     @Override
     public SubWorkDetailResponse getSubWork(Long subWorkId, MemberEntity viewer) {
-        SubWorkEntity subWork =
-                subWorkRepository
-                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
-                        .orElseThrow(
-                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+        return buildDetail(findSubWork(subWorkId), viewer);
+    }
 
+    /*
+     * 기본 정보 수정(OPS-030). oper(제목·기간·우선순위·담당자)와 sub_work(제목·업무 내용·
+     * 완료 기준 내용·외부 링크·마감 일시)를 한 트랜잭션에서 함께 바꾼다 — 등록이 두 행을
+     * 함께 만드는 것과 같은 경계다(AR-11).
+     *
+     * workId·subWorkTypeId·workStatus·approvalStatus는 손대지 않는다 — 요청 DTO에 그 필드가
+     * 아예 없어(SubWorkUpdateRequest 주석) 여기서 막을 것도 없다.
+     */
+    @Override
+    @Transactional
+    public SubWorkDetailResponse updateSubWork(
+            Long subWorkId, SubWorkUpdateRequest request, MemberEntity viewer) {
+        SubWorkEntity subWork = findSubWork(subWorkId);
+
+        // 담당자 실재 여부는 등록과 같은 규칙이다 (AR-07·LY-10)
+        MemberEntity owner =
+                memberService
+                        .findAssignableMember(request.ownerId())
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER));
+
+        Instant beginAt = toInstant(request.startAt());
+        Instant endAt = toInstant(request.endAt());
+        validatePeriod(beginAt, endAt);
+
+        // sub_work_ttl은 oper_ttl과 값이 같아야 하므로 둘을 나란히 바꾼다 (SubWorkEntity 주석)
+        OperationEntity operation = subWork.getOperation();
+        operation.changeTitle(request.title());
+        operation.changeSchedule(beginAt, endAt);
+        // 등록 팩토리(createForSubWork)와 같은 기본값 — 생략하면 NORMAL이다
+        operation.changePriority(orNormalPriority(request.priority()));
+        operation.changePersonInCharge(owner);
+
+        subWork.changeTitle(request.title());
+        subWork.changeDueAt(toInstant(request.dueAt()));
+        subWork.writeContent(request.content());
+        subWork.writeCompletionCriteria(request.completionCriteria());
+        subWork.changeExternalLink(request.externalLink());
+
+        // mdfcn_dt를 지금 바꾼 값으로 응답에 실으려면 flush로 감사 필드를 먼저 채워야 한다
+        entityManager.flush();
+
+        return buildDetail(subWork, viewer);
+    }
+
+    private SubWorkEntity findSubWork(Long subWorkId) {
+        return subWorkRepository
+                .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                .orElseThrow(() -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+    }
+
+    private SubWorkDetailResponse buildDetail(SubWorkEntity subWork, MemberEntity viewer) {
         List<SubWorkChecklistItemEntity> checklist =
                 subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);
 
@@ -189,6 +251,10 @@ public class SubWorkServiceImpl implements SubWorkService {
                                 .findFirstBySubWorkOrderByRejectedAtDescIdDesc(subWork)
                                 .orElse(null)),
                 approvalAuthorityPolicy.canDecide(subWork, viewer));
+    }
+
+    private OperationPriority orNormalPriority(OperationPriority priority) {
+        return priority == null ? OperationPriority.NORMAL : priority;
     }
 
     /*

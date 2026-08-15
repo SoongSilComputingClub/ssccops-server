@@ -35,6 +35,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationType;
@@ -113,7 +114,8 @@ class WorkServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService);
+                        memberService,
+                        entityManager.getEntityManager());
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
@@ -515,5 +517,137 @@ class WorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
         return workService.getWork(workId);
+    }
+
+    // ---------------------------------------------------------------- OPS-004 수정
+
+    @Test
+    void updateWorkChangesAllEditableFields() {
+        Long workId = createWork("수정 전 업무", "수정 전 총평");
+        MemberEntity newOwner = saveMember("20200003", "박준호", "new-owner@sscc.org");
+        OffsetDateTime newStart = START.plusDays(1);
+        OffsetDateTime newEnd = END.plusDays(1);
+
+        WorkDetailResponse updated =
+                workService.updateWork(
+                        workId,
+                        new WorkUpdateRequest(
+                                "수정 후 업무",
+                                WorkType.ROUTINE,
+                                newOwner.getId(),
+                                newStart,
+                                newEnd,
+                                OperationPriority.HIGH,
+                                "수정 후 총평"));
+
+        assertThat(updated.workId()).isEqualTo(workId);
+        assertThat(updated.title()).isEqualTo("수정 후 업무");
+        assertThat(updated.workType()).isEqualTo(WorkType.ROUTINE);
+        assertThat(updated.owner().memberId()).isEqualTo(newOwner.getId());
+        assertThat(updated.startAt().toInstant()).isEqualTo(newStart.toInstant());
+        assertThat(updated.endAt().toInstant()).isEqualTo(newEnd.toInstant());
+        assertThat(updated.priority()).isEqualTo(OperationPriority.HIGH);
+        assertThat(updated.generalReview()).isEqualTo("수정 후 총평");
+        // 상태는 이 경로로 바꿀 방법이 없다(요청 DTO에 필드가 아예 없다) — 그대로 남아야 한다
+        assertThat(updated.workStatus()).isEqualTo(WorkStatus.PLANNING);
+        // 등록자는 이 경로로도 바뀌지 않는다 — updatable=false
+        assertThat(updated.registrant().memberId()).isEqualTo(registrant.getId());
+
+        assertThat(detailOf(workId).title()).isEqualTo("수정 후 업무");
+    }
+
+    // 화면 기본값이 '보통'이라 우선순위가 빠진 요청도 NORMAL로 저장돼야 한다 (등록과 같은 규칙)
+    @Test
+    void updateWorkWithoutPriorityDefaultsToNormal() {
+        Long workId = createWork("우선순위 미지정 수정", "총평 있음");
+
+        WorkDetailResponse updated =
+                workService.updateWork(
+                        workId,
+                        new WorkUpdateRequest(
+                                "우선순위 미지정 수정", WorkType.EVENT, ownerId, START, END, null, null));
+
+        assertThat(updated.priority()).isEqualTo(OperationPriority.NORMAL);
+        // review도 생략하면 지워진다 — 부분 수정이 아니라 전체 교체다
+        assertThat(updated.generalReview()).isNull();
+    }
+
+    @Test
+    void updateWorkWithUnknownOwnerIsRejected() {
+        Long workId = createWork("담당자 교체 실패", null);
+
+        WorkUpdateRequest request =
+                new WorkUpdateRequest(
+                        "담당자 교체 실패", WorkType.EVENT, ownerId + 999, START, END, null, null);
+
+        assertThatThrownBy(() -> workService.updateWork(workId, request))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER);
+
+        // 실패한 수정은 아무것도 바꾸지 않는다
+        assertThat(detailOf(workId).title()).isEqualTo("담당자 교체 실패");
+    }
+
+    @Test
+    void updateWorkWithInvertedPeriodIsRejected() {
+        Long workId = createWork("기간 역전 수정", null);
+
+        WorkUpdateRequest request =
+                new WorkUpdateRequest("기간 역전 수정", WorkType.EVENT, ownerId, END, START, null, null);
+
+        assertThatThrownBy(() -> workService.updateWork(workId, request))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.INVALID_OPERATION_PERIOD);
+    }
+
+    @Test
+    void updateWorkWithUnknownIdIsRejected() {
+        Long workId = createWork("존재 확인용 수정", null);
+        WorkUpdateRequest request =
+                new WorkUpdateRequest("존재 확인용 수정", WorkType.EVENT, ownerId, START, END, null, null);
+
+        assertThatThrownBy(() -> workService.updateWork(workId + 999, request))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.WORK_NOT_FOUND);
+    }
+
+    // 소프트 삭제된 업무는 조회와 마찬가지로 없는 것으로 본다
+    @Test
+    void updateWorkWithDeletedWorkIsRejected() {
+        Long workId = createWork("삭제된 업무 수정", null);
+        workRepository.findById(workId).orElseThrow().getOperation().softDelete(DELETED_AT);
+        entityManager.flush();
+        entityManager.clear();
+
+        WorkUpdateRequest request =
+                new WorkUpdateRequest("삭제된 업무 수정", WorkType.EVENT, ownerId, START, END, null, null);
+
+        assertThatThrownBy(() -> workService.updateWork(workId, request))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.WORK_NOT_FOUND);
+    }
+
+    /*
+     * updatedAt(mdfcn_dt)은 @LastModifiedDate라 flush 시점에야 채워진다. 응답을 만들기 전에
+     * flush하지 않으면 방금 바꾼 값인데도 직전 수정 시각이 그대로 나간다 — 응답이 실제
+     * 저장값과 같은지로 그 회귀를 잡는다.
+     */
+    @Test
+    void updateWorkResponseReflectsFlushedUpdatedAt() {
+        Long workId = createWork("갱신 시각 확인", null);
+
+        WorkDetailResponse updated =
+                workService.updateWork(
+                        workId,
+                        new WorkUpdateRequest(
+                                "갱신 시각 확인", WorkType.EVENT, ownerId, START, END, null, null));
+
+        Instant persistedUpdatedAt =
+                operationRepository.findById(updated.operationId()).orElseThrow().getUpdatedAt();
+        assertThat(updated.updatedAt().toInstant()).isEqualTo(persistedUpdatedAt);
     }
 }

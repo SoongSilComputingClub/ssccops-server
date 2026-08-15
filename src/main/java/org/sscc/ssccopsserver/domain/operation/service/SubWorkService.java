@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.util.List;
+
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
@@ -8,6 +10,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
@@ -85,4 +88,17 @@ public interface SubWorkService {
             Long checklistItemId,
             SubWorkChecklistItemUpdateRequest request,
             MemberEntity performer);
+
+    /*
+     * 운영 대시보드(OPS-038) '내 업무 목록'. owner가 담당자인 하위 업무 전량을 마감 오름차순
+     * (AGG-04)으로 돌려준다. 완료 건도 포함한다 — 전체/마감임박/지연 필터는 화면이 이 목록
+     * 위에서 다시 나눈다.
+     */
+    List<SubWorkSummaryResponse> findMyTasks(MemberEntity owner);
+
+    /*
+     * 운영 대시보드(OPS-038) '다가오는 마감'. 조회 시점 기준 ±5일 범위에 마감이 있는 하위
+     * 업무를 마감 오름차순으로 돌려준다(이슈#60). 완료 건은 빠진다.
+     */
+    List<SubWorkSummaryResponse> findUpcomingDeadlines();
 }

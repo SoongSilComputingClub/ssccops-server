@@ -281,7 +281,44 @@ public enum MemberErrorCode implements ErrorCode {
      * 프론트에게는 입력값 오류이고, 정의서 03_오류_코드에 없는 코드를 새로 만들지 않는다.
      */
     ACADEMIC_PROFILE_REQUIRED(
-            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "재학 회원은 학과·학년을 입력해야 합니다.");
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "재학 회원은 학과·학년을 입력해야 합니다."),
+
+    /*
+     * 400 — 지금과 같은 값으로 등급·상태를 바꾸려 할 때 (#78).
+     *
+     * 통과시키면 "임시회원 → 임시회원" 같은 행이 mbr_grd_hstry에 쌓여 실제 승급 시점을 찾을 수
+     * 없게 된다. 이력은 되돌릴 수 없으므로(행이 updatable = false로 잠겨 있다) 들어오기 전에
+     * 막는 것이 유일한 방어선이다.
+     *
+     * 코드 문자열이 VALIDATION_FAILED가 아니라 전용 값인 것은 화면이 이것만 다르게 안내해야
+     * 하기 때문이다 — 필수값 누락과 뭉뚱그리면 "무엇이 잘못됐는지" 대신 "다시 확인하세요"가 된다.
+     */
+    NO_CHANGE(HttpStatus.BAD_REQUEST, "NO_CHANGE", "현재와 같은 값으로는 변경할 수 없습니다."),
+
+    /*
+     * 400 — 등급·상태의 적용 일자가 미래일 때 (#78).
+     *
+     * mbr의 등급·상태는 이 요청으로 **지금 바뀐다.** 미래 일자를 받아들이면 "3월 1일부터 휴학"이
+     * 이력에는 적혀 있는데 회원은 오늘부터 휴학인 상태가 되어 둘이 어긋난다. 예약 변경은 적용
+     * 시점에 실제로 값을 바꿔 줄 장치가 있어야 성립하므로 별도 이슈다.
+     *
+     * 오늘은 시스템 시각이 아니라 주입된 Clock에서 온다 — 클라이언트가 자기 시각으로 오늘을
+     * 채워 보내면 시간대가 다른 기기에서 하루 어긋난 이력이 남는다.
+     */
+    FUTURE_APPLIED_DATE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "적용 일자는 오늘 이후일 수 없습니다."),
+
+    /*
+     * 400 — 종료 예정일을 쓸 수 없는 상태에 실어 보냈을 때 (#78).
+     *
+     * 조용히 버리지 않고 거절하는 근거는 MemberStatusChangeRequest 주석에 있다 — 이력 행이
+     * updatable = false라 나중에 채워 넣을 경로가 없기 때문이다.
+     */
+    STATUS_END_DATE_NOT_ALLOWED(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "종료 예정일은 휴학·군휴학 상태에만 지정할 수 있습니다."),
+
+    // 400 — 종료 예정일이 적용 일자보다 앞설 때 (#78). 시작하기 전에 끝나는 상태는 성립하지 않는다
+    STATUS_END_DATE_BEFORE_APPLIED(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "종료 예정일은 적용 일자보다 앞설 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

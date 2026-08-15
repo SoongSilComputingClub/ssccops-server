@@ -77,10 +77,9 @@ WHERE NOT EXISTS (SELECT 1 FROM role_clsf WHERE role_clsf_cd = 'EVENT');
 
 -- 조직 역할(role) 마스터.
 --
--- indct_seqno는 화면 정렬 순번이지만 여기서는 **서열 오름차순**(회장 1 → 부회장 2 → 총무 3 → 국장 4 → …)
--- 으로 채운다. role 테이블에는 서열 컬럼이 따로 없어서, "국장 이상"(#9)을 판정하려면 기댈 곳이
--- 이 순번뿐이다. 판정 로직 자체는 #9의 범위라 여기서 만들지 않고, 그 위에 얹을 수 있는 순서만 보장한다.
--- 역할을 새로 추가할 때 서열 중간에 끼워 넣으려면 뒤쪽 순번을 밀어야 한다는 뜻이기도 하다.
+-- indct_seqno는 화면 정렬 순번이다. **서열로 쓰지 않는다** — 분류(role_clsf)마다 1번부터
+-- 다시 시작하므로 분류를 가르지 않고 비교하면 '프로젝트장(PROJECT 1)'이 '국장(POSITION 4)'보다
+-- 높게 계산된다(#9 · VR-M11). 인가는 서열이 아니라 역할에 부여된 권한(role_authrt_rel)으로 한다.
 --
 -- role_id는 지정하지 않는다. IDENTITY 컬럼에 값을 박아 넣으면 시퀀스가 그대로 1에 머물러,
 -- 나중에 역할 관리 화면이 역할을 추가하는 순간 PK가 충돌한다. 멱등 판정은 역할명으로 한다.
@@ -111,6 +110,96 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '프로젝트장');
 INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
 SELECT 7, '스터디장', 'POSITION'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
+
+-- 권한(authrt) 트리. 코드가 @RequireAuthority로 직접 가리키는 값이라 전부 sys_yn = TRUE다 (#9).
+--
+-- 단일 부모 트리이며 부여는 위→아래 한 방향으로만 펼쳐진다. 상위를 부여하면 자손 전부를
+-- 부여한 것이지만, 자손을 가졌다고 상위가 생기지는 않는다.
+--
+--   EXECUTIVE 임원
+--   ├── OPERATOR 운영자
+--   │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW
+--   │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
+--   ├── SUB_WORK_TYPE_MANAGE · FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
+--
+-- indct_seqno는 형제들 사이의 표시 순번이다(각 부모 아래에서 1부터). 서열이 아니다 —
+-- 인가는 순번이 아니라 트리의 부모-자식 관계로만 판정한다.
+--
+-- 상위(up_authrt_cd)가 FK라 부모를 먼저 넣어야 한다. 감사 컬럼(crt_dt·mdfcn_dt)은 이 파일이
+-- JPA를 거치지 않는 순수 SQL이라 직접 적는다 — 빠뜨리면 NOT NULL 위반으로 기동이 깨진다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'EXECUTIVE', '임원', NULL, '운영 전반의 최상위 권한. 아래 모든 권한을 포함한다.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'EXECUTIVE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'OPERATOR', '운영자', 'EXECUTIVE', '업무·폼 운영에 필요한 권한 묶음.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'OPERATOR');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_TYPE_MANAGE', '하위 업무 유형 관리', 'EXECUTIVE', '하위 업무 유형의 등록·수정·사용 여부 전환.', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_TYPE_MANAGE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'FORM_LABEL_MANAGE', '폼 라벨 관리', 'EXECUTIVE', '폼 라벨의 생성·비활성화.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_LABEL_MANAGE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'MEMBER_MANAGE', '회원 관리', 'EXECUTIVE', '회원 정보·등급·상태의 조회와 변경.', TRUE, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEMBER_MANAGE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'ROLE_MANAGE', '역할·권한 관리', 'EXECUTIVE', '역할의 생성·부여와 역할별 권한 지정.', TRUE, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'ROLE_MANAGE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'WORK_MANAGE', '업무 관리', 'OPERATOR', '업무·하위 업무의 등록·조회·상태 전이.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'WORK_MANAGE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_TYPE_READ', '하위 업무 유형 조회', 'OPERATOR', '하위 업무 유형 목록 조회(등록 폼의 드롭다운).', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_TYPE_READ');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'FORM_MANAGE', '폼 관리', 'OPERATOR', '폼 조회·작성·접수 상태 변경을 아우르는 묶음.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_MANAGE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'RESPONSE_REVIEW', '응답 심사', 'OPERATOR', '폼 응답의 조회와 심사 결과 반영.', TRUE, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'RESPONSE_REVIEW');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'FORM_READ', '폼 조회', 'FORM_MANAGE', '운영자용 폼 목록·상세 조회.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_READ');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'FORM_WRITE', '폼 작성·수정', 'FORM_MANAGE', '폼 생성·수정·복제와 라벨 지정 교체.', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_WRITE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'FORM_STATUS_CHANGE', '폼 접수 상태 변경', 'FORM_MANAGE', '폼의 접수 시작·마감 전이.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_STATUS_CHANGE');
+
+-- 역할↔권한 초기 매핑(role_authrt_rel). 회장·부회장·총무 → EXECUTIVE · 국장 → OPERATOR이며
+-- 국원·프로젝트장·스터디장은 부여하지 않는다 — "권한 없는 역할은 아무것도 못 한다"가 기본값이다.
+--
+-- role_id를 값으로 적지 않고 역할명으로 조회해 넣는다. role_id는 IDENTITY라 환경마다 값이 다르다
+-- (그래서 코드도 역할이 아니라 권한만 가리킨다). role_nm은 UNIQUE가 아니므로 같은 이름의 역할이
+-- 여럿이면 각각에 붙는데, 그것이 의도한 동작이다.
+--
+-- 멱등 판정은 (role_id, authrt_cd) 쌍으로 한다 — uk_role_authrt_rel_role_authority와 같은 기준이다.
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'EXECUTIVE', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm IN ('회장', '부회장', '총무')
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'EXECUTIVE');
+
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'OPERATOR', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '국장'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'OPERATOR');
 
 -- 하위 업무 유형(sub_work_type). 운영 등록 화면의 업무 유형 4종과 1:1로 대응한다.
 -- 유형은 코드가 아니라 기준 데이터라서 여기서 넣는다 (REQ-010 · POL-005 — 승인 정책의 데이터화).

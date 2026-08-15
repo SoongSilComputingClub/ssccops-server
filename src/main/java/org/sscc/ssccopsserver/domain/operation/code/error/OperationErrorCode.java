@@ -49,8 +49,11 @@ public enum OperationErrorCode implements ErrorCode {
 
     /*
      * 403 — 승인자 역할이 아닌 회원의 승인·반려(TR-03·TR-04), 운영진이 아닌 회원의 투표(OPS-015).
-     * 판정은 ApprovalAuthorityPolicy가 한 곳에서 하며, 역할 인가가 AOP로 붙으면(#9) 그쪽으로
-     * 옮겨간다. 그 전까지 이 코드를 던지는 곳은 승인 관련 경로뿐이고 '국장 이상' 통제는 아직 없다.
+     * 판정은 ApprovalAuthorityPolicy가 한 곳에서 한다.
+     *
+     * 권한 인가(#9)가 이것을 대체하지 않는다 — 그쪽은 "이 사람이 업무를 다룰 수 있는가"이고
+     * 이쪽은 "이 건의 승인자 본인인가"라, 두 검사가 순서대로 걸린다. 코드 문자열은
+     * MemberErrorCode.AUTHORITY_REQUIRED와 같은 FORBIDDEN이다(화면이 보기에 같은 거절이다).
      */
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "권한이 없습니다."),
 

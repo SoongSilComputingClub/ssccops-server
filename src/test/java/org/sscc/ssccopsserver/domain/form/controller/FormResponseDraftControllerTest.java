@@ -42,8 +42,12 @@ import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryReposito
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -102,6 +106,9 @@ class FormResponseDraftControllerTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
 
@@ -110,6 +117,14 @@ class FormResponseDraftControllerTest {
     @BeforeEach
     void setUp() {
         respondent = saveMember("20260001", "이서연", "actor@sscc.org");
+
+        // 자동 저장 자체에는 권한이 필요 없지만, 응답 집계 확인이 운영자용 폼 조회(FORM_READ)를 거친다 (#9)
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                respondent,
+                MemberRoleFixture.DIRECTOR);
     }
 
     /* ── 저장(upsert) ──────────────────────────────────────── */

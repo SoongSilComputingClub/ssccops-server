@@ -27,8 +27,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -50,6 +54,9 @@ class WorkControllerTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
 
     private Long ownerId;
     private Long registrantId;
@@ -58,7 +65,16 @@ class WorkControllerTest {
     void setUp() {
         ownerId = saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org").getId();
         // 등록자는 토큰의 sub(AUTH_USER_ID)와 연결된 회원이며 담당자와 다른 사람이다
-        registrantId = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org").getId();
+        MemberEntity registrant = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org");
+        registrantId = registrant.getId();
+
+        // 업무 API는 WORK_MANAGE를 요구한다 (#9). 국장이 OPERATOR로 닿는다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                registrant,
+                MemberRoleFixture.DIRECTOR);
     }
 
     @Test

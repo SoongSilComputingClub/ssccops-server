@@ -45,8 +45,12 @@ import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 /*
  * 폼 라벨 관리·지정 API (#34).
@@ -75,6 +79,9 @@ class FormLabelControllerTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
 
     private MemberEntity operator;
     private FormEntity form;
@@ -90,6 +97,14 @@ class FormLabelControllerTest {
                         "20260101",
                         "홍길동",
                         EMAIL);
+
+        // 라벨 생성·비활성화는 FORM_LABEL_MANAGE(EXECUTIVE 직속)라 국장은 닿지 않는다 (#9)
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                operator,
+                MemberRoleFixture.PRESIDENT);
         form = saveForm("2026 신규모집 지원서");
     }
 

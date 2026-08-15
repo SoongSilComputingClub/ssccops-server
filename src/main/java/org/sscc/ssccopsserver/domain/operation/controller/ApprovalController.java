@@ -26,9 +26,10 @@ import lombok.RequiredArgsConstructor;
  * 투표는 하위 업무에 달린 하위 리소스(POST /v1/sub-works/{id}/approvals/votes)라, 둘 다
  * 대상 하위 업무를 경로에 갖는다. 이 컨트롤러는 조회만 맡는다.
  *
- * 정의서상 권한은 '승인자 본인'이나 역할 인가가 아직 구현되지 않아 현재는 인증만 요구한다
- * (SubWorkController와 같은 선례). 목록을 승인자별로 좁히지 않는 것은 화면이 운영진 전체에게
- * 같은 승인함을 보여주기 때문이며, 실제 승인·반려는 전이 API가 승인자만 통과시킨다.
+ * 권한 인가(#9)를 걸지 않은 유일한 운영 컨트롤러다. 정의서상 권한이 '승인자 본인'이라
+ * 권한 코드로 표현되는 종류가 아니기 때문이다 — 판정은 ApprovalAuthorityPolicy가 계속 맡는다.
+ * 목록을 승인자별로 좁히지 않는 것은 화면이 운영진 전체에게 같은 승인함을 보여주기 때문이며,
+ * 실제 승인·반려는 전이 API(@RequireAuthority(WORK_MANAGE) + 승인자 판정)가 걸러낸다.
  */
 @RestController
 @RequiredArgsConstructor

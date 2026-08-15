@@ -8,8 +8,6 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
-import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -23,7 +21,6 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-import org.sscc.ssccopsserver.global.security.UserRoleType;
 import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtAuthenticationConverter;
 
 import lombok.extern.slf4j.Slf4j;
@@ -35,8 +32,12 @@ import lombok.extern.slf4j.Slf4j;
  * 설정한다. 회원이 없어도(가입 전) 인증 자체는 통과하며, 회원이 필요한 엔드포인트를 막는 것은
  * 여기가 아니라 @CurrentMember 리졸버의 책임이다(403 SIGNUP_REQUIRED).
  *
- * 아직 권한(GrantedAuthority)을 채우지 않으므로 hasRole 기반 인가(/admin/** 등)는 role 판별
- * 로직이 붙기 전까지 사실상 항상 거부된다 — 별도 이슈에서 처리한다.
+ * **여기서는 경로별 권한을 판단하지 않는다.** 인가는 @RequireAuthority + AOP가 요청 시점에
+ * DB(role_authrt_rel)를 보고 판정한다 (#9). GrantedAuthority를 채우지 않는 것도 그래서다 —
+ * 역할은 화면에서 만들어지는 사용자 관리 데이터라 정적인 hasRole 규칙으로 굳힐 수 없다.
+ *
+ * RoleHierarchy(ADMIN ⊃ USER ⊃ PREUSER)와 /admin/** 규칙은 #9에서 제거했다. 실제 역할·권한
+ * 어휘(회장·국장 / WORK_MANAGE …)와 대응되지 않는 잔재였고, 남겨 두면 권한 어휘가 두 벌이 된다.
  */
 @Slf4j
 @Configuration
@@ -72,17 +73,6 @@ public class SecurityConfig {
         this.authenticationEntryPoint = authenticationEntryPoint;
         this.accessDeniedHandler = accessDeniedHandler;
         this.supabaseJwtAuthenticationConverter = supabaseJwtAuthenticationConverter;
-    }
-
-    // 권한 계층
-    @Bean
-    public RoleHierarchy roleHierarchy() {
-        return RoleHierarchyImpl.withRolePrefix("ROLE_")
-                .role(UserRoleType.ADMIN.name())
-                .implies(UserRoleType.USER.name())
-                .role(UserRoleType.USER.name())
-                .implies(UserRoleType.PREUSER.name())
-                .build();
     }
 
     /*
@@ -172,10 +162,8 @@ public class SecurityConfig {
                     // 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없다. 지표·로그 레벨 조회
                     // (prometheus·metrics·loggers)는 계속 인증을 요구한다
                     auth.requestMatchers("/actuator/health/**", "/actuator/info").permitAll();
-                    auth.requestMatchers("/admin/**")
-                            .hasRole(UserRoleType.ADMIN.name())
-                            .anyRequest()
-                            .authenticated();
+                    // 나머지는 인증만 요구한다. 무엇을 할 수 있는지는 @RequireAuthority가 본다
+                    auth.anyRequest().authenticated();
                 });
 
         /*

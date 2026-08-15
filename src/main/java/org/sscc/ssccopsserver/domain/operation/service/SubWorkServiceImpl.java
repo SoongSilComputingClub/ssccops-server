@@ -74,7 +74,7 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkRejectionRepository subWorkRejectionRepository;
     private final MemberService memberService;
 
-    // 승인자·투표자 판정은 한 곳에만 둔다 — 역할 인가(#9)가 붙으면 통째로 옮겨간다
+    // 승인자·투표자 판정은 한 곳에만 둔다 (권한 인가 #9와 층이 다르다 — 그쪽 주석 참고)
     private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
 
     // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
@@ -310,7 +310,8 @@ public class SubWorkServiceImpl implements SubWorkService {
 
         /*
          * 승인·완료와 반려는 유형이 지정한 승인자만 할 수 있다 (TR-03·TR-04 수행 권한 · #47).
-         * 착수·검토요청은 담당자의 몫이라 검사하지 않는다 — 그쪽 통제는 역할 인가(#9)가 맡는다.
+         * 착수·검토요청은 담당자의 몫이라 검사하지 않는다 — 컨트롤러의 WORK_MANAGE 권한(#9)이
+         * 이미 업무를 다룰 수 없는 사람을 걸러 두었다.
          * 상태를 바꾸기 전에 먼저 끊어야 권한 없는 요청이 이력을 남기지 않는다.
          */
         if (action == TransitionAction.APPROVE_COMPLETE || action == TransitionAction.REJECT) {
@@ -425,8 +426,9 @@ public class SubWorkServiceImpl implements SubWorkService {
      * 나오는 값이라 체크로 변하지 않는다. 상위 업무 상세(OPS-003)가 보여주는 하위 업무별
      * 진행률은 저장 컬럼 없이 체크리스트에서 파생하므로(AGG-02) 다음 조회에 그대로 반영된다.
      *
-     * performer는 아직 읽지 않는다. 권한 검사는 역할 인가(#9), 체크 이력은 감사 로그(#8)가
-     * 붙을 때 이 자리에서 쓰인다 — 그때 시그니처가 바뀌지 않도록 지금부터 받아 둔다 (LY-05).
+     * performer는 아직 읽지 않는다. 권한 검사는 컨트롤러의 @RequireAuthority(#9)가 이미 마쳤고,
+     * 체크 이력은 감사 로그(#8)가 붙을 때 이 자리에서 쓰인다 — 그때 시그니처가 바뀌지 않도록
+     * 지금부터 받아 둔다 (LY-05).
      */
     @Override
     @Transactional

@@ -16,8 +16,10 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,7 +32,8 @@ import lombok.RequiredArgsConstructor;
  * **응답자용 PublicFormController와 컨트롤러를 나눈다.** 경로 접두사(/v1/forms/{formId}/responses)는
  * 같지만 소비자가 반대다 — 저쪽은 자기 답을 내는 사람이고 여기는 남의 답을 읽고 심사하는 사람이다.
  * 한 클래스에 두면 운영자용 응답에 필드가 하나 늘 때마다 공개 링크로 새어 나갈 것이 함께 늘고,
- * 역할 인가가 붙을 때 클래스 하나에 두 종류의 규칙을 적어야 한다 (#35에서 세운 분리와 같은 이유).
+ * 인가 규칙도 클래스 하나에 두 벌을 적어야 한다 (#35에서 세운 분리와 같은 이유) — 실제로
+ * 이 컨트롤러는 통째로 RESPONSE_REVIEW를 요구하고 저쪽은 권한 요구가 없다.
  *
  * 같은 경로에 메서드가 갈리는 자리가 하나 있다 — POST /v1/forms/{formId}/responses는 응답자의
  * 제출(#35)이고 GET은 운영자의 목록이다. 스프링은 메서드까지 보고 매핑하므로 충돌하지 않지만,
@@ -40,12 +43,14 @@ import lombok.RequiredArgsConstructor;
  * 스프링은 경로 변수보다 리터럴 세그먼트를 먼저 고르므로 /responses/draft는 언제나 자동 저장
  * 조회로 간다 — 순서에 기대는 것이 아니라 명세로 정해진 동작이다.
  *
- * 정의서상 권한은 운영자이나 역할 인가가 아직 구현되지 않아 현재는 인증만 요구한다
- * (FormController와 같은 상태). 역할 인가가 AOP로 붙을 때 이 컨트롤러에 함께 적용한다 —
- * 이 API는 다른 회원의 학번·연락처·지원서 내용을 통째로 내려주므로 그때 가장 먼저 걸어야 한다.
+ * 인가는 RESPONSE_REVIEW 권한이며 **클래스 전체**에 건다 (#9). 이 API는 다른 회원의 학번·
+ * 연락처·지원서 내용을 통째로 내려주므로, 핸들러가 하나 늘 때 애노테이션을 빠뜨리는 것만으로
+ * 개인정보가 열리는 자리를 만들지 않는다. 조회와 심사를 나누지 않은 것은 남의 지원서를 읽는
+ * 것 자체가 심사 권한이기 때문이다.
  */
 @RestController
 @RequiredArgsConstructor
+@RequireAuthority(AuthorityCode.RESPONSE_REVIEW)
 @RequestMapping("/v1/forms/{formId}/responses")
 public class FormResponseController {
 

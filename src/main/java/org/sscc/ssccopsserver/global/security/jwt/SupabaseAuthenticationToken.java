@@ -13,7 +13,9 @@ import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
  * 회원이 필요한 엔드포인트는 principal을 직접 캐스팅하지 말고 @CurrentMember로 받는다.
  * 미가입 사용자를 SIGNUP_REQUIRED로 걸러내는 책임이 그 리졸버 한 곳에 모여 있다.
  *
- * 권한(GrantedAuthority)은 비워둔다 — 역할 인가는 별도 이슈에서 처리할 예정이다.
+ * 권한(GrantedAuthority)은 비워둔다. 인가는 요청 시점에 @RequireAuthority + AOP가 DB를 보고
+ * 판정하므로(#9) 인증 시점에 굳힐 것이 없다 — 굳히면 권한이 필요 없는 요청에도 조회가 붙고,
+ * 화면에서 역할·권한이 바뀌어도 이미 발급된 토큰의 판정이 따라오지 않는다.
  */
 public class SupabaseAuthenticationToken extends AbstractAuthenticationToken {
 

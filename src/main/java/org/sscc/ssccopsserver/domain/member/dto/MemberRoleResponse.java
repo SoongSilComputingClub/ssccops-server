@@ -8,7 +8,8 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
  * 종료일이 지난 역할은 담지 않는다 — '현재 역할'만 화면에 쓰이기 때문이다.
  * representative는 여러 현재 역할 중 사이드바 프로필에 대표로 표시할 하나를 가린다.
  *
- * 여기서 말하는 역할은 조직 직책이며, 인가용 역할(global.security.UserRoleType)과는 별개다.
+ * 이 목록은 **표시용**이다. 인가 판정은 역할이 아니라 그 역할에 부여된 권한으로 하며(#9),
+ * 화면이 버튼을 감출 때 쓰는 값은 여기가 아니라 MemberProfileResponse.capabilities다.
  */
 public record MemberRoleResponse(Long roleId, String roleName, boolean representative) {
 

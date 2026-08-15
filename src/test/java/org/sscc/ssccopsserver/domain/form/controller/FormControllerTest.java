@@ -50,8 +50,12 @@ import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -113,6 +117,9 @@ class FormControllerTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormLabelRepository formLabelRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
@@ -122,7 +129,16 @@ class FormControllerTest {
 
     @BeforeEach
     void setUp() {
-        actorId = saveMember(AUTH_USER_ID, "20260001", "이서연", "actor@sscc.org").getId();
+        MemberEntity actor = saveMember(AUTH_USER_ID, "20260001", "이서연", "actor@sscc.org");
+        actorId = actor.getId();
+
+        // 폼 API는 FORM_READ·FORM_WRITE·FORM_STATUS_CHANGE를 요구한다 (#9). 국장(OPERATOR)이 셋 다에 닿는다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                actor,
+                MemberRoleFixture.DIRECTOR);
     }
 
     /* ── 생성 ─────────────────────────────────────────────── */

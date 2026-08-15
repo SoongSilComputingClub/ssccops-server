@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -17,9 +18,13 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
+// AuthorityPolicy는 @Service라 @DataJpaTest 슬라이스에 없다. MemberServiceImpl이 프로필의
+// capabilities를 계산하는 데 쓰므로(#9) 정책과 그 Clock만 슬라이스에 들여온다.
 @DataJpaTest
+@Import({AuthorityPolicy.class, ClockConfig.class})
 @ActiveProfiles("test")
 class MemberServiceImplTest {
 
@@ -29,6 +34,7 @@ class MemberServiceImplTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private AuthorityPolicy authorityPolicy;
 
     private MemberService memberService() {
         return new MemberServiceImpl(
@@ -38,6 +44,7 @@ class MemberServiceImplTest {
                 memberStatusRepository,
                 memberGradeHistoryRepository,
                 memberStatusHistoryRepository,
+                authorityPolicy,
                 Clock.systemDefaultZone());
     }
 

@@ -48,8 +48,12 @@ import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -98,6 +102,9 @@ class FormResponseControllerTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormResponseService formResponseService;
@@ -120,6 +127,14 @@ class FormResponseControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         operator = saveMember(AUTH_USER_ID, "20200001", "김운영", "actor@sscc.org");
+
+        // 운영자용 응답 조회·심사는 RESPONSE_REVIEW를 요구한다 (#9). 국장이 OPERATOR로 닿는다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                operator,
+                MemberRoleFixture.DIRECTOR);
 
         form = saveForm("2026 신규모집 지원서");
         otherForm = saveForm("2026 임원 모집 지원서");

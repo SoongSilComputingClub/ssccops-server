@@ -28,6 +28,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
@@ -55,6 +56,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
@@ -66,7 +68,9 @@ import org.sscc.ssccopsserver.support.MemberFixture;
  * @DataJpaTest가 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다.
  */
 @DataJpaTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
-@Import(JpaAuditingConfig.class)
+// AuthorityPolicy는 @Service라 @DataJpaTest 슬라이스에 없다. MemberServiceImpl이 프로필의
+// capabilities를 계산하는 데 쓰므로(#9) 정책과 그 Clock만 슬라이스에 들여온다.
+@Import({JpaAuditingConfig.class, AuthorityPolicy.class, ClockConfig.class})
 @ActiveProfiles("test")
 class WorkServiceImplSearchTest {
 
@@ -95,6 +99,7 @@ class WorkServiceImplSearchTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private AuthorityPolicy authorityPolicy;
     @Autowired private TestEntityManager entityManager;
 
     private WorkService workService;
@@ -112,6 +117,7 @@ class WorkServiceImplSearchTest {
                         memberStatusRepository,
                         memberGradeHistoryRepository,
                         memberStatusHistoryRepository,
+                        authorityPolicy,
                         FIXED_CLOCK);
         workService =
                 new WorkServiceImpl(

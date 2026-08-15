@@ -23,8 +23,10 @@ import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,9 +37,10 @@ import lombok.RequiredArgsConstructor;
  * 폼 API (#32). 경로 버전 /v1을 쓰고 컨텍스트 경로에 /api를 두지 않는다 (AP-01).
  * 폼 관리 화면 네 개(목록·상세·편집·복제 버튼)가 전부 이 컨트롤러를 소비한다.
  *
- * 정의서상 권한은 운영자이나 역할 인가가 아직 구현되지 않아 현재는 인증만 요구한다 —
- * 인증 주체에 GrantedAuthority가 부여되지 않아 hasRole 계열이 항상 실패하기 때문이며,
- * 역할 인가가 AOP로 붙을 때 이 엔드포인트들에 함께 적용한다 (WorkController 선례).
+ * 인가는 핸들러마다 갈린다 (#9) — 조회는 FORM_READ, 생성·수정·복제는 FORM_WRITE, 접수 상태
+ * 전이는 FORM_STATUS_CHANGE다. 셋 다 시드에서 FORM_MANAGE 아래에 있으므로 '폼 관리'를 통째로
+ * 받은 역할은 셋 모두에 닿고, 필요하면 조회만 떼어 줄 수도 있다 — 클래스에 하나로 걸지 않은
+ * 이유가 이것이다. **응답자용 PublicFormController에는 권한 요구가 없다**(인증만).
  *
  * 생성·복제만 @CurrentMember를 받는다. 폼의 생성자를 서버가 채워야 하는 쓰기이기 때문이며,
  * 조회와 수정은 주체를 기록하지 않으므로 회원을 요구하지 않는다 — 수정 이력을 남기게 되면
@@ -63,6 +66,7 @@ public class FormController {
                             + " 응답 건수(responseCount)는 제출 이상(SUBMITTED·ACCEPTED·REJECTED)만 세며"
                             + " 작성 중인 임시저장 응답은 세지 않는다."
                             + " 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
+    @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping
     public ApiResponse<List<FormSummaryResponse>> getForms(
             @RequestParam(required = false) FormStatus statusCode,
@@ -75,6 +79,7 @@ public class FormController {
             description =
                     "폼 상세·편집 화면이 진입 시 호출한다. 문항 구성을 통째로 싣고 있어 편집기가 그대로 초안으로 받아 쓴다."
                             + " 없는 폼은 404 FORM_NOT_FOUND로 응답한다.")
+    @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping("/{formId}")
     public ApiResponse<FormDetailResponse> getForm(@PathVariable Long formId) {
         return ApiResponse.success(formService.getForm(formId));
@@ -87,6 +92,7 @@ public class FormController {
                             + " 상태를 지정하지 않으면 DRAFT이며, 편집 화면의 '바로 접수 시작'은 OPEN을 보낸다."
                             + " 문항 구성이 규칙을 어기면 400 INVALID_QUESTION_COMPOSITION,"
                             + " 접수 종료가 시작보다 빠르면 400 INVALID_RECEIPT_PERIOD로 응답한다.")
+    @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PostMapping
     public ResponseEntity<ApiResponse<FormSaveResponse>> createForm(
             @Valid @RequestBody FormSaveRequest request, @CurrentMember MemberEntity creator) {
@@ -110,6 +116,7 @@ public class FormController {
                             + " labelIds를 생략하거나 빈 배열로 보내면 라벨을 모두 뗀다."
                             + " 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 바꾸면 409 QUESTION_ITEM_IN_USE로"
                             + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다.")
+    @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PutMapping("/{formId}")
     public ApiResponse<FormSaveResponse> updateForm(
             @PathVariable Long formId, @Valid @RequestBody FormSaveRequest request) {
@@ -126,6 +133,7 @@ public class FormController {
                     "제목에 '(복사본)'을 붙이고 상태 DRAFT·접수 일시 초기화로 새 폼을 만든다."
                             + " 문항 구성은 깊은 복사라 사본을 고쳐도 원본이 바뀌지 않는다."
                             + " 응답과 라벨은 승계하지 않으며 생성자는 복제를 수행한 회원이다.")
+    @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PostMapping("/{formId}/duplicate")
     public ResponseEntity<ApiResponse<FormDuplicateResponse>> duplicateForm(
             @PathVariable Long formId, @CurrentMember MemberEntity creator) {
@@ -156,6 +164,7 @@ public class FormController {
                             + " 문항이 0개인 폼을 열려 하면 400 FORM_HAS_NO_QUESTION이다."
                             + " 응답의 receiptStatus는 상태와 접수 기간을 함께 본 파생 값으로,"
                             + " 기간이 끝난 폼은 formSttsCd가 OPEN인 채 EXPIRED가 된다 (자동 마감하지 않는다).")
+    @RequireAuthority(AuthorityCode.FORM_STATUS_CHANGE)
     @PostMapping("/{formId}/status")
     public ApiResponse<FormStatusChangeResponse> changeFormStatus(
             @PathVariable Long formId,

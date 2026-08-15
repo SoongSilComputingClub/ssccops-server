@@ -35,7 +35,11 @@ public enum MemberImportField {
 
     DEPARTMENT_NAME("scsbjtNm", false, List.of("학과", "전공", "학부", "department")),
 
-    ACADEMIC_YEAR("scyrNo", false, List.of("학년", "grade", "year")),
+    /*
+     * 영문 별칭에 grade를 두지 않는다 — 학년과 등급 양쪽을 가리키는 낱말이라, 어느 쪽으로 추천해도
+     * 절반은 틀린다. 틀린 추천을 그대로 확인 버튼으로 넘기면 등급 컬럼이 학년으로 들어간다.
+     */
+    ACADEMIC_YEAR("scyrNo", false, List.of("학년", "year", "schoolyear")),
 
     /** 연락처. 비어 있어도 오류가 아니라 경고다 (ssccops#78 A안 — 계정 연결에 필요하다) */
     PHONE_NUMBER("telno", false, List.of("전화번호", "연락처", "휴대폰", "핸드폰", "전화", "phone")),
@@ -49,7 +53,7 @@ public enum MemberImportField {
      * 기수(0)·가입일(이관일)처럼 기본값을 둘 수 없다 — 어느 등급으로 넣을지는 명부가 아는 사실이지
      * 서버가 고를 값이 아니다. 가입 API가 TEMP로 고정하는 것과는 상황이 다르다(그쪽은 본인 신청이다).
      */
-    GRADE_NAME("mbrGrdCd", true, List.of("등급", "회원등급", "grade")),
+    GRADE_NAME("mbrGrdCd", true, List.of("등급", "회원등급", "membergrade")),
 
     STATUS_NAME("mbrSttsCd", true, List.of("상태", "회원상태", "학적", "학적상태", "status"));
 

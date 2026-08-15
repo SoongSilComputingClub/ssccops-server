@@ -94,12 +94,20 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     /*
      * 서블릿 계층의 업로드 상한(spring.servlet.multipart)을 넘긴 요청 (#84).
      *
-     * 잡지 않으면 handleAll이 500으로 내린다 — 파일이 큰 것은 서버 잘못이 아니라 요청 잘못이다.
-     * 업무 상한(이관 CSV 5MB 등)은 각 도메인이 자기 오류 코드로 먼저 끊으므로, 여기 닿는 것은
-     * 그 판정에 다다르지도 못할 만큼 큰 요청뿐이다.
+     * @ExceptionHandler를 새로 달지 않고 **재정의**한다 — ResponseEntityExceptionHandler가 이미
+     * 이 예외를 맡고 있어 따로 달면 "Ambiguous @ExceptionHandler"로 컨텍스트가 아예 뜨지 않는다.
+     *
+     * 상위 구현은 ProblemDetail을 내리는데 이 서비스의 모든 응답은 ApiResponse 봉투를 쓰므로
+     * 여기 하나만 모양이 달라진다. 상태를 413이 아니라 400으로 맞추는 것은 업무 상한(이관 CSV
+     * 5MB 등)을 각 도메인이 400으로 끊기 때문이다 — 같은 "파일이 너무 크다"가 상한을 얼마나
+     * 넘겼는지에 따라 다른 상태로 나가면 화면이 두 갈래로 안내해야 한다.
      */
-    @ExceptionHandler(MaxUploadSizeExceededException.class)
-    public ResponseEntity<Object> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
+    @Override
+    protected ResponseEntity<Object> handleMaxUploadSizeExceededException(
+            MaxUploadSizeExceededException ex,
+            HttpHeaders headers,
+            HttpStatusCode status,
+            WebRequest request) {
         log.warn("MaxUploadSizeExceededException: {}", ex.getMessage());
         return handleExceptionInternal(CommonErrorCode.BAD_REQUEST, "업로드 가능한 크기를 초과했습니다.");
     }

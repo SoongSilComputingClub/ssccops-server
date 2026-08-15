@@ -46,21 +46,8 @@ public record MemberRoleAssignmentResponse(
                 assignment.getRoleStartDate(),
                 assignment.getRoleEndDate(),
                 Boolean.TRUE.equals(assignment.getRepresentative()),
-                isCurrent(assignment, today),
+                assignment.isValidOn(today),
                 RoleResponse.toOffsetDateTime(assignment.getCreatedAt()),
                 RoleResponse.toOffsetDateTime(assignment.getUpdatedAt()));
-    }
-
-    /*
-     * 유효 역할 판정 (BR-M25). 질의로 거르는 쪽은 MemberRoleAssignmentRepository가 갖고 있으므로
-     * 규칙이 두 벌이 되는 것처럼 보이지만, 이쪽은 **이미 손에 든 행 하나**를 판정하는 자리다 —
-     * current=false 목록에는 종료된 배정도 함께 실리므로 행마다 다시 물어볼 곳이 필요하다.
-     * 두 곳이 갈리면 목록의 배지와 current=true 목록의 내용이 어긋나므로 조건을 그대로 옮겨 적는다.
-     */
-    private static boolean isCurrent(MemberRoleAssignmentEntity assignment, LocalDate today) {
-        if (assignment.getRoleStartDate().isAfter(today)) {
-            return false;
-        }
-        return assignment.getRoleEndDate() == null || !assignment.getRoleEndDate().isBefore(today);
     }
 }

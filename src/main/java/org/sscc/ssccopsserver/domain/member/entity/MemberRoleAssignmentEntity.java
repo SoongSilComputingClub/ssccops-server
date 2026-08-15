@@ -82,4 +82,21 @@ public class MemberRoleAssignmentEntity {
     public void end(LocalDate roleEndDate) {
         this.roleEndDate = roleEndDate;
     }
+
+    /*
+     * 이 배정이 기준일에 유효한가 (BR-M25 — role_bgng_ymd <= 기준일 <= role_end_ymd, 종료일이
+     * NULL이면 무기한).
+     *
+     * 같은 규칙의 질의 버전은 MemberRoleAssignmentRepository가 갖는다. 두 벌인 것처럼 보이지만
+     * 쓰임이 다르다 — 저쪽은 '유효한 것만 골라 오기'이고 이쪽은 **이미 손에 든 행 하나**를
+     * 판정하는 자리다. 종료된 배정까지 함께 실리는 목록(#81 current=false)은 행마다 배지를
+     * 그려야 하므로 질의로는 답할 수 없다. 조건을 엔티티에 두는 것은 그 판정이 필요한 곳
+     * (응답 DTO·대표 역할 단일성)마다 세 줄을 다시 적지 않기 위해서다.
+     */
+    public boolean isValidOn(LocalDate baseDate) {
+        if (roleStartDate.isAfter(baseDate)) {
+            return false;
+        }
+        return roleEndDate == null || !roleEndDate.isBefore(baseDate);
+    }
 }

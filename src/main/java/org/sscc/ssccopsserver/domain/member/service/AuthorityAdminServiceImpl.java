@@ -15,7 +15,6 @@ import jakarta.persistence.PersistenceException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.dto.AuthorityCreateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.AuthorityResponse;
@@ -52,6 +51,7 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
     private final RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     private final MemberRoleRepository memberRoleRepository;
     private final AuthorityPolicy authorityPolicy;
+    private final RoleManageSelfLockGuard roleManageSelfLockGuard;
     private final EntityManager entityManager;
 
     /*
@@ -187,10 +187,9 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
      * 잃는다. 같은 (role_id, authrt_cd)를 한 트랜잭션에서 지웠다 넣으면 Hibernate가 INSERT를
      * DELETE보다 먼저 흘려보내 UNIQUE 제약에 걸리기도 한다.
      *
-     * **자기 잠금 방지는 바꾼 뒤에 정책에게 다시 물어보는 방식이다** (VR-M13). 요청자의 역할과
-     * 대상 역할을 비교해 미리 계산할 수도 있지만, 그러면 '유효 기간·여러 역할·자손 펼침'이라는
-     * 판정 규칙을 여기서 한 벌 더 구현하게 된다. 실제 상태를 만들어 놓고 AuthorityPolicy에게
-     * 물으면 규칙이 한 곳에 남고, 거절은 예외로 트랜잭션을 되돌려 아무것도 반영되지 않는다.
+     * **자기 잠금 방지는 바꾼 뒤에 정책에게 다시 물어보는 방식이며, 그 판정은 여기 없다**
+     * (VR-M13). RoleManageSelfLockGuard 한 곳에 있고 회원 역할 종료(#81)도 같은 것을 부른다 —
+     * 인가를 좁히는 문이 둘인데 잠금 장치가 둘이면 한쪽만 고쳐진 규칙이 우회로가 된다.
      */
     @Override
     @Transactional
@@ -232,10 +231,7 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
                         .filter(relation -> requested.contains(relation.getAuthority().getCode()))
                         .toList();
 
-        entityManager.flush();
-        if (!authorityPolicy.hasAuthority(requesterMemberId, AuthorityCode.ROLE_MANAGE)) {
-            throw new GeneralException(MemberErrorCode.CANNOT_REVOKE_OWN_ROLE_MANAGE);
-        }
+        roleManageSelfLockGuard.verifyRequesterKeepsRoleManage(requesterMemberId);
 
         List<RoleAuthorityRelationEntity> result = new ArrayList<>(kept);
         result.addAll(added);

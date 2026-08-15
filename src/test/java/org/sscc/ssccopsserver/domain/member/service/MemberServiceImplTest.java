@@ -16,6 +16,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryReposit
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
@@ -30,6 +31,7 @@ class MemberServiceImplTest {
 
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
@@ -39,6 +41,7 @@ class MemberServiceImplTest {
     private MemberService memberService() {
         return new MemberServiceImpl(
                 memberRepository,
+                memberRoleRepository,
                 memberRoleAssignmentRepository,
                 memberGradeRepository,
                 memberStatusRepository,

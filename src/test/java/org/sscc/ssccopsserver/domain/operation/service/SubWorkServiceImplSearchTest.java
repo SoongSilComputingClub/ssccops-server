@@ -131,6 +131,7 @@ class SubWorkServiceImplSearchTest {
         MemberService memberService =
                 new MemberServiceImpl(
                         memberRepository,
+                        memberRoleRepository,
                         memberRoleAssignmentRepository,
                         memberGradeRepository,
                         memberStatusRepository,

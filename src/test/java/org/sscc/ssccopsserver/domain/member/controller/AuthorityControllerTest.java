@@ -99,34 +99,49 @@ class AuthorityControllerTest {
     // ------------------------------------------------------------------ 트리 조회
 
     /*
-     * 시드된 권한 13종이 children 중첩으로 내려온다. 평평한 목록에 upAuthrtCd만 실어 보내면
+     * 시드된 권한 14종이 children 중첩으로 내려온다. 평평한 목록에 upAuthrtCd만 실어 보내면
      * 화면이 트리를 다시 조립해야 하고, 그 조립이 서버의 펼침과 갈릴 여지가 생긴다.
+     *
+     * 최상위는 SUPER 하나이고 EXECUTIVE가 그 자식이다 (#71). 이 부모-자식 간선이 SUPER가
+     * "모든 권한"인 유일한 근거다 — 판정에 특별 취급이 없으므로 여기서 간선이 끊기면 인가가
+     * 조용히 좁아진다. 그래서 트리 응답 테스트가 그 사실을 못 박는다.
      */
     @Test
     void returnsSeededPermissionTreeAsNestedChildren() throws Exception {
         mockMvc.perform(authorized(get(AUTHORITIES), adminToken))
                 .andExpect(status().isOk())
-                // 최상위는 EXECUTIVE 하나뿐이다
+                // 최상위는 SUPER 하나뿐이다
                 .andExpect(jsonPath("$.data", hasSize(1)))
-                .andExpect(jsonPath("$.data[0].authrtCd").value("EXECUTIVE"))
-                .andExpect(jsonPath("$.data[0].authrtNm").value("임원"))
+                .andExpect(jsonPath("$.data[0].authrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].upAuthrtCd").doesNotExist())
                 .andExpect(jsonPath("$.data[0].sysYn").value(true))
-                .andExpect(jsonPath("$.data[0].children", hasSize(5)))
+                .andExpect(jsonPath("$.data[0].children", hasSize(1)))
+                .andExpect(jsonPath("$.data[0].children[0].authrtCd").value("EXECUTIVE"))
+                .andExpect(jsonPath("$.data[0].children[0].authrtNm").value("임원"))
+                .andExpect(jsonPath("$.data[0].children[0].upAuthrtCd").value("SUPER"))
+                .andExpect(jsonPath("$.data[0].children[0].children", hasSize(5)))
                 // 형제 순서는 indct_seqno다
-                .andExpect(jsonPath("$.data[0].children[0].authrtCd").value("OPERATOR"))
-                .andExpect(jsonPath("$.data[0].children[4].authrtCd").value("ROLE_MANAGE"))
-                // 손자까지 중첩된다 — OPERATOR > FORM_MANAGE > FORM_READ
-                .andExpect(jsonPath("$.data[0].children[0].children", hasSize(4)))
+                .andExpect(jsonPath("$.data[0].children[0].children[0].authrtCd").value("OPERATOR"))
                 .andExpect(
-                        jsonPath("$.data[0].children[0].children[2].authrtCd").value("FORM_MANAGE"))
-                .andExpect(jsonPath("$.data[0].children[0].children[2].children", hasSize(3)))
+                        jsonPath("$.data[0].children[0].children[4].authrtCd").value("ROLE_MANAGE"))
+                // 증손자까지 중첩된다 — EXECUTIVE > OPERATOR > FORM_MANAGE > FORM_READ
+                .andExpect(jsonPath("$.data[0].children[0].children[0].children", hasSize(4)))
                 .andExpect(
-                        jsonPath("$.data[0].children[0].children[2].children[0].authrtCd")
+                        jsonPath("$.data[0].children[0].children[0].children[2].authrtCd")
+                                .value("FORM_MANAGE"))
+                .andExpect(
+                        jsonPath(
+                                "$.data[0].children[0].children[0].children[2].children",
+                                hasSize(3)))
+                .andExpect(
+                        jsonPath(
+                                        "$.data[0].children[0].children[0].children[2].children[0].authrtCd")
                                 .value("FORM_READ"))
                 // 잎 노드의 children은 null이 아니라 빈 배열이다
                 .andExpect(
-                        jsonPath("$.data[0].children[0].children[2].children[0].children")
+                        jsonPath(
+                                        "$.data[0].children[0].children[0].children[2]"
+                                                + ".children[0].children")
                                 .isEmpty());
     }
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
 import java.util.Comparator;
+import java.util.List;
 
 import javax.sql.DataSource;
 
@@ -36,6 +37,8 @@ class CodeSeedDataTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberRoleRepository memberRoleRepository;
     @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private AuthorityRepository authorityRepository;
+    @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @Autowired private SubWorkTypeRepository subWorkTypeRepository;
 
     @Test
@@ -72,21 +75,80 @@ class CodeSeedDataTest {
     void seedsRoleClassifications() {
         assertThat(memberRoleClassificationRepository.findAll())
                 .extracting(MemberRoleClassificationEntity::getCode)
-                .contains("POSITION", "DEPT", "PROJECT", "STUDY", "EVENT");
+                .contains("POSITION", "DEPT", "PROJECT", "STUDY", "EVENT", "SYSTEM");
     }
 
     /*
-     * 역할 표시순번이 서열 오름차순인지 확인한다. role에 서열 컬럼이 없어 "국장 이상"(#9) 판정이
-     * 이 순번에 얹히므로, 순번이 흐트러지면 인가 판정이 조용히 틀어진다.
+     * 역할 표시순번이 회칙 순서대로인지 확인한다.
+     *
+     * **분류를 갈라 비교한다.** indct_seqno는 분류마다 1부터 다시 시작하므로(data.sql) SYSTEM의
+     * '최고관리자'(1)와 POSITION의 '회장'(1)은 값이 같다 — 분류를 섞어 한 줄로 세우면 순서가
+     * 무엇에 의해 정해지는지 알 수 없는 비교가 된다. #71로 SYSTEM 분류에 역할이 생기기 전까지는
+     * 역할이 전부 POSITION이라 이 구별이 드러나지 않았다.
+     *
+     * 순번은 화면 정렬용일 뿐 서열이 아니다 — 인가는 역할에 부여된 권한으로 한다(#9 · VR-M11).
      */
     @Test
-    void ordersRolesBySeniority() {
-        assertThat(
-                        memberRoleRepository.findAll().stream()
-                                .sorted(Comparator.comparing(MemberRoleEntity::getDisplayOrder))
-                                .map(MemberRoleEntity::getName)
-                                .toList())
-                .startsWith("회장", "부회장", "총무", "국장");
+    void ordersPositionRolesInBylawOrder() {
+        assertThat(rolesOfClassification("POSITION"))
+                .containsExactly("회장", "부회장", "총무", "국장", "국원", "프로젝트장", "스터디장");
+    }
+
+    /*
+     * 최초 가입자 부트스트랩(#71)이 딛고 서는 시드 세 가지 — 역할·권한·매핑.
+     *
+     * 이름을 문자열로 적는 것은 MemberServiceImpl.BOOTSTRAP_ROLE_NAME과 data.sql이 **문자열로**
+     * 맞춰져 있기 때문이다. 상수를 참조하면 상수만 바뀌었을 때 테스트가 따라 바뀌어 조용히
+     * 통과한다 — 그 순간 최초 가입자는 역할을 못 받고, 회원이 한 명 생겨 버려 부트스트랩 창구는
+     * 영영 닫힌다.
+     */
+    @Test
+    void seedsBootstrapRoleThatCarriesSuperAuthority() {
+        assertThat(rolesOfClassification("SYSTEM")).containsExactly("최고관리자");
+
+        MemberRoleEntity bootstrapRole =
+                memberRoleRepository.findAll().stream()
+                        .filter(role -> "최고관리자".equals(role.getName()))
+                        .findFirst()
+                        .orElseThrow();
+
+        assertThat(roleAuthorityRelationRepository.findAllByRoleId(bootstrapRole.getId()))
+                .extracting(relation -> relation.getAuthority().getCode())
+                .containsExactly("SUPER");
+    }
+
+    /*
+     * SUPER가 트리의 최상위이고 EXECUTIVE가 그 자식이어야 한다 (#71 · BR-M35).
+     *
+     * 이 두 줄이 SUPER의 의미 전부다 — AuthorityPolicy에는 SUPER를 특별 취급하는 분기가 없고,
+     * "모든 권한을 포함한다"는 오로지 트리 모양에서 나온다. 부모 관계가 끊기면 인가는 조용히
+     * 좁아지고, 웹이 트리 간선으로 하는 저장 전 미리 보기와도 어긋난다.
+     */
+    @Test
+    void seedsSuperAsTheRootAboveExecutive() {
+        assertThat(authorityRepository.findById("SUPER"))
+                .get()
+                .satisfies(
+                        authority -> {
+                            assertThat(authority.getParent()).isNull();
+                            assertThat(authority.isSystemDefined()).isTrue();
+                        });
+
+        assertThat(authorityRepository.findById("EXECUTIVE"))
+                .get()
+                .extracting(authority -> authority.getParent().getCode())
+                .isEqualTo("SUPER");
+    }
+
+    private List<String> rolesOfClassification(String roleClassificationCode) {
+        return memberRoleRepository.findAll().stream()
+                .filter(
+                        role ->
+                                roleClassificationCode.equals(
+                                        role.getRoleClassification().getCode()))
+                .sorted(Comparator.comparing(MemberRoleEntity::getDisplayOrder))
+                .map(MemberRoleEntity::getName)
+                .toList();
     }
 
     // 승인이 필요한 유형에는 승인자가 있고, 필요 없는 유형에는 없어야 한다
@@ -119,6 +181,8 @@ class CodeSeedDataTest {
         long statuses = memberStatusRepository.count();
         long classifications = memberRoleClassificationRepository.count();
         long roles = memberRoleRepository.count();
+        long authorities = authorityRepository.count();
+        long grants = roleAuthorityRelationRepository.count();
         long subWorkTypes = subWorkTypeRepository.count();
 
         new ResourceDatabasePopulator(new ClassPathResource("data.sql")).execute(dataSource);
@@ -127,6 +191,8 @@ class CodeSeedDataTest {
         assertThat(memberStatusRepository.count()).isEqualTo(statuses);
         assertThat(memberRoleClassificationRepository.count()).isEqualTo(classifications);
         assertThat(memberRoleRepository.count()).isEqualTo(roles);
+        assertThat(authorityRepository.count()).isEqualTo(authorities);
+        assertThat(roleAuthorityRelationRepository.count()).isEqualTo(grants);
         assertThat(subWorkTypeRepository.count()).isEqualTo(subWorkTypes);
     }
 }

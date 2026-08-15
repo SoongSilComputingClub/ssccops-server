@@ -318,7 +318,20 @@ public enum MemberErrorCode implements ErrorCode {
 
     // 400 — 종료 예정일이 적용 일자보다 앞설 때 (#78). 시작하기 전에 끝나는 상태는 성립하지 않는다
     STATUS_END_DATE_BEFORE_APPLIED(
-            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "종료 예정일은 적용 일자보다 앞설 수 없습니다.");
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "종료 예정일은 적용 일자보다 앞설 수 없습니다."),
+
+    /*
+     * 409 — 이관 실행 요청의 fileToken이 지금 올라온 파일의 해시와 다를 때 (#85 · BR-M48).
+     *
+     * 사전 검증(#84)이 돌려준 토큰을 실행 요청이 되돌려 주게 해서 **확인한 파일과 넣는 파일이
+     * 같은 것임**을 서버가 확인한다. 두 요청 사이에 파일이 바뀌면 운영자가 한 번도 본 적 없는
+     * 128건이 그대로 들어가고, 사전 검증 단계 자체가 의미를 잃는다.
+     *
+     * 400이 아니라 409인 것은 요청의 모양이 틀린 것이 아니라 **서버가 쥔 사실과 어긋나는** 것이기
+     * 때문이다 — 운영자가 할 일도 "값을 고친다"가 아니라 "검증을 다시 받는다"이다.
+     */
+    IMPORT_FILE_MISMATCH(
+            HttpStatus.CONFLICT, "IMPORT_FILE_MISMATCH", "검증한 파일과 다른 파일입니다. 검증을 다시 수행하십시오.");
 
     private final HttpStatus httpStatus;
     private final String code;

@@ -99,6 +99,8 @@ class MemberQueryServiceTest {
                         memberStatusRepository,
                         memberGradeHistoryRepository,
                         memberStatusHistoryRepository,
+                        new MemberInitialHistoryRecorder(
+                                memberGradeHistoryRepository, memberStatusHistoryRepository),
                         authorityPolicy,
                         FIXED_CLOCK);
     }

@@ -74,6 +74,22 @@ public interface MemberRoleAssignmentRepository
             @Param("roleId") Long roleId, @Param("today") LocalDate today);
 
     /*
+     * 이 회원이 지금 쥐고 있는 역할의 건수 (#78 탈퇴·제명 전이의 경고).
+     *
+     * 기준은 findValidRoleIds·findValidByMemberIds와 같은 BR-M25다 — role_bgng_ymd <= 오늘 <=
+     * role_end_ymd이며 종료일이 NULL이면 무기한이고, 오늘은 주입된 Clock에서 온다. 회원 상세가
+     * roles로 그리는 것과 같은 집합이어야 "역할 2건이 있습니다"라는 경고를 보고 상세를 열었을
+     * 때 숫자가 맞는다.
+     *
+     * 목록을 받아 세지 않고 count로 두는 것은 경고가 숫자 하나만 쓰기 때문이다.
+     */
+    @Query(
+            "select count(a) from MemberRoleAssignmentEntity a"
+                    + " where a.member.id = :memberId and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)")
+    long countCurrentByMemberId(@Param("memberId") Long memberId, @Param("today") LocalDate today);
+
+    /*
      * 이 역할에 배정된 적이 **한 번이라도** 있는가 (#79 삭제 가드).
      *
      * 위의 질의들과 달리 기간을 보지 않는다. 종료된 배정을 빼면 "작년 국장이 누구였는지"가

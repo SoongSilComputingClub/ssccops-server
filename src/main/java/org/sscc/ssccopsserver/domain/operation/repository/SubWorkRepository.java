@@ -106,6 +106,24 @@ public interface SubWorkRepository
     List<SubWorkEntity> findAllByOwnerId(@Param("ownerId") Long ownerId);
 
     /*
+     * 회원 상태 변경(#78)의 경고에 실리는 '담당 중인 하위 업무' 건수.
+     *
+     * 완료(DONE)된 건을 빼는 것은 '담당 중'이라는 말과 어긋나기 때문이고, 빼지 않으면 오래
+     * 활동한 회원일수록 경고가 영영 남아 실제로 인수인계가 필요한 상황과 구별되지 않는다.
+     * 소프트 삭제 여부는 다른 집계와 같은 기준으로(부모 oper의 del_dt) 걸러낸다.
+     *
+     * 목록(findAllByOwnerId)을 받아 세지 않고 count로 두는 것은 경고가 숫자 하나만 쓰기
+     * 때문이다 — 화면은 그 숫자를 배지에 달 뿐 업무를 그리지 않는다.
+     */
+    @Query(
+            "select count(s) from SubWorkEntity s"
+                    + " join s.operation o"
+                    + " where o.personInCharge.id = :ownerId"
+                    + " and s.workStatus <> :excludedStatus and o.deletedAt is null")
+    long countByOwnerIdExcludingStatus(
+            @Param("ownerId") Long ownerId, @Param("excludedStatus") WorkStatus excludedStatus);
+
+    /*
      * 운영 대시보드(OPS-038) '다가오는 마감'. 조회 시점 기준 ±5일 범위에 마감이 있는 하위
      * 업무다(이슈#60). 이미 끝난 건은 뺀다 — 완료된 일의 마감을 다시 알릴 이유가 없다.
      */

@@ -108,4 +108,16 @@ public interface SubWorkService {
      * 정렬은 OPS-008 기본값과 같다(마감 오름차순, 마감 없는 건은 뒤).
      */
     List<SubWorkSummaryResponse> listSubWorks();
+
+    /*
+     * 이 회원이 담당 중인(완료되지 않은) 하위 업무의 건수 (#78).
+     *
+     * 회원 도메인이 탈퇴·제명 전이의 경고를 만들 때 쓴다. 회원 도메인은 운영 Repository를
+     * 직접 호출할 수 없으므로(AR-07·LY-10) 진입점을 여기 하나로 둔다 — 운영 도메인이 회원
+     * 정보를 MemberService로만 얻는 것과 같은 규칙을 반대 방향으로 지킨다.
+     *
+     * **아무것도 바꾸지 않는다.** 담당 업무를 자동으로 회수하거나 재배정하는 동작은 운영 규칙이
+     * 필요한 판단이라 범위 밖이고, 이 메서드는 화면이 사람에게 알릴 숫자만 돌려준다.
+     */
+    long countOngoingByOwner(Long ownerId);
 }

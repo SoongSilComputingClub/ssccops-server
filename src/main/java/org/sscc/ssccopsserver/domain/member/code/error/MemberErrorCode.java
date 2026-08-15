@@ -234,7 +234,40 @@ public enum MemberErrorCode implements ErrorCode {
      * 파일을 바꾸는 것이 아니라 내보내기 범위를 다시 잡아야 한다. 빈 결과를 200으로 돌려주지
      * 않는 것은 위저드가 "0건 검증 완료"를 성공으로 읽고 다음 단계로 넘어가기 때문이다.
      */
-    EMPTY_CSV_FILE(HttpStatus.BAD_REQUEST, "EMPTY_CSV_FILE", "데이터가 없는 CSV 파일입니다.");
+    EMPTY_CSV_FILE(HttpStatus.BAD_REQUEST, "EMPTY_CSV_FILE", "데이터가 없는 CSV 파일입니다."),
+
+    /*
+     * 404 — 없는 역할 배정을 수정하려 할 때, 또는 **다른 회원의 배정**을 경로에 섞어 보냈을 때 (#81).
+     *
+     * 두 경우를 같은 코드로 내린다. 나누면 "그 회원에게 그 배정이 있는지"가 코드 문자열로 새어
+     * 나가며, 폼 응답의 범위 검사(#37 FORM_RESPONSE_NOT_FOUND)가 세운 선례와 같은 판단이다.
+     * 경로에 회원과 배정이 둘 다 있는데 배정 식별자만 보면 /v1/members/1/roles/999가 남의 배정을
+     * 종료시킨다.
+     */
+    MEMBER_ROLE_ASSIGNMENT_NOT_FOUND(
+            HttpStatus.NOT_FOUND, "MEMBER_ROLE_ASSIGNMENT_NOT_FOUND", "회원의 역할 배정을 찾을 수 없습니다."),
+
+    /*
+     * 400 — 역할 종료일이 시작일보다 이를 때 (#81).
+     *
+     * 코드 문자열을 VALIDATION_FAILED로 두는 것은 프론트 입장에서 입력값 오류이기 때문이다
+     * (SIGNUP_STATUS_NOT_ALLOWED와 같은 방식). 애노테이션으로 막을 수 없는 것은 비교 대상인
+     * 시작일이 요청 본문이 아니라 저장된 행에 있어서다.
+     */
+    ROLE_PERIOD_INVALID(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "역할 종료일은 시작일보다 이를 수 없습니다."),
+
+    /*
+     * 409 — 같은 역할을 기간이 겹치게 두 번 부여하려 할 때 (#81).
+     *
+     * **기간이 겹치지 않는 재임은 막지 않는다.** 작년 국장이 올해 다시 국장이 되는 것은 정상이며,
+     * 그 두 행이 따로 남아야 "언제부터 언제까지 국장이었는가"가 보존된다. 막는 것은 같은 사람에게
+     * 같은 역할이 동시에 두 번 붙는 상태 하나뿐이다 — 인가에는 영향이 없지만(하나만 유효해도
+     * 통과한다) 역할 상세의 재임자 목록에 같은 이름이 두 줄 서고, 종료 조작이 어느 행을 끝내야
+     * 하는지 알 수 없게 된다.
+     *
+     * 종료일이 NULL인 배정은 무기한이므로 이후의 어떤 시작일과도 겹친다.
+     */
+    ROLE_ALREADY_ASSIGNED(HttpStatus.CONFLICT, "ROLE_ALREADY_ASSIGNED", "이미 같은 기간에 부여된 역할입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

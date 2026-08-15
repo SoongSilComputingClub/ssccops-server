@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.member.repository;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -101,4 +102,74 @@ public interface MemberRoleAssignmentRepository
                     + " order by a.member.id asc, a.role.displayOrder asc, a.role.id asc")
     List<MemberRoleAssignmentEntity> findValidByMemberIds(
             @Param("memberIds") Collection<Long> memberIds, @Param("today") LocalDate today);
+
+    /*
+     * 회원의 역할 배정 **전부** (#81 GET .../roles, current=false).
+     *
+     * 위의 질의들과 달리 기간을 보지 않는다 — 종료된 배정도 목록에 남아야 "언제까지 국장이었는가"를
+     * 화면에서 볼 수 있고, 그것이 '종료는 삭제가 아니다'라는 규칙이 실제로 쓰이는 자리다.
+     * current=true 목록은 이 질의가 아니라 findValidByMemberIds(BR-M25)를 그대로 쓴다.
+     *
+     * 정렬은 시작일 내림차순 → 식별자 내림차순이다. 최근 임기가 위에 서야 하고, 같은 날 시작한
+     * 배정은 식별자로 끊어야 목록을 두 번 불러도 순서가 흔들리지 않는다.
+     */
+    @Query(
+            "select a from MemberRoleAssignmentEntity a join fetch a.role"
+                    + " where a.member.id = :memberId"
+                    + " order by a.roleStartDate desc, a.id desc")
+    List<MemberRoleAssignmentEntity> findAllByMemberId(@Param("memberId") Long memberId);
+
+    /*
+     * 배정 한 건을 **회원 범위 안에서만** 찾는다 (#81 PATCH).
+     *
+     * 경로에 회원과 배정이 둘 다 있는데 배정 식별자만 보면 /v1/members/1/roles/999가 다른 회원의
+     * 역할을 종료시킨다 — 폼 응답의 findByIdAndForm(#37)과 같은 자리다. 없는 배정과 남의 배정은
+     * 같은 404로 돌아간다.
+     *
+     * 응답에 역할명을 실으므로 join fetch로 함께 가져온다.
+     */
+    @Query(
+            "select a from MemberRoleAssignmentEntity a join fetch a.role"
+                    + " where a.id = :assignmentId and a.member.id = :memberId")
+    Optional<MemberRoleAssignmentEntity> findByIdAndMemberId(
+            @Param("assignmentId") Long assignmentId, @Param("memberId") Long memberId);
+
+    /*
+     * 같은 역할이 기간을 겹쳐 이미 부여돼 있는가 (#81 · 409 ROLE_ALREADY_ASSIGNED).
+     *
+     * **새 배정은 언제나 [startDate, 무기한)이다** — 부여 요청이 종료일을 받지 않기 때문이다
+     * (MemberRoleAssignRequest 주석). 그래서 겹침 조건의 절반(기존 시작일 <= 새 종료일)이 항상
+     * 참이 되어 남는 것은 '기존 배정이 새 시작일 이후까지 살아 있는가' 하나뿐이다. 종료일이
+     * NULL인 배정은 무기한이므로 어떤 시작일과도 겹친다.
+     *
+     * 조건을 [startDate, endDate] 양쪽으로 일반화하지 않은 것은 endDate에 NULL을 넘기는 순간
+     * `:endDate is null` 분기가 필요해지고, 그런 질의는 Hibernate가 파라미터 타입을 추론하지 못해
+     * 깨지는 자리이기 때문이다(폼 목록의 상태 필터 #32와 같은 사정). 필요해지면 그때 연다.
+     */
+    @Query(
+            "select count(a) > 0 from MemberRoleAssignmentEntity a"
+                    + " where a.member.id = :memberId and a.role.id = :roleId"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :startDate)")
+    boolean existsOverlappingAssignment(
+            @Param("memberId") Long memberId,
+            @Param("roleId") Long roleId,
+            @Param("startDate") LocalDate startDate);
+
+    /*
+     * 지금 유효한 대표 역할 배정 (#81 · BR-M26).
+     *
+     * 대표는 **회원당 유효한 것 중 최대 1건**이므로 새 대표를 지정할 때 여기서 찾은 행을 같은
+     * 트랜잭션에서 내린다. 유효 판정은 findValidRoleIds와 같은 BR-M25다 — 이미 끝난 임기에
+     * 남아 있는 rprs_role_yn까지 내리면 지난 이력이 조작 한 번으로 바뀐다.
+     *
+     * 하나만 돌려주지 않고 목록인 것은 이 API 이전에 만들어진 데이터에 대표가 둘 이상 있을 수
+     * 있어서다. 한 건만 내리면 나머지가 남아 단일성이 영영 회복되지 않는다.
+     */
+    @Query(
+            "select a from MemberRoleAssignmentEntity a"
+                    + " where a.member.id = :memberId and a.representative = true"
+                    + " and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)")
+    List<MemberRoleAssignmentEntity> findValidRepresentatives(
+            @Param("memberId") Long memberId, @Param("today") LocalDate today);
 }

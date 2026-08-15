@@ -18,14 +18,19 @@ import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSelfUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.MemberChangeService;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
@@ -54,6 +59,13 @@ import lombok.RequiredArgsConstructor;
 public class MemberController {
 
     private final MemberService memberService;
+
+    /*
+     * 등급·상태 변경은 조회·가입과 다른 빈이다 (#78). 나눈 이유는 MemberChangeService 주석에
+     * 있다 — 운영 도메인(SubWorkService)이 필요한데 그쪽이 이미 MemberService를 주입받고 있어
+     * 한 빈에 두면 생성자 주입이 순환한다.
+     */
+    private final MemberChangeService memberChangeService;
 
     @Operation(
             summary = "회원가입",
@@ -185,5 +197,61 @@ public class MemberController {
     public ApiResponse<MemberDetailResponse> updateMember(
             @PathVariable Long memberId, @Valid @RequestBody MemberUpdateRequest request) {
         return ApiResponse.success(memberService.updateMember(memberId, request));
+
+    /*
+     * 회원 등급 변경 (#78). mbr 갱신과 mbr_grd_hstry INSERT가 한 트랜잭션이다.
+     *
+     * **변경자를 요청 본문으로 받지 않는다.** @CurrentMember로 인증 주체에서 가져오며, 그래야
+     * 이력의 chnrg_mbr_id가 증거가 된다 (LY-05 — 하위 업무 전이의 performer와 같은 자리).
+     *
+     * 회원 정보 수정(PATCH)에 등급 필드를 두지 않고 전용 경로를 파는 것은, 같은 API에 섞으면
+     * 이력 없이 등급이 바뀌는 경로가 반드시 생기기 때문이다.
+     *
+     * 201이 아니라 200인 것은 이 요청의 결과가 '새 자원'이 아니기 때문이다 — 이력 행이 하나
+     * 생기지만 그것을 가리키는 조회 경로가 없어 Location에 실을 URI가 없고, 화면이 받는 것은
+     * 바뀐 회원이다 (하위 업무 상태 전이 POST .../transitions와 같은 판단).
+     */
+    @Operation(
+            summary = "회원 등급 변경",
+            description =
+                    "회원의 등급을 바꾸고 변경 이력(mbr_grd_hstry)을 한 트랜잭션에서 남긴다."
+                            + " 변경자는 요청 본문이 아니라 토큰에서 가져온다."
+                            + " 적용 일자를 생략하면 오늘이며 미래 일자는 400 VALIDATION_FAILED,"
+                            + " 지금과 같은 등급은 400 NO_CHANGE, 기준 코드 밖의 등급은 400"
+                            + " INVALID_CODE_VALUE, 없는 회원은 404다."
+                            + " 응답은 변경 후 회원 상세이며 warnings는 항상 비어 있다(상태 변경과 같은 모양).")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @PostMapping("/{memberId}/grade-changes")
+    public ApiResponse<MemberGradeChangeResponse> changeGrade(
+            @PathVariable Long memberId,
+            @Valid @RequestBody MemberGradeChangeRequest request,
+            @CurrentMember MemberEntity changer) {
+        return ApiResponse.success(memberChangeService.changeGrade(memberId, request, changer));
+    }
+
+    /*
+     * 회원 상태 변경 (#78). 등급 변경과 같은 규칙이며 다른 점은 두 가지다.
+     *
+     * 종료 예정일(sttsEndPrnmntYmd)은 휴학·군휴학에만 실을 수 있고 그 밖의 상태에 실려 오면
+     * 400이다 — 조용히 버리지 않는 근거는 MemberStatusChangeRequest 주석에 있다.
+     *
+     * 탈퇴·제명으로 전이할 때 역할을 끝내거나 담당 업무를 정리하지 **않는다.** 대신 남아 있는
+     * 것들이 warnings로 실려 화면이 사람에게 알린다 (MemberChangeWarningResponse 주석).
+     */
+    @Operation(
+            summary = "회원 상태 변경",
+            description =
+                    "회원의 상태를 바꾸고 변경 이력(mbr_stts_hstry)을 한 트랜잭션에서 남긴다."
+                            + " 종료 예정일은 휴학·군휴학에만 지정할 수 있다(그 밖의 상태는 400 VALIDATION_FAILED)."
+                            + " 탈퇴·제명으로 바꿔도 역할·담당 업무를 자동으로 정리하지 않으며,"
+                            + " 남아 있는 현재 역할·담당 하위 업무 건수를 warnings로 함께 내린다."
+                            + " 오류는 등급 변경과 같다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @PostMapping("/{memberId}/status-changes")
+    public ApiResponse<MemberStatusChangeResponse> changeStatus(
+            @PathVariable Long memberId,
+            @Valid @RequestBody MemberStatusChangeRequest request,
+            @CurrentMember MemberEntity changer) {
+        return ApiResponse.success(memberChangeService.changeStatus(memberId, request, changer));
     }
 }

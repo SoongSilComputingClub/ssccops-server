@@ -17,4 +17,11 @@ public interface MemberStatusHistoryRepository
     @EntityGraph(attributePaths = {"previousStatus", "newStatus", "changedBy"})
     List<MemberStatusHistoryEntity> findByMemberIdOrderByCreatedAtDescIdDesc(
             Long memberId, Pageable pageable);
+
+    /*
+     * 통합 이력 조회(#82)의 재료 — 이 회원의 상태 이력 **전부**.
+     * 규칙은 MemberGradeHistoryRepository의 같은 이름 메서드와 같다(변경자 조인 포함).
+     */
+    @EntityGraph(attributePaths = {"previousStatus", "newStatus", "changedBy"})
+    List<MemberStatusHistoryEntity> findByMemberIdOrderByCreatedAtDescIdDesc(Long memberId);
 }

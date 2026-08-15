@@ -23,4 +23,18 @@ public interface MemberGradeHistoryRepository
     @EntityGraph(attributePaths = {"previousGrade", "newGrade", "changedBy"})
     List<MemberGradeHistoryEntity> findByMemberIdOrderByCreatedAtDescIdDesc(
             Long memberId, Pageable pageable);
+
+    /*
+     * 통합 이력 조회(#82)의 재료 — 이 회원의 등급 이력 **전부**.
+     *
+     * 자르지 않는 것은 그 목록에 페이징을 두지 않기로 했기 때문이다(근거는
+     * MemberHistoryServiceImpl 주석). 정렬 규칙은 위의 최근 3건판과 같은 한 벌이며,
+     * 두 경로가 다른 순서를 쓰면 상세의 '최근 변경'과 이력 화면의 첫 줄이 갈린다.
+     *
+     * **변경자를 함께 끌어오는 것이 N+1 방지다.** 이력마다 chnrg_mbr_id로 회원을 다시 찾으면
+     * 이력 건수만큼 쿼리가 늘어나므로, 이름까지 쓰는 연관을 한 번의 조인으로 모아 온다
+     * (DB-13). 별도의 회원 배치 조회를 두지 않는 것은 그 쿼리가 이미 하는 일이기 때문이다.
+     */
+    @EntityGraph(attributePaths = {"previousGrade", "newGrade", "changedBy"})
+    List<MemberGradeHistoryEntity> findByMemberIdOrderByCreatedAtDescIdDesc(Long memberId);
 }

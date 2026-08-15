@@ -22,6 +22,13 @@ public final class MemberRoleFixture {
     public static final String PRESIDENT = "회장";
     public static final String TREASURER = "총무";
 
+    /*
+     * 시드된 '국장'. data.sql이 이 역할에 OPERATOR 권한을 붙여 두므로(#9) 업무·폼·응답 심사
+     * 엔드포인트를 부를 수 있다 — 인가가 필요한 컨트롤러 테스트는 이 역할을 쓴다.
+     * 회장·부회장·총무는 EXECUTIVE라 그보다 넓고, 시드에 없는 이름(홍보국장 등)은 권한이 없다.
+     */
+    public static final String DIRECTOR = "국장";
+
     /** 부서별 직책. 시드에 없는 이름이라 승인자 판정이 접미사로 도는지 확인하는 데 쓴다 */
     public static final String PR_DIRECTOR = "홍보국장";
 

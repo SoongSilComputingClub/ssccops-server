@@ -378,7 +378,9 @@ public enum MemberErrorCode implements ErrorCode {
      * 제한 단위·잠금 시간과 그 근거는 MemberLinkAttemptLimiter의 주석에 있다.
      */
     TOO_MANY_LINK_ATTEMPTS(
-            HttpStatus.TOO_MANY_REQUESTS, "TOO_MANY_LINK_ATTEMPTS", "연결 시도가 너무 많습니다. 잠시 후 다시 시도하십시오.");
+            HttpStatus.TOO_MANY_REQUESTS,
+            "TOO_MANY_LINK_ATTEMPTS",
+            "연결 시도가 너무 많습니다. 잠시 후 다시 시도하십시오.");
 
     private final HttpStatus httpStatus;
     private final String code;

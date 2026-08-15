@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,12 +21,16 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberSelfUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSignupRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
+import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
 
@@ -129,5 +134,56 @@ public class MemberController {
     @GetMapping("/{memberId}")
     public ApiResponse<MemberDetailResponse> getMember(@PathVariable Long memberId) {
         return ApiResponse.success(memberService.getMemberDetail(memberId));
+    }
+
+    /*
+     * 본인 프로필 수정 (#77).
+     *
+     * **/{memberId}보다 먼저 선언할 필요는 없다** — 스프링이 리터럴 세그먼트를 경로 변수보다
+     * 우선하므로 'me'가 단건 수정으로 새지 않는다(/assignable과 같다).
+     *
+     * MEMBER_MANAGE를 요구하지 않는다. 자기 연락처를 고치는 데 회원 관리 권한이 필요하다면
+     * 대부분의 회원은 자기 정보를 영영 고칠 수 없다. 대신 대상이 @CurrentMember 하나로 고정돼
+     * 있어 남의 행에 닿을 자리가 없고, 미가입 주체는 그 리졸버가 403 SIGNUP_REQUIRED로 끊는다.
+     *
+     * 응답이 MemberProfileResponse인 것은 가입·세션 조회와 같은 모양을 쓰기 위해서다 —
+     * 저장 직후 웹이 세션을 다시 조회하지 않아도 된다.
+     */
+    @Operation(
+            summary = "본인 프로필 수정",
+            description =
+                    "인증 주체 본인의 이름·학과·학년·연락처를 고친다. 대상은 언제나 본인이라 경로에 회원 식별자가 없다."
+                            + " 기수와 이메일은 이 경로로 바꿀 수 없다 — 기수는 운영진이 배정하는 값이고,"
+                            + " 이메일은 인증 계정에서 오므로 본인이 바꾸면 로그인 계정과 갈린다."
+                            + " 등급·상태·학번도 바꿀 수 없다(요청 본문에 필드 자체가 없다)."
+                            + " 재학 회원이 학과·학년을 비우면 400 VALIDATION_FAILED다."
+                            + " 응답은 세션 조회(GET /v1/auth/session)의 member 블록과 같은 모양이라"
+                            + " 저장 직후 세션을 다시 조회할 필요가 없다.")
+    @PatchMapping("/me")
+    public ApiResponse<MemberProfileResponse> updateMyProfile(
+            @CurrentMember MemberEntity member,
+            @Valid @RequestBody MemberSelfUpdateRequest request) {
+        return ApiResponse.success(memberService.updateMyProfile(member.getId(), request));
+    }
+
+    /*
+     * 운영진의 회원 정보 수정 (#77).
+     *
+     * 바꿀 수 있는 필드는 요청 DTO가 정한다 — 등급·상태(#78)·학번은 애초에 담기지 않으므로
+     * 여기에 걸러내는 코드가 없다. 없는 회원은 404, 재학 회원의 학과·학년 누락은 400이다.
+     */
+    @Operation(
+            summary = "회원 정보 수정",
+            description =
+                    "기수·이름·학과·학년·연락처·이메일을 고친다. 등급·상태는 변경 이력을 함께 남겨야 해"
+                            + " 전용 API가 따로 있고, 학번·가입일·계정 식별자는 바꿀 수 없다"
+                            + " (요청 본문에 필드 자체가 없어 넣어도 무시된다)."
+                            + " PATCH이지만 본문은 한 벌 전체이며, 생략한 선택 필드는 비우는 것으로 본다."
+                            + " 재학 회원이 학과·학년을 비우면 400 VALIDATION_FAILED, 없는 회원은 404다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @PatchMapping("/{memberId}")
+    public ApiResponse<MemberDetailResponse> updateMember(
+            @PathVariable Long memberId, @Valid @RequestBody MemberUpdateRequest request) {
+        return ApiResponse.success(memberService.updateMember(memberId, request));
     }
 }

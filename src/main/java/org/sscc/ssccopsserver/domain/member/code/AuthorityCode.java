@@ -16,7 +16,19 @@ package org.sscc.ssccopsserver.domain.member.code;
  */
 public enum AuthorityCode {
 
-    /** 임원 — 최상위 묶음. 아래 전부를 포함한다 */
+    /*
+     * 최고 관리자 — 트리의 최상위. 아래 전부를 포함한다 (#71 · ssccops#71 BR-M35).
+     *
+     * 회원이 한 명도 없을 때 최초 가입자에게 부여되는 권한이며, 그 뒤로는 운영진이 화면에서
+     * 넘겨준다. 어떤 엔드포인트도 @RequireAuthority(SUPER)를 요구하지 않는다 — "전부 포함"은
+     * 트리의 부모-자식 관계가 만들어 내는 결과이지 판정의 예외가 아니다. AuthorityPolicy에
+     * SUPER를 특별 취급하는 분기를 넣지 말 것: 웹이 저장 전 미리 보기를 위해 같은 펼침을
+     * 트리 간선으로 한 번 더 하므로(entities/authority/model/tree.ts.previewGrants), 서버만
+     * 특별 취급하면 체크박스와 실제 부여 결과가 갈린다.
+     */
+    SUPER,
+
+    /** 임원 — 운영 전반의 묶음. SUPER의 자식이다 */
     EXECUTIVE,
 
     /** 운영자 — 업무·폼 운영 묶음 */

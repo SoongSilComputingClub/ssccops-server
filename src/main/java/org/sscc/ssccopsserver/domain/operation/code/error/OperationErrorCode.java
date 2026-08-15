@@ -70,8 +70,25 @@ public enum OperationErrorCode implements ErrorCode {
     // 404 — 경로의 하위 업무에 속하지 않는 체크리스트 항목도 여기에 걸린다 (403으로 나누지 않는다)
     CHECKLIST_ITEM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "체크리스트 항목을 찾을 수 없습니다."),
 
-    // 409 — 전이표(TR-01~TR-04)에 없는 상태 전환. 완료 → 진행 되돌리기도 여기에 걸린다
+    // 404 — 소프트 삭제된 회의도 여기에 걸린다 (SUB_WORK_NOT_FOUND와 같은 판단)
+    MEETING_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "회의를 찾을 수 없습니다."),
+
+    // 404 — 경로의 회의에 속하지 않는 안건도 여기에 걸린다 (403으로 나누지 않는다)
+    MEETING_AGENDA_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "안건을 찾을 수 없습니다."),
+
+    // 409 — 전이표(TR-01~TR-04)에 없는 상태 전환. 완료 → 진행 되돌리기도 여기에 걸린다.
+    // 회의 전이표(TR-M1~TR-M4)에 없는 조합과 시작 전(SCHEDULED)이 아닌 회의의 안건 상정
+    // 철회(OPS-029)도 전용 코드를 새로 만들지 않고 이 코드를 재사용한다 (#47 선례 준용)
     TRANSITION_NOT_ALLOWED(HttpStatus.CONFLICT, "TRANSITION_NOT_ALLOWED", "현재 상태에서 할 수 없는 작업입니다."),
+
+    /*
+     * 409 — 미처리(PENDING) 안건이 남은 채 회의 종료(TR-M3)를 시도했을 때. 보류(HOLD)는
+     * 다음 회의로 이월하겠다는 의사 표시라 막지 않는다 (MeetingEntity.close 참고).
+     */
+    AGENDA_UNRESOLVED(HttpStatus.CONFLICT, "AGENDA_UNRESOLVED", "처리하지 않은 안건이 있습니다."),
+
+    // 409 — 종료·취소된 회의에 안건을 상정하거나 수정하려 할 때 (OPS-027·OPS-028)
+    MEETING_CLOSED(HttpStatus.CONFLICT, "MEETING_CLOSED", "이미 종료된 회의입니다."),
 
     /*
      * 409 — 이미 있는 유형명으로 등록·수정할 때(OPS-019). 선조회만으로는 동시 요청을 막지 못하므로

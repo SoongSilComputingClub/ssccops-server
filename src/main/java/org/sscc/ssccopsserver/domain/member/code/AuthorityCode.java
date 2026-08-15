@@ -37,6 +37,9 @@ public enum AuthorityCode {
     /** 업무·하위 업무 관리 */
     WORK_MANAGE,
 
+    /** 회의 등록·조회·상태 전이·안건 관리 */
+    MEETING_MANAGE,
+
     /** 하위 업무 유형 조회 */
     SUB_WORK_TYPE_READ,
 

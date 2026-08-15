@@ -114,7 +114,7 @@ public class OperationEntity {
 
     /*
      * 업무 등록(OPS-002)용 생성 팩토리. oper_type_cd = WORK는 서버가 고정하며
-     * 클라이언트가 지정할 수 없다. 회의 등록이 붙을 때 createForMeeting을 따로 연다.
+     * 클라이언트가 지정할 수 없다.
      */
     public static OperationEntity createForWork(
             String title,
@@ -151,6 +151,32 @@ public class OperationEntity {
         return new OperationEntity(
                 null,
                 OperationType.SUB_WORK,
+                title,
+                registrant,
+                beginAt,
+                endAt,
+                priority == null ? OperationPriority.NORMAL : priority,
+                personInCharge,
+                null,
+                null,
+                null);
+    }
+
+    /*
+     * 회의 등록(OPS-024)용 생성 팩토리. oper_type_cd = MEETING은 서버가 고정하며
+     * 클라이언트가 지정할 수 없다. 담당자(personInCharge)는 회의 책임자와 항상 동일 인물이라
+     * mtg_rbprsn_id에도 같은 회원을 넣는다 — 별도로 입력받지 않는다(ssccops-web#56).
+     */
+    public static OperationEntity createForMeeting(
+            String title,
+            MemberEntity registrant,
+            MemberEntity personInCharge,
+            Instant beginAt,
+            Instant endAt,
+            OperationPriority priority) {
+        return new OperationEntity(
+                null,
+                OperationType.MEETING,
                 title,
                 registrant,
                 beginAt,

@@ -135,7 +135,7 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
 --   SUPER 최고 관리자
 --   └── EXECUTIVE 임원
 --       ├── OPERATOR 운영자
---       │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW
+--       │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW · MEETING_MANAGE
 --       │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
 --       ├── SUB_WORK_TYPE_MANAGE · FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
 --
@@ -179,6 +179,10 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'WORK_MANAGE');
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'SUB_WORK_TYPE_READ', '하위 업무 유형 조회', 'OPERATOR', '하위 업무 유형 목록 조회(등록 폼의 드롭다운).', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_TYPE_READ');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'MEETING_MANAGE', '회의 관리', 'OPERATOR', '회의의 등록·조회·상태 전이와 안건 관리.', TRUE, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_MANAGE');
 
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'FORM_MANAGE', '폼 관리', 'OPERATOR', '폼 조회·작성·접수 상태 변경을 아우르는 묶음.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP

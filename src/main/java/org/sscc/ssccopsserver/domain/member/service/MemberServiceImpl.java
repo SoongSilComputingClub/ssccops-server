@@ -65,6 +65,9 @@ public class MemberServiceImpl implements MemberService {
     private final MemberGradeHistoryRepository memberGradeHistoryRepository;
     private final MemberStatusHistoryRepository memberStatusHistoryRepository;
 
+    // 프로필의 capabilities는 인가 애스펙트와 같은 정책으로 계산한다 (#9) — 두 벌로 두면 갈린다
+    private final AuthorityPolicy authorityPolicy;
+
     // 가입일 산출 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
 
@@ -119,8 +122,11 @@ public class MemberServiceImpl implements MemberService {
         MemberEntity saved = saveOrTranslateConflict(member);
         recordInitialHistories(saved, grade, status);
 
-        // 가입 직후에는 어떤 역할도 부여되지 않는다 — 역할 배정은 운영진의 별도 절차다
-        return MemberProfileResponse.of(saved, List.of());
+        /*
+         * 가입 직후에는 어떤 역할도 부여되지 않는다 — 역할 배정은 운영진의 별도 절차다.
+         * 역할이 없으면 권한도 없으므로 capabilities도 빈 목록이다(굳이 조회하지 않는다).
+         */
+        return MemberProfileResponse.of(saved, List.of(), List.of());
     }
 
     @Override
@@ -140,7 +146,8 @@ public class MemberServiceImpl implements MemberService {
                         .findById(memberId)
                         .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
 
-        return MemberProfileResponse.of(member, findCurrentRoles(memberId));
+        return MemberProfileResponse.of(
+                member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
     }
 
     /*

@@ -18,9 +18,8 @@ public interface MemberHistoryService {
     /**
      * 회원의 변경 이력을 발생 시각 역순으로 전부 내린다.
      *
-     * @param sources 읽을 출처. 비어 있을 수 없으며 '전부'는 세 값을 모두 담아 표현한다 —
-     *     빈 집합을 '전부'로 읽으면 필터를 잘못 만든 요청이 조용히 전량 조회가 된다.
+     * @param sources 읽을 출처. 비어 있을 수 없으며 '전부'는 세 값을 모두 담아 표현한다 — 빈 집합을 '전부'로 읽으면 필터를 잘못 만든 요청이 조용히
+     *     전량 조회가 된다.
      */
-    List<MemberChangeHistoryResponse> getHistories(
-            Long memberId, Set<MemberHistorySource> sources);
+    List<MemberChangeHistoryResponse> getHistories(Long memberId, Set<MemberHistorySource> sources);
 }

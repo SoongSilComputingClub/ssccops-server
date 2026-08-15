@@ -37,8 +37,7 @@ public final class MemberChangeHistoryAssembler {
      * 지킨다. 세 출처를 각각 식별자 내림차순으로 받아 넣으므로 그 순서도 결정적이다.
      */
     private static final Comparator<MemberChangeHistoryResponse> NEWEST_FIRST =
-            Comparator.comparing(
-                            MemberChangeHistoryResponse::createdAt, Comparator.reverseOrder())
+            Comparator.comparing(MemberChangeHistoryResponse::createdAt, Comparator.reverseOrder())
                     .thenComparing(MemberChangeHistoryResponse::changeType);
 
     private MemberChangeHistoryAssembler() {}

@@ -13,7 +13,15 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: none
+      # 정식 버전 전까지 한시적으로 update다. none일 때는 엔티티가 늘 때마다 배포 전에
+      # CREATE TABLE·CREATE INDEX를 사람이 먼저 실행해야 했고, 빠뜨리면 배포가 아니라
+      # 첫 요청에서 터졌다 — 스키마가 아직 매 이슈마다 바뀌는 단계라 그 수동 단계가
+      # 실질적인 배포 실패 원인이었다.
+      # update는 새 테이블·컬럼·인덱스만 추가하며 **컬럼 삭제·이름 변경·타입 변경은
+      # 반영하지 않는다** — 그런 변경은 prod DB에 수동 ALTER가 여전히 필요하다.
+      # 데이터가 있는 DB라 dev(#83)처럼 "드리프트가 쌓이면 통째로 재생성"이라는
+      # 탈출구가 없다. 정식 버전 시점에 Flyway/Liquibase를 넣고 none으로 되돌린다.
+      ddl-auto: update
 
   h2:
     console:

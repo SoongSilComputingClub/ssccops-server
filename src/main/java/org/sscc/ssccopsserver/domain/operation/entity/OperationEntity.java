@@ -41,8 +41,9 @@ import lombok.NoArgsConstructor;
  * 여기인 것은 제목·기간·등록시각 같은 공통 속성을 부모가 갖기 때문이며, 커서 페이징은 정렬
  * 키를 매 요청 훑으므로 인덱스가 없으면 그대로 전체 스캔이 된다.
  *
- * 주의: 이 선언으로 인덱스가 만들어지는 것은 ddl-auto가 도는 local·dev·test뿐이다.
- * prod는 ddl-auto가 none이라 배포 전에 아래 DDL을 직접 실행해야 한다.
+ * 주의: prod도 ddl-auto가 update이므로(정식 버전 전까지 한시적) 이 선언은 배포 때 반영된다.
+ * update는 추가만 하고 삭제·이름 변경·타입 변경은 반영하지 않으니, 아래 DDL은 그런 변경이
+ * 필요할 때와 정식 버전에서 ddl-auto를 none으로 되돌린 뒤를 위한 기준으로 남긴다.
  *   CREATE INDEX idx_oper_crt_dt ON oper (crt_dt);
  *   CREATE INDEX idx_oper_bgng_dt ON oper (bgng_dt);
  */

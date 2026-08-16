@@ -44,8 +44,9 @@ import lombok.NoArgsConstructor;
  * work_id는 상위 업무 목록(OPS-020)이 진행률·하위 업무 건수를 집계할 때 매 요청 타는 축이다 —
  * PostgreSQL은 FK에 인덱스를 자동으로 만들지 않는다.
  *
- * 주의: 이 선언으로 인덱스가 만들어지는 것은 ddl-auto가 도는 local·dev·test뿐이다.
- * prod는 ddl-auto가 none이라 배포 전에 아래 DDL을 직접 실행해야 한다.
+ * 주의: prod도 ddl-auto가 update이므로(정식 버전 전까지 한시적) 이 선언은 배포 때 반영된다.
+ * update는 추가만 하고 삭제·이름 변경·타입 변경은 반영하지 않으니, 아래 DDL은 그런 변경이
+ * 필요할 때와 정식 버전에서 ddl-auto를 none으로 되돌린 뒤를 위한 기준으로 남긴다.
  *   CREATE INDEX idx_sub_work_ddln_dt ON sub_work (ddln_dt);
  *   CREATE INDEX idx_sub_work_work_stts_cd ON sub_work (work_stts_cd);
  *   CREATE INDEX idx_sub_work_aprv_stts_cd ON sub_work (aprv_stts_cd);

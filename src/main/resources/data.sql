@@ -184,6 +184,26 @@ INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, in
 SELECT 'MEETING_MANAGE', '회의 관리', 'OPERATOR', '회의의 등록·조회·상태 전이와 안건 관리.', TRUE, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_MANAGE');
 
+-- #101: 업무·하위 업무를 조회만 할 수 있는 권한. WORK_MANAGE의 자식이라 그 보유자(국장 이상,
+-- 그리고 WORK_MANAGE를 직접 부여받은 임의의 역할)는 트리 펼침으로 자동 보유한다.
+-- OPERATOR의 자식이 아니라 WORK_MANAGE의 자식인 것은, OPERATOR를 거치지 않고 WORK_MANAGE만
+-- 직접 부여받은 역할도 자신이 다룰 수 있는 업무는 당연히 읽을 수 있어야 하기 때문이다 —
+-- 형제 노드로 두면 그 경로에서는 조회가 막힌다. 국원에게는 이 권한 하나만 직접 매핑한다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'WORK_READ', '업무·하위 업무 조회', 'WORK_MANAGE', '업무·하위 업무의 목록·상세 조회.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'WORK_READ');
+
+-- #101: 회의를 조회만 할 수 있는 권한. WORK_READ와 같은 이유로 MEETING_MANAGE의 자식이다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'MEETING_READ', '회의 조회', 'MEETING_MANAGE', '회의의 목록·상세·안건 조회.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_READ');
+
+-- #101: 회의 안건만 쓸 수 있는 권한. MEETING_MANAGE의 자식이라 국장 이상은 자동 보유하고,
+-- 국원은 회의 생성·전이는 못 하지만 안건 작성은 이 권한으로 통과한다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'MEETING_AGENDA_WRITE', '회의 안건 작성', 'MEETING_MANAGE', '회의 안건의 등록·수정·철회.', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_AGENDA_WRITE');
+
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'FORM_MANAGE', '폼 관리', 'OPERATOR', '폼 조회·작성·접수 상태 변경을 아우르는 묶음.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_MANAGE');
@@ -210,6 +230,15 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_STATUS_CHANGE');
 -- 운영진이 EXECUTIVE를 어딘가로 옮겨 두었다면 그 판단을 되돌리지 않는다.
 UPDATE authrt SET up_authrt_cd = 'SUPER', mdfcn_dt = CURRENT_TIMESTAMP
 WHERE authrt_cd = 'EXECUTIVE' AND up_authrt_cd IS NULL;
+
+-- #101: 하위 업무 유형 관리(SUB_WORK_TYPE_MANAGE)를 EXECUTIVE에서 떼어 SUPER 바로 아래로
+-- 옮긴다. EXECUTIVE 자식으로 두면 회장·부회장뿐 아니라 총무까지 자동으로 갖게 되는데,
+-- 총무는 이 권한을 갖지 않는 것이 요구사항이다(총무의 다른 EXECUTIVE 자손인 회원관리·
+-- 역할관리·폼라벨관리는 그대로 유지 — 그래서 총무를 EXECUTIVE에서 통째로 떼지 않고 이
+-- 노드 하나만 옮긴다). up_authrt_cd = 'EXECUTIVE' 가드가 위 EXECUTIVE 재배치 UPDATE와
+-- 같은 이유로 멱등성과 "화면에서 이미 옮긴 값은 건드리지 않는다"를 함께 지킨다.
+UPDATE authrt SET up_authrt_cd = 'SUPER', mdfcn_dt = CURRENT_TIMESTAMP
+WHERE authrt_cd = 'SUB_WORK_TYPE_MANAGE' AND up_authrt_cd = 'EXECUTIVE';
 
 -- 역할↔권한 초기 매핑(role_authrt_rel). 회장·부회장·총무 → EXECUTIVE · 국장 → OPERATOR이며
 -- 국원·프로젝트장·스터디장은 부여하지 않는다 — "권한 없는 역할은 아무것도 못 한다"가 기본값이다.
@@ -242,6 +271,40 @@ FROM role r
 WHERE r.role_nm = '최고관리자'
   AND NOT EXISTS (
     SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUPER');
+
+-- #101: 회장·부회장에게만 하위 업무 유형관리를 명시적으로 되돌려준다. SUB_WORK_TYPE_MANAGE를
+-- EXECUTIVE에서 떼어냈으므로(위 authrt UPDATE) 더는 자동 상속되지 않는다 — 총무·국장은
+-- 여기 이름이 없어 그대로 제외된다.
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'SUB_WORK_TYPE_MANAGE', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm IN ('회장', '부회장')
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUB_WORK_TYPE_MANAGE');
+
+-- #101: 국원은 업무·하위 업무·회의를 조회만 하고(WORK_READ·MEETING_READ), 회의는 안건 작성만
+-- 한다(MEETING_AGENDA_WRITE). 하위 업무의 "본인이 담당자인 건만 쓰기"는 코드가 갖는
+-- 판정(SubWorkOwnershipPolicy)이라 role_authrt_rel로 표현되지 않는다.
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'WORK_READ', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '국원'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'WORK_READ');
+
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'MEETING_READ', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '국원'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'MEETING_READ');
+
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'MEETING_AGENDA_WRITE', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '국원'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'MEETING_AGENDA_WRITE');
 
 -- 하위 업무 유형(sub_work_type). 운영 등록 화면의 업무 유형 4종과 1:1로 대응한다.
 -- 유형은 코드가 아니라 기준 데이터라서 여기서 넣는다 (REQ-010 · POL-005 — 승인 정책의 데이터화).

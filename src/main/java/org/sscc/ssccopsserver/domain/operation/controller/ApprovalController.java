@@ -8,12 +8,14 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.service.ApprovalService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import lombok.RequiredArgsConstructor;
@@ -26,13 +28,16 @@ import lombok.RequiredArgsConstructor;
  * 투표는 하위 업무에 달린 하위 리소스(POST /v1/sub-works/{id}/approvals/votes)라, 둘 다
  * 대상 하위 업무를 경로에 갖는다. 이 컨트롤러는 조회만 맡는다.
  *
- * 권한 인가(#9)를 걸지 않은 유일한 운영 컨트롤러다. 정의서상 권한이 '승인자 본인'이라
- * 권한 코드로 표현되는 종류가 아니기 때문이다 — 판정은 ApprovalAuthorityPolicy가 계속 맡는다.
- * 목록을 승인자별로 좁히지 않는 것은 화면이 운영진 전체에게 같은 승인함을 보여주기 때문이며,
- * 실제 승인·반려는 전이 API(@RequireAuthority(WORK_MANAGE) + 승인자 판정)가 걸러낸다.
+ * 인가는 WORK_MANAGE다(#101). 원래는 권한 인가(#9)를 걸지 않은 유일한 운영 컨트롤러였는데
+ * — '누가 승인할 수 있는가'가 정의서상 권한 코드가 아니라 '승인자 본인'(ApprovalAuthorityPolicy)이라
+ * 그 판정은 여전히 유효하다 — 그와 별개로 '승인함 화면 자체를 볼 수 있는가'는 국원을 뺀
+ * 운영진 전체로 좁혀야 해서(#101) 새로 걸었다. 목록을 승인자별로 좁히지 않는 것은 화면이
+ * WORK_MANAGE 보유 운영진 전체에게 같은 승인함을 보여주기 때문이며, 실제 승인·반려는 전이
+ * API(@RequireAuthority(WORK_READ) + 승인자 판정)가 건별로 걸러낸다.
  */
 @RestController
 @RequiredArgsConstructor
+@RequireAuthority(AuthorityCode.WORK_MANAGE)
 @RequestMapping("/v1/approvals")
 public class ApprovalController {
 

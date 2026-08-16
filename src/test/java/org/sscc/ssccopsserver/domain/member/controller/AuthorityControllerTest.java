@@ -99,31 +99,37 @@ class AuthorityControllerTest {
     // ------------------------------------------------------------------ 트리 조회
 
     /*
-     * 시드된 권한 14종이 children 중첩으로 내려온다. 평평한 목록에 upAuthrtCd만 실어 보내면
+     * 시드된 권한 종이 children 중첩으로 내려온다. 평평한 목록에 upAuthrtCd만 실어 보내면
      * 화면이 트리를 다시 조립해야 하고, 그 조립이 서버의 펼침과 갈릴 여지가 생긴다.
      *
-     * 최상위는 SUPER 하나이고 EXECUTIVE가 그 자식이다 (#71). 이 부모-자식 간선이 SUPER가
+     * 최상위는 SUPER이고 EXECUTIVE가 그 자식이다 (#71). 이 부모-자식 간선이 SUPER가
      * "모든 권한"인 유일한 근거다 — 판정에 특별 취급이 없으므로 여기서 간선이 끊기면 인가가
      * 조용히 좁아진다. 그래서 트리 응답 테스트가 그 사실을 못 박는다.
+     *
+     * SUPER의 또 다른 자식 SUB_WORK_TYPE_MANAGE(#101)는 일부러 EXECUTIVE 밑이 아니다 —
+     * 회장·부회장만 이 권한을 직접 부여받고 총무·국장은 EXECUTIVE·OPERATOR를 통해서도 닿지
+     * 못해야 하므로, 자동 상속되는 자리(EXECUTIVE의 자식)에 둘 수 없다.
      */
     @Test
     void returnsSeededPermissionTreeAsNestedChildren() throws Exception {
         mockMvc.perform(authorized(get(AUTHORITIES), adminToken))
                 .andExpect(status().isOk())
-                // 최상위는 SUPER 하나뿐이다
+                // 최상위(부모 없는 노드)는 SUPER 하나뿐이다
                 .andExpect(jsonPath("$.data", hasSize(1)))
                 .andExpect(jsonPath("$.data[0].authrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].upAuthrtCd").doesNotExist())
                 .andExpect(jsonPath("$.data[0].sysYn").value(true))
-                .andExpect(jsonPath("$.data[0].children", hasSize(1)))
+                .andExpect(jsonPath("$.data[0].children", hasSize(2)))
                 .andExpect(jsonPath("$.data[0].children[0].authrtCd").value("EXECUTIVE"))
                 .andExpect(jsonPath("$.data[0].children[0].authrtNm").value("임원"))
                 .andExpect(jsonPath("$.data[0].children[0].upAuthrtCd").value("SUPER"))
-                .andExpect(jsonPath("$.data[0].children[0].children", hasSize(5)))
+                .andExpect(jsonPath("$.data[0].children[1].authrtCd").value("SUB_WORK_TYPE_MANAGE"))
+                .andExpect(jsonPath("$.data[0].children[1].upAuthrtCd").value("SUPER"))
+                .andExpect(jsonPath("$.data[0].children[0].children", hasSize(4)))
                 // 형제 순서는 indct_seqno다
                 .andExpect(jsonPath("$.data[0].children[0].children[0].authrtCd").value("OPERATOR"))
                 .andExpect(
-                        jsonPath("$.data[0].children[0].children[4].authrtCd").value("ROLE_MANAGE"))
+                        jsonPath("$.data[0].children[0].children[3].authrtCd").value("ROLE_MANAGE"))
                 // 증손자까지 중첩된다 — EXECUTIVE > OPERATOR > FORM_MANAGE > FORM_READ.
                 // OPERATOR 자식 5개:
                 // WORK_MANAGE·SUB_WORK_TYPE_READ·FORM_MANAGE·RESPONSE_REVIEW·MEETING_MANAGE(#83)

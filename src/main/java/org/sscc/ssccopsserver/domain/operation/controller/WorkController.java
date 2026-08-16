@@ -33,19 +33,21 @@ import lombok.RequiredArgsConstructor;
 /*
  * 업무 API (OPS-002). 경로 버전 /v1을 쓰고 컨텍스트 경로에 /api를 두지 않는다 (AP-01).
  *
- * 인가는 WORK_MANAGE 권한이다 (#9). 정의서의 '국장 이상'을 역할이 아니라 권한으로 옮긴 것으로,
- * 시드에서 국장은 OPERATOR를 통해·회장·부회장·총무는 EXECUTIVE를 통해 이 권한에 닿는다.
- * 조회도 함께 막는다 — 업무 목록·상세에는 담당자와 진행 상황이 그대로 들어 있다.
- * 클래스에 걸어 두었으므로 핸들러가 늘어도 자동으로 같은 권한이 걸린다.
+ * 인가는 메서드마다 갈린다(#101) — 조회는 WORK_READ, 쓰기는 WORK_MANAGE다. 정의서의
+ * '국장 이상' 전체 허용은 WORK_MANAGE 그대로이고(국장은 OPERATOR를 통해·회장·부회장·총무는
+ * EXECUTIVE를 통해 닿는다), 국원은 WORK_READ만 받아 조회는 되지만 생성·수정은 막힌다.
+ * WORK_READ가 WORK_MANAGE의 자식이라 WORK_MANAGE 보유자는 별도 매핑 없이 조회도 통과한다.
+ * 클래스 레벨에 걸지 않는 것은 SubWorkTypeController와 같은 이유다 — 메서드마다 다른 권한을
+ * 요구하면 클래스 레벨 하나로는 표현할 수 없다.
  */
 @RestController
 @RequiredArgsConstructor
-@RequireAuthority(AuthorityCode.WORK_MANAGE)
 @RequestMapping("/v1/works")
 public class WorkController {
 
     private final WorkService workService;
 
+    @RequireAuthority(AuthorityCode.WORK_MANAGE)
     @PostMapping
     public ResponseEntity<ApiResponse<WorkCreateResponse>> create(
             @Valid @RequestBody WorkCreateRequest request, @CurrentMember MemberEntity registrant) {
@@ -61,6 +63,7 @@ public class WorkController {
      * 경로 변수는 work_id다 — oper_id가 아니다. 소프트 삭제된 건은 서비스가 404로 막으므로
      * 여기서 분기하지 않는다 (LY-02).
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @GetMapping("/{workId}")
     public ApiResponse<WorkDetailResponse> getWork(@PathVariable Long workId) {
         return ApiResponse.success(workService.getWork(workId));
@@ -76,6 +79,7 @@ public class WorkController {
      * 응답이 상세 조회와 같은 WorkDetailResponse인 것은 화면이 수정 직후 재조회 없이 같은
      * 화면을 그대로 갱신할 수 있어야 하기 때문이다(다른 PATCH 엔드포인트들과 같은 판단).
      */
+    @RequireAuthority(AuthorityCode.WORK_MANAGE)
     @PatchMapping("/{workId}")
     public ApiResponse<WorkDetailResponse> updateWork(
             @PathVariable Long workId, @Valid @RequestBody WorkUpdateRequest request) {
@@ -93,6 +97,7 @@ public class WorkController {
      *
      * 목록이므로 응답은 data 배열과 page 봉투 두 갈래다 (AP-11).
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @GetMapping
     public ApiResponse<List<WorkListItemResponse>> searchWorks(
             @Valid @ModelAttribute WorkSearchCondition condition) {

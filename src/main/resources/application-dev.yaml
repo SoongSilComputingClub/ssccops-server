@@ -13,7 +13,13 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      # 재시작마다 전체 재생성하지 않는다(ssccops#83). Render 무료 티어에서 create-drop이
+      # 테이블 수 증가와 겹치며 부팅이 헬스체크 타임아웃을 넘겨 update_failed가 반복됐고,
+      # 한 번은 기준 코드 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다(mbr_grd.TEMP 누락).
+      # update는 추가만 반영하고 컬럼 삭제·타입 변경은 반영하지 않는다 — dev 환경 한정으로
+      # 감수하는 트레이드오프다. 드리프트가 실제 문제가 되면 수동 ALTER로 정리하거나
+      # Flyway/Liquibase 도입을 검토한다.
+      ddl-auto: update
 
   h2:
     console:

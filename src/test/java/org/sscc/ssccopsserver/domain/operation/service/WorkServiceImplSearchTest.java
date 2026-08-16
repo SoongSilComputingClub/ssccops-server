@@ -31,6 +31,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryReposi
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
+import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
@@ -124,6 +125,7 @@ class WorkServiceImplSearchTest {
                         new MemberInitialHistoryRecorder(
                                 memberGradeHistoryRepository, memberStatusHistoryRepository),
                         authorityPolicy,
+                        new MemberLinkAttemptLimiter(FIXED_CLOCK),
                         FIXED_CLOCK);
         workService =
                 new WorkServiceImpl(

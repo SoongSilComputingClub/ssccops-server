@@ -24,6 +24,7 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberChangeHistoryResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberCursor;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberLinkRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
@@ -52,7 +53,9 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MemberServiceImpl implements MemberService {
@@ -109,6 +112,12 @@ public class MemberServiceImpl implements MemberService {
 
     // 프로필의 capabilities는 인가 애스펙트와 같은 정책으로 계산한다 (#9) — 두 벌로 두면 갈린다
     private final AuthorityPolicy authorityPolicy;
+
+    /*
+     * 계정 연결의 시도 횟수 제한 (#86 · VR-M24). 제한 단위와 잠금 시간, 인메모리 구현의 한계는
+     * MemberLinkAttemptLimiter의 주석에 있다.
+     */
+    private final MemberLinkAttemptLimiter linkAttemptLimiter;
 
     // 가입일 산출 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -178,6 +187,128 @@ public class MemberServiceImpl implements MemberService {
             return MemberProfileResponse.of(saved, List.of(), List.of());
         }
         return grantBootstrapRole(saved, bootstrapRole);
+    }
+
+    /*
+     * 이관 회원 계정 연결 (#86 · ssccops#78 A안).
+     *
+     * ── 순서가 규칙이다 ────────────────────────────────────────
+     * 1) 이미 가입한 계정인가 — 연결은 가입 전 주체의 일이다.
+     * 2) 시도 제한에 걸렸는가 — **명부를 보기 전에** 끊어야 제한이 뜻을 갖는다. 조회한 뒤에
+     *    응답만 막으면 타이밍으로 존재 여부가 새어 나가고, 애초에 훑는 일 자체를 막지 못한다.
+     * 3) 후보 조회 → 본인 확인 → assignAuthUserId.
+     *
+     * ── mbr 행을 만들지 않는다 (BR-M51) ────────────────────────
+     * 여기에는 MemberEntity.create도 이력 기록도 없다. 등급·상태는 명부에 이미 있고 그 최초
+     * 부여 이력은 이관(#85)이 남겼으므로, 연결이 또 남기면 "이관됐다"와 "본인이 로그인했다"가
+     * 같은 종류의 사건으로 섞인다. 연결 사실은 **로그로만** 남긴다 — 데이터사전에 연결 이력
+     * 테이블이 없고, mbr_stts_hstry에 상태 변화 없는 행을 억지로 넣으면 이력의 뜻이 흐려진다.
+     *
+     * ── 트랜잭션 ───────────────────────────────────────────────
+     * 갱신은 auth_user_id 한 컬럼뿐이지만 flush를 명시적으로 부른다. uk_mbr_auth_user_id 위반은
+     * flush 시점에야 드러나고, 커밋까지 미루면 도메인 오류(409)가 아니라 500으로 새어 나간다.
+     */
+    @Override
+    @Transactional
+    public MemberProfileResponse link(AuthenticatedUser user, MemberLinkRequest request) {
+        UUID authUserId = user.authUserId();
+        if (memberRepository.existsByAuthUserId(authUserId)) {
+            throw new GeneralException(MemberErrorCode.ALREADY_SIGNED_UP);
+        }
+        if (linkAttemptLimiter.isLocked(authUserId)) {
+            throw new GeneralException(MemberErrorCode.TOO_MANY_LINK_ATTEMPTS);
+        }
+
+        MemberEntity member = findLinkTarget(request, authUserId);
+        member.assignAuthUserId(authUserId);
+        flushOrTranslateLinkConflict();
+
+        linkAttemptLimiter.reset(authUserId);
+        /*
+         * 연결 사실이 남는 유일한 자리다. 누가 어느 명부 행을 가져갔는지는 나중에 반드시 묻게
+         * 되는 질문이라, 화면에 필요해지면 테이블 등재를 별도 TASK로 세운다.
+         */
+        log.info("이관 회원 계정 연결 완료: mbrId={}, authUserId={}", member.getId(), authUserId);
+
+        Long memberId = member.getId();
+        return MemberProfileResponse.of(
+                member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
+    }
+
+    /*
+     * 연결할 명부 회원을 찾는다. 실패는 **한 코드 한 문구**다 (VR-M23).
+     *
+     * 후보는 auth_user_id가 비어 있는 회원으로 좁혀 조회하고(이미 계정이 붙은 행은 연결 대상이
+     * 아니다), 학번·회원명·연락처 3종 일치를 MemberLinkPolicy가 판정한다. **정확히 한 건**일
+     * 때만 연결하며, 0건이든 2건 이상이든 같은 실패다 — uk_mbr_student_number 덕분에 2건은
+     * 나올 수 없지만, 규칙을 제약에 기대지 않고 여기서 센다.
+     *
+     * 3종이 다 맞았는데 그 행에 이미 계정이 붙어 있는 경우만 409로 갈라낸다. 여기 닿은 사람은
+     * 연락처까지 맞힌 사람이라 이 응답이 새로 알려 주는 사실이 없고(연락처는 MEMBER_MANAGE
+     * 없이는 조회되지 않는다), 화면은 "정보가 틀렸다"가 아니라 "운영진에게 문의하라"고 안내해야
+     * 한다. 같은 이유로 **이 경우는 실패 횟수에 세지 않는다** — 추측이 아니기 때문이다.
+     */
+    private MemberEntity findLinkTarget(MemberLinkRequest request, UUID authUserId) {
+        String studentNumber = MemberLinkPolicy.normalizeStudentNumber(request.stdntNo());
+
+        List<MemberEntity> matched =
+                matching(
+                        memberRepository.findLinkCandidatesByStudentNumber(studentNumber), request);
+        if (matched.size() == 1) {
+            return lockForLink(matched.get(0));
+        }
+
+        if (!matching(memberRepository.findLinkedByStudentNumber(studentNumber), request)
+                .isEmpty()) {
+            throw new GeneralException(MemberErrorCode.MEMBER_ALREADY_LINKED);
+        }
+
+        linkAttemptLimiter.recordFailure(authUserId);
+        throw new GeneralException(MemberErrorCode.MEMBER_LINK_FAILED);
+    }
+
+    /*
+     * 본인 확인을 통과한 뒤 그 행을 잠그고 auth_user_id를 다시 읽는다 — 근거는
+     * MemberRepository.lockAndFindAuthUserId의 주석에 있다. 1차 후보 조회와 이 재확인 사이에
+     * 다른 계정이 같은 행을 가져갔다면 여기서 409로 끊는다.
+     */
+    private MemberEntity lockForLink(MemberEntity member) {
+        if (memberRepository.lockAndFindAuthUserId(member.getId()).isPresent()) {
+            throw new GeneralException(MemberErrorCode.MEMBER_ALREADY_LINKED);
+        }
+        return member;
+    }
+
+    private static List<MemberEntity> matching(
+            List<MemberEntity> candidates, MemberLinkRequest request) {
+        return candidates.stream()
+                .filter(
+                        candidate ->
+                                MemberLinkPolicy.matches(
+                                        candidate,
+                                        request.stdntNo(),
+                                        request.mbrNm(),
+                                        request.telno()))
+                .toList();
+    }
+
+    /*
+     * UNIQUE 제약이 최종 방어선이다. uk_mbr_auth_user_id 위반은 flush 시점에야 드러나므로
+     * 여기서 잡아 선조회와 같은 409로 옮긴다 (가입의 saveOrTranslateConflict와 같은 방식).
+     *
+     * **같은 행에 대한 경합은 이 제약이 막지 못한다** — 그쪽은 lockForLink가 끊으며 근거는
+     * MemberRepository.lockAndFindAuthUserId의 주석에 있다. 여기 걸리는 것은 한 계정이 서로
+     * 다른 두 명부 행에 동시에 붙으려는 경우다(학번이 다른 두 요청을 나란히 보내는 경우).
+     *
+     * 제약명을 가리지 않는 것은 이 UPDATE가 어길 수 있는 UNIQUE가 하나뿐이기 때문이다.
+     * 학번은 엔티티에서 updatable = false로 잠겨 있어 이 경로로는 바뀌지 않는다.
+     */
+    private void flushOrTranslateLinkConflict() {
+        try {
+            memberRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            throw new GeneralException(MemberErrorCode.MEMBER_ALREADY_LINKED);
+        }
     }
 
     @Override

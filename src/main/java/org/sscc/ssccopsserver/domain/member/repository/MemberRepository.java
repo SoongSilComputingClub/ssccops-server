@@ -5,8 +5,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -37,6 +40,62 @@ public interface MemberRepository
      */
     @Query("select m.studentNumber from MemberEntity m where m.studentNumber in :studentNumbers")
     List<String> findStudentNumbersIn(@Param("studentNumbers") Collection<String> studentNumbers);
+
+    /*
+     * 이관 회원 계정 연결의 후보 (#86). **auth_user_id가 비어 있는 회원으로 좁힌다** — 이미
+     * 계정이 붙은 행은 연결 대상이 아니고, 여기서 걸러야 "남의 계정에 연결한다"는 상태가
+     * 조회 단계에서 아예 손에 들어오지 않는다.
+     *
+     * 학번으로만 좁히고 회원명·연락처는 걸지 않는다. 정규화한 뒤에 비교해야 하는데(하이픈 유무·
+     * 앞뒤 공백) 그 규칙을 SQL에 적으면 MemberLinkPolicy와 두 벌이 되고, DB 함수마다 표기가
+     * 달라 H2와 PostgreSQL에서 다른 결과가 나올 자리가 생긴다. 좁히는 일만 DB가 하고 판정은
+     * 정책 한 곳에서 한다.
+     *
+     * uk_mbr_student_number 때문에 결과는 사실상 0건 아니면 1건이지만 목록으로 받는다 —
+     * '정확히 한 건일 때만 연결한다'는 규칙을 호출부가 세는 것이지 제약에 기대는 것이 아니다.
+     */
+    @Query(
+            "select m from MemberEntity m where m.studentNumber = :studentNumber and m.authUserId"
+                    + " is null")
+    List<MemberEntity> findLinkCandidatesByStudentNumber(
+            @Param("studentNumber") String studentNumber);
+
+    /*
+     * 연결 직전에 그 행을 잠그고 auth_user_id를 **다시 읽는다** (#86). 값이 있으면 그 사이에
+     * 다른 계정이 가져간 것이다.
+     *
+     * ── 왜 UNIQUE 제약만으로는 부족한가 ────────────────────────
+     * uk_mbr_auth_user_id가 막는 것은 '한 계정이 두 명부 행에 붙는 것'이다. 두 계정이 **같은
+     * 행**을 노리면 UPDATE가 한 컬럼을 덮어쓸 뿐이라 제약에 걸리지 않는다 — 늦게 커밋한 쪽이
+     * 조용히 이기고 먼저 연결한 사람은 성공 응답을 받고도 계정을 잃는다. 제약은 최종 방어선으로
+     * 남겨 두고(flush 시 위반도 409로 옮긴다) 같은 행에 대한 경합은 여기서 끊는다.
+     *
+     * ── 왜 후보를 찾은 뒤에야 잠그는가 ────────────────────────
+     * 최초 가입자 부트스트랩(#71 claimBootstrapRole)과 같은 두 단계다. 1차 후보 조회는 잠금 없이
+     * 하므로 본인 확인에 실패한 요청(대다수)은 아무 행도 잠그지 않는다. 3종이 맞은 요청만
+     * 그 한 행을 잠그고 다시 읽는다.
+     *
+     * ── 왜 엔티티가 아니라 값을 읽는가 ────────────────────────
+     * 후보 조회에서 이미 그 회원을 읽어 영속성 컨텍스트에 담았으므로, 엔티티로 다시 조회하면
+     * 같은 인스턴스가 그대로 돌아와 **잠금을 얻기 전에 읽은 옛 값**을 보게 된다. 스칼라 조회는
+     * 1차 캐시를 거치지 않고 DB의 지금 값을 가져온다. 조건을 PK 하나로 두는 것도 같은 이유다 —
+     * auth_user_id를 WHERE에 넣으면 잠금 대기가 풀린 뒤 조건을 다시 평가하는지가 DB마다 갈린다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select m.authUserId from MemberEntity m where m.id = :memberId")
+    Optional<UUID> lockAndFindAuthUserId(@Param("memberId") Long memberId);
+
+    /*
+     * 같은 학번으로 **이미 계정이 붙어 있는** 회원 (#86).
+     *
+     * 위 후보 조회에서 아무것도 찾지 못했을 때만, 그리고 409 MEMBER_ALREADY_LINKED와 404
+     * MEMBER_LINK_FAILED를 가르기 위해서만 부른다. 두 질의를 하나로 합치지 않는 것은 연결
+     * 대상 후보가 'auth_user_id IS NULL'이라는 사실을 조회 자체에 남겨 두기 위해서다.
+     */
+    @Query(
+            "select m from MemberEntity m where m.studentNumber = :studentNumber and m.authUserId"
+                    + " is not null")
+    List<MemberEntity> findLinkedByStudentNumber(@Param("studentNumber") String studentNumber);
 
     /*
      * 제외할 상태 코드를 파라미터로 받는다. 어떤 상태를 배정에서 뺄지는 조회 조건이 아니라

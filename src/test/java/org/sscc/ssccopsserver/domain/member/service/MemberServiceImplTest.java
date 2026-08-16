@@ -50,6 +50,7 @@ class MemberServiceImplTest {
                 new MemberInitialHistoryRecorder(
                         memberGradeHistoryRepository, memberStatusHistoryRepository),
                 authorityPolicy,
+                new MemberLinkAttemptLimiter(Clock.systemDefaultZone()),
                 Clock.systemDefaultZone());
     }
 

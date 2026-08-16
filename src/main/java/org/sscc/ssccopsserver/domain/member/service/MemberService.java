@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberLinkRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSearchCondition;
@@ -28,6 +29,25 @@ public interface MemberService {
      * 세션을 다시 조회하지 않아도 되게 하려는 것이 이 API의 설계 의도이기 때문이다.
      */
     MemberProfileResponse signUp(AuthenticatedUser user, MemberSignupRequest request);
+
+    /*
+     * 이관 회원 계정 연결 (POST /v1/members/link, #86 · ssccops#78 A안).
+     *
+     * CSV로 이관된 회원(auth_user_id가 NULL인 행)에 지금 로그인한 소셜 계정을 붙인다.
+     * **mbr 행을 새로 만들지 않는다**(BR-M51) — 학번·회원명·연락처 3종이 모두 일치하는 회원
+     * 한 건을 찾아 auth_user_id만 채우며, 기수·등급·상태·역할은 명부의 값 그대로다.
+     *
+     * 가입(signUp)과 같은 자리에 두지 않고 메서드를 나눈 것은 성공 조건도 실패 처리도 다르기
+     * 때문이다. 가입은 입력값을 검증하면 되지만 연결은 본인 확인이라 시도 횟수 제한이 붙고,
+     * 한 메서드에 섞으면 어느 규칙이 어느 경로에 걸리는지 알 수 없게 된다.
+     *
+     * 주체를 MemberEntity가 아니라 AuthenticatedUser로 받는 것도 가입과 같은 이유다 — 연결을
+     * 요청하는 사람은 아직 회원이 아니라 @CurrentMember로는 받을 수 없다.
+     *
+     * 응답은 가입·세션 조회와 같은 MemberProfileResponse다. 연결 직후 웹이 세션을 다시 조회하지
+     * 않아도 이관된 등급·기수·역할·capabilities가 그대로 손에 들어온다.
+     */
+    MemberProfileResponse link(AuthenticatedUser user, MemberLinkRequest request);
 
     /*
      * Supabase 인증 사용자 식별자로 연결된 회원을 조회한다. 아직 가입하지 않았으면 비어 있다.

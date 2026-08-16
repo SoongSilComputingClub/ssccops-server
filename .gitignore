@@ -39,5 +39,8 @@ out/
 .vscode/
 
 ### Private files & Artifacts ###
-/.private-workspace/
+/private-workspace/
 /.omc/
+
+### macOS ###
+.DS_Store

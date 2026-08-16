@@ -1,0 +1,184 @@
+package org.sscc.ssccopsserver.domain.operation.repository;
+
+import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
+
+public interface SubWorkRepository
+        extends JpaRepository<SubWorkEntity, Long>, SubWorkRepositoryCustom {
+
+    /*
+     * 상세 조회(OPS-009)용 단건 조회. 소프트 삭제 여부는 부모 oper가 관리하므로 조인해서
+     * 걸러내고, 삭제된 건은 없는 것으로 본다(404).
+     *
+     * 상세 응답이 담당자·등록자 이름과 유형명·상위 업무 식별자를 모두 쓰므로 연관을 한 번에
+     * 끌어온다 — LAZY 그대로 두면 응답 조립 단계에서 연관마다 쿼리가 더 나간다 (DB-13).
+     *
+     * work.operation까지 실는 것은 상위 업무의 **이름**이 work가 아니라 그 상위 oper에 있기
+     * 때문이다 (#70의 workTitle). EntityGraph에 넣은 연관은 같은 SELECT의 조인이 되므로
+     * 조회 횟수는 그대로다 — 테스트가 3회·4회로 못 박아 둔다.
+     */
+    @EntityGraph(
+            attributePaths = {
+                "operation",
+                "operation.personInCharge",
+                "operation.registrant",
+                "subWorkType",
+                "work",
+                "work.operation"
+            })
+    Optional<SubWorkEntity> findByIdAndOperationDeletedAtIsNull(Long id);
+
+    /*
+     * 상위 업무 상세(OPS-003)의 하위 업무 목록. 목록에 필요한 것은 제목·담당자·상태·진행률
+     * 뿐이라 유형·등록자는 끌어오지 않는다 (AP-14 — 목록에는 요약만).
+     *
+     * 정렬을 쿼리에 고정하는 이유는 시안에 정렬 기준이 없어 서버가 정해야 하기 때문이다.
+     * 마감이 빠른 순으로 두고 마감 없는 건을 뒤로 보낸다 — NULL 정렬 기본값이 H2(먼저)와
+     * PostgreSQL(나중)에서 갈리므로 nulls last를 명시해야 테스트와 운영이 같아진다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " where s.work = :work and o.deletedAt is null"
+                    + " order by s.dueAt asc nulls last, s.id asc")
+    List<SubWorkEntity> findAllByWorkWithOwner(@Param("work") WorkEntity work);
+
+    /*
+     * 상위 업무 진행률 집계용. 소프트 삭제 여부는 부모 oper가 관리하므로(sub_work에는
+     * del_dt가 없다) 조인해서 걸러낸다 — 삭제된 하위 업무는 분모에 들어가면 안 된다.
+     */
+    long countByWorkAndOperationDeletedAtIsNull(WorkEntity work);
+
+    long countByWorkAndWorkStatusAndOperationDeletedAtIsNull(
+            WorkEntity work, WorkStatus workStatus);
+
+    /*
+     * 목록 조회(OPS-008)가 화면 우상단에 표시하는 '전체 N건'. 필터를 걸지 않았을 때의 건수라
+     * 조건이 없고, 삭제된 건을 빼는 기준만 목록과 같아야 한다 (AGG-03).
+     */
+    long countByOperationDeletedAtIsNull();
+
+    /*
+     * 상위 업무 목록(OPS-020)의 진행률·하위 업무 건수 집계. 업무마다 하위 업무를 조회하면
+     * 그대로 N+1이므로 이번 페이지의 업무 전체를 한 번에 읽는다 (DB-13).
+     *
+     * 엔티티가 아니라 프로젝션인 것은 집계에 필요한 값이 셋뿐이기 때문이다 — 상세 화면과 달리
+     * 카드는 하위 업무의 제목도 담당자도 그리지 않는다 (AP-14).
+     *
+     * 소프트 삭제 여부는 부모 oper가 관리하므로(sub_work에는 del_dt가 없다) 조인해서 걸러낸다.
+     * 빈 컬렉션을 넘기면 IN () 이 되어 DB에 따라 문법 오류가 나므로 호출 전에 걸러야 한다.
+     */
+    @Query(
+            "select w.id as workId, s.id as subWorkId, s.workStatus as workStatus"
+                    + " from SubWorkEntity s"
+                    + " join s.work w"
+                    + " join s.operation o"
+                    + " where w.id in :workIds and o.deletedAt is null")
+    List<WorkSubWorkAggregate> findAggregatesByWorkIds(@Param("workIds") Collection<Long> workIds);
+
+    /*
+     * 운영 대시보드(OPS-038) '내 업무 목록'. 담당자(oper.pic_id)가 본인인 하위 업무 전량이다.
+     * 개인 스코프라 목록(OPS-008)의 커서 페이징을 쓰지 않는다 — 회의 목록(OPS-031)과 같은 판단.
+     * 완료 건도 포함한다 — '전체' 필터가 화면에서 그 값을 그대로 보여준다.
+     *
+     * 정렬은 AGG-04와 같다(마감 오름차순, 마감 없는 건은 뒤, 동률은 식별자 오름차순).
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where o.personInCharge.id = :ownerId and o.deletedAt is null"
+                    + " order by s.dueAt asc nulls last, s.id asc")
+    List<SubWorkEntity> findAllByOwnerId(@Param("ownerId") Long ownerId);
+
+    /*
+     * 회원 상태 변경(#78)의 경고에 실리는 '담당 중인 하위 업무' 건수.
+     *
+     * 완료(DONE)된 건을 빼는 것은 '담당 중'이라는 말과 어긋나기 때문이고, 빼지 않으면 오래
+     * 활동한 회원일수록 경고가 영영 남아 실제로 인수인계가 필요한 상황과 구별되지 않는다.
+     * 소프트 삭제 여부는 다른 집계와 같은 기준으로(부모 oper의 del_dt) 걸러낸다.
+     *
+     * 목록(findAllByOwnerId)을 받아 세지 않고 count로 두는 것은 경고가 숫자 하나만 쓰기
+     * 때문이다 — 화면은 그 숫자를 배지에 달 뿐 업무를 그리지 않는다.
+     */
+    @Query(
+            "select count(s) from SubWorkEntity s"
+                    + " join s.operation o"
+                    + " where o.personInCharge.id = :ownerId"
+                    + " and s.workStatus <> :excludedStatus and o.deletedAt is null")
+    long countByOwnerIdExcludingStatus(
+            @Param("ownerId") Long ownerId, @Param("excludedStatus") WorkStatus excludedStatus);
+
+    /*
+     * 운영 대시보드(OPS-038) '다가오는 마감'. 조회 시점 기준 ±5일 범위에 마감이 있는 하위
+     * 업무다(이슈#60). 이미 끝난 건은 뺀다 — 완료된 일의 마감을 다시 알릴 이유가 없다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where s.dueAt >= :from and s.dueAt <= :to"
+                    + " and s.workStatus <> :doneStatus and o.deletedAt is null"
+                    + " order by s.dueAt asc, s.id asc")
+    List<SubWorkEntity> findAllDueBetweenExcludingStatus(
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            @Param("doneStatus") WorkStatus doneStatus);
+
+    /*
+     * '다가오는 마감'을 담당자 한 명으로 좁힌 버전(#101). WORK_MANAGE가 없는 조회자(국원)에게는
+     * 전체가 아니라 자신이 담당자인 건만 보여줘야 하는데, 대시보드는 완료 건을 뺀 마감 임박
+     * 건만 필요하므로 findAllByOwnerId(완료 건 포함 전량)를 다시 걸러 쓰지 않고 이 조합
+     * 전용 질의를 둔다 — 스코프만 findAllDueBetweenExcludingStatus에서 좁힌 것이다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where s.dueAt >= :from and s.dueAt <= :to"
+                    + " and s.workStatus <> :doneStatus and o.deletedAt is null"
+                    + " and o.personInCharge.id = :ownerId"
+                    + " order by s.dueAt asc, s.id asc")
+    List<SubWorkEntity> findAllDueBetweenExcludingStatusAndOwnerId(
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            @Param("doneStatus") WorkStatus doneStatus,
+            @Param("ownerId") Long ownerId);
+
+    /*
+     * 운영 통합(OPS-001)의 하위 업무 전량. 좌측 목록과 우측 트리(상위 업무별 묶음)를 한 화면이
+     * 함께 그리므로 커서 페이징을 쓰지 않는다 — 회의 목록(OPS-031)과 같은 판단. fetch join
+     * 구성과 정렬(AGG-04: 마감 오름차순, 마감 없는 건은 뒤, 동률은 식별자)은 대시보드의
+     * findAllByOwnerId와 같다 — 스코프만 계정에서 전체로 넓힌 것이다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where o.deletedAt is null"
+                    + " order by s.dueAt asc nulls last, s.id asc")
+    List<SubWorkEntity> findAllAlive();
+}

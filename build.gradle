@@ -61,6 +61,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
 
     // Monitoring & Observability - OpenTelemetry (traces, logs)
     implementation 'io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter'
@@ -80,6 +81,10 @@ dependencies {
     // Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
 
+    // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
+    // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
+    implementation 'org.apache.commons:commons-csv:1.12.0'
+
     // Lombok
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
@@ -91,10 +96,46 @@ dependencies {
 }
 
 // ============================================================================
+// .env 로드 (docker-compose는 .env를 자동으로 읽지만, ./gradlew bootRun은 JVM 프로세스
+// 환경변수를 직접 넘겨줘야 하므로 여기서 파싱해 bootRun 태스크에 주입한다)
+// ============================================================================
+def envFile = rootProject.file('.env')
+if (envFile.exists()) {
+    def envVars = [:]
+    envFile.readLines().each { line ->
+        def trimmed = line.trim()
+        if (trimmed && !trimmed.startsWith('#')) {
+            def idx = trimmed.indexOf('=')
+            if (idx > 0) {
+                def key = trimmed.substring(0, idx).trim()
+                def value = trimmed.substring(idx + 1).trim().replaceAll(/^["']|["']$/, '')
+                envVars[key] = value
+            }
+        }
+    }
+    tasks.named('bootRun') {
+        environment(envVars)
+    }
+}
+
+// ============================================================================
 // Test
 // ============================================================================
 tasks.named('test') {
     useJUnitPlatform()
+
+    // 테스트 JVM 힙. Gradle 기본값(512MB)으로는 부족해 컨텍스트 로딩이 OutOfMemoryError로
+    // 실패하며, 어느 테스트가 깨지는지는 실행 순서에 따라 매번 달라진다.
+    //
+    // 이 레포는 테스트 클래스마다 자기 몫의 @TestConfiguration(StubJwtDecoderConfig)을 두므로
+    // ApplicationContext가 클래스 수만큼 생긴다. #81이 공용 H2 스키마가 지워지는 것을 막으려
+    // spring.test.context.cache.maxSize를 32에서 64로 올리면서 동시에 살아 있는 컨텍스트도
+    // 두 배가 됐다. 캐시를 되돌리면 이번엔 컨텍스트 교체가 잦아져 스키마 문제가 돌아온다.
+    //
+    // 근본 해법은 스텁 설정을 한 곳으로 모아 컨텍스트 수 자체를 줄이는 것이고(별도 이슈),
+    // 그때까지는 힙을 늘려 둔다.
+    maxHeapSize = '2g'
+
     finalizedBy jacocoTestReport, jacocoTestCoverageVerification
 }
 

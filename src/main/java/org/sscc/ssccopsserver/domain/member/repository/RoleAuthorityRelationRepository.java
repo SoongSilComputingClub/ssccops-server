@@ -1,0 +1,53 @@
+package org.sscc.ssccopsserver.domain.member.repository;
+
+import java.util.Collection;
+import java.util.List;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.sscc.ssccopsserver.domain.member.entity.AuthorityEntity;
+import org.sscc.ssccopsserver.domain.member.entity.RoleAuthorityRelationEntity;
+
+public interface RoleAuthorityRelationRepository
+        extends JpaRepository<RoleAuthorityRelationEntity, Long> {
+
+    /*
+     * 역할들에 직접 부여된 권한 코드. 자손 펼침은 하지 않는다 — 펼침은 AuthorityPolicy의 몫이고,
+     * 여기서 한 번 더 펼치면 규칙이 두 곳에 놓인다.
+     *
+     * authrt_cd는 FK 컬럼이라 authority 연관을 조인하지 않고도 꺼낼 수 있다.
+     */
+    @Query("select r.authority.code from RoleAuthorityRelationEntity r where r.role.id in :roleIds")
+    List<String> findAuthorityCodesByRoleIds(@Param("roleIds") Collection<Long> roleIds);
+
+    /*
+     * findAuthorityCodesByRoleIds의 반대 방향(#101) — 권한 코드 집합(요구 코드와 그 조상 전부,
+     * AuthorityPolicy.memberIdsWithAuthority가 미리 계산해 넘긴다) 중 하나라도 직접 부여받은
+     * 역할의 id. distinct인 것은 한 역할이 조상 코드 여러 개를 동시에 부여받았을 수 있어서다.
+     */
+    @Query(
+            "select distinct r.role.id from RoleAuthorityRelationEntity r"
+                    + " where r.authority.code in :codes")
+    List<Long> findRoleIdsByAuthorityCodes(@Param("codes") Collection<String> codes);
+
+    /*
+     * 한 역할의 부여 전부 (#65). 권한명을 응답에 실으므로 join fetch로 함께 가져온다 —
+     * 없으면 부여 건수만큼 추가 쿼리가 나간다.
+     */
+    @Query(
+            "select r from RoleAuthorityRelationEntity r join fetch r.authority a"
+                    + " where r.role.id = :roleId order by a.code asc")
+    List<RoleAuthorityRelationEntity> findAllByRoleId(@Param("roleId") Long roleId);
+
+    /** 어느 역할엔가 부여돼 있는지. 부여된 권한은 지울 수 없으므로 삭제 전에 본다 (#65) */
+    boolean existsByAuthority(AuthorityEntity authority);
+
+    /*
+     * 이 역할에 권한이 붙어 있는지 (#79 삭제 가드).
+     *
+     * existsByAuthority의 반대 방향이며 태도는 같다 — 매핑을 함께 지워 주지 않고 회수를 먼저
+     * 하게 한다. 조용히 지우면 삭제 한 번으로 무엇이 사라졌는지 화면에서 보이지 않는다.
+     */
+    boolean existsByRoleId(Long roleId);
+}

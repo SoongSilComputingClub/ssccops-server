@@ -4,10 +4,46 @@ spring:
     driver-class-name: org.h2.Driver
     username: sa
     password:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # 테스트는 SecurityMockMvcRequestPostProcessors.jwt()로 디코더를 우회하므로 실제 네트워크 호출 없음
+          jwk-set-uri: http://localhost/auth/v1/.well-known/jwks.json
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      # create-drop이 아니라 create다. 모든 테스트 컨텍스트가 위의 testdb 하나를 공유하는데,
+      # create-drop은 EntityManagerFactory가 닫힐 때 스키마를 통째로 지운다 — 스프링
+      # 테스트 컨텍스트 캐시가 한계(기본 32개)를 넘어 컨텍스트 하나를 evict 하는 순간
+      # 공유 DB의 테이블이 사라져, 그 뒤 캐시된 다른 컨텍스트를 쓰는 테스트가
+      # "Table MBR not found (this database is empty)"로 떨어진다. 실행 순서에 따라
+      # 나타났다 사라지는 종류라 테스트 클래스를 하나 더할 때마다 다시 터진다.
+      # create는 컨텍스트가 뜰 때만 drop+create 하고 닫을 때는 아무것도 하지 않으므로
+      # 파괴 시점이 하나 줄어든다(뜰 때 지우는 것은 create-drop도 똑같이 한다).
+      # 인메모리라 남은 스키마는 JVM이 끝나면 함께 사라진다.
+      ddl-auto: create
     database-platform: org.hibernate.dialect.H2Dialect
+
+# 관측성 내보내기는 테스트에서 전부 끈다.
+#
+# 테스트 환경에는 OTLP 수집기가 없으므로 스팬·로그가 나가지 못하고 BatchSpanProcessor·
+# BatchLogRecordProcessor의 큐에 그대로 쌓인다. 그런데 OTel SDK는 **스프링 컨텍스트마다 한 벌**
+# 이고 테스트 컨텍스트는 캐시 한계(32개)까지 살아 있으므로, 쌓이는 양이 컨텍스트 수만큼 곱해져
+# 결국 테스트 JVM이 OutOfMemoryError로 죽는다 — 위 ddl-auto 주석과 같은 종류의 함정이며
+# 마찬가지로 테스트 클래스를 더할 때마다 다시 터진다. 내보내기 실패 로그가 초당 수십 줄씩
+# 찍히는 것도 그 증상이고, 그 로그 자체가 다시 메모리를 먹는다.
+#
+# 끄는 것이 무해한 이유는 이 저장소의 어떤 테스트도 트레이스·메트릭을 확인하지 않기 때문이다.
+# 운영 프로필의 설정은 그대로이며 여기서만 덮어쓴다.
+otel:
+  sdk:
+    disabled: true
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
 
 # Frontend Configuration (CORS 허용 오리진)
 frontend:

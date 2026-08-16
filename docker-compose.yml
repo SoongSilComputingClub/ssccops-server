@@ -1,30 +1,46 @@
+# 변수 이름에 하이픈을 쓰지 않는다.
+#
+# Compose의 변수 치환은 셸 파라미터 확장 문법을 그대로 따르므로 `-`가 이름의 일부가 아니라
+# 기본값 구분자로 읽힌다. 예전에는 `${db-username}` 이라고 적혀 있었는데 이것은
+# "db 가 없으면 문자열 username" 이라는 뜻이어서, .env 에 무엇을 적든 무시된 채
+# POSTGRES_USER=username · POSTGRES_DB=name:-ssccops_server_db 로 컨테이너가 떴다.
+# 조용히 잘못된 DB가 만들어지고 그 뒤 앱이 인증 실패로 죽는, 원인을 찾기 어려운 형태였다.
+#
+# 필수 값에는 `${VAR:?메시지}` 를 써서 빠졌을 때 컨테이너가 뜨기 전에 멈추게 한다.
 services:
   backend:
     build: .
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
     environment:
-      SPRING_PROFILES_ACTIVE: prod
-      PROD_DATABASE_URL: jdbc:postgresql://postgres:5432/${DB_NAME}
-      PROD_DATABASE_USER: ${DB_USER}
-      PROD_DATABASE_PASSWORD: ${DB_PASSWORD}
-      PROD_FRONTEND_URL: ${PROD_FRONTEND_URL}
+      SPRING_PROFILES_ACTIVE: local
+      # 컨테이너 안에서는 compose 네트워크의 서비스 이름으로 DB에 붙는다.
+      # .env 의 DB_HOST/DB_PORT(호스트 실행용 localhost:15432)를 여기서 덮어쓴다 —
+      # 덕분에 .env 한 벌로 `./gradlew bootRun` 과 `docker compose up` 이 모두 동작한다.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-ssccops_server_db}
+      DB_USERNAME: ${DB_USERNAME:?.env 에 DB_USERNAME 을 설정하세요 - cp .env.example .env}
+      DB_PASSWORD: ${DB_PASSWORD:?.env 에 DB_PASSWORD 를 설정하세요}
+      SUPABASE_URL: ${SUPABASE_URL:?.env 에 SUPABASE_URL 을 설정하세요}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
     depends_on:
       postgres:
         condition: service_healthy
 
   postgres:
     image: postgres:17
+    # 호스트에 게시하는 포트를 DB_PORT 로 맞춘다 — `./gradlew bootRun` 이 이 포트로 접속한다
     ports:
-      - "15432:5432"
+      - "${DB_PORT:-15432}:5432"
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-ssccops_server_db}
+      POSTGRES_USER: ${DB_USERNAME:?.env 에 DB_USERNAME 을 설정하세요 - cp .env.example .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?.env 에 DB_PASSWORD 를 설정하세요}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME} -d ${DB_NAME:-ssccops_server_db}"]
       interval: 10s
       timeout: 5s
       retries: 5

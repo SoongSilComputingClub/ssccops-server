@@ -1,0 +1,152 @@
+package org.sscc.ssccopsserver.domain.member.entity;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.UUID;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+
+@Entity
+@EntityListeners(AuditingEntityListener.class)
+@Table(
+        name = "mbr",
+        uniqueConstraints = {
+            @UniqueConstraint(name = "uk_mbr_student_number", columnNames = "stdnt_no"),
+            @UniqueConstraint(name = "uk_mbr_auth_user_id", columnNames = "auth_user_id")
+        })
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PRIVATE)
+public class MemberEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "mbr_id")
+    private Long id;
+
+    /*
+     * 졸업 회원은 학번 없이 가입할 수 있어야 해 nullable이다 (#21). 학번이 기억나지 않는 졸업생을
+     * 위해 가입 화면이 선택 입력으로 두고 있는데, NOT NULL이면 그 화면이 성립하지 않는다.
+     *
+     * uk_mbr_student_number는 그대로 유지한다 — NULL은 UNIQUE 제약에 걸리지 않기 때문이다.
+     * 다만 학번 미입력을 빈 문자열로 저장하면 두 번째 졸업 회원부터 UNIQUE 충돌이 나므로
+     * 반드시 NULL로 저장해야 한다.
+     */
+    @Column(name = "stdnt_no", updatable = false, length = 20)
+    private String studentNumber;
+
+    @Column(name = "gen_no", nullable = false)
+    private Integer generationNumber;
+
+    @Column(name = "mbr_nm", nullable = false, length = 50)
+    private String name;
+
+    @Column(name = "scsbjt_nm", length = 100)
+    private String departmentName;
+
+    @Column(name = "scyr_no")
+    private Integer academicYear;
+
+    @Column(name = "telno", length = 20)
+    private String phoneNumber;
+
+    @Column(name = "eml", length = 255)
+    private String email;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "mbr_grd_cd", nullable = false)
+    private MemberGradeEntity membershipGrade;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "mbr_stts_cd", nullable = false)
+    private MemberStatusEntity membershipStatus;
+
+    @Column(name = "join_ymd", nullable = false)
+    private LocalDate joinDate;
+
+    // Supabase Auth 사용자 식별자(auth.users.id). 아직 로그인하지 않은 이관 회원은 NULL
+    @Column(name = "auth_user_id")
+    private UUID authUserId;
+
+    @CreatedDate
+    @Column(name = "crt_dt", updatable = false)
+    private Instant createdAt;
+
+    @LastModifiedDate
+    @Column(name = "mdfcn_dt")
+    private Instant updatedAt;
+
+    public static MemberEntity create(
+            String studentNumber,
+            Integer generationNumber,
+            String name,
+            String departmentName,
+            Integer academicYear,
+            String phoneNumber,
+            String email,
+            MemberGradeEntity membershipGrade,
+            MemberStatusEntity membershipStatus,
+            LocalDate joinDate) {
+        return new MemberEntity(
+                null,
+                studentNumber,
+                generationNumber,
+                name,
+                departmentName,
+                academicYear,
+                phoneNumber,
+                email,
+                membershipGrade,
+                membershipStatus,
+                joinDate,
+                null,
+                null,
+                null);
+    }
+
+    public void updateBasicInfo(
+            Integer generationNumber,
+            String name,
+            String departmentName,
+            Integer academicYear,
+            String phoneNumber,
+            String email) {
+        this.generationNumber = generationNumber;
+        this.name = name;
+        this.departmentName = departmentName;
+        this.academicYear = academicYear;
+        this.phoneNumber = phoneNumber;
+        this.email = email;
+    }
+
+    public void changeMembershipGrade(MemberGradeEntity membershipGrade) {
+        this.membershipGrade = membershipGrade;
+    }
+
+    public void changeMembershipStatus(MemberStatusEntity membershipStatus) {
+        this.membershipStatus = membershipStatus;
+    }
+
+    public void assignAuthUserId(UUID authUserId) {
+        this.authUserId = authUserId;
+    }
+}

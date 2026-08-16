@@ -15,13 +15,15 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
   - `docker compose up postgres`로 DB만 띄우고(호스트 포트 `DB_PORT`, 기본 `15432`) 앱은 `./gradlew bootRun`으로 실행한다. `.env`의 `DB_HOST=localhost`·`DB_PORT=15432`가 그대로 쓰인다. 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `DB_PORT=5432`로 바꾼다.
 
   **주의**: `.env`와 `docker-compose.yml`의 변수 이름에 하이픈(`-`)을 쓰지 않는다. Compose의 변수 치환은 셸 파라미터 확장 문법을 따르므로 `${db-username}`은 이름이 아니라 "`db`가 없으면 문자열 `username`"으로 읽힌다 — 실제로 이 때문에 `.env` 값이 통째로 무시된 채 `POSTGRES_USER=username`·`POSTGRES_DB=name:-ssccops_server_db`로 DB가 만들어지고 앱이 인증 실패로 죽는 일이 있었다(#59). Spring 프로퍼티 키(`db-username`)를 환경변수 이름으로 그대로 쓸 수 없다.
-- 프로필: `local`(PostgreSQL, OTel 비활성) / `dev` / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create — 테스트 실행 시 자동 적용). **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 모든 테스트 컨텍스트가 `testdb` 하나를 공유하는데 `create-drop`은 컨텍스트가 닫힐 때 스키마를 지워, 테스트 컨텍스트 캐시가 evict 하는 순간 남은 테스트가 "Table MBR not found"로 떨어진다.
+- 프로필: `local`(PostgreSQL, OTel 비활성, ddl-auto create-drop) / `dev`(ddl-auto update — 이유는 아래) / `prod`(env 변수 주입, ddl-auto none, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create — 테스트 실행 시 자동 적용). **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 모든 테스트 컨텍스트가 `testdb` 하나를 공유하는데 `create-drop`은 컨텍스트가 닫힐 때 스키마를 지워, 테스트 컨텍스트 캐시가 evict 하는 순간 남은 테스트가 "Table MBR not found"로 떨어진다.
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.
 
 **주의**: checkstyle의 `ImportOrder`는 `java, javax, jakarta, org, net, com, *, lombok` 그룹 순서를 엄격히 검사한다. import를 추가/이동한 뒤 checkstyle이 실패하면 순서를 수동으로 고치지 말고 `./gradlew spotlessApply`로 자동 정렬할 것 (Spotless의 `importOrder` 설정이 checkstyle 규칙과 동일하게 맞춰져 있음).
 
-**주의**: `prod`는 `ddl-auto: none`이라 엔티티 컬럼/테이블 변경(특히 리네임)이 배포만으로 반영되지 않는다. `local`/`dev`는 `ddl-auto: create-drop`이라 재기동 시 자동 반영되지만, `prod`는 배포 전 수동 DDL을 직접 실행해야 한다 — 예: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`를 배포 전에 미리 실행한다. 널 허용 여부도 마찬가지다 — `mbr.stdnt_no`를 nullable로 바꿨으므로(#21, 졸업 회원 가입) `ALTER TABLE mbr ALTER COLUMN stdnt_no DROP NOT NULL;`이 배포 전에 필요하다. 마이그레이션 도구(Flyway/Liquibase)가 없어 현재는 전적으로 수동이다.
+**주의**: `prod`는 `ddl-auto: none`이라 엔티티 컬럼/테이블 변경(특히 리네임)이 배포만으로 반영되지 않는다. `local`은 `ddl-auto: create-drop`이라 재기동 시 자동 반영되지만, `prod`는 배포 전 수동 DDL을 직접 실행해야 한다 — 예: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`를 배포 전에 미리 실행한다. 널 허용 여부도 마찬가지다 — `mbr.stdnt_no`를 nullable로 바꿨으므로(#21, 졸업 회원 가입) `ALTER TABLE mbr ALTER COLUMN stdnt_no DROP NOT NULL;`이 배포 전에 필요하다. 마이그레이션 도구(Flyway/Liquibase)가 없어 현재는 전적으로 수동이다.
+
+**주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — `prod`와 같은 성격의 제약이 dev에도 생겼다는 뜻이다. 리네임·삭제가 필요한 변경을 만들면 dev DB에도 수동 `ALTER`가 필요할 수 있다(지금은 개발 단계라 드리프트가 쌓이면 통째로 재생성해도 되지만, 늘어날수록 이 트레이드오프가 부담이 된다 — Flyway/Liquibase 도입을 그때 검토한다).
 
 ## 아키텍처
 

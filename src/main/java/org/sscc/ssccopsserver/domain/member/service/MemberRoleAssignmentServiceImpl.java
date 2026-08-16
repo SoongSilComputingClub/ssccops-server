@@ -128,6 +128,10 @@ public class MemberRoleAssignmentServiceImpl implements MemberRoleAssignmentServ
      * 인가를 좁히는 변경인가"를 여기서 다시 판단하지 않기 위해서다. 애스펙트가 이미 요청 시작
      * 시점에 ROLE_MANAGE를 확인했으므로 여기서 false가 나올 수 있는 원인은 이 트랜잭션의 변경
      * 하나뿐이다.
+     *
+     * **가드에 '오늘'이 아니라 발효 시점을 넘긴다** (#110). 종료는 종료일 다음 날에 발효되므로
+     * 오늘로 물으면 자기 역할을 오늘·미래로 끝내는 조작이 그대로 통과했다. 어느 날짜로 물을지는
+     * selfLockBaseDate가 정한다.
      */
     @Override
     @Transactional
@@ -166,12 +170,40 @@ public class MemberRoleAssignmentServiceImpl implements MemberRoleAssignmentServ
             assignment.changeRepresentative(request.rprsRoleYn());
         }
 
-        roleManageSelfLockGuard.verifyRequesterKeepsRoleManage(requesterId);
+        roleManageSelfLockGuard.verifyRequesterKeepsRoleManage(
+                requesterId, selfLockBaseDate(memberId, requesterId, request.roleEndYmd(), today));
 
         return MemberRoleAssignmentResponse.of(assignment, today);
     }
 
     // ------------------------------------------------------------------ 헬퍼
+
+    /*
+     * 자기 잠금 방지를 **어느 날짜로 물을 것인가** (#110 · VR-M13).
+     *
+     * 종료는 종료일 당일까지 유효하고 **다음 날** 발효된다(BR-M25). 그래서 오늘로 물으면
+     * 종료일을 오늘로 채운 요청은 "아직 가지고 있다"는 답을 받아 통과하고, 잠금은 다음 날
+     * 0시에 걸린다 — 그때는 되돌릴 트랜잭션이 없다. 미래 날짜도 마찬가지다. 물어야 하는 것은
+     * '이 조작으로 잃게 되는가'이므로 발효 시점을 기준일로 넘긴다.
+     *
+     * **본인의 배정을 끝낼 때만 시점을 미룬다.** 조건 없이 미래로 물으면 임기가 정해진
+     * 관리자가 **남의** 역할을 그보다 먼 종료일로 끝내려 할 때 "그 시점엔 당신에게 권한이
+     * 없다"며 거절하게 된다 — 요청자의 권한을 전혀 좁히지 않는 조작이라 막을 근거가 없다.
+     * 여기서 보는 것은 식별자가 같은가 하나이고, 인가 규칙은 여전히 AuthorityPolicy에만 있다.
+     *
+     * 이미 지난 종료일이면 오늘로 되돌린다. 그 경우 역할은 이미 유효하지 않아 종전처럼
+     * '오늘' 판정이 그대로 결론을 낸다.
+     */
+    private LocalDate selfLockBaseDate(
+            Long memberId, Long requesterId, LocalDate newEndDate, LocalDate today) {
+
+        if (newEndDate == null || !memberId.equals(requesterId)) {
+            return today;
+        }
+
+        LocalDate effectiveDate = newEndDate.plusDays(1);
+        return effectiveDate.isBefore(today) ? today : effectiveDate;
+    }
 
     /*
      * 지금 유효한 다른 대표 역할을 내린다 (회원당 최대 1건).

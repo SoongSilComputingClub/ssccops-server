@@ -1,5 +1,8 @@
 package org.sscc.ssccopsserver.domain.member.service;
 
+import java.time.Clock;
+import java.time.LocalDate;
+
 import jakarta.persistence.EntityManager;
 
 import org.springframework.stereotype.Component;
@@ -37,17 +40,36 @@ public class RoleManageSelfLockGuard {
 
     private final AuthorityPolicy authorityPolicy;
     private final EntityManager entityManager;
+    private final Clock clock;
 
     /*
-     * 이 트랜잭션의 변경이 반영된 상태에서 요청자가 여전히 ROLE_MANAGE를 행사할 수 있는지 묻는다.
-     * 아니면 409로 던져 조작 전체를 되돌린다.
-     *
-     * 막는 것은 '자기 자신'뿐이다. 남의 권한·역할을 거두는 것은 통과시킨다 — 그 경우엔 거둔
-     * 쪽이 여전히 관리할 수 있어 아무도 되돌리지 못하는 상태가 되지 않는다.
+     * 변경이 **곧바로** 발효되는 조작용 (#65 역할↔권한 교체). 오늘을 기준일로 묻는다.
      */
     public void verifyRequesterKeepsRoleManage(Long requesterMemberId) {
+        verifyRequesterKeepsRoleManage(requesterMemberId, LocalDate.now(clock));
+    }
+
+    /*
+     * 이 트랜잭션의 변경이 반영된 상태에서 요청자가 **effectiveDate에** ROLE_MANAGE를 행사할 수
+     * 있는지 묻는다. 아니면 409로 던져 조작 전체를 되돌린다.
+     *
+     * **기준일을 받는 것이 이 가드의 전부다** (#110). 원래는 언제나 오늘로 물었는데, 역할 종료는
+     * 종료일 **다음 날**에 발효되므로 종료일을 오늘로 채운 조작은 "오늘은 아직 유효하다"는
+     * 답을 받아 그대로 통과했다 — 잠금은 다음 날 0시에 걸리고 그때는 되돌릴 트랜잭션이 없다.
+     * 미래 날짜도 전부 같은 이유로 뚫렸고, 실제로 막히는 것은 종료일이 어제 이하인 경우뿐이었다.
+     *
+     * 물어야 하는 것은 '요청자가 지금 ROLE_MANAGE를 잃었는가'가 아니라 **'이 조작으로 잃게
+     * 되는가'**다. 판정을 미리 계산하지 않고 여전히 AuthorityPolicy에게 되묻는 것은 같다 —
+     * 달라진 것은 묻는 시점 하나뿐이라 '유효 기간·여러 역할·자손 펼침'이 여기로 새어 오지 않는다.
+     *
+     * 막는 것은 '자기 자신'뿐이다. 남의 권한·역할을 거두는 것은 통과시킨다 — 그 경우엔 거둔
+     * 쪽이 여전히 관리할 수 있어 아무도 되돌리지 못하는 상태가 되지 않는다. 발효 시점을 미루는
+     * 것도 대상이 요청자 본인일 때뿐이며, 그 판단은 호출부가 한다.
+     */
+    public void verifyRequesterKeepsRoleManage(Long requesterMemberId, LocalDate effectiveDate) {
         entityManager.flush();
-        if (!authorityPolicy.hasAuthority(requesterMemberId, AuthorityCode.ROLE_MANAGE)) {
+        if (!authorityPolicy.hasAuthorityOn(
+                requesterMemberId, AuthorityCode.ROLE_MANAGE, effectiveDate)) {
             throw new GeneralException(MemberErrorCode.CANNOT_REVOKE_OWN_ROLE_MANAGE);
         }
     }

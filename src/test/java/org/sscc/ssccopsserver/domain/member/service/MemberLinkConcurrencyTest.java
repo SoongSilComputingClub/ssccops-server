@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,14 +38,13 @@ import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
  * 409 MEMBER_ALREADY_LINKED다. 막지 못하면 늦게 커밋한 쪽이 조용히 이기고 먼저 연결한 사람은
  * 성공 응답을 받고도 계정을 잃는다.
  *
- * @Transactional을 걸 수 없고 그래서 DB를 따로 쓰는 이유는 MemberSignupBootstrapConcurrencyTest의
- * 주석과 같다 — 두 스레드가 서로의 커밋을 봐야 경합 자체가 재현된다. 프로퍼티를
- * MemberLinkAttemptLimitTest와 똑같이 맞춰 컨텍스트 하나를 나눠 쓰는 근거는 그쪽 주석에 있다.
+ * @Transactional을 걸 수 없는 이유는 MemberSignupBootstrapConcurrencyTest의 주석과 같다 —
+ * 두 스레드가 서로의 커밋을 봐야 경합 자체가 재현된다. 다만 저쪽과 달리 전용 DB를 띄우지
+ * 않고 만든 회원을 @AfterEach로 지운다. 프로퍼티를 달리하면 스프링 테스트 컨텍스트가 한 벌 더
+ * 잡히는데, 이 저장소는 이미 캐시 한계 언저리라 그것만으로 무관한 테스트가 터진다
+ * (MemberLinkAttemptLimitTest 주석 · application-test.yaml의 ddl-auto·otel 주석).
  */
-@SpringBootTest(
-        properties =
-                "spring.datasource.url="
-                        + "jdbc:h2:mem:member-link;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
+@SpringBootTest
 @ActiveProfiles("test")
 class MemberLinkConcurrencyTest {
 
@@ -58,9 +58,22 @@ class MemberLinkConcurrencyTest {
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
 
+    private Long rosterMemberId;
+
+    /*
+     * 트랜잭션이 없어 커밋된 회원이 그대로 남는다. 공용 DB를 쓰므로 만든 것은 여기서 지운다 —
+     * 남기면 'mbr이 비어 있다'를 전제하는 테스트가 실행 순서에 따라 깨진다.
+     */
+    @AfterEach
+    void removeRosterMember() {
+        if (rosterMemberId != null) {
+            memberRepository.deleteById(rosterMemberId);
+        }
+    }
+
     @Test
     void simultaneousLinksToTheSameRosterMemberLeaveExactlyOneWinner() throws Exception {
-        Long rosterMemberId = saveRosterMember();
+        saveRosterMember();
         List<UUID> accounts = List.of(UUID.randomUUID(), UUID.randomUUID());
 
         ExecutorService pool = Executors.newFixedThreadPool(CONCURRENT_LINKS);
@@ -89,8 +102,8 @@ class MemberLinkConcurrencyTest {
             pool.shutdownNow();
         }
 
-        // 회원은 여전히 한 행이고, 이긴 쪽 하나만 그 행에 붙어 있다
-        assertThat(memberRepository.count()).isEqualTo(1);
+        // 회원은 여전히 그 한 행이고, 이긴 쪽 하나만 붙어 있다
+        assertThat(memberRepository.findLinkCandidatesByStudentNumber(STUDENT_NUMBER)).isEmpty();
         UUID linkedAccount =
                 memberRepository.findById(rosterMemberId).orElseThrow().getAuthUserId();
         assertThat(linkedAccount).isIn(accounts);
@@ -112,26 +125,26 @@ class MemberLinkConcurrencyTest {
         }
     }
 
-    private Long saveRosterMember() {
-        memberRepository.deleteAll();
-        return memberRepository
-                .saveAndFlush(
-                        MemberEntity.create(
-                                STUDENT_NUMBER,
-                                25,
-                                NAME,
-                                "컴퓨터학부",
-                                4,
-                                PHONE,
-                                null,
-                                memberGradeRepository
-                                        .findById(MemberGradeCode.FULL.code())
-                                        .orElseThrow(),
-                                memberStatusRepository
-                                        .findById(MemberStatusCode.ENROLLED.code())
-                                        .orElseThrow(),
-                                LocalDate.of(2019, 3, 1)))
-                .getId();
+    private void saveRosterMember() {
+        rosterMemberId =
+                memberRepository
+                        .saveAndFlush(
+                                MemberEntity.create(
+                                        STUDENT_NUMBER,
+                                        25,
+                                        NAME,
+                                        "컴퓨터학부",
+                                        4,
+                                        PHONE,
+                                        null,
+                                        memberGradeRepository
+                                                .findById(MemberGradeCode.FULL.code())
+                                                .orElseThrow(),
+                                        memberStatusRepository
+                                                .findById(MemberStatusCode.ENROLLED.code())
+                                                .orElseThrow(),
+                                        LocalDate.of(2019, 3, 1)))
+                        .getId();
     }
 
     private static MemberLinkRequest request() {

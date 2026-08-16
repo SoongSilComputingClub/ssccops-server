@@ -24,6 +24,27 @@ spring:
       ddl-auto: create
     database-platform: org.hibernate.dialect.H2Dialect
 
+# 관측성 내보내기는 테스트에서 전부 끈다.
+#
+# 테스트 환경에는 OTLP 수집기가 없으므로 스팬·로그가 나가지 못하고 BatchSpanProcessor·
+# BatchLogRecordProcessor의 큐에 그대로 쌓인다. 그런데 OTel SDK는 **스프링 컨텍스트마다 한 벌**
+# 이고 테스트 컨텍스트는 캐시 한계(32개)까지 살아 있으므로, 쌓이는 양이 컨텍스트 수만큼 곱해져
+# 결국 테스트 JVM이 OutOfMemoryError로 죽는다 — 위 ddl-auto 주석과 같은 종류의 함정이며
+# 마찬가지로 테스트 클래스를 더할 때마다 다시 터진다. 내보내기 실패 로그가 초당 수십 줄씩
+# 찍히는 것도 그 증상이고, 그 로그 자체가 다시 메모리를 먹는다.
+#
+# 끄는 것이 무해한 이유는 이 저장소의 어떤 테스트도 트레이스·메트릭을 확인하지 않기 때문이다.
+# 운영 프로필의 설정은 그대로이며 여기서만 덮어쓴다.
+otel:
+  sdk:
+    disabled: true
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: false
+
 # Frontend Configuration (CORS 허용 오리진)
 frontend:
   url: http://localhost:5173

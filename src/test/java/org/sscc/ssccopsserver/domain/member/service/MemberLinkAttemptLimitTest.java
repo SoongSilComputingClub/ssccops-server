@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.LocalDate;
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,19 +31,15 @@ import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
  * 참여 트랜잭션을 rollback-only로 표시해 두 번째 호출부터 UnexpectedRollbackException을 만난다
  * (MemberSignupRollbackTest·RoleAuthoritySelfLockTest와 같은 이유).
  *
- * ── 그래서 DB를 따로 쓴다 ──────────────────────────────────────
- * 연결에 성공한 회원이 커밋되어 남으므로 공용 H2(testdb)를 쓰면 다른 테스트 클래스가 실행
- * 순서에 따라 깨진다. URL을 바꿔 연결 전용 DB를 띄운다.
- *
- * **MemberLinkConcurrencyTest와 프로퍼티를 똑같이 맞춘 것은 의도한 것이다** — 그래야 두 클래스가
- * 컨텍스트 하나를 나눠 쓴다. 스프링 테스트 컨텍스트는 한 벌이 수백 MB이고 이 저장소의 테스트는
- * 이미 서른 벌을 넘겨 잡으므로, 이유 없이 프로퍼티를 달리하면 그만큼 컨텍스트가 늘어난다.
- * 두 클래스 모두 회원을 만들기 전에 mbr을 비우므로 실행 순서에 기대지 않는다.
+ * ── 그런데도 전용 DB를 띄우지 않는다 ───────────────────────────
+ * MemberSignupBootstrapConcurrencyTest는 URL을 바꿔 자기 DB를 띄우지만, 프로퍼티가 다르면
+ * 스프링 테스트 컨텍스트가 한 벌 더 잡힌다 — 이 저장소의 컨텍스트 수는 이미 캐시 한계(32개)
+ * 언저리라 클래스를 더할 때마다 터지는 자리가 있다(application-test.yaml의 ddl-auto·otel 주석).
+ * 저쪽은 '회원이 한 명도 없는 상태'가 전제라 격리가 필요했지만, 이 테스트는 자기가 만든 회원
+ * 하나만 있으면 되므로 공용 DB에 만들었다가 **@AfterEach로 지운다**. 그래야 뒤따르는
+ * 테스트 클래스가 mbr이 빈 상태를 다시 전제할 수 있다.
  */
-@SpringBootTest(
-        properties =
-                "spring.datasource.url="
-                        + "jdbc:h2:mem:member-link;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
+@SpringBootTest
 @ActiveProfiles("test")
 class MemberLinkAttemptLimitTest {
 
@@ -54,6 +51,20 @@ class MemberLinkAttemptLimitTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+
+    private Long rosterMemberId;
+
+    /*
+     * 트랜잭션이 없어 커밋된 회원이 그대로 남는다. 공용 DB를 쓰므로 만든 것은 여기서 지운다 —
+     * 남기면 'mbr이 비어 있다'를 전제하는 테스트(최초 가입자 부트스트랩)가 실행 순서에 따라
+     * 깨진다.
+     */
+    @AfterEach
+    void removeRosterMember() {
+        if (rosterMemberId != null) {
+            memberRepository.deleteById(rosterMemberId);
+        }
+    }
 
     /*
      * 실패가 상한에 닿으면 **맞는 값을 넣어도** 잠긴다. 잠금 판정이 후보 조회보다 앞이라는
@@ -88,21 +99,25 @@ class MemberLinkAttemptLimitTest {
     }
 
     private void saveRosterMember() {
-        memberRepository.deleteAll();
-        memberRepository.saveAndFlush(
-                MemberEntity.create(
-                        STUDENT_NUMBER,
-                        25,
-                        NAME,
-                        "컴퓨터학부",
-                        4,
-                        PHONE,
-                        null,
-                        memberGradeRepository.findById(MemberGradeCode.FULL.code()).orElseThrow(),
-                        memberStatusRepository
-                                .findById(MemberStatusCode.ENROLLED.code())
-                                .orElseThrow(),
-                        LocalDate.of(2019, 3, 1)));
+        rosterMemberId =
+                memberRepository
+                        .saveAndFlush(
+                                MemberEntity.create(
+                                        STUDENT_NUMBER,
+                                        25,
+                                        NAME,
+                                        "컴퓨터학부",
+                                        4,
+                                        PHONE,
+                                        null,
+                                        memberGradeRepository
+                                                .findById(MemberGradeCode.FULL.code())
+                                                .orElseThrow(),
+                                        memberStatusRepository
+                                                .findById(MemberStatusCode.ENROLLED.code())
+                                                .orElseThrow(),
+                                        LocalDate.of(2019, 3, 1)))
+                        .getId();
     }
 
     private static AuthenticatedUser user(UUID authUserId) {

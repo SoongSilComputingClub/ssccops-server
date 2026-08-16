@@ -38,12 +38,13 @@ import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
  * 성공 응답을 받고도 계정을 잃는다.
  *
  * @Transactional을 걸 수 없고 그래서 DB를 따로 쓰는 이유는 MemberSignupBootstrapConcurrencyTest의
- * 주석과 같다 — 두 스레드가 서로의 커밋을 봐야 경합 자체가 재현된다.
+ * 주석과 같다 — 두 스레드가 서로의 커밋을 봐야 경합 자체가 재현된다. 프로퍼티를
+ * MemberLinkAttemptLimitTest와 똑같이 맞춰 컨텍스트 하나를 나눠 쓰는 근거는 그쪽 주석에 있다.
  */
 @SpringBootTest(
         properties =
                 "spring.datasource.url="
-                        + "jdbc:h2:mem:link-concurrency;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
+                        + "jdbc:h2:mem:member-link;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
 @ActiveProfiles("test")
 class MemberLinkConcurrencyTest {
 

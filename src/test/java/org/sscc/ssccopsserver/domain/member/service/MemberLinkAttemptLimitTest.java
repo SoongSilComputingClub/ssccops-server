@@ -32,13 +32,17 @@ import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
  *
  * ── 그래서 DB를 따로 쓴다 ──────────────────────────────────────
  * 연결에 성공한 회원이 커밋되어 남으므로 공용 H2(testdb)를 쓰면 다른 테스트 클래스가 실행
- * 순서에 따라 깨진다. URL을 바꿔 이 클래스만의 DB를 띄운다 — 프로퍼티가 다르므로 컨텍스트도
- * 따로 잡히고, 그 덕에 시도 카운터(싱글턴 빈)도 이 클래스 전용이 된다.
+ * 순서에 따라 깨진다. URL을 바꿔 연결 전용 DB를 띄운다.
+ *
+ * **MemberLinkConcurrencyTest와 프로퍼티를 똑같이 맞춘 것은 의도한 것이다** — 그래야 두 클래스가
+ * 컨텍스트 하나를 나눠 쓴다. 스프링 테스트 컨텍스트는 한 벌이 수백 MB이고 이 저장소의 테스트는
+ * 이미 서른 벌을 넘겨 잡으므로, 이유 없이 프로퍼티를 달리하면 그만큼 컨텍스트가 늘어난다.
+ * 두 클래스 모두 회원을 만들기 전에 mbr을 비우므로 실행 순서에 기대지 않는다.
  */
 @SpringBootTest(
         properties =
                 "spring.datasource.url="
-                        + "jdbc:h2:mem:link-attempt;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
+                        + "jdbc:h2:mem:member-link;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
 @ActiveProfiles("test")
 class MemberLinkAttemptLimitTest {
 

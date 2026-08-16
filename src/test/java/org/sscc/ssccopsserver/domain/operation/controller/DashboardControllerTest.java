@@ -71,7 +71,7 @@ class DashboardControllerTest {
     @BeforeEach
     void setUp() {
         actor = saveMember(AUTH_USER_ID, "20200001", "이서연", "actor@sscc.org");
-        // 대시보드는 WORK_MANAGE를 요구한다(#9, WorkController·SubWorkController와 같은 권한)
+        // 대시보드는 WORK_READ를 요구한다(#101) — 국장은 OPERATOR를 통해 WORK_MANAGE·WORK_READ를 함께 갖는다
         MemberRoleFixture.assign(
                 memberRoleRepository,
                 memberRoleClassificationRepository,
@@ -128,9 +128,9 @@ class DashboardControllerTest {
         mockMvc.perform(get("/v1/dashboard")).andExpect(status().isUnauthorized());
     }
 
-    // 운영진이 아닌 회원(스터디장)은 WORK_MANAGE가 없어 인가 단계에서 막힌다
+    // 운영진이 아닌 회원(스터디장)은 WORK_READ가 없어 인가 단계에서 막힌다
     @Test
-    void getDashboardWithoutWorkManageReturns403() throws Exception {
+    void getDashboardWithoutWorkReadReturns403() throws Exception {
         UUID outsiderToken = UUID.randomUUID();
         MemberEntity outsider = saveMember(outsiderToken, "20200002", "박현우", "outsider@sscc.org");
         MemberRoleFixture.assign(
@@ -143,6 +143,29 @@ class DashboardControllerTest {
         mockMvc.perform(get("/v1/dashboard").header("Authorization", "Bearer " + outsiderToken))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    /*
+     * 국원(WORK_READ만, WORK_MANAGE 없음)은 대시보드에 들어올 수 있다(#101) — 다만 승인
+     * 대기 영역은 승인함(WORK_MANAGE)과 같은 데이터라 비어서 온다. 값 자체의 규칙은
+     * DashboardServiceImplTest.pendingApprovalIsHiddenWithoutWorkManage가 이미 못 박아 뒀으므로
+     * 여기서는 200과 그 필드가 빈 배열인 것만 확인한다.
+     */
+    @Test
+    void getDashboardWithOnlyWorkReadReturns200WithEmptyPendingApproval() throws Exception {
+        UUID staffToken = UUID.randomUUID();
+        MemberEntity staffMember = saveMember(staffToken, "20200003", "국원회원", "staff@sscc.org");
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                staffMember,
+                "국원");
+
+        mockMvc.perform(get("/v1/dashboard").header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pendingApproval").isArray())
+                .andExpect(jsonPath("$.data.pendingApproval.length()").value(0));
     }
 
     private MemberEntity saveMember(

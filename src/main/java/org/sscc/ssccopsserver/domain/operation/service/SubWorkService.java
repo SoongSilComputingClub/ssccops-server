@@ -99,8 +99,12 @@ public interface SubWorkService {
     /*
      * 운영 대시보드(OPS-038) '다가오는 마감'. 조회 시점 기준 ±5일 범위에 마감이 있는 하위
      * 업무를 마감 오름차순으로 돌려준다(이슈#60). 완료 건은 빠진다.
+     *
+     * ownerId가 null이면 전체(WORK_MANAGE 보유자용), 값이 있으면 그 담당자의 것만 본다
+     * (국원 등 WORK_MANAGE 없는 조회자용, #101) — 호출부(DashboardServiceImpl)가 조회자의
+     * 권한을 보고 어느 쪽을 줄지 정한다.
      */
-    List<SubWorkSummaryResponse> findUpcomingDeadlines();
+    List<SubWorkSummaryResponse> findUpcomingDeadlines(Long ownerId);
 
     /*
      * 운영 통합(OPS-001)의 하위 업무 전량 목록. 목록 조회(OPS-008)와 같은 행 요약이지만

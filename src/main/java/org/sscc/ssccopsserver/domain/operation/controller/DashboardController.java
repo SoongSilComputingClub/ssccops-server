@@ -17,13 +17,15 @@ import lombok.RequiredArgsConstructor;
  * 운영 대시보드 API (OPS-038 · ssccops-web#60). 경로 버전 /v1을 쓰고 컨텍스트 경로에 /api를
  * 두지 않는다 (AP-01).
  *
- * 인가는 WORK_MANAGE 권한이다 — WorkController·SubWorkController와 같은 권한이며 정의서의
- * '국장 이상'을 옮긴 것이다(#9). 대시보드가 그 둘의 조회를 요약한 화면이라 별도 권한을
- * 새로 만들지 않는다.
+ * 인가는 WORK_READ다(#101) — 국원도 자신의 담당 업무·다가오는 마감은 볼 수 있어야 한다.
+ * WORK_MANAGE 보유자는 트리 펼침으로 WORK_READ를 자동으로 가지므로 국장 이상은 그대로
+ * 통과한다. 다만 응답에 실리는 '승인 대기' 목록은 승인함(WORK_MANAGE)과 같은 데이터라 —
+ * WORK_READ만 가진 조회자(국원)에게는 DashboardServiceImpl이 그 부분만 빈 배열로 돌려준다
+ * (컨트롤러 레벨 권한 하나로는 응답 안의 서로 다른 두 영역을 나눠 가릴 수 없다).
  */
 @RestController
 @RequiredArgsConstructor
-@RequireAuthority(AuthorityCode.WORK_MANAGE)
+@RequireAuthority(AuthorityCode.WORK_READ)
 @RequestMapping("/v1/dashboard")
 public class DashboardController {
 

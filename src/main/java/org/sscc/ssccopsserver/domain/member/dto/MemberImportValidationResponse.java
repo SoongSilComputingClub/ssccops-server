@@ -25,6 +25,10 @@ public record MemberImportValidationResponse(
      * warningCount만 그 관계 밖이다 — 경고가 있는 행도 status는 OK라 okCount에 이미 들어 있고,
      * 여기서 다시 빼면 합이 무너진다. "119건 중 7건은 연락처가 없다"를 화면에 보이기 위한 값이지
      * 네 번째 버킷이 아니다.
+     *
+     * 그래서 **warningCount ⊆ okCount**이며 이 포함 관계가 이 값을 읽을 수 있게 하는 전부다.
+     * 경고를 OK인 행에만 싣는 것(MemberImportValidator)이 그 관계를 지킨다 — 이관되지 않는 행까지
+     * 세면 warningCount는 어느 집합의 부분집합인지 말할 수 없는 숫자가 된다 (#109).
      */
     public record MemberImportSummary(
             int totalCount, int okCount, int errorCount, int duplicateCount, int warningCount) {

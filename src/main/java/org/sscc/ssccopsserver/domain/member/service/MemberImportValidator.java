@@ -26,6 +26,12 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberImportRowResult.MemberImpo
  *
  * 오류와 중복을 나눠 담는 것은 상태 결정 때문이다 — 둘 다 있으면 ERROR 하나로 세고(요약의 세
  * 버킷이 겹치면 안 된다) 사유에는 둘 다 싣는다.
+ *
+ * **경고는 OK인 행에만 싣는다** (#109). 경고의 뜻이 "이관은 되지만 나중에 불편하다"이므로 이관되지
+ * 않는 행에 붙으면 문장 자체가 거짓이 된다 — 실행(#85)은 ERROR를 FAILED로, DUPLICATE를 SKIPPED로
+ * 처리해 **둘 다 등록하지 않는다**(BR-M40, 자동 병합 없음). 중복을 오류와 함께 빼는 근거가 그것이며,
+ * 기준을 '이 행이 실제로 이관되는가' 하나로 두면 규칙이 하나로 끝난다. 경고를 잃는 것이 아니라
+ * 미루는 것이다 — 사유를 고쳐 다시 검증하면 그 행은 OK가 되고 그때 경고가 나타난다.
  */
 @Component
 public class MemberImportValidator {
@@ -85,12 +91,25 @@ public class MemberImportValidator {
         List<MemberImportRowIssue> reasons = new ArrayList<>(errors);
         reasons.addAll(duplicates);
 
+        MemberImportRowStatus status = statusOf(errors, duplicates);
+
         return new MemberImportRowResult(
                 row.rowNo(),
                 describeTarget(name, studentNumber),
-                statusOf(errors, duplicates),
+                status,
                 List.copyOf(reasons),
-                List.copyOf(warnings));
+                warningsOf(status, warnings));
+    }
+
+    /*
+     * 경고를 거르는 자리는 여기 하나다. 항목별 검사(validatePhoneNumber 등)는 다른 항목의 판정을
+     * 모르는 채로 두어야 순서에 기대지 않으므로, 행 전체의 상태가 정해진 뒤에 한 번에 판단한다.
+     * 경고가 늘어나도(예: 이메일 누락) 만드는 쪽마다 상태를 다시 확인할 필요가 없다.
+     */
+    private static List<MemberImportRowIssue> warningsOf(
+            MemberImportRowStatus status, List<MemberImportRowIssue> warnings) {
+
+        return status == MemberImportRowStatus.OK ? List.copyOf(warnings) : List.of();
     }
 
     // ------------------------------------------------------------------ 항목별 규칙

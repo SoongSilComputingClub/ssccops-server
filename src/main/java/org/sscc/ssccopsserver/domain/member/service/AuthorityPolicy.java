@@ -151,4 +151,44 @@ public class AuthorityPolicy {
         }
         return childrenByParent;
     }
+
+    /*
+     * "이 권한을 가진 회원은 누구인가"(#101) — capabilitiesOf·hasAuthority의 반대 방향이다.
+     * 담당자 후보를 국장 이상으로만 좁히는 화면(GET /v1/members/assignable?authority=)이 쓴다.
+     *
+     * 펼침도 반대로 돈다. 회원 쪽은 위→아래(상위를 가지면 자손도 가진다)지만, 여기서는
+     * required의 **조상**(부모→조부모→…→SUPER)을 전부 모아 그중 하나라도 직접 부여받은
+     * 역할을 찾는다 — WORK_MANAGE를 직접 부여받은 역할뿐 아니라 그 상위 묶음(OPERATOR·
+     * EXECUTIVE·SUPER)을 부여받은 역할도 결국 WORK_MANAGE를 행사할 수 있기 때문이다.
+     */
+    @Transactional(readOnly = true)
+    public List<Long> memberIdsWithAuthority(AuthorityCode required) {
+        Set<String> ancestorCodes = ancestorsOf(required.code());
+        List<Long> roleIds =
+                roleAuthorityRelationRepository.findRoleIdsByAuthorityCodes(ancestorCodes);
+        if (roleIds.isEmpty()) {
+            return List.of();
+        }
+        return memberRoleAssignmentRepository.findMemberIdsByRoleIdsValidOn(
+                roleIds, LocalDate.now(clock));
+    }
+
+    // code 자신을 포함해 up_authrt_cd를 따라 루트까지 올라간 코드 전부. 방문 집합이 고리 데이터를 막는다
+    private Set<String> ancestorsOf(String code) {
+        Map<String, String> parentByCode = loadParents();
+        Set<String> ancestors = new HashSet<>();
+        String current = code;
+        while (current != null && ancestors.add(current)) {
+            current = parentByCode.get(current);
+        }
+        return ancestors;
+    }
+
+    private Map<String, String> loadParents() {
+        Map<String, String> parentByCode = new HashMap<>();
+        for (AuthorityLink link : authorityRepository.findAllLinks()) {
+            parentByCode.put(link.code(), link.parentCode());
+        }
+        return parentByCode;
+    }
 }

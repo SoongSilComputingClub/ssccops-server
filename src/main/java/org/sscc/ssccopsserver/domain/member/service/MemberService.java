@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
@@ -110,8 +111,14 @@ public interface MemberService {
      * 목록 메서드를 여기 하나 더 두어 규칙을 한 곳에 남긴다.
      *
      * 응답에 연락처·이메일·학번이 없는 것은 이 목록이 MEMBER_MANAGE 없이 불리기 때문이다.
+     *
+     * requiredAuthority가 있으면 그 권한을 오늘 행사할 수 있는 회원으로 더 좁힌다(#101) —
+     * 업무·회의 등록의 담당자는 국장 이상(WORK_MANAGE·MEETING_MANAGE)만 고를 수 있어야
+     * 하는데, 그 판정은 AuthorityPolicy.memberIdsWithAuthority 한 곳에서만 한다(BR-M28과
+     * 같은 이유 — 화면이 이 판정을 다시 구현하면 후보 목록과 실제 등록 가능 여부가 갈린다).
+     * null이면 지금처럼 탈퇴·제명만 뺀 전체다(하위 업무 담당자는 국원도 될 수 있어야 한다).
      */
-    List<AssignableMemberResponse> findAssignableMembers();
+    List<AssignableMemberResponse> findAssignableMembers(AuthorityCode requiredAuthority);
 
     /*
      * 회원 등급 기준 코드 전체 (GET /v1/member-grades, #76). 표시 순번 오름차순이다.

@@ -2,11 +2,13 @@ package org.sscc.ssccopsserver.domain.member.service;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -375,14 +377,29 @@ public class MemberServiceImpl implements MemberService {
      * 담당자 후보 목록 (#76). 대상 판정은 단건판(findAssignableMember)과 같은
      * UNASSIGNABLE_STATUS_CODES를 쓴다 — 규칙이 두 벌이 되면 목록과 등록이 갈린다.
      *
-     * 쿼리는 두 번이다(후보 목록 · 현재 역할). 대표 역할명을 채우려면 역할이 필요한데,
-     * 후보마다 조회하면 그대로 N+1이라 목록과 같은 방식으로 한 번에 모아 온다.
+     * requiredAuthority가 있으면 그 권한을 오늘 행사할 수 있는 회원으로 한 번 더 좁힌다
+     * (#101) — 업무·회의 담당자는 국장 이상만 골라야 하는데, 그 판정은
+     * AuthorityPolicy.memberIdsWithAuthority 하나로만 한다. 동아리 규모라 회원 목록을
+     * 메모리에서 걸러도 무리가 없고, 그래야 findAllAssignable의 정렬(이름순)이 그대로 유지된다
+     * — DB 쪽에서 IN 절로 다시 걸러 별도 정렬을 하면 두 쿼리의 결과 순서가 갈릴 수 있다.
+     *
+     * requiredAuthority가 없으면 쿼리는 두 번이다(후보 목록 · 현재 역할). 대표 역할명을
+     * 채우려면 역할이 필요한데, 후보마다 조회하면 그대로 N+1이라 목록과 같은 방식으로 한 번에
+     * 모아 온다. requiredAuthority가 있으면 회원 ID 조회가 더해져 세 번이다.
      */
     @Override
     @Transactional(readOnly = true)
-    public List<AssignableMemberResponse> findAssignableMembers() {
+    public List<AssignableMemberResponse> findAssignableMembers(AuthorityCode requiredAuthority) {
         List<MemberEntity> candidates =
                 memberRepository.findAllAssignable(UNASSIGNABLE_STATUS_CODES);
+
+        if (requiredAuthority != null) {
+            Set<Long> authorizedIds =
+                    new HashSet<>(authorityPolicy.memberIdsWithAuthority(requiredAuthority));
+            candidates =
+                    candidates.stream().filter(m -> authorizedIds.contains(m.getId())).toList();
+        }
+
         Map<Long, List<MemberRoleResponse>> rolesByMemberId = currentRolesOf(candidates);
 
         return candidates.stream()

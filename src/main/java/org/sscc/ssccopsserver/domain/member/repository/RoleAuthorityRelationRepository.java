@@ -22,6 +22,16 @@ public interface RoleAuthorityRelationRepository
     List<String> findAuthorityCodesByRoleIds(@Param("roleIds") Collection<Long> roleIds);
 
     /*
+     * findAuthorityCodesByRoleIds의 반대 방향(#101) — 권한 코드 집합(요구 코드와 그 조상 전부,
+     * AuthorityPolicy.memberIdsWithAuthority가 미리 계산해 넘긴다) 중 하나라도 직접 부여받은
+     * 역할의 id. distinct인 것은 한 역할이 조상 코드 여러 개를 동시에 부여받았을 수 있어서다.
+     */
+    @Query(
+            "select distinct r.role.id from RoleAuthorityRelationEntity r"
+                    + " where r.authority.code in :codes")
+    List<Long> findRoleIdsByAuthorityCodes(@Param("codes") Collection<String> codes);
+
+    /*
      * 한 역할의 부여 전부 (#65). 권한명을 응답에 실으므로 join fetch로 함께 가져온다 —
      * 없으면 부여 건수만큼 추가 쿼리가 나간다.
      */

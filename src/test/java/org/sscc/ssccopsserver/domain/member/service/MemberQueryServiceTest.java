@@ -102,6 +102,7 @@ class MemberQueryServiceTest {
                         new MemberInitialHistoryRecorder(
                                 memberGradeHistoryRepository, memberStatusHistoryRepository),
                         authorityPolicy,
+                        new MemberLinkAttemptLimiter(FIXED_CLOCK),
                         FIXED_CLOCK);
     }
 

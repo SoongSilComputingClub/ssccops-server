@@ -255,7 +255,7 @@ public class MemberServiceImpl implements MemberService {
                 matching(
                         memberRepository.findLinkCandidatesByStudentNumber(studentNumber), request);
         if (matched.size() == 1) {
-            return matched.get(0);
+            return lockForLink(matched.get(0));
         }
 
         if (!matching(memberRepository.findLinkedByStudentNumber(studentNumber), request)
@@ -265,6 +265,18 @@ public class MemberServiceImpl implements MemberService {
 
         linkAttemptLimiter.recordFailure(authUserId);
         throw new GeneralException(MemberErrorCode.MEMBER_LINK_FAILED);
+    }
+
+    /*
+     * 본인 확인을 통과한 뒤 그 행을 잠그고 auth_user_id를 다시 읽는다 — 근거는
+     * MemberRepository.lockAndFindAuthUserId의 주석에 있다. 1차 후보 조회와 이 재확인 사이에
+     * 다른 계정이 같은 행을 가져갔다면 여기서 409로 끊는다.
+     */
+    private MemberEntity lockForLink(MemberEntity member) {
+        if (memberRepository.lockAndFindAuthUserId(member.getId()).isPresent()) {
+            throw new GeneralException(MemberErrorCode.MEMBER_ALREADY_LINKED);
+        }
+        return member;
     }
 
     private static List<MemberEntity> matching(
@@ -281,10 +293,12 @@ public class MemberServiceImpl implements MemberService {
     }
 
     /*
-     * 동시 요청은 DB가 막는다. 두 계정이 같은 명부 행을 나란히 후보로 집어 들면 둘 다
-     * auth_user_id가 비어 있는 것을 보므로 선조회로는 갈라낼 수 없고, 진 쪽은
-     * uk_mbr_auth_user_id 위반으로만 드러난다 — 그것을 선조회와 같은 409로 옮긴다
-     * (가입의 saveOrTranslateConflict와 같은 방식).
+     * UNIQUE 제약이 최종 방어선이다. uk_mbr_auth_user_id 위반은 flush 시점에야 드러나므로
+     * 여기서 잡아 선조회와 같은 409로 옮긴다 (가입의 saveOrTranslateConflict와 같은 방식).
+     *
+     * **같은 행에 대한 경합은 이 제약이 막지 못한다** — 그쪽은 lockForLink가 끊으며 근거는
+     * MemberRepository.lockAndFindAuthUserId의 주석에 있다. 여기 걸리는 것은 한 계정이 서로
+     * 다른 두 명부 행에 동시에 붙으려는 경우다(학번이 다른 두 요청을 나란히 보내는 경우).
      *
      * 제약명을 가리지 않는 것은 이 UPDATE가 어길 수 있는 UNIQUE가 하나뿐이기 때문이다.
      * 학번은 엔티티에서 updatable = false로 잠겨 있어 이 경로로는 바뀌지 않는다.

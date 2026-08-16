@@ -109,6 +109,7 @@ class WorkServiceImplSearchTest {
     private WorkService workService;
     private SubWorkService subWorkService;
     private MemberEntity registrant;
+    private MemberEntity owner;
     private Long ownerId;
 
     @BeforeEach
@@ -148,12 +149,14 @@ class WorkServiceImplSearchTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
+                        new SubWorkOwnershipPolicy(authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
-        ownerId = saveMember("20200002", "박지훈", "owner@sscc.org").getId();
+        owner = saveMember("20200002", "박지훈", "owner@sscc.org");
+        ownerId = owner.getId();
     }
 
     // 카드 한 장이 그리는 값이 모두 실린다 — 상태·유형 배지, 제목, 담당자, 기간
@@ -574,11 +577,12 @@ class WorkServiceImplSearchTest {
         checkItem(subWorkId, checklistItemIds(subWorkId).get(0));
     }
 
+    // 체크리스트 토글은 담당자 본인만 할 수 있으므로(#101) registrant가 아니라 owner로 수행한다
     private void checkItem(Long subWorkId, Long itemId) {
         entityManager.flush();
         entityManager.clear();
         subWorkService.updateChecklistItem(
-                subWorkId, itemId, new SubWorkChecklistItemUpdateRequest(true), registrant);
+                subWorkId, itemId, new SubWorkChecklistItemUpdateRequest(true), owner);
     }
 
     private List<Long> checklistItemIds(Long subWorkId) {
@@ -590,11 +594,13 @@ class WorkServiceImplSearchTest {
                 .toList();
     }
 
+    // 전이도 담당자 본인만 시도할 수 있으므로(#101) owner로 수행한다 — 이 파일의 승인 필요
+    // 없는 유형(내부행사)은 담당자 본인이 완료 승인까지 마칠 수 있다
     private void transition(Long subWorkId, TransitionAction action) {
         entityManager.flush();
         entityManager.clear();
         subWorkService.transitionSubWork(
-                subWorkId, new SubWorkTransitionRequest(action, null), registrant);
+                subWorkId, new SubWorkTransitionRequest(action, null), owner);
     }
 
     private WorkSearchResponse search(WorkSearchCondition condition) {

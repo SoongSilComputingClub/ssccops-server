@@ -40,6 +40,18 @@ public interface MemberRoleAssignmentRepository
     List<Long> findValidRoleIds(@Param("memberId") Long memberId, @Param("today") LocalDate today);
 
     /*
+     * findValidRoleIds의 반대 방향(#101) — 주어진 역할들 중 하나라도 오늘 유효하게 배정된
+     * 회원의 id 전부. "이 권한을 가진 회원은 누구인가"(AuthorityPolicy.memberIdsWithAuthority)
+     * 조회의 마지막 단계에 쓴다. 판정 기준은 BR-M25로 다른 '유효 역할' 질의들과 같다.
+     */
+    @Query(
+            "select distinct a.member.id from MemberRoleAssignmentEntity a"
+                    + " where a.role.id in :roleIds and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)")
+    List<Long> findMemberIdsByRoleIdsValidOn(
+            @Param("roleIds") Collection<Long> roleIds, @Param("today") LocalDate today);
+
+    /*
      * 역할별 현재 보유 회원 수를 **한 번에 모아** 센다 (#79 역할 목록).
      *
      * 역할마다 count를 돌리면 역할 수에 비례해 쿼리가 늘어난다. 목록은 역할 조회 1 + 이 집계

@@ -131,6 +131,7 @@ class DashboardServiceImplTest {
                         subWorkRejectionRepository,
                         memberService,
                         approvalAuthorityPolicy,
+                        new SubWorkOwnershipPolicy(authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
         ApprovalService approvalService =
@@ -142,7 +143,8 @@ class DashboardServiceImplTest {
                         subWorkRejectionRepository,
                         approvalAuthorityPolicy,
                         FIXED_CLOCK);
-        dashboardService = new DashboardServiceImpl(approvalService, subWorkService);
+        dashboardService =
+                new DashboardServiceImpl(approvalService, subWorkService, authorityPolicy);
 
         registrant = saveMember("20200001", "김도현");
         MemberRoleFixture.assign(
@@ -152,6 +154,18 @@ class DashboardServiceImplTest {
                 registrant,
                 MemberRoleFixture.TREASURER);
         viewer = saveMember("20200002", "이서연");
+        /*
+         * 컨트롤러 인가는 WORK_READ뿐이라(#101) viewer가 국원이어도 대시보드에 들어올 수
+         * 있지만, 이 테스트 파일의 pendingApproval 검증들은 원래 "승인함과 같은 데이터가
+         * 그대로 온다"만 확인하던 것이라 WORK_MANAGE를 쥔 국장으로 둔다 — WORK_MANAGE 없는
+         * 조회자의 승인 대기가 가려지는 것은 별도 테스트(pendingApprovalIsHiddenWithoutWorkManage)가 본다.
+         */
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                viewer,
+                MemberRoleFixture.DIRECTOR);
         otherOwner = saveMember("20200003", "박현우");
 
         approvalFreeTypeId =
@@ -265,6 +279,35 @@ class DashboardServiceImplTest {
         assertThat(dashboard.pendingApproval())
                 .extracting(ApprovalInboxItemResponse::subWorkId)
                 .containsExactlyElementsOf(ids.subList(0, 5));
+    }
+
+    /*
+     * WORK_READ만 가진 조회자(국원)는 대시보드에 들어올 수 있지만(#101), 승인 대기는
+     * 승인함(WORK_MANAGE)과 같은 데이터라 그 영역만 빈 배열로 온다. 내 업무는 원래도
+     * 본인 스코프라 그대로 채워지고, 다가오는 마감은 전체가 아니라 본인이 담당자인
+     * 것만 좁혀서 온다 — 남의 마감(검토 중인 지출 건, registrant 담당)은 빠진다.
+     */
+    @Test
+    void pendingApprovalIsHiddenAndUpcomingDeadlinesAreScopedWithoutWorkManage() {
+        MemberEntity staffMember = saveMember("20200099", "국원회원");
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                staffMember,
+                "국원");
+        Long mine = createSubWork("내 업무", staffMember.getId(), approvalFreeTypeId, NOW.plusDays(1));
+        subWorkInReview("검토 중인 지출 건", NOW.plusDays(2));
+
+        DashboardResponse dashboard = dashboardService.getDashboard(staffMember);
+
+        assertThat(dashboard.pendingApproval()).isEmpty();
+        assertThat(dashboard.myTasks())
+                .extracting(SubWorkSummaryResponse::subWorkId)
+                .containsExactly(mine);
+        assertThat(dashboard.upcomingDeadlines())
+                .extracting(SubWorkSummaryResponse::subWorkId)
+                .containsExactly(mine);
     }
 
     private MemberEntity saveMember(String studentNumber, String name) {

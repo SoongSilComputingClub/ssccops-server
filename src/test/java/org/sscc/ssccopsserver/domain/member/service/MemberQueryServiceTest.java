@@ -355,7 +355,7 @@ class MemberQueryServiceTest {
             assignRole(member, "역할" + index, TODAY.minusYears(1), null, true);
         }
 
-        assertThat(countQueries(memberService::findAssignableMembers)).isEqualTo(2);
+        assertThat(countQueries(() -> memberService.findAssignableMembers(null))).isEqualTo(2);
     }
 
     /* ── 현재 역할 ───────────────────────────────────────── */
@@ -496,7 +496,7 @@ class MemberQueryServiceTest {
          * 순서는 이름 오름차순이다. 한글 정렬은 DB 콜레이션(H2·PostgreSQL 모두 코드 포인트)을
          * 따르므로 '재 < 졸 < 휴'가 된다 — 사전순 로케일 정렬을 기대하면 어긋난다.
          */
-        assertThat(memberService.findAssignableMembers())
+        assertThat(memberService.findAssignableMembers(null))
                 .extracting(AssignableMemberResponse::name)
                 .containsExactly("재학회원", "졸업회원", "휴학회원");
 
@@ -520,7 +520,7 @@ class MemberQueryServiceTest {
 
         saveMember("20200003", "박준호", 33);
 
-        assertThat(memberService.findAssignableMembers())
+        assertThat(memberService.findAssignableMembers(null))
                 .extracting(
                         AssignableMemberResponse::name,
                         AssignableMemberResponse::representativeRoleName)

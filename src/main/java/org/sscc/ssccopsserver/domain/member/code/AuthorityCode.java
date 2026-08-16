@@ -37,8 +37,17 @@ public enum AuthorityCode {
     /** 업무·하위 업무 관리 */
     WORK_MANAGE,
 
+    /** 업무·하위 업무 조회 전용(#101). WORK_MANAGE의 자식이라 그 보유자는 자동으로 포함한다 */
+    WORK_READ,
+
     /** 회의 등록·조회·상태 전이·안건 관리 */
     MEETING_MANAGE,
+
+    /** 회의 조회 전용(#101). MEETING_MANAGE의 자식이라 그 보유자는 자동으로 포함한다 */
+    MEETING_READ,
+
+    /** 회의 안건 등록·수정·철회 전용(#101) — 회의 자체의 생성·전이는 MEETING_MANAGE만의 몫이다 */
+    MEETING_AGENDA_WRITE,
 
     /** 하위 업무 유형 조회 */
     SUB_WORK_TYPE_READ,

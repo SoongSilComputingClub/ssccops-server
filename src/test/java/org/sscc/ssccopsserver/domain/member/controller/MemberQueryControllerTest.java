@@ -198,6 +198,29 @@ class MemberQueryControllerTest {
                 .andExpect(jsonPath("$.data[*].name").value(Matchers.hasItem("박준호")));
     }
 
+    /*
+     * authority 파라미터를 주면 그 권한을 오늘 행사할 수 있는 회원으로 좁혀진다(#101) —
+     * 업무·회의 등록의 담당자·책임자는 국장 이상만 고를 수 있어야 한다. WORK_MANAGE가 없는
+     * target(홍보국장, 권한 미매핑)·PLAIN_MEMBER는 빠지고, WORK_MANAGE를 직접 부여받은
+     * 회원만 남는다.
+     */
+    @Test
+    void assignableFiltersByRequiredAuthority() throws Exception {
+        MemberEntity director = saveMember(UUID.randomUUID(), "20200006", "국장회원");
+        AuthorityFixture.grant(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                director,
+                AuthorityCode.WORK_MANAGE);
+
+        mockMvc.perform(authorized(get(ASSIGNABLE).param("authority", "WORK_MANAGE"), PLAIN_MEMBER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[*].name").value(Matchers.contains("국장회원")));
+    }
+
     /* ── 목록·단건에 실리는 것 ───────────────────────────── */
 
     /*

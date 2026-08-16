@@ -143,6 +143,29 @@ public interface SubWorkRepository
             @Param("doneStatus") WorkStatus doneStatus);
 
     /*
+     * '다가오는 마감'을 담당자 한 명으로 좁힌 버전(#101). WORK_MANAGE가 없는 조회자(국원)에게는
+     * 전체가 아니라 자신이 담당자인 건만 보여줘야 하는데, 대시보드는 완료 건을 뺀 마감 임박
+     * 건만 필요하므로 findAllByOwnerId(완료 건 포함 전량)를 다시 걸러 쓰지 않고 이 조합
+     * 전용 질의를 둔다 — 스코프만 findAllDueBetweenExcludingStatus에서 좁힌 것이다.
+     */
+    @Query(
+            "select s from SubWorkEntity s"
+                    + " join fetch s.operation o"
+                    + " join fetch o.personInCharge"
+                    + " join fetch s.subWorkType"
+                    + " join fetch s.work w"
+                    + " join fetch w.operation"
+                    + " where s.dueAt >= :from and s.dueAt <= :to"
+                    + " and s.workStatus <> :doneStatus and o.deletedAt is null"
+                    + " and o.personInCharge.id = :ownerId"
+                    + " order by s.dueAt asc, s.id asc")
+    List<SubWorkEntity> findAllDueBetweenExcludingStatusAndOwnerId(
+            @Param("from") Instant from,
+            @Param("to") Instant to,
+            @Param("doneStatus") WorkStatus doneStatus,
+            @Param("ownerId") Long ownerId);
+
+    /*
      * 운영 통합(OPS-001)의 하위 업무 전량. 좌측 목록과 우측 트리(상위 업무별 묶음)를 한 화면이
      * 함께 그리므로 커서 페이징을 쓰지 않는다 — 회의 목록(OPS-031)과 같은 판단. fetch join
      * 구성과 정렬(AGG-04: 마감 오름차순, 마감 없는 건은 뒤, 동률은 식별자)은 대시보드의

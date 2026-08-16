@@ -154,6 +154,7 @@ class ApprovalServiceImplTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
+                        new SubWorkOwnershipPolicy(authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
         approvalService =
@@ -390,7 +391,8 @@ class ApprovalServiceImplTest {
             MemberEntity otherRegistrant = saveMember("2021000" + index, "요청자 " + index, null);
             Long subWorkId = subWorkInReview(quorumTypeId, "검토 중 " + index, otherRegistrant);
             transition(subWorkId, TransitionAction.REJECT, "보완 필요 " + index, president);
-            transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, otherRegistrant);
+            // 검토요청은 담당자만 할 수 있으므로(#101) 등록자(otherRegistrant)가 아니라 담당자(registrant)로 수행한다
+            transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
         }
         entityManager.flush();
         entityManager.clear();
@@ -559,10 +561,11 @@ class ApprovalServiceImplTest {
         return subWorkInReview(subWorkTypeId, title, registrant);
     }
 
+    // 착수·검토요청은 담당자만 할 수 있으므로(#101) 등록자(requester)가 아니라 담당자(registrant)로 수행한다
     private Long subWorkInReview(long subWorkTypeId, String title, MemberEntity requester) {
         Long subWorkId = createSubWork(subWorkTypeId, title, requester);
-        transition(subWorkId, TransitionAction.START, null, requester);
-        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, requester);
+        transition(subWorkId, TransitionAction.START, null, registrant);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null, registrant);
         return subWorkId;
     }
 

@@ -165,6 +165,7 @@ class SubWorkServiceImplSearchTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
+                        new SubWorkOwnershipPolicy(authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 

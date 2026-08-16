@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
@@ -120,15 +121,22 @@ public class MemberController {
      *
      * 페이징을 두지 않는다 — 선택 칩의 드롭다운이라 한 번에 받아 그 자리에서 걸러 쓰는
      * 목록이고, 동아리 회원 수 규모에서 나누어 받을 이유가 없다 (#37의 응답 목록과 같은 판단).
+     *
+     * authority 쿼리 파라미터(#101): 업무 등록의 담당자·회의 등록의 책임자는 국장 이상
+     * (WORK_MANAGE·MEETING_MANAGE)만 고를 수 있어야 한다 — 생략하면 지금처럼 전체(하위 업무
+     * 담당자는 국원도 될 수 있다). 판정은 AuthorityPolicy.memberIdsWithAuthority 하나뿐이다.
      */
     @Operation(
             summary = "담당자 후보 조회",
             description =
                     "담당자·회의 책임자로 지정할 수 있는 회원 목록. 탈퇴·제명 회원은 빠진다."
-                            + " 권한 없이 부를 수 있는 목록이라 연락처·이메일·학번은 내리지 않는다.")
+                            + " authority를 주면 그 권한을 오늘 행사할 수 있는 회원으로 좁힌다(예:"
+                            + " WORK_MANAGE·MEETING_MANAGE). 권한 없이 부를 수 있는 목록이라"
+                            + " 연락처·이메일·학번은 내리지 않는다.")
     @GetMapping("/assignable")
-    public ApiResponse<List<AssignableMemberResponse>> findAssignableMembers() {
-        return ApiResponse.success(memberService.findAssignableMembers());
+    public ApiResponse<List<AssignableMemberResponse>> findAssignableMembers(
+            @RequestParam(required = false) AuthorityCode authority) {
+        return ApiResponse.success(memberService.findAssignableMembers(authority));
     }
 
     /*

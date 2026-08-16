@@ -82,6 +82,9 @@ public class SubWorkServiceImpl implements SubWorkService {
     // 승인자·투표자 판정은 한 곳에만 둔다 (권한 인가 #9와 층이 다르다 — 그쪽 주석 참고)
     private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
 
+    // "담당자 본인인가"의 유일한 구현 (#101) — WORK_MANAGE가 없는 회원(국원)은 이 판정을 거친다
+    private final SubWorkOwnershipPolicy subWorkOwnershipPolicy;
+
     // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
 
@@ -190,6 +193,8 @@ public class SubWorkServiceImpl implements SubWorkService {
     public SubWorkDetailResponse updateSubWork(
             Long subWorkId, SubWorkUpdateRequest request, MemberEntity viewer) {
         SubWorkEntity subWork = findSubWork(subWorkId);
+        // WORK_MANAGE가 없는 회원은 자신이 담당자인 건만 수정할 수 있다 (#101)
+        subWorkOwnershipPolicy.requireOwnerOrManager(subWork, viewer);
 
         // 담당자 실재 여부는 등록과 같은 규칙이다 (AR-07·LY-10)
         MemberEntity owner =
@@ -251,7 +256,20 @@ public class SubWorkServiceImpl implements SubWorkService {
                         subWorkRejectionRepository
                                 .findFirstBySubWorkOrderByRejectedAtDescIdDesc(subWork)
                                 .orElse(null)),
-                approvalAuthorityPolicy.canDecide(subWork, viewer));
+                canDecideOn(subWork, viewer));
+    }
+
+    /*
+     * canApprove·canReject의 판정 (#101). transitionSubWork의 승인·반려 게이트와 정확히 같은
+     * 갈림을 쓴다 — 승인 필요 유형은 승인자 판정(ApprovalAuthorityPolicy), 승인 필요 없는
+     * 유형은 담당자·WORK_MANAGE 판정(SubWorkOwnershipPolicy)이다. 둘 중 하나만 바뀌면 버튼은
+     * 보이는데 누르면 403이 나는 자리가 생긴다.
+     */
+    private boolean canDecideOn(SubWorkEntity subWork, MemberEntity viewer) {
+        if (subWork.getSubWorkType().isApprovalNeeded()) {
+            return approvalAuthorityPolicy.canDecide(subWork, viewer);
+        }
+        return subWorkOwnershipPolicy.isOwnerOrManager(subWork, viewer);
     }
 
     private OperationPriority orNormalPriority(OperationPriority priority) {
@@ -377,12 +395,30 @@ public class SubWorkServiceImpl implements SubWorkService {
 
         /*
          * 승인·완료와 반려는 유형이 지정한 승인자만 할 수 있다 (TR-03·TR-04 수행 권한 · #47).
-         * 착수·검토요청은 담당자의 몫이라 검사하지 않는다 — 컨트롤러의 WORK_MANAGE 권한(#9)이
-         * 이미 업무를 다룰 수 없는 사람을 걸러 두었다.
-         * 상태를 바꾸기 전에 먼저 끊어야 권한 없는 요청이 이력을 남기지 않는다.
+         * 승인자 자격은 부서별 국장(홍보국장 등)처럼 WORK_MANAGE도 담당자도 아닌 회원에게도
+         * 열려 있으므로(ApprovalAuthorityPolicy 주석) 담당자 판정(#101)을 여기 겹쳐 걸지 않는다
+         * — 승인자 판정이 그 자체로 완결된 별도 축이다.
+         *
+         * **승인이 필요 없는 유형**(aprv_need_yn = false)은 얘기가 다르다. 그 경우
+         * ApprovalAuthorityPolicy.canDecide가 회원을 보지 않고 바로 통과시키는데, 그건 원래
+         * "컨트롤러가 WORK_MANAGE로 이미 걸러 뒀다"는 전제 위에 짠 규칙이었다(#47 당시 주석).
+         * 컨트롤러 게이트를 WORK_READ로 낮춘 뒤(#101)로는 그 전제가 깨져, 담당자도
+         * WORK_MANAGE도 아닌 국원이 남의 승인불필요 유형 완료·반려까지 건드릴 수 있었다.
+         * 그래서 승인이 필요 없는 유형에서는 승인자 판정 대신 담당자 판정으로 대체한다 —
+         * "그 유형의 완료는 담당자의 몫이다"라는 원래 주석의 뜻을 실제로 강제한다.
+         *
+         * 착수·검토요청은 원래도 담당자의 몫이라 WORK_MANAGE가 없는 회원은 자신이 담당자인
+         * 건만 시도할 수 있다(#101). 상태를 바꾸기 전에 먼저 끊어야 권한 없는 요청이 이력을
+         * 남기지 않는다.
          */
-        if (action == TransitionAction.APPROVE_COMPLETE || action == TransitionAction.REJECT) {
+        boolean approverGoverned =
+                subWork.getSubWorkType().isApprovalNeeded()
+                        && (action == TransitionAction.APPROVE_COMPLETE
+                                || action == TransitionAction.REJECT);
+        if (approverGoverned) {
             approvalAuthorityPolicy.requireApprover(subWork, performer);
+        } else {
+            subWorkOwnershipPolicy.requireOwnerOrManager(subWork, performer);
         }
 
         subWork.applyTransition(
@@ -493,9 +529,9 @@ public class SubWorkServiceImpl implements SubWorkService {
      * 나오는 값이라 체크로 변하지 않는다. 상위 업무 상세(OPS-003)가 보여주는 하위 업무별
      * 진행률은 저장 컬럼 없이 체크리스트에서 파생하므로(AGG-02) 다음 조회에 그대로 반영된다.
      *
-     * performer는 아직 읽지 않는다. 권한 검사는 컨트롤러의 @RequireAuthority(#9)가 이미 마쳤고,
-     * 체크 이력은 감사 로그(#8)가 붙을 때 이 자리에서 쓰인다 — 그때 시그니처가 바뀌지 않도록
-     * 지금부터 받아 둔다 (LY-05).
+     * WORK_MANAGE가 없는 회원은 자신이 담당자인 건의 체크리스트만 토글할 수 있다 (#101).
+     * 체크 이력은 감사 로그(#8)가 붙을 때 performer가 한 번 더 쓰인다 — 그때 시그니처가
+     * 바뀌지 않도록 지금부터 받아 둔다 (LY-05).
      */
     @Override
     @Transactional
@@ -509,6 +545,7 @@ public class SubWorkServiceImpl implements SubWorkService {
                         .findByIdAndOperationDeletedAtIsNull(subWorkId)
                         .orElseThrow(
                                 () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+        subWorkOwnershipPolicy.requireOwnerOrManager(subWork, performer);
         // 완료된 건은 체크를 되돌릴 수 없다. 항목을 찾기 전에 막아 상태를 먼저 알린다
         subWork.requireChecklistEditable();
 
@@ -542,16 +579,19 @@ public class SubWorkServiceImpl implements SubWorkService {
 
     /*
      * 대시보드 '다가오는 마감' (OPS-038). 조회 시점 기준 ±5일 범위에 마감이 있고 아직
-     * 완료되지 않은 하위 업무다(이슈#60).
+     * 완료되지 않은 하위 업무다(이슈#60). ownerId가 있으면 그 담당자의 것만 본다(#101).
      */
     @Override
-    public List<SubWorkSummaryResponse> findUpcomingDeadlines() {
+    public List<SubWorkSummaryResponse> findUpcomingDeadlines(Long ownerId) {
         Instant now = clock.instant();
+        Instant from = now.minus(UPCOMING_DEADLINE_WINDOW);
+        Instant to = now.plus(UPCOMING_DEADLINE_WINDOW);
         List<SubWorkEntity> rows =
-                subWorkRepository.findAllDueBetweenExcludingStatus(
-                        now.minus(UPCOMING_DEADLINE_WINDOW),
-                        now.plus(UPCOMING_DEADLINE_WINDOW),
-                        WorkStatus.DONE);
+                ownerId == null
+                        ? subWorkRepository.findAllDueBetweenExcludingStatus(
+                                from, to, WorkStatus.DONE)
+                        : subWorkRepository.findAllDueBetweenExcludingStatusAndOwnerId(
+                                from, to, WorkStatus.DONE, ownerId);
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
         return rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
     }

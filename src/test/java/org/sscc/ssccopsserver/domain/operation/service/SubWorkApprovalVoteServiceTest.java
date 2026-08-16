@@ -160,6 +160,7 @@ class SubWorkApprovalVoteServiceTest {
                         subWorkRejectionRepository,
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
+                        new SubWorkOwnershipPolicy(authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -486,15 +487,24 @@ class SubWorkApprovalVoteServiceTest {
         assertThat(detail(subWorkId, staff).canReject()).isFalse();
     }
 
-    // 승인 단계가 없는 유형은 승인자도 없다 — 전이가 통과시키는 사람에게 버튼도 보여야 한다
+    /*
+     * 승인 단계가 없는 유형은 승인자 판정이 아니라 담당자 판정을 쓴다(#101) — 그 유형의
+     * 완료·반려는 담당자(또는 WORK_MANAGE 보유자)의 몫이지 "전이가 통과시키는 사람 누구나"가
+     * 아니다. 담당자(registrant)에게는 버튼이 보이고, 담당자도 운영진도 아닌 스터디장에게는
+     * 보이지 않는다 — 실제 전이 게이트(SubWorkOwnershipPolicy)와 같은 판정이어야 버튼은
+     * 보이는데 누르면 403이 나는 자리가 생기지 않는다.
+     */
     @Test
-    void detailAllowsAnyoneToDecideOnApprovalFreeType() {
+    void detailAllowsOwnerButNotUnrelatedMemberToDecideOnApprovalFreeType() {
         Long subWorkId = subWorkInReview(approvalFreeTypeId);
 
-        SubWorkDetailResponse detail = detail(subWorkId, studyLeader);
+        SubWorkDetailResponse forOwner = detail(subWorkId, registrant);
+        assertThat(forOwner.canApprove()).isTrue();
+        assertThat(forOwner.canReject()).isTrue();
 
-        assertThat(detail.canApprove()).isTrue();
-        assertThat(detail.canReject()).isTrue();
+        SubWorkDetailResponse forOutsider = detail(subWorkId, studyLeader);
+        assertThat(forOutsider.canApprove()).isFalse();
+        assertThat(forOutsider.canReject()).isFalse();
     }
 
     // 승인함 카드와 같은 정족수 진행을 상세에서도 본다 — 시안은 여기서 승인을 누른다

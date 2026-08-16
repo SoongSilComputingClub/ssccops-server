@@ -246,6 +246,56 @@ class AuthorityPolicyTest {
                 .contains(AuthorityCode.EXECUTIVE.code(), AuthorityCode.OPERATOR.code());
     }
 
+    /* ── 반대 방향: 이 권한을 가진 회원은 누구인가 (#101) ─────── */
+
+    /** 요구 코드를 직접 부여받은 회원은 당연히 나온다 */
+    @Test
+    void memberIdsWithAuthorityIncludesDirectGrant() {
+        MemberEntity member = saveMember("20260013", "업무담당");
+        grant(member, AuthorityCode.WORK_MANAGE);
+
+        assertThat(authorityPolicy.memberIdsWithAuthority(AuthorityCode.WORK_MANAGE))
+                .containsExactly(member.getId());
+    }
+
+    /*
+     * 상위(조상) 권한을 부여받은 회원도 나온다 — EXECUTIVE를 가진 회원은 그 자손인
+     * WORK_MANAGE를 이미 행사할 수 있으므로, "WORK_MANAGE를 가진 회원"을 물었을 때
+     * 빠지면 실제 인가와 조회 결과가 갈린다.
+     */
+    @Test
+    void memberIdsWithAuthorityIncludesAncestorGrant() {
+        MemberEntity member = saveMember("20260014", "임원");
+        grant(member, AuthorityCode.EXECUTIVE);
+
+        assertThat(authorityPolicy.memberIdsWithAuthority(AuthorityCode.WORK_MANAGE))
+                .containsExactly(member.getId());
+    }
+
+    /** 자손이나 형제 권한만 가진 회원은 나오지 않는다 — 펼침이 반대로 새면 안 된다 */
+    @Test
+    void memberIdsWithAuthorityExcludesDescendantAndSiblingGrants() {
+        MemberEntity descendantOnly = saveMember("20260015", "폼조회자");
+        grant(descendantOnly, AuthorityCode.FORM_READ);
+        MemberEntity siblingOnly = saveMember("20260016", "회의담당");
+        grant(siblingOnly, AuthorityCode.MEETING_MANAGE);
+
+        assertThat(authorityPolicy.memberIdsWithAuthority(AuthorityCode.WORK_MANAGE)).isEmpty();
+    }
+
+    /** 임기가 끝난 역할로는 나오지 않는다 — 기준은 hasAuthority와 같은 BR-M25다 */
+    @Test
+    void memberIdsWithAuthorityExcludesExpiredRoles() {
+        MemberEntity member = saveMember("20260017", "임기만료업무담당");
+        grantForPeriod(
+                member,
+                AuthorityCode.WORK_MANAGE,
+                LocalDate.now().minusYears(1),
+                LocalDate.now().minusDays(1));
+
+        assertThat(authorityPolicy.memberIdsWithAuthority(AuthorityCode.WORK_MANAGE)).isEmpty();
+    }
+
     /* ── 헬퍼 ────────────────────────────────────────────── */
 
     private static void forceParent(AuthorityEntity child, AuthorityEntity parent) {

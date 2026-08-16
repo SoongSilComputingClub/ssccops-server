@@ -39,18 +39,23 @@ import lombok.RequiredArgsConstructor;
 /*
  * 하위 업무 API (OPS-007). 경로 버전 /v1을 쓰고 컨텍스트 경로에 /api를 두지 않는다 (AP-01).
  *
- * 인가는 WORK_MANAGE 권한이다 (#9, WorkController와 같은 권한 — 상위 업무와 하위 업무를 나눠
- * 부여할 이유가 없다). 승인·투표 자격은 이 권한과 별개로 ApprovalAuthorityPolicy가 본다 —
- * 그쪽은 '무슨 일을 하는 사람인가'가 아니라 '이 건의 승인자 본인인가'라 성질이 다르다.
+ * 인가는 메서드마다 갈린다(#101, WorkController와 같은 구조). 조회는 WORK_READ(WORK_MANAGE의
+ * 자식이라 WORK_MANAGE 보유자는 별도 매핑 없이 통과한다), 생성은 WORK_MANAGE만(국원은 새
+ * 하위 업무를 만들 수 없다 — 배정받은 건을 다루는 것과 새 건을 만드는 것은 다른 권한이다).
+ * 수정·전이·체크리스트는 WORK_MANAGE 보유자거나 "본인이 담당자인 건"이어야 하는데,
+ * @RequireAuthority는 레코드를 모르므로 여기서는 WORK_READ까지만 걸고 담당자 여부는
+ * SubWorkOwnershipPolicy가 서비스 레이어에서 본다
+ * (ApprovalAuthorityPolicy와 같은 층 — '무슨 일을 하는 사람인가'와 '이 건의 담당자
+ * 본인인가'는 성질이 다르다). 승인·투표 자격도 마찬가지로 ApprovalAuthorityPolicy가 본다.
  */
 @RestController
 @RequiredArgsConstructor
-@RequireAuthority(AuthorityCode.WORK_MANAGE)
 @RequestMapping("/v1/sub-works")
 public class SubWorkController {
 
     private final SubWorkService subWorkService;
 
+    @RequireAuthority(AuthorityCode.WORK_MANAGE)
     @PostMapping
     public ResponseEntity<ApiResponse<SubWorkCreateResponse>> create(
             @Valid @RequestBody SubWorkCreateRequest request,
@@ -71,6 +76,7 @@ public class SubWorkController {
      *
      * 목록이므로 응답은 data 배열과 page 봉투 두 갈래다 (AP-11).
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @GetMapping
     public ApiResponse<List<SubWorkSummaryResponse>> searchSubWorks(
             @Valid @ModelAttribute SubWorkSearchCondition condition) {
@@ -87,6 +93,7 @@ public class SubWorkController {
      * myVote뿐이다. 판정을 프론트가 하지 않는 것은 서버의 승인자 판정과 어긋나면 버튼은 보이는데
      * 누르면 403이 나기 때문이다.
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @GetMapping("/{subWorkId}")
     public ApiResponse<SubWorkDetailResponse> getSubWork(
             @PathVariable Long subWorkId, @CurrentMember MemberEntity viewer) {
@@ -104,6 +111,7 @@ public class SubWorkController {
      * 응답이 상세 조회와 같은 SubWorkDetailResponse인 것도 같은 이유다 — canApprove·
      * canReject·quorum·myVote까지 함께 실려야 화면이 수정 직후 재조회 없이 그대로 갱신된다.
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @PatchMapping("/{subWorkId}")
     public ApiResponse<SubWorkDetailResponse> updateSubWork(
             @PathVariable Long subWorkId,
@@ -120,6 +128,7 @@ public class SubWorkController {
      * 전이 가능 여부·사유 필수 여부는 서비스와 도메인이 판단하므로 여기서 분기하지 않는다 (LY-02).
      * 상태 변경은 생성이 아니므로 200이다 (LY-06).
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @PostMapping("/{subWorkId}/transitions")
     public ApiResponse<SubWorkTransitionResponse> transition(
             @PathVariable Long subWorkId,
@@ -138,6 +147,7 @@ public class SubWorkController {
      * 투표 자격·정족수 유형 여부·상태 조건은 서비스와 도메인이 판단하므로 여기서 분기하지 않는다 (LY-02).
      * 표를 새로 만들든 기존 표를 바꾸든 결과가 같은 멱등한 호출이라 201이 아니라 200이다 (LY-06).
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @PostMapping("/{subWorkId}/approvals/votes")
     public ApiResponse<SubWorkVoteResponse> vote(
             @PathVariable Long subWorkId,
@@ -155,6 +165,7 @@ public class SubWorkController {
      *
      * 항목의 소속·상태 제약은 서비스와 도메인이 판단하므로 여기서 분기하지 않는다 (LY-02).
      */
+    @RequireAuthority(AuthorityCode.WORK_READ)
     @PatchMapping("/{subWorkId}/checklist/{checklistItemId}")
     public ApiResponse<SubWorkChecklistItemUpdateResponse> updateChecklistItem(
             @PathVariable Long subWorkId,

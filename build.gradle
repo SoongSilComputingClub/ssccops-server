@@ -123,6 +123,19 @@ if (envFile.exists()) {
 // ============================================================================
 tasks.named('test') {
     useJUnitPlatform()
+
+    // 테스트 JVM 힙. Gradle 기본값(512MB)으로는 부족해 컨텍스트 로딩이 OutOfMemoryError로
+    // 실패하며, 어느 테스트가 깨지는지는 실행 순서에 따라 매번 달라진다.
+    //
+    // 이 레포는 테스트 클래스마다 자기 몫의 @TestConfiguration(StubJwtDecoderConfig)을 두므로
+    // ApplicationContext가 클래스 수만큼 생긴다. #81이 공용 H2 스키마가 지워지는 것을 막으려
+    // spring.test.context.cache.maxSize를 32에서 64로 올리면서 동시에 살아 있는 컨텍스트도
+    // 두 배가 됐다. 캐시를 되돌리면 이번엔 컨텍스트 교체가 잦아져 스키마 문제가 돌아온다.
+    //
+    // 근본 해법은 스텁 설정을 한 곳으로 모아 컨텍스트 수 자체를 줄이는 것이고(별도 이슈),
+    // 그때까지는 힙을 늘려 둔다.
+    maxHeapSize = '2g'
+
     finalizedBy jacocoTestReport, jacocoTestCoverageVerification
 }
 

@@ -2,7 +2,6 @@ package org.sscc.ssccopsserver.domain.member.service;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -10,7 +9,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
@@ -485,29 +483,25 @@ public class MemberServiceImpl implements MemberService {
     /*
      * 등급 이력과 상태 이력을 합쳐 기록 시각 역순으로 자른다 (#76).
      *
-     * 같은 시각의 두 이력(한 트랜잭션에서 등급과 상태를 함께 바꾼 경우)은 순서를 못 박을
-     * 근거가 없으므로 종류로 끊는다 — 근거 없는 흔들림보다 임의라도 고정된 순서가 낫다.
+     * **합치고 정렬하는 규칙은 여기에 없다** — MemberChangeHistoryAssembler가 갖는다 (#82).
+     * 통합 이력 조회와 같은 한 벌을 쓰므로 상세 카드의 첫 줄과 이력 화면의 첫 줄이 갈리지
+     * 않는다. 이 메서드가 정하는 것은 두 가지뿐이다: 어느 출처를 읽는가와 몇 건에서 자르는가.
+     *
+     * 역할을 빈 목록으로 넘기는 것은 상세가 현재 역할을 roles 필드로 따로 싣기 때문이다.
+     * 최근 변경 세 칸을 지난 임기의 부여·종료가 채우면 등급·상태의 최근 변화가 밀려난다 —
+     * 역할의 시간축은 통합 이력 화면에서 본다.
      */
     private List<MemberChangeHistoryResponse> recentChangesOf(Long memberId) {
         Pageable limit = PageRequest.of(0, RECENT_CHANGE_LIMIT);
 
-        Stream<MemberChangeHistoryResponse> gradeChanges =
-                memberGradeHistoryRepository
-                        .findByMemberIdOrderByCreatedAtDescIdDesc(memberId, limit)
-                        .stream()
-                        .map(MemberChangeHistoryResponse::from);
-        Stream<MemberChangeHistoryResponse> statusChanges =
-                memberStatusHistoryRepository
-                        .findByMemberIdOrderByCreatedAtDescIdDesc(memberId, limit)
-                        .stream()
-                        .map(MemberChangeHistoryResponse::from);
-
-        return Stream.concat(gradeChanges, statusChanges)
-                .sorted(
-                        Comparator.comparing(
-                                        MemberChangeHistoryResponse::createdAt,
-                                        Comparator.reverseOrder())
-                                .thenComparing(MemberChangeHistoryResponse::changeType))
+        return MemberChangeHistoryAssembler.merge(
+                        memberGradeHistoryRepository.findByMemberIdOrderByCreatedAtDescIdDesc(
+                                memberId, limit),
+                        memberStatusHistoryRepository.findByMemberIdOrderByCreatedAtDescIdDesc(
+                                memberId, limit),
+                        List.of(),
+                        clock.getZone())
+                .stream()
                 .limit(RECENT_CHANGE_LIMIT)
                 .toList();
     }

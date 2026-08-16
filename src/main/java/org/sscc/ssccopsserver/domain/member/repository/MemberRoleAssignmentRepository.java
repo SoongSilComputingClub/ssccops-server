@@ -128,6 +128,10 @@ public interface MemberRoleAssignmentRepository
      *
      * 정렬은 시작일 내림차순 → 식별자 내림차순이다. 최근 임기가 위에 서야 하고, 같은 날 시작한
      * 배정은 식별자로 끊어야 목록을 두 번 불러도 순서가 흔들리지 않는다.
+     *
+     * 통합 이력 조회(#82)도 역할 재료를 이 질의로 받는다 — 이력에는 종료된 임기가 반드시
+     * 실려야 하므로 기간을 보지 않는 이 질의가 그대로 맞고, 새 질의를 하나 더 두면 '어떤
+     * 배정이 이력에 실리는가'가 두 곳에서 정해진다. 합쳐 정렬하는 것은 서비스의 몫이다.
      */
     @Query(
             "select a from MemberRoleAssignmentEntity a join fetch a.role"

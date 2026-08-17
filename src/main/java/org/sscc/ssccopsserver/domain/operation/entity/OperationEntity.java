@@ -206,6 +206,12 @@ public class OperationEntity {
         this.personInCharge = personInCharge;
     }
 
+    /*
+     * 운영 건 삭제 엔드포인트는 아직 없다. 그래도 남기기로 한 것은(#117) 이 메서드가 지금도
+     * 두 가지로 쓰이고 있기 때문이다 — 조회·집계가 전부 deletedAt IS NULL로 거르므로 그
+     * 규칙을 검증하는 테스트가 소프트 삭제 상태를 여기로 만들고, 삭제 API가 붙을 때
+     * del_dt를 채우는 자리가 이미 정해져 있다. 지우면 테스트가 컬럼을 직접 건드려야 한다.
+     */
     public void softDelete(Instant deletedAt) {
         this.deletedAt = deletedAt;
     }

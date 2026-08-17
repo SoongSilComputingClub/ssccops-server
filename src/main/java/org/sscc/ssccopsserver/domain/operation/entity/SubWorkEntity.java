@@ -102,7 +102,15 @@ public class SubWorkEntity {
     @Column(name = "cmptn_crtr_cn", columnDefinition = "TEXT")
     private String completionCriteria;
 
-    // 지연 여부는 마감 일시를 기준으로 자동 판정할 값이라 등록 시점에는 항상 false다
+    /*
+     * 채우지 않기로 결정한 컬럼 (OPS-008, #117). 등록 시 false로 굳고 그 뒤 갱신하는 주체가
+     * 없으므로 마감이 한참 지난 건도 이 값은 false다.
+     *
+     * 지연 여부의 정본은 조회 시점 판정이다 — 단건은 isDelayedAt, 목록 필터는
+     * SubWorkRepositoryImpl이 같은 조건을 SQL로 옮겨 쓴다. 컬럼을 채우는 배치를 새로 붙이지
+     * 말 것: 마감이 지나는 순간 값을 바꿔 줄 주체가 필요해지고, 그 배치가 늦으면 화면이
+     * 다시 컬럼과 어긋난다. 컬럼 자체를 지우지 않은 이유는 work_prgrs_rt와 같다.
+     */
     @Column(name = "dly_yn", nullable = false)
     private boolean delayed;
 
@@ -338,9 +346,8 @@ public class SubWorkEntity {
 
     /*
      * 마감이 지났는데 아직 완료되지 않았는지. dly_yn 컬럼을 읽지 않고 그때그때 판정한다 —
-     * 컬럼은 등록 시 false로 고정된 뒤 갱신하는 주체가 없어 항상 false이기 때문이다.
-     * 컬럼을 실제로 채우는 배치는 목록 조회(OPS-008)의 마감 임박·지연 필터가 인덱스를
-     * 필요로 할 때 붙는다.
+     * 그 컬럼은 채우지 않기로 결정했으므로(위 필드 주석) 항상 false다. 목록 필터
+     * (SubWorkRepositoryImpl)가 같은 조건을 SQL로 옮겨 쓰므로 규칙을 바꾸면 두 곳을 함께 고친다.
      *
      * 마감이 없는 하위 업무는 지연될 수 없고, 완료된 하위 업무는 늦게 끝났더라도 지연이 아니다
      * — 화면이 이 값으로 '지금 손봐야 하는 건'을 표시하기 때문이다.

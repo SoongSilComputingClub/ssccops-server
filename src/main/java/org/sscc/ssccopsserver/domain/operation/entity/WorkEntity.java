@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -51,11 +50,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class WorkEntity {
 
-    // 업무 진행률 초기값. 하위 업무가 하나도 없는 동안은 0이다
+    // 업무 진행률 초기값. 등록 이후로는 갱신되지 않으므로 이 컬럼은 늘 0이다 (AGG-05)
     private static final BigDecimal INITIAL_PROGRESS_RATE = BigDecimal.ZERO;
-
-    private static final BigDecimal PERCENT_MULTIPLIER = BigDecimal.valueOf(100);
-    private static final int PROGRESS_RATE_SCALE = 2;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -78,6 +74,18 @@ public class WorkEntity {
     @Column(name = "grvw_cn", columnDefinition = "TEXT")
     private String generalReview;
 
+    /*
+     * 채우지 않기로 결정한 컬럼 (AGG-05, #117). 등록 시 0으로 굳고 그 뒤 갱신하는 주체가 없다.
+     *
+     * 진행률의 정본은 AGG-01 — 하위 업무 진행률(체크리스트 완료율)의 단순 평균이며, 조회
+     * API가 그때그때 계산해 내려준다(ProgressRate.average). 이 컬럼은 '완료 하위 업무 수 ÷
+     * 전체'라는 다른 식으로 채워지고 있어 DB를 직접 보는 사람과 화면이 다른 숫자를 봤고,
+     * 두 식 중 명세를 따르는 쪽은 응답이므로 저장 쪽 갱신을 걷어냈다.
+     *
+     * 갱신 코드를 다시 넣지 말 것 — 되살리면 같은 어긋남이 그대로 돌아온다. 컬럼 자체를
+     * 지우지 않은 것은 ddl-auto: update가 삭제를 반영하지 않고 데이터사전 동기화가 따라붙기
+     * 때문이며, 제거는 마이그레이션 도구(Flyway/Liquibase) 도입 시점의 일이다.
+     */
     @Column(name = "work_prgrs_rt", nullable = false, precision = 5, scale = 2)
     private BigDecimal progressRate;
 
@@ -102,26 +110,5 @@ public class WorkEntity {
 
     public void writeGeneralReview(String generalReview) {
         this.generalReview = generalReview;
-    }
-
-    /*
-     * 하위 업무 완료 개수로 진행률을 다시 계산한다. 등록 화면의 "하위 업무를 이 운영에
-     * 연결하면 진행률이 자동으로 집계됩니다" 안내가 이 계산을 가리킨다.
-     *
-     * 하위 업무가 하나도 없으면 0이다. 완료율은 백분율(0.00~100.00)로 소수 2자리까지
-     * 반올림해 저장한다 — work_prgrs_rt가 NUMERIC(5,2)이라 그 이상은 담기지 않는다.
-     */
-    public void recalculateProgressRate(long completedCount, long totalCount) {
-        if (totalCount <= 0) {
-            this.progressRate = INITIAL_PROGRESS_RATE;
-            return;
-        }
-        this.progressRate =
-                BigDecimal.valueOf(completedCount)
-                        .multiply(PERCENT_MULTIPLIER)
-                        .divide(
-                                BigDecimal.valueOf(totalCount),
-                                PROGRESS_RATE_SCALE,
-                                RoundingMode.HALF_UP);
     }
 }

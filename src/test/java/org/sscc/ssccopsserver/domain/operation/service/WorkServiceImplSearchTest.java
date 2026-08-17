@@ -261,8 +261,8 @@ class WorkServiceImplSearchTest {
      * 진행률은 하위 업무 진행률의 평균이다 (AGG-01). 하나는 4개 중 1개를 체크해 25.00,
      * 다른 하나는 완료라 100.00이므로 카드에는 62.50이 실린다.
      *
-     * 저장 컬럼(work_prgrs_rt)은 완료 개수 비율이라 같은 시점에 50.00이다. 응답이 그 값을
-     * 읽지 않는다는 것을 여기서 못 박는다 (AGG-05).
+     * 저장 컬럼(work_prgrs_rt)은 채우지 않기로 결정했으므로(#117) 같은 시점에 0이다.
+     * 응답이 그 값을 읽지 않는다는 것을 여기서 못 박는다 (AGG-05).
      */
     @Test
     void progressRateAveragesSubWorkRatesInsteadOfStoredColumn() {
@@ -277,7 +277,7 @@ class WorkServiceImplSearchTest {
         assertThat(card.progressRate()).isEqualByComparingTo(new BigDecimal("62.50"));
         assertThat(card.subWorkCount()).isEqualTo(2);
         assertThat(workRepository.findById(workId).orElseThrow().getProgressRate())
-                .isEqualByComparingTo(new BigDecimal("50.00"));
+                .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     // 하위 업무가 없으면 진행률은 0이고 건수도 0이다. 분모가 0인 나눗셈을 하지 않는다

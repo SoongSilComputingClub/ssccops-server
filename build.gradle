@@ -136,6 +136,22 @@ tasks.named('test') {
     // 그때까지는 힙을 늘려 둔다.
     maxHeapSize = '2g'
 
+    // 테스트 JVM의 기본 시간대를 서비스 표준 시간대에 맞춘다.
+    //
+    // 운영 코드는 시각을 주입된 Clock에서 가져오고 그 Clock은 Asia/Seoul로 고정돼 있다
+    // (ClockConfig · AP-12). 반면 테스트는 "오늘"을 LocalDate.now()로 만드는데, 이쪽은 JVM
+    // 기본 시간대를 따르므로 **러너의 시간대가 KST가 아니면 두 '오늘'이 하루 어긋난다.**
+    //
+    // 로컬(KST)에서는 두 값이 같아 드러나지 않고, UTC로 도는 GitHub Actions에서 한국 시간
+    // 00:00~09:00(UTC 15:00~24:00)에 CI가 돌 때만 터진다 — 역할 유효기간 경계를 보는
+    // 테스트들(roleEndingTodayIsStillValid · futureAssignmentIsNotCurrentYet 등)이 그때
+    // 한꺼번에 실패한다. 실패가 시각에 달려 있어 재실행하면 통과하므로 원인을 찾기 어렵다.
+    //
+    // 테스트마다 LocalDate.now(SERVICE_ZONE)으로 고치지 않고 여기서 한 번에 맞추는 것은,
+    // 그 방식이면 새로 쓰는 테스트가 LocalDate.now()를 부르는 순간 같은 함정이 되살아나기
+    // 때문이다. 서비스의 '오늘'이 Asia/Seoul이라는 사실을 테스트 환경 전체에 건다.
+    systemProperty 'user.timezone', 'Asia/Seoul'
+
     finalizedBy jacocoTestReport, jacocoTestCoverageVerification
 }
 

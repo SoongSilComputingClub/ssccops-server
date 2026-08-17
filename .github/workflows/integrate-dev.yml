@@ -1,0 +1,143 @@
+# ============================================================================
+# Backend Integration Workflow - Dev
+# ============================================================================
+# 역할:
+#   - 소스 코드 정적 분석 (Spotless, Checkstyle)
+#   - 테스트 수행 및 JaCoCo 커버리지 생성
+#   - JAR artifact 생성 (deploy-dev workflow에서 사용)
+#
+# Job 구조:
+#   lint ──┬──> build
+#   test ──┘
+#
+# 대상 브랜치: develop (dev 환경)
+#
+# integrate-prod와의 차이:
+#   - SonarQube 분석(analyze job)이 없다. dev는 배포 속도가 우선이고,
+#     Quality Gate는 main으로 향하는 PR에서 integrate-prod가 강제한다.
+#   - 그 외 lint/test 실행 방식은 integrate-prod와 동일하게 맞춘다 —
+#     두 워크플로가 다른 명령을 쓰면 develop에서 통과한 코드가 main에서 떨어진다.
+#
+# GitHub Secrets: 없음 (외부 서비스에 접근하지 않는다)
+# ============================================================================
+
+name: Integrate Dev
+
+on:
+  pull_request:
+    branches:
+      - develop
+  push:
+    branches:
+      - develop
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+  # ==========================================================================
+  # Lint Job - 코드 스타일 검사
+  # ==========================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant execution to Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Run Spotless Check
+        run: ./gradlew spotlessCheck
+
+      - name: Run Checkstyle
+        run: ./gradlew checkstyleMain checkstyleTest
+
+  # ==========================================================================
+  # Test Job - 테스트 및 커버리지
+  # ==========================================================================
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant execution to Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Run Tests with JaCoCo
+        run: ./gradlew test jacocoTestReport
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            build/test-results/
+            build/reports/jacoco/
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  # Build Job - JAR 빌드 및 Artifact 업로드
+  # ==========================================================================
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+
+    permissions:
+      actions: write
+      contents: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant execution to Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Build Spring Boot JAR
+        run: ./gradlew bootJar
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spring-boot-app
+          path: build/libs/*.jar
+
+      - name: Integration Summary
+        run: |
+          echo "## Integration Summary (Dev)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch** : ${{ github.ref }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit** : ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

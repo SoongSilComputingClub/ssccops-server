@@ -353,7 +353,7 @@ class RoleClassificationControllerTest {
 
         MemberRoleClassificationEntity position =
                 roleClassificationRepository.findById("POSITION").orElseThrow();
-        role.update(role.getDisplayOrder(), role.getName(), position);
+        role.update(role.getDisplayOrder(), role.getName(), position, role.getPositionCode());
         entityManager.flush();
 
         mockMvc.perform(authorized(delete(CLASSIFICATIONS + "/TF"), adminToken))

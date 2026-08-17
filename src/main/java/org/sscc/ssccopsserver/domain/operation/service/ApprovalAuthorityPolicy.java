@@ -1,11 +1,14 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 
 import org.springframework.stereotype.Component;
+import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
@@ -28,6 +31,10 @@ import lombok.extern.slf4j.Slf4j;
  *
  * 회원의 역할은 회원 도메인 Service를 경유해서만 읽는다 (AR-07·LY-10) — 다른 도메인의
  * Repository를 직접 주입하지 않는다.
+ *
+ * **판정이 보는 값은 역할명이 아니라 직위 코드(role.role_pstn_cd)다** (#118). 승인 자격과
+ * 투표 자격 두 가지가 모두 여기 있고 둘 다 같은 값을 본다 — 한쪽만 코드로 옮기면 '총무'를
+ * '재무'로 개명했을 때 승인은 되는데 투표가 안 되는(또는 그 반대) 절반짜리 상태가 된다.
  */
 @Slf4j
 @Component
@@ -35,20 +42,32 @@ import lombok.extern.slf4j.Slf4j;
 public class ApprovalAuthorityPolicy {
 
     /*
-     * 투표할 수 있는 운영진 판정 (#47). 정의서 OPS-015의 '회장단'보다 넓다 — 이슈 본문이
+     * 투표할 수 있는 운영진 판정 (#47 · #118). 정의서 OPS-015의 '회장단'보다 넓다 — 이슈 본문이
      * "회장/부회장/총무/국장/국원 등 사전에 운영진 권한을 가진 운영자 누구나"라고 못박고 있다.
      *
-     * 실제 직책은 부서별로 나뉜다: 회장 · 부회장 · 총무 · 홍보국장 · 행정국장 · 학술국장 ·
-     * 기획국장 · 홍보국원 · 행정국원 · 학술국원 · 기획국원. 부서가 늘 때마다 이 목록을 고치지
-     * 않도록 국장·국원은 **접미사**로 판정한다(data.sql이 시드하는 총칭 '국장'·'국원'도 함께 걸린다).
+     * 실제 직책은 부서별로 나뉜다(홍보국장 · 행정국원 …). 부서가 늘 때마다 목록을 고치지
+     * 않도록 원래는 '국장'·'국원' **접미사**로 판정했는데, 그러면 화면에서 만든 사용자 정의
+     * 역할이 이름만으로 투표 자격을 얻고 '총무'를 '재무'로 개명하면 자격이 사라졌다. 지금은
+     * 역할의 직위 코드(role.role_pstn_cd)를 본다 — 부서별 역할에는 그 코드를 지정한다.
      *
-     * 프로젝트장·스터디장은 빠진다 — 활동 단위의 장이지 운영 의사결정 주체가 아니다.
+     * **승인 자격(AuthorizerRole)과 같은 값을 본다.** 한쪽만 코드로 옮기면 개명 뒤에 승인은
+     * 되는데 투표가 안 되는(또는 그 반대) 상태가 된다.
+     *
+     * 프로젝트장·스터디장은 빠진다 — 활동 단위의 장이지 운영 의사결정 주체가 아니다. 코드로
+     * 옮긴 뒤에는 그 역할들이 애초에 직위 코드를 갖지 않아 목록에 적을 필요조차 없는데,
+     * 그래도 '값이 있으면 통과'가 아니라 집합을 명시한다 — 나중에 투표에 넣지 말아야 할
+     * 직위(자문 등)가 늘면 암묵적 규칙은 조용히 그것까지 통과시킨다.
+     *
      * role.indct_seqno(서열 순번)로 "n위 이내"를 판정하지 않는 것은, 그 순번이 화면 정렬용이라
      * 역할이 하나 끼어들면 기준이 조용히 바뀌기 때문이다.
      */
-    private static final Set<String> STAFF_ROLE_NAMES = Set.of("회장", "부회장", "총무");
-
-    private static final Set<String> STAFF_ROLE_SUFFIXES = Set.of("국장", "국원");
+    private static final Set<RolePositionCode> VOTING_POSITION_CODES =
+            EnumSet.of(
+                    RolePositionCode.PRESIDENT,
+                    RolePositionCode.VICE_PRESIDENT,
+                    RolePositionCode.TREASURER,
+                    RolePositionCode.DIRECTOR,
+                    RolePositionCode.STAFF);
 
     private final MemberService memberService;
 
@@ -85,15 +104,15 @@ public class ApprovalAuthorityPolicy {
                     subWorkType.getAuthorizerRoleCode());
         } else {
             /*
-             * 역할 관리 화면에서 역할명을 바꾸면(role.role_nm은 NOT NULL도 UNIQUE도 아니다)
-             * 승인할 수 있는 사람이 사라진다. 판정에 쓴 양쪽 값을 남겨 매핑이 깨진 경우를
-             * 로그에서 알아볼 수 있게 한다.
+             * 판정에 쓴 양쪽 값을 남긴다. 직위 코드로 옮긴 뒤에도(#118) 이 로그가 필요한 것은,
+             * 부서별 국장 역할에 DIRECTOR를 지정하지 않으면 여전히 승인자가 없는 것과 같기
+             * 때문이다 — 이제 그 경우가 '보유=[]'(직위 코드가 없는 역할뿐)로 드러난다.
              */
             log.warn(
                     "승인자 역할 불일치. subWorkId={}, 필요={}, 보유={}",
                     subWork.getId(),
-                    required.get().getRoleName(),
-                    roleNamesOf(performer));
+                    required.get().getPositionCode(),
+                    positionCodesOf(performer));
         }
         throw new GeneralException(OperationErrorCode.FORBIDDEN);
     }
@@ -114,7 +133,7 @@ public class ApprovalAuthorityPolicy {
         if (member == null) {
             return false;
         }
-        return canDecide(subWork, roleNamesOf(member));
+        return canDecide(subWork, positionCodesOf(member));
     }
 
     /*
@@ -125,17 +144,17 @@ public class ApprovalAuthorityPolicy {
      * 규칙은 아래 canDecide 한 곳에만 있어 상세(#58)·전이 검사와 갈리지 않는다.
      */
     public Predicate<SubWorkEntity> decidableBy(MemberEntity member) {
-        List<String> roleNames = member == null ? List.of() : roleNamesOf(member);
-        return subWork -> canDecide(subWork, roleNames);
+        List<RolePositionCode> positionCodes = member == null ? List.of() : positionCodesOf(member);
+        return subWork -> canDecide(subWork, positionCodes);
     }
 
-    private boolean canDecide(SubWorkEntity subWork, List<String> roleNames) {
+    private boolean canDecide(SubWorkEntity subWork, List<RolePositionCode> positionCodes) {
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         if (!subWorkType.isApprovalNeeded()) {
             return true;
         }
         return AuthorizerRole.from(subWorkType.getAuthorizerRoleCode())
-                .filter(required -> roleNames.stream().anyMatch(required::matches))
+                .filter(required -> positionCodes.stream().anyMatch(required::matches))
                 .isPresent();
     }
 
@@ -147,23 +166,19 @@ public class ApprovalAuthorityPolicy {
      * 않았고, 자가 승인도 차단이 아니라 표시로 다루는 것이 현재 정책이기 때문이다(POL-006).
      */
     public void requireStaff(MemberEntity member) {
-        if (roleNamesOf(member).stream().noneMatch(ApprovalAuthorityPolicy::isStaffRole)) {
+        if (positionCodesOf(member).stream().noneMatch(VOTING_POSITION_CODES::contains)) {
             throw new GeneralException(OperationErrorCode.FORBIDDEN);
         }
     }
 
-    private static boolean isStaffRole(String roleName) {
-        if (roleName == null) {
-            return false;
-        }
-        String name = roleName.strip();
-        return STAFF_ROLE_NAMES.contains(name)
-                || STAFF_ROLE_SUFFIXES.stream().anyMatch(name::endsWith);
-    }
-
-    private List<String> roleNamesOf(MemberEntity member) {
+    /*
+     * 회원이 지금 맡고 있는 역할들의 직위 코드. 지정되지 않은 역할(프로젝트장·스터디장·사용자
+     * 정의 역할)은 null이라 빼고 담는다 — 판정 두 곳 모두 '값이 있는 것 중 일치'를 묻는다.
+     */
+    private List<RolePositionCode> positionCodesOf(MemberEntity member) {
         return memberService.findCurrentRoles(member.getId()).stream()
-                .map(MemberRoleResponse::roleName)
+                .map(MemberRoleResponse::rolePstnCd)
+                .filter(Objects::nonNull)
                 .toList();
     }
 }

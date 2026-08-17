@@ -178,6 +178,107 @@ class RoleControllerTest {
                 .andExpect(jsonPath("$.code").value("ROLE_CLASSIFICATION_NOT_FOUND"));
     }
 
+    // ------------------------------------------------------------------ 직위 코드 (#118)
+
+    /*
+     * 승인·투표 자격은 역할명이 아니라 직위 코드가 준다 (#118). 부서별 국장을 만들 때 여기에
+     * DIRECTOR를 지정하는 것이 그 자격을 주는 유일한 길이다 — 이름을 '홍보국장'으로 짓는 것만
+     * 으로는 아무 자격도 생기지 않으며, 그것이 이름만 국장인 사용자 정의 역할을 막는 방법이다.
+     */
+    @Test
+    void createStoresThePositionCodeThatGrantsApprovalRight() throws Exception {
+        mockMvc.perform(
+                        authorized(post(ROLES), adminToken)
+                                .content(
+                                        "{\"roleNm\": \"홍보국장\", \"roleClsfCd\": \"POSITION\","
+                                                + " \"rolePstnCd\": \"DIRECTOR\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rolePstnCd").value("DIRECTOR"));
+    }
+
+    /** 생략하면 NULL이고, 그 역할은 승인도 투표도 하지 못한다 — 안전한 기본값이다 */
+    @Test
+    void createWithoutAPositionCodeLeavesItEmpty() throws Exception {
+        Long roleId = createRole("동아리방국장", "POSITION", null);
+
+        mockMvc.perform(authorized(get(ROLES + "/" + roleId), adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rolePstnCd").doesNotExist());
+    }
+
+    // 기준 코드에 없는 값은 역직렬화에서 걸린다
+    @Test
+    void createWithAnUnknownPositionCodeIsRejected() throws Exception {
+        mockMvc.perform(
+                        authorized(post(ROLES), adminToken)
+                                .content(
+                                        "{\"roleNm\": \"이상한역할\", \"roleClsfCd\": \"POSITION\","
+                                                + " \"rolePstnCd\": \"CHAIRMAN\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    /*
+     * **이 필드를 모르는 요청은 값을 건드리지 않는다.** 역할 관리 화면이 이름만 고쳐 보낼 때
+     * 직위 코드가 조용히 지워지면, 개명 한 번으로 승인자가 사라지는 원래 문제가 형태만 바꿔
+     * 되살아난다 (#118 RoleUpdateRequest 주석).
+     */
+    @Test
+    void patchWithoutThePositionCodeFieldKeepsIt() throws Exception {
+        Long roleId = createRoleWithPositionCode("학술국장", "DIRECTOR");
+
+        mockMvc.perform(
+                        authorized(patch(ROLES + "/" + roleId), adminToken)
+                                .content("{\"roleNm\": \"학술부장\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.roleNm").value("학술부장"))
+                .andExpect(jsonPath("$.data.rolePstnCd").value("DIRECTOR"));
+    }
+
+    /*
+     * 빈 문자열은 해제다. 잘못 지정한 코드를 되돌릴 길이 없으면 그 역할은 영영 승인·투표
+     * 자격을 갖는다 — null은 '그대로 두라'로 이미 쓰이고 있어 다른 신호가 필요했다.
+     */
+    @Test
+    void patchWithAnEmptyPositionCodeClearsIt() throws Exception {
+        Long roleId = createRoleWithPositionCode("잘못 지정한 역할", "TREASURER");
+
+        mockMvc.perform(
+                        authorized(patch(ROLES + "/" + roleId), adminToken)
+                                .content("{\"rolePstnCd\": \"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rolePstnCd").doesNotExist());
+    }
+
+    // 수정도 생성과 같은 응답으로 거절한다 — 같은 값에 두 갈래 처리를 만들지 않는다
+    @Test
+    void patchWithAnUnknownPositionCodeIsRejected() throws Exception {
+        Long roleId = createRole("바꿔 볼 역할", "POSITION", null);
+
+        mockMvc.perform(
+                        authorized(patch(ROLES + "/" + roleId), adminToken)
+                                .content("{\"rolePstnCd\": \"CHAIRMAN\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    /*
+     * **빈 문자열은 생성과 수정에서 같은 뜻이어야 한다** — 지정 없음이다. 생성만 enum으로
+     * 받으면 Jackson이 빈 문자열을 역직렬화에서 거절해, 화면의 빈 선택 상자가 보내는 같은
+     * 본문이 생성에서는 400인데 수정에서는 해제로 통한다. 두 요청이 같은 변환을 쓰는지를
+     * 이 한 줄이 지킨다.
+     */
+    @Test
+    void createWithAnEmptyPositionCodeMeansNoneJustLikeOmittingIt() throws Exception {
+        mockMvc.perform(
+                        authorized(post(ROLES), adminToken)
+                                .content(
+                                        "{\"roleNm\": \"직위 없는 역할\", \"roleClsfCd\":"
+                                                + " \"POSITION\", \"rolePstnCd\": \"\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rolePstnCd").doesNotExist());
+    }
+
     // ------------------------------------------------------------------ 표시 순번
 
     /*
@@ -446,6 +547,22 @@ class RoleControllerTest {
                                 authorized(post(ROLES), adminToken)
                                         .content(
                                                 createBody(name, classificationCode, displayOrder)))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.roleId", Long.class);
+    }
+
+    private Long createRoleWithPositionCode(String name, String positionCode) throws Exception {
+        String response =
+                mockMvc.perform(
+                                authorized(post(ROLES), adminToken)
+                                        .content(
+                                                ("{\"roleNm\": \"%s\", \"roleClsfCd\":"
+                                                                + " \"POSITION\", \"rolePstnCd\":"
+                                                                + " \"%s\"}")
+                                                        .formatted(name, positionCode)))
                         .andExpect(status().isCreated())
                         .andReturn()
                         .getResponse()

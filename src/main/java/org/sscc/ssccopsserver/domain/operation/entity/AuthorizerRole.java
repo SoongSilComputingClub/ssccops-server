@@ -3,6 +3,8 @@ package org.sscc.ssccopsserver.domain.operation.entity;
 import java.util.Arrays;
 import java.util.Optional;
 
+import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
+
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
@@ -15,39 +17,40 @@ import lombok.RequiredArgsConstructor;
  * 요청 DTO가 이 enum으로 받는 것으로 충분하다 — 목록에 없는 값은 역직렬화 단계에서
  * 걸려 전역 핸들러가 INVALID_CODE_VALUE로 바꾼다.
  *
- * roleName은 회원 도메인 role 테이블의 한글 역할명(role.role_nm)이다. 두 어휘를 잇는 값이
- * DB에 없어(role에 코드 컬럼이 없다) 여기서 매핑한다 — 스키마 변경 없이 오늘 데이터로 동작한다 (#47).
+ * **회원 쪽과 잇는 값은 역할명이 아니라 직위 코드(role.role_pstn_cd)다** (#118).
+ * 원래는 role에 코드 컬럼이 없어 한글 역할명(role.role_nm)을 직접 비교했는데, 그 값은
+ * NOT NULL도 UNIQUE도 아니고 역할 관리 화면에서 바뀌므로 '총무'를 '재무'로 개명하면
+ * 예산지출을 승인할 사람이 사라졌다. 이제 개명은 판정에 아무 영향을 주지 않는다.
  *
- * **국장은 정확히 일치하지 않는다.** 실제 조직의 직책은 부서별로 나뉘어 홍보국장·행정국장·
- * 학술국장·기획국장처럼 저장되고, data.sql이 시드하는 '국장'은 그 총칭일 뿐이다. 그래서
- * DIRECTOR만 접미사로 판정한다. 회장·부회장·총무는 하나뿐이라 정확히 일치시킨다 —
- * '부회장'이 '회장'으로 끝나므로 접미사로 두면 부회장이 회장 승인권을 갖게 된다.
+ * **접미사 매칭도 함께 사라졌다.** 부서별 직책(홍보국장·행정국장 …)을 걸러 내려고
+ * DIRECTOR만 '국장'으로 끝나는 이름을 통과시켰는데, 그 때문에 화면에서 만든 '동아리방국장'
+ * 같은 사용자 정의 역할이 의도치 않게 승인권을 얻었다. 지금은 부서별 국장 역할에
+ * DIRECTOR 코드를 직접 지정하는 것이 그 자리를 대신한다 — 이름이 아니라 지정이 자격을 준다.
+ * ('부회장'이 '회장'으로 끝나므로 접미사로 둘 수 없다는 옛 제약도 함께 무의미해졌다.)
  *
- * 이 매핑의 약점은 role_nm이 NOT NULL도 UNIQUE도 아니고 역할 관리 화면에서 바뀔 수 있다는
- * 것이다. '총무'를 '재무'로 바꾸면 예산지출을 승인할 사람이 사라지는데 겉으로는 평범한 403이라
- * 원인을 찾기 어렵다. 그래서 ApprovalAuthorityPolicy가 그 경우를 로그로 구분한다.
- * 근본 대책(role.role_cd 컬럼)은 후속 과제로 뺐다 — 회원 도메인 스키마 변경이라 담당이 다르다.
+ * 투표 자격(ApprovalAuthorityPolicy)도 같은 코드를 본다. 한쪽만 옮기면 개명 뒤에 승인은
+ * 되는데 투표가 안 되는(또는 그 반대) 상태가 된다.
  */
 @Getter
 @RequiredArgsConstructor
 public enum AuthorizerRole {
-    PRESIDENT("회장", false),
-    VICE_PRESIDENT("부회장", false),
-    TREASURER("총무", false),
-    DIRECTOR("국장", true);
+    PRESIDENT(RolePositionCode.PRESIDENT),
+    VICE_PRESIDENT(RolePositionCode.VICE_PRESIDENT),
+    TREASURER(RolePositionCode.TREASURER),
+    DIRECTOR(RolePositionCode.DIRECTOR);
 
-    private final String roleName;
+    /*
+     * 이 승인자 역할에 해당하는 회원 역할의 직위 코드.
+     *
+     * 두 enum의 이름이 지금은 같지만 name()으로 비교하지 않고 이 필드로 잇는다 — 이름이
+     * 같다는 것은 우연이고, 승인자가 될 수 없는 직위(STAFF)가 RolePositionCode에는 있어
+     * 두 어휘의 범위 자체가 다르기 때문이다.
+     */
+    private final RolePositionCode positionCode;
 
-    // 부서명이 앞에 붙는 직책인지 (홍보국장·행정국장 …). 그렇다면 접미사로 판정한다
-    private final boolean departmental;
-
-    /** 회원이 가진 역할명(role.role_nm)이 이 승인자 역할에 해당하는지. */
-    public boolean matches(String memberRoleName) {
-        if (memberRoleName == null) {
-            return false;
-        }
-        String name = memberRoleName.strip();
-        return departmental ? name.endsWith(roleName) : name.equals(roleName);
+    /** 회원이 가진 역할의 직위 코드(role.role_pstn_cd)가 이 승인자 역할에 해당하는지. */
+    public boolean matches(RolePositionCode memberRolePositionCode) {
+        return positionCode == memberRolePositionCode;
     }
 
     /*

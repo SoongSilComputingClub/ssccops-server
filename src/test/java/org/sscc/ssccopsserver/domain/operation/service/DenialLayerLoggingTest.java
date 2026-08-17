@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -195,7 +196,8 @@ class DenialLayerLoggingTest {
 
         SubWorkEntity approvalTarget = subWorkNeedingApprovalBy("PRESIDENT");
         given(memberService.findCurrentRoles(MEMBER_ID))
-                .willReturn(List.of(new MemberRoleResponse(1L, "기획국원", true)));
+                .willReturn(
+                        List.of(new MemberRoleResponse(1L, "기획국원", RolePositionCode.STAFF, true)));
 
         try (LogCapture ownership = LogCapture.of(SubWorkOwnershipPolicy.class);
                 LogCapture approval = LogCapture.of(ApprovalAuthorityPolicy.class)) {

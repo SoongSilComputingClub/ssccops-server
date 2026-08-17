@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 
+import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 
@@ -29,6 +30,7 @@ public record RoleDetailResponse(
         String roleNm,
         String roleClsfCd,
         String roleClsfNm,
+        RolePositionCode rolePstnCd,
         long memberCount,
         List<RoleMember> members,
         OffsetDateTime crtDt,
@@ -43,6 +45,7 @@ public record RoleDetailResponse(
                 role.getName(),
                 role.getRoleClassification().getCode(),
                 role.getRoleClassification().getName(),
+                role.getPositionCode(),
                 currentAssignments.stream()
                         .map(assignment -> assignment.getMember().getId())
                         .distinct()

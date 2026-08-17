@@ -338,9 +338,9 @@ class SubWorkServiceImplTest {
                 .isEqualTo(ApprovalStatus.NOT_REQUIRED);
     }
 
-    // 상위 업무 진행률은 하위 업무 완료율에서 나온다. 기획 상태 하위 업무만 있으면 0이다
+    // 하위 업무를 등록해도 상위 업무의 저장 진행률은 건드리지 않는다 (AGG-05, #117)
     @Test
-    void createSubWorkRecalculatesParentProgressRate() {
+    void createSubWorkDoesNotTouchStoredParentProgressRate() {
         subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
         subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
 
@@ -656,8 +656,12 @@ class SubWorkServiceImplTest {
     }
 
     /*
-     * TR-03 승인·완료. 승인과 완료가 한 단계라 승인 상태와 업무 상태가 함께 바뀌고,
-     * 완료 일시와 상위 업무 진행률도 이 전이에서 갱신된다.
+     * TR-03 승인·완료. 승인과 완료가 한 단계라 승인 상태와 업무 상태가 함께 바뀌고
+     * 완료 일시가 채워진다.
+     *
+     * parentWorkProgressRate는 저장 컬럼을 그대로 읽는 필드라 0이다 — 그 컬럼을 채우지 않기로
+     * 했기 때문이다 (AGG-05, #117). 진행률의 정본은 상세(OPS-003)·목록(OPS-020)이 계산해
+     * 내려주는 AGG-01이며, 웹도 이 필드를 받지 않는다.
      */
     @Test
     void approveCompleteMarksDoneAndRecordsCompletedAt() {
@@ -671,8 +675,25 @@ class SubWorkServiceImplTest {
         assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
         assertThat(response.approvalStatus()).isEqualTo(ApprovalStatus.APPROVED);
         assertThat(response.completedAt()).isEqualTo(NOW);
-        assertThat(response.parentWorkProgressRate())
-                .isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(response.parentWorkProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /*
+     * 완료 승인은 하위 업무만 바꾸고 상위 업무 행은 건드리지 않는다 (AGG-05, #117).
+     * 예전에는 이 전이가 완료 개수를 다시 세어 work_prgrs_rt를 UPDATE 했다 — 그 값이
+     * 응답의 진행률(AGG-01 평균)과 어긋나는 원인이었다.
+     */
+    @Test
+    void approveCompleteDoesNotTouchStoredParentProgressRate() {
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
+        completeChecklist(subWorkId);
+
+        transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(workRepository.findById(parentWorkId).orElseThrow().getProgressRate())
+                .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     // 승인이 필요 없는 유형은 승인 상태를 승인으로 바꾸지 않는다 — 승인 절차를 아예 타지 않는다

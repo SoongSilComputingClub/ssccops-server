@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -43,6 +44,9 @@ public class MeetingServiceImpl implements MeetingService {
     private final MeetingRepository meetingRepository;
     private final MeetingAgendaRepository meetingAgendaRepository;
     private final MemberService memberService;
+
+    // 전이 일시의 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
+    private final Clock clock;
 
     /*
      * oper(공통)·mtg(확장)·mtg_dtl(안건, 함께 제출된 경우)을 한 트랜잭션에서 INSERT 한다
@@ -189,7 +193,7 @@ public class MeetingServiceImpl implements MeetingService {
                 action == MeetingTransitionAction.CLOSE
                         && meetingAgendaRepository.existsByMeetingAndProcessStatus(
                                 meeting, AgendaProcessStatus.PENDING);
-        Instant changedAt = Instant.now();
+        Instant changedAt = Instant.now(clock);
         meeting.applyTransition(action, request.reason(), hasUnresolvedAgenda);
 
         return MeetingTransitionResponse.of(meeting, action, previousStatus, changedAt);

@@ -313,6 +313,22 @@ class WorkServiceImplTest {
     }
 
     /*
+     * 평균이지 완료 개수 비율이 아니라는 것을 나누어떨어지지 않는 값으로 못 박는다 (#117).
+     * 완료 1건 · 5개 중 3개 체크 1건 · 손대지 않은 1건이면 (100 + 60 + 0) / 3 = 53.33이다 —
+     * 완료 개수 비율이라면 3건 중 1건이라 33.33이 나온다.
+     */
+    @Test
+    void getWorkProgressRateAveragesUnevenSubWorkRates() {
+        Long workId = createWork("가을 해커톤", null);
+        Long done = addSubWork(workId, "완료된 건", END.toInstant(), 0, 0);
+        markDone(done);
+        addSubWork(workId, "절반 넘게 진행된 건", END.toInstant(), 5, 3);
+        addSubWork(workId, "손대지 않은 건", END.toInstant(), 4, 0);
+
+        assertThat(detailOf(workId).progressRate()).isEqualByComparingTo("53.33");
+    }
+
+    /*
      * 승인이 필요 없는 유형은 완료 점검 항목이 하나도 없을 수 있고, 그래도 완료 전이는
      * 통과한다. 그런 건이 완료되고도 0%로 보이면 안 된다.
      */

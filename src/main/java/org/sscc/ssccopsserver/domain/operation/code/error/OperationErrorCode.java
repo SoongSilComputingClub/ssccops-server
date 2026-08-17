@@ -114,7 +114,12 @@ public enum OperationErrorCode implements ErrorCode {
      */
     REASON_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "REASON_REQUIRED", "사유를 입력해주세요."),
 
-    // 500 — 감사 로그 기록 실패. 원 트랜잭션도 함께 롤백된다 (EX-13, BR-O12)
+    /*
+     * 500 — 감사 로그 기록 실패. 원 트랜잭션도 함께 롤백된다 (EX-13, BR-O12).
+     *
+     * 아직 던지는 곳이 없다. 감사 로그(#8)가 확정되면 쓸 코드라 남긴다(#117) — 정의서가
+     * 명시한 코드이고, 지웠다가 다시 넣으면 그 사이에 다른 이름이 붙어 명세와 갈린다.
+     */
     AUDIT_LOG_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "AUDIT_LOG_FAILED", "감사 로그 기록에 실패했습니다.");
 
     private final HttpStatus httpStatus;

@@ -162,7 +162,6 @@ public class SubWorkServiceImpl implements SubWorkService {
                                 toInstant(request.dueAt())));
 
         List<SubWorkChecklistItemEntity> checklist = createChecklist(subWork, subWorkType);
-        recalculateParentProgressRate(parentWork);
 
         return SubWorkCreateResponse.of(subWork, checklist);
     }
@@ -444,8 +443,6 @@ public class SubWorkServiceImpl implements SubWorkService {
             subWorkApprovalRepository.save(
                     SubWorkApprovalEntity.record(
                             subWork, performer, history, occurredAt, selfApproval));
-            // 완료 개수가 바뀌는 전이는 이것뿐이다. 완료에서 빠져나가는 전이는 전이표에 없다
-            recalculateParentProgressRate(subWork.getWork());
         } else if (action == TransitionAction.REJECT) {
             subWorkRejectionRepository.save(
                     SubWorkRejectionEntity.record(
@@ -697,18 +694,6 @@ public class SubWorkServiceImpl implements SubWorkService {
             items.add(SubWorkChecklistItemEntity.create(subWork, articles.get(index), index + 1));
         }
         return subWorkChecklistItemRepository.saveAll(items);
-    }
-
-    /*
-     * 상위 업무의 진행률은 하위 업무 완료율에서 나오므로 하위 업무가 하나 늘 때마다 다시 센다.
-     * 방금 등록한 건은 기획 상태라 분모만 늘어 진행률이 내려간다 — 의도된 동작이다.
-     */
-    private void recalculateParentProgressRate(WorkEntity parentWork) {
-        long total = subWorkRepository.countByWorkAndOperationDeletedAtIsNull(parentWork);
-        long completed =
-                subWorkRepository.countByWorkAndWorkStatusAndOperationDeletedAtIsNull(
-                        parentWork, WorkStatus.DONE);
-        parentWork.recalculateProgressRate(completed, total);
     }
 
     private void validatePeriod(Instant beginAt, Instant endAt) {

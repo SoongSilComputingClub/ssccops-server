@@ -102,7 +102,8 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
         }
         /*
          * 지연: 마감이 지났는데 아직 완료되지 않은 건. dly_yn 컬럼을 읽지 않는다 —
-         * 등록 시 false로 고정된 뒤 갱신하는 주체가 없어 항상 false다.
+         * 채우지 않기로 결정한 컬럼이라 항상 false다 (SubWorkEntity.delayed 주석).
+         * 조건은 SubWorkEntity.isDelayedAt과 같아야 한다 — 단건과 목록이 갈리면 안 된다.
          */
         if (query.overdueOnly()) {
             conditions.append(" and s.dueAt < :now and s.workStatus <> :doneStatus");

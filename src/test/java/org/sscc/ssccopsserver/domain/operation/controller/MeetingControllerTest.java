@@ -8,7 +8,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -54,6 +57,12 @@ import com.jayway.jsonpath.JsonPath;
 class MeetingControllerTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
+
+    private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+
+    // 전이 일시 검증용 고정 시각. 서비스가 주입된 Clock을 쓰지 않으면 이 값과 어긋난다 (#117)
+    private static final OffsetDateTime TRANSITION_NOW =
+            OffsetDateTime.of(2026, 9, 3, 19, 30, 0, 0, KST);
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
@@ -335,6 +344,19 @@ class MeetingControllerTest {
                 .andExpect(jsonPath("$.data.meetingStatus").value("IN_PROGRESS"));
     }
 
+    /*
+     * 전이 일시는 Instant.now()가 아니라 주입된 Clock에서 온다 (#117). 직접 호출하던 동안에는
+     * 이 값이 매 실행마다 달라 응답에 실린 시각이 맞는지 확인할 방법이 없었다.
+     */
+    @Test
+    void transitionChangedAtComesFromInjectedClock() throws Exception {
+        Long meetingId = createMeeting(registrantId);
+
+        mockMvc.perform(transition(meetingId, "OPEN", null))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.changedAt").value("2026-09-03T19:30:00+09:00"));
+    }
+
     // 의장이 아닌 회원은 MEETING_MANAGE가 있어도 개회·회의록작성·종료를 할 수 없다 (TR-M1~M3)
     @Test
     void transitionOpenByNonChairReturns403Forbidden() throws Exception {
@@ -571,6 +593,18 @@ class MeetingControllerTest {
 
     @TestConfiguration
     static class StubJwtDecoderConfig {
+
+        /*
+         * 전이 일시(changedAt)를 응답에서 검증하려면 기준 시각이 고정돼야 한다 (#117).
+         * 역할 배정 시작일(MemberRoleFixture — 2026-03-01) 이후여야 MEETING_MANAGE가
+         * 유효하므로 회의 일정과 같은 날로 둔다.
+         */
+        // 빈 이름을 ClockConfig의 'clock'과 다르게 둔다 — 같으면 정의 덮어쓰기가 막혀 컨텍스트가 뜨지 않는다
+        @Bean
+        @Primary
+        Clock fixedClock() {
+            return Clock.fixed(TRANSITION_NOW.toInstant(), KST);
+        }
 
         @Bean
         @Primary

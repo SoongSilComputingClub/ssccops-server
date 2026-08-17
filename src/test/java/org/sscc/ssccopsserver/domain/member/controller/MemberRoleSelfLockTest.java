@@ -106,12 +106,7 @@ class MemberRoleSelfLockTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CANNOT_REVOKE_OWN_ROLE_MANAGE"));
 
-        assertThat(
-                        memberRoleAssignmentRepository
-                                .findById(firstAssignmentId)
-                                .orElseThrow()
-                                .getRoleEndDate())
-                .isNull();
+        assertThat(roleEndDateOf(firstAssignmentId)).isNull();
 
         // 여전히 역할 관리 화면에 들어갈 수 있다
         mockMvc.perform(authorized(get(ROLES), firstManagerToken)).andExpect(status().isOk());
@@ -130,12 +125,7 @@ class MemberRoleSelfLockTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.current").value(false));
 
-        assertThat(
-                        memberRoleAssignmentRepository
-                                .findById(firstAssignmentId)
-                                .orElseThrow()
-                                .getRoleEndDate())
-                .isEqualTo(LocalDate.now().minusDays(1));
+        assertThat(roleEndDateOf(firstAssignmentId)).isEqualTo(LocalDate.now().minusDays(1));
 
         mockMvc.perform(authorized(get(ROLES), firstManagerToken))
                 .andExpect(status().isForbidden())
@@ -143,6 +133,73 @@ class MemberRoleSelfLockTest {
 
         // 끝낸 쪽은 그대로다 — 관리 창구가 닫히지 않았다
         mockMvc.perform(authorized(get(ROLES), secondManagerToken)).andExpect(status().isOk());
+    }
+
+    /*
+     * **종료일을 오늘로 채우는 것도 같은 자기 잠금이다** (#110 · ssccops#86).
+     *
+     * 종료는 종료일 당일까지 유효하고 다음 날 발효되므로(BR-M25), 가드가 '오늘'로 물으면
+     * "아직 가지고 있다"는 답을 받아 통과한다 — 그러나 다음 날 0시에 이 계정은 ROLE_MANAGE를
+     * 영구히 잃고, 그때는 되돌릴 트랜잭션이 없다. 부트스트랩(BR-M37)은 회원이 있는 환경에서
+     * 열리지 않으므로 복구 수단은 DB 직접 수정뿐이다.
+     *
+     * 수동 QA가 실제로 밟은 경로이며, 수정 전 코드에서는 200 OK가 난다.
+     */
+    @Test
+    void endingOwnRoleManageAssignmentTodayIsRejectedAndRolledBack() throws Exception {
+        mockMvc.perform(endOwnAssignment(firstManagerToken, LocalDate.now()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CANNOT_REVOKE_OWN_ROLE_MANAGE"));
+
+        assertThat(roleEndDateOf(firstAssignmentId)).isNull();
+        mockMvc.perform(authorized(get(ROLES), firstManagerToken)).andExpect(status().isOk());
+    }
+
+    /*
+     * 미래 종료일도 마찬가지다. 잠금이 오늘 걸리느냐 내년에 걸리느냐는 이 판정과 무관하다 —
+     * 되돌릴 사람이 아무도 남지 않는다는 결과가 같다. 수정 전 코드에서는 종료일이 어제 이하일
+     * 때만 막혔으므로 이 요청도 200 OK가 난다.
+     */
+    @Test
+    void endingOwnRoleManageAssignmentInTheFutureIsRejectedAndRolledBack() throws Exception {
+        mockMvc.perform(endOwnAssignment(firstManagerToken, LocalDate.now().plusMonths(6)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CANNOT_REVOKE_OWN_ROLE_MANAGE"));
+
+        assertThat(roleEndDateOf(firstAssignmentId)).isNull();
+        mockMvc.perform(authorized(get(ROLES), firstManagerToken)).andExpect(status().isOk());
+    }
+
+    /*
+     * **남의 역할을 먼 미래 종료일로 끝내는 것은 막지 않는다** (과잉 차단 방지).
+     *
+     * 발효 시점으로 묻는 규칙을 대상 구분 없이 걸면, 임기가 정해진 관리자(여기서는 10일 뒤
+     * 끝나는 배정만 가진 세 번째 관리자)가 남의 역할을 그보다 먼 날짜로 끝내려 할 때 "그 시점엔
+     * 당신에게 권한이 없다"며 거절된다. 이 조작은 요청자의 권한을 전혀 좁히지 않으므로 막을
+     * 근거가 없다 — 시점을 미루는 것은 대상이 요청자 본인일 때뿐이어야 한다.
+     */
+    @Test
+    void endingAnotherMembersAssignmentWithAFarFutureDateIsAllowed() throws Exception {
+        UUID temporaryManagerToken = UUID.randomUUID();
+        MemberEntity temporaryManager = saveMember(temporaryManagerToken, "20260603", "임기있는관리자");
+        createdRoleIds.add(
+                AuthorityFixture.grant(
+                                memberRoleRepository,
+                                memberRoleClassificationRepository,
+                                memberRoleAssignmentRepository,
+                                authorityRepository,
+                                roleAuthorityRelationRepository,
+                                temporaryManager,
+                                AuthorityCode.ROLE_MANAGE,
+                                LocalDate.now().minusYears(1),
+                                LocalDate.now().plusDays(10))
+                        .getId());
+
+        LocalDate farFuture = LocalDate.now().plusYears(1);
+        mockMvc.perform(endOwnAssignment(temporaryManagerToken, farFuture))
+                .andExpect(status().isOk());
+
+        assertThat(roleEndDateOf(firstAssignmentId)).isEqualTo(farFuture);
     }
 
     /*
@@ -169,10 +226,22 @@ class MemberRoleSelfLockTest {
 
     /** 첫 관리자의 ROLE_MANAGE 배정을 어제로 끝내는 요청. 누가 부르는가만 달라진다 */
     private MockHttpServletRequestBuilder endOwnAssignment(UUID token) {
+        return endOwnAssignment(token, LocalDate.now().minusDays(1));
+    }
+
+    /*
+     * 같은 배정을 지정한 날짜로 끝내는 요청. 종료일에 따라 판정이 갈리지 않는다는 것이 #110의
+     * 요지라 날짜를 밖에서 정한다.
+     */
+    private MockHttpServletRequestBuilder endOwnAssignment(UUID token, LocalDate endDate) {
         return authorized(
                         patch("/v1/members/" + firstManagerId + "/roles/" + firstAssignmentId),
                         token)
-                .content("{\"roleEndYmd\": \"%s\"}".formatted(LocalDate.now().minusDays(1)));
+                .content("{\"roleEndYmd\": \"%s\"}".formatted(endDate));
+    }
+
+    private LocalDate roleEndDateOf(Long assignmentId) {
+        return memberRoleAssignmentRepository.findById(assignmentId).orElseThrow().getRoleEndDate();
     }
 
     private MemberRoleAssignmentEntity onlyAssignmentOf(Long memberId) {

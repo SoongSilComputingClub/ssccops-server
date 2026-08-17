@@ -62,12 +62,28 @@ public class AuthorityPolicy {
      */
     @Transactional(readOnly = true)
     public Set<String> capabilitiesOf(Long memberId) {
-        if (memberId == null) {
+        return capabilitiesOn(memberId, LocalDate.now(clock));
+    }
+
+    /*
+     * 같은 판정을 **오늘이 아닌 기준일**로 묻는다 (#110).
+     *
+     * 유효 역할 규칙(BR-M25)은 그대로 findValidRoleIds가 갖는다 — 여기서 달라지는 것은 그
+     * 질의에 넘기는 날짜 하나뿐이고, 판정 규칙이 한 벌 더 생기지 않는다.
+     *
+     * 이 문을 연 것은 자기 잠금 방지(VR-M13) 때문이다. 역할 종료는 종료일 **다음 날**에
+     * 발효되므로 "지금 가지고 있는가"로 물으면 종료일을 오늘로 채운 조작이 통과한다 —
+     * 가드가 물어야 하는 것은 '이미 잃었는가'가 아니라 '이 조작으로 잃게 되는가'이고,
+     * 그 답은 발효 시점을 기준일로 넣어야 나온다 (RoleManageSelfLockGuard 참고).
+     */
+    @Transactional(readOnly = true)
+    public Set<String> capabilitiesOn(Long memberId, LocalDate baseDate) {
+        if (memberId == null || baseDate == null) {
             return Set.of();
         }
 
         List<Long> validRoleIds =
-                memberRoleAssignmentRepository.findValidRoleIds(memberId, LocalDate.now(clock));
+                memberRoleAssignmentRepository.findValidRoleIds(memberId, baseDate);
         if (validRoleIds.isEmpty()) {
             return Set.of();
         }
@@ -85,6 +101,12 @@ public class AuthorityPolicy {
     @Transactional(readOnly = true)
     public boolean hasAuthority(Long memberId, AuthorityCode required) {
         return capabilitiesOf(memberId).contains(required.code());
+    }
+
+    /** 기준일에 요구 권한을 가지는지 (#110). 판정은 hasAuthority와 같고 묻는 날짜만 다르다 */
+    @Transactional(readOnly = true)
+    public boolean hasAuthorityOn(Long memberId, AuthorityCode required, LocalDate baseDate) {
+        return capabilitiesOn(memberId, baseDate).contains(required.code());
     }
 
     /** 세션·프로필 응답에 실을 형태. 정렬은 응답을 읽기 쉽게 하려는 것뿐이다 */

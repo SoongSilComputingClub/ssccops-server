@@ -89,32 +89,41 @@ WHERE NOT EXISTS (SELECT 1 FROM role_clsf WHERE role_clsf_cd = 'SYSTEM');
 --
 -- role_id는 지정하지 않는다. IDENTITY 컬럼에 값을 박아 넣으면 시퀀스가 그대로 1에 머물러,
 -- 나중에 역할 관리 화면이 역할을 추가하는 순간 PK가 충돌한다. 멱등 판정은 역할명으로 한다.
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 1, '회장', 'POSITION'
+--
+-- role_pstn_cd는 승인·투표 자격을 가르는 **직위 코드**다(#118). role_clsf_cd와 축이 다르다 —
+-- 분류는 여기 일곱이 전부 POSITION 하나이므로 '어느 직책이냐'를 가르지 못한다. 여러 역할이
+-- 같은 값을 갖는 것이 정상이라(부서별 국장은 전부 DIRECTOR) UNIQUE를 걸지 않는다.
+--
+-- **프로젝트장·스터디장은 NULL이다.** 활동 단위의 장이지 운영 의사결정 주체가 아니며,
+-- 값이 없으면 승인도 투표도 되지 않는다. 화면에서 만드는 사용자 정의 역할도 기본이 NULL이라
+-- 이름이 '국장'으로 끝난다는 이유만으로 승인권을 얻던 접미사 판정이 이것으로 사라졌다.
+-- 부서별 국장(홍보국장 …)을 만들 때는 역할 관리 화면에서 DIRECTOR를 명시해야 한다.
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 1, '회장', 'POSITION', 'PRESIDENT'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '회장');
 
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 2, '부회장', 'POSITION'
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 2, '부회장', 'POSITION', 'VICE_PRESIDENT'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '부회장');
 
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 3, '총무', 'POSITION'
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 3, '총무', 'POSITION', 'TREASURER'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '총무');
 
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 4, '국장', 'POSITION'
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 4, '국장', 'POSITION', 'DIRECTOR'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '국장');
 
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 5, '국원', 'POSITION'
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 5, '국원', 'POSITION', 'STAFF'
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '국원');
 
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 6, '프로젝트장', 'POSITION'
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 6, '프로젝트장', 'POSITION', NULL
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '프로젝트장');
 
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 7, '스터디장', 'POSITION'
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 7, '스터디장', 'POSITION', NULL
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
 
 -- 최초 가입자에게 배정되는 역할(#71). 이 역할만이 SUPER 권한을 갖는다.
@@ -123,8 +132,13 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '스터디장');
 --
 -- 이 역할을 특별히 잠그지 않는다. 부여·회수는 역할 관리 화면에서 하는 평범한 조작이며,
 -- 그것이 최초 가입자가 최고관리자를 다른 사람에게 넘겨주는 정상 경로다.
-INSERT INTO role (indct_seqno, role_nm, role_clsf_cd)
-SELECT 1, '최고관리자', 'SYSTEM'
+--
+-- role_pstn_cd는 NULL이다(#118). 이 역할이 여는 것은 권한(SUPER)이지 직위가 아니며, 직위 코드는
+-- 승인·투표라는 조직 의사결정 자격이다 — 최고관리자에게 회장의 승인권까지 얹으면 '시스템을
+-- 관리한다'와 '조직을 대표해 결재한다'가 한 역할에 섞인다. 두 자격이 다 필요한 사람에게는
+-- 최고관리자와 회장 역할을 각각 배정한다(인가는 여러 역할 중 하나만 만족해도 통과한다).
+INSERT INTO role (indct_seqno, role_nm, role_clsf_cd, role_pstn_cd)
+SELECT 1, '최고관리자', 'SYSTEM', NULL
 WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
 
 -- 권한(authrt) 트리. 코드가 @RequireAuthority로 직접 가리키는 값이라 전부 sys_yn = TRUE다 (#9).

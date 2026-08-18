@@ -91,6 +91,9 @@ class SubWorkServiceImplSearchTest {
     private static final OffsetDateTime SOON = NOW.plusDays(2);
     private static final OffsetDateTime LATER = NOW.plusDays(10);
 
+    // 마감일은 오늘인데 마감 시각은 이미 지난 건. 두 칩의 경계가 갈리는 자리다 (#121)
+    private static final OffsetDateTime DUE_TODAY = NOW.minusHours(3);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -166,6 +169,7 @@ class SubWorkServiceImplSearchTest {
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -327,6 +331,23 @@ class SubWorkServiceImplSearchTest {
 
         assertThat(idsOf(search(condition().dueBefore(NOW.plusDays(3)).build())))
                 .containsExactly(soon);
+    }
+
+    /*
+     * 마감일이 오늘인 건은 마감 시각이 지났어도 '지연' 칩이 아니라 '마감임박' 칩에 잡힌다
+     * (#121). 두 칩이 같은 값(오늘 0시)을 경계로 쓰므로 사이로 빠지는 건이 없다 — 지연만
+     * 날짜 단위로 옮기고 마감임박 하한을 '지금'으로 두면 이 건은 어느 칩에서도 보이지 않는다.
+     */
+    @Test
+    void subWorkDueTodayGoesToDueBeforeChipInsteadOfOverdueChip() {
+        Long dueToday = createSubWork(springMtWorkId, "오늘 아침 마감", DUE_TODAY);
+
+        assertThat(idsOf(search(condition().isOverdue(true).build()))).isEmpty();
+        assertThat(idsOf(search(condition().dueBefore(NOW.plusDays(3)).build())))
+                .containsExactly(dueToday);
+        assertThat(search(condition().build()).subWorks())
+                .extracting(SubWorkSummaryResponse::isDelayed)
+                .containsExactly(false);
     }
 
     // 화면 '완료' 칩

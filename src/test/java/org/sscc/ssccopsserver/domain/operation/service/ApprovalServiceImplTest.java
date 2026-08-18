@@ -155,6 +155,7 @@ class ApprovalServiceImplTest {
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
         approvalService =

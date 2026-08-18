@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -70,6 +71,9 @@ class DashboardServiceImplTest {
     private static final OffsetDateTime NOW = OffsetDateTime.of(2026, 8, 20, 12, 0, 0, 0, KST);
     private static final Clock FIXED_CLOCK = Clock.fixed(NOW.toInstant(), KST);
 
+    // 마감일은 오늘인데 마감 시각은 이미 지난 건 (#121)
+    private static final OffsetDateTime DUE_TODAY = NOW.minusHours(3);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -132,6 +136,7 @@ class DashboardServiceImplTest {
                         memberService,
                         approvalAuthorityPolicy,
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
         ApprovalService approvalService =
@@ -243,6 +248,43 @@ class DashboardServiceImplTest {
         assertThat(dashboard.upcomingDeadlines())
                 .extracting(SubWorkSummaryResponse::subWorkId)
                 .containsExactly(nearPast, nearFuture);
+    }
+
+    /*
+     * 마감일이 오늘인 건은 두 영역 어디에서도 지연이 아니다 (#121).
+     *
+     * 원 결함이 드러난 자리가 정확히 여기다 — '다가오는 마감'은 화면이 마감 일자로 D-day를
+     * 세어 'D-DAY'를 그리는데 '내 업무 목록'은 서버가 내린 isDelayed로 '지연' 배지를 붙여,
+     * 같은 하위 업무가 한 화면에서 두 가지로 보였다. 두 영역이 같은 판정을 쓰는지 못 박는다.
+     */
+    @Test
+    void subWorkDueTodayIsNotDelayedInEitherDashboardSection() {
+        Long dueToday = createSubWork("오늘 아침 마감", viewer.getId(), approvalFreeTypeId, DUE_TODAY);
+
+        DashboardResponse dashboard = dashboardService.getDashboard(viewer);
+
+        assertThat(dashboard.myTasks())
+                .extracting(SubWorkSummaryResponse::subWorkId, SubWorkSummaryResponse::isDelayed)
+                .containsExactly(tuple(dueToday, false));
+        assertThat(dashboard.upcomingDeadlines())
+                .extracting(SubWorkSummaryResponse::subWorkId, SubWorkSummaryResponse::isDelayed)
+                .containsExactly(tuple(dueToday, false));
+    }
+
+    // 하루만 지나도 두 영역 모두 지연이다 — 경계는 마감일 다음 날 0시다
+    @Test
+    void subWorkDueYesterdayIsDelayedInEitherDashboardSection() {
+        Long dueYesterday =
+                createSubWork("어제 마감", viewer.getId(), approvalFreeTypeId, NOW.minusDays(1));
+
+        DashboardResponse dashboard = dashboardService.getDashboard(viewer);
+
+        assertThat(dashboard.myTasks())
+                .extracting(SubWorkSummaryResponse::subWorkId, SubWorkSummaryResponse::isDelayed)
+                .containsExactly(tuple(dueYesterday, true));
+        assertThat(dashboard.upcomingDeadlines())
+                .extracting(SubWorkSummaryResponse::subWorkId, SubWorkSummaryResponse::isDelayed)
+                .containsExactly(tuple(dueYesterday, true));
     }
 
     // 승인 대기는 승인함(OPS-017)의 대기 탭을 그대로 재사용한다 — 아직 검토에 오르지 않은 건은 빠진다

@@ -102,6 +102,15 @@ class SubWorkServiceImplTest {
 
     private static final Clock FIXED_CLOCK = Clock.fixed(NOW.toInstant(), KST);
 
+    /*
+     * 지연 판정은 시각이 아니라 일자로 한다 (#121). 그 경계를 재는 값들이라 NOW에서 파생한다 —
+     * 날짜를 따로 적으면 NOW를 옮겼을 때 한쪽만 따라오지 않는다.
+     */
+    private static final OffsetDateTime TODAY_START =
+            NOW.toLocalDate().atStartOfDay().atOffset(KST);
+    private static final OffsetDateTime TODAY_MORNING = NOW.minusHours(3);
+    private static final OffsetDateTime YESTERDAY_END = TODAY_START.minusMinutes(1);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -176,6 +185,7 @@ class SubWorkServiceImplTest {
                         memberService,
                         new ApprovalAuthorityPolicy(memberService),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -304,6 +314,26 @@ class SubWorkServiceImplTest {
         assertThat(reloaded.getRegistrant().getId()).isEqualTo(registrant.getId());
         assertThat(reloaded.getRegistrant().getId()).isNotEqualTo(ownerId);
         assertThat(response.registrantId()).isEqualTo(registrant.getId());
+    }
+
+    /*
+     * 등록 응답의 isDelayed도 조회 시점 판정값이다 (#121). 이 자리만 dly_yn 컬럼을 읽고 있어서,
+     * 마감이 이미 지난 건으로 등록하면 등록 응답은 false인데 곧바로 여는 목록·상세는 true인
+     * 상태가 됐다. 그 컬럼은 채우지 않기로 결정한 값이라 언제나 false다 (#117).
+     */
+    @Test
+    void createSubWorkResponseJudgesDelayInsteadOfReadingDeadColumn() {
+        SubWorkCreateResponse response = createWithDueAt(NOW.minusDays(1));
+
+        assertThat(response.isDelayed()).isTrue();
+        assertThat(subWorkRepository.findById(response.subWorkId()).orElseThrow().isDelayed())
+                .isFalse();
+    }
+
+    // 그리고 그 판정도 날짜 단위다 — 오늘 아침 마감으로 등록해도 등록 응답은 지연이 아니다
+    @Test
+    void createSubWorkResponseIsNotDelayedWhenDueToday() {
+        assertThat(createWithDueAt(TODAY_MORNING).isDelayed()).isFalse();
     }
 
     // 화면 안내: "완료 체크리스트 4항목이 기본 생성되며, 등록 직후 단계는 기획입니다"
@@ -555,6 +585,29 @@ class SubWorkServiceImplTest {
     @Test
     void isDelayedIsTrueAfterDueDateWhileUnfinished() {
         assertThat(detailOf(subWorkWithDueAt(NOW.minusDays(1))).isDelayed()).isTrue();
+    }
+
+    /*
+     * 마감일이 오늘이면 마감 시각이 지났어도 지연이 아니다 (#121). 초 단위로 재던 동안에는
+     * 이 건이 대시보드에서 'D-DAY'(화면의 날짜 단위 D-day)와 '지연'(서버 판정)으로 동시에
+     * 표시됐다 — 결함이 살아남은 것은 기존 검증이 전부 NOW ± N일이라 같은 날 안의 시각차를
+     * 아무도 보지 않았기 때문이다.
+     */
+    @Test
+    void isDelayedIsFalseWhenDueTodayEvenAfterDueTime() {
+        assertThat(detailOf(subWorkWithDueAt(TODAY_MORNING)).isDelayed()).isFalse();
+    }
+
+    // 오늘 0시 마감도 오늘 하루는 지연이 아니다 — 경계는 마감 '일자'이지 시각이 아니다
+    @Test
+    void isDelayedIsFalseWhenDueAtTodayMidnight() {
+        assertThat(detailOf(subWorkWithDueAt(TODAY_START)).isDelayed()).isFalse();
+    }
+
+    // 그리고 자정을 넘기는 순간 지연이 된다 — 어제 23:59 마감은 오늘 지연이다
+    @Test
+    void isDelayedTurnsTrueAtMidnightAfterDueDate() {
+        assertThat(detailOf(subWorkWithDueAt(YESTERDAY_END)).isDelayed()).isTrue();
     }
 
     // 늦게 끝났더라도 완료된 건은 지연이 아니다 — 화면은 지금 손봐야 하는 건만 표시한다
@@ -1329,21 +1382,23 @@ class SubWorkServiceImplTest {
     }
 
     private Long subWorkWithDueAt(OffsetDateTime dueAt) {
-        return subWorkService
-                .createSubWork(
-                        new SubWorkCreateRequest(
-                                parentWorkId,
-                                "마감 판정용 하위 업무",
-                                approvalFreeTypeId,
-                                ownerId,
-                                null,
-                                null,
-                                dueAt,
-                                null,
-                                null,
-                                null),
-                        registrant)
-                .subWorkId();
+        return createWithDueAt(dueAt).subWorkId();
+    }
+
+    private SubWorkCreateResponse createWithDueAt(OffsetDateTime dueAt) {
+        return subWorkService.createSubWork(
+                new SubWorkCreateRequest(
+                        parentWorkId,
+                        "마감 판정용 하위 업무",
+                        approvalFreeTypeId,
+                        ownerId,
+                        null,
+                        null,
+                        dueAt,
+                        null,
+                        null,
+                        null),
+                registrant);
     }
 
     private SubWorkDetailResponse detailOf(Long subWorkId) {

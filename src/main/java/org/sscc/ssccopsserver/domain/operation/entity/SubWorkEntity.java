@@ -106,7 +106,7 @@ public class SubWorkEntity {
      * 채우지 않기로 결정한 컬럼 (OPS-008, #117). 등록 시 false로 굳고 그 뒤 갱신하는 주체가
      * 없으므로 마감이 한참 지난 건도 이 값은 false다.
      *
-     * 지연 여부의 정본은 조회 시점 판정이다 — 단건은 isDelayedAt, 목록 필터는
+     * 지연 여부의 정본은 조회 시점 판정이다 — 단건은 isDelayedBefore, 목록 필터는
      * SubWorkRepositoryImpl이 같은 조건을 SQL로 옮겨 쓴다. 컬럼을 채우는 배치를 새로 붙이지
      * 말 것: 마감이 지나는 순간 값을 바꿔 줄 주체가 필요해지고, 그 배치가 늦으면 화면이
      * 다시 컬럼과 어긋난다. 컬럼 자체를 지우지 않은 이유는 work_prgrs_rt와 같다.
@@ -349,10 +349,15 @@ public class SubWorkEntity {
      * 그 컬럼은 채우지 않기로 결정했으므로(위 필드 주석) 항상 false다. 목록 필터
      * (SubWorkRepositoryImpl)가 같은 조건을 SQL로 옮겨 쓰므로 규칙을 바꾸면 두 곳을 함께 고친다.
      *
+     * 인자는 '지금'이 아니라 **지연 경계 시각**이다 (DeadlinePolicy.overdueBefore — 서비스
+     * 표준 시간대의 오늘 0시). 판정을 날짜 단위로 옮긴 것이 #121이다. 여기에 clock.instant()를
+     * 넘기면 마감일이 오늘인 건이 그날 안에 지연으로 바뀌던 옛 동작이 그대로 되살아나는데,
+     * 그렇게 넘겨도 컴파일은 되므로 이름을 isDelayedAt에서 바꿔 호출부에서 눈에 띄게 했다.
+     *
      * 마감이 없는 하위 업무는 지연될 수 없고, 완료된 하위 업무는 늦게 끝났더라도 지연이 아니다
      * — 화면이 이 값으로 '지금 손봐야 하는 건'을 표시하기 때문이다.
      */
-    public boolean isDelayedAt(Instant now) {
-        return dueAt != null && workStatus != WorkStatus.DONE && dueAt.isBefore(now);
+    public boolean isDelayedBefore(Instant overdueBefore) {
+        return dueAt != null && workStatus != WorkStatus.DONE && dueAt.isBefore(overdueBefore);
     }
 }

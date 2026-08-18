@@ -101,24 +101,32 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
             parameters.put("approvalStatuses", query.approvalStatuses());
         }
         /*
-         * 지연: 마감이 지났는데 아직 완료되지 않은 건. dly_yn 컬럼을 읽지 않는다 —
+         * 지연: 마감일이 지났는데 아직 완료되지 않은 건. dly_yn 컬럼을 읽지 않는다 —
          * 채우지 않기로 결정한 컬럼이라 항상 false다 (SubWorkEntity.delayed 주석).
-         * 조건은 SubWorkEntity.isDelayedAt과 같아야 한다 — 단건과 목록이 갈리면 안 된다.
+         * 조건은 SubWorkEntity.isDelayedBefore와 같아야 한다 — 단건과 목록이 갈리면 안 된다.
+         *
+         * 경계는 '지금'이 아니라 오늘 0시다 (DeadlinePolicy, #121). 마감일이 오늘인 건은
+         * 시각이 지났어도 아직 지연이 아니다.
          */
         if (query.overdueOnly()) {
-            conditions.append(" and s.dueAt < :now and s.workStatus <> :doneStatus");
-            parameters.put("now", query.now());
+            conditions.append(" and s.dueAt < :overdueBefore and s.workStatus <> :doneStatus");
+            parameters.put("overdueBefore", query.overdueBefore());
             parameters.put("doneStatus", WorkStatus.DONE);
         }
         /*
-         * 마감 임박: 아직 마감 전이면서 지정한 시각 안에 마감되는 건. 이미 지난 건을 빼는 것은
-         * 그러지 않으면 '마감임박' 칩이 '지연' 칩을 통째로 포함해 두 칩이 겹치기 때문이다.
+         * 마감 임박: 아직 마감일이 지나지 않았으면서 지정한 시각 안에 마감되는 건. 이미 지난
+         * 건을 빼는 것은 그러지 않으면 '마감임박' 칩이 '지연' 칩을 통째로 포함해 두 칩이
+         * 겹치기 때문이다.
+         *
+         * 하한이 지연 조건의 경계와 **같은 값**이어야 한다. 한쪽만 오늘 0시로 옮기면 '오늘
+         * 09시 마감'인 건이 정오에 지연 칩에서도 빠지고 마감임박 칩에도 잡히지 않아 어느
+         * 칩에서도 보이지 않게 된다 (#121).
          */
         if (query.hasDueBeforeFilter()) {
             conditions.append(
-                    " and s.dueAt >= :now and s.dueAt <= :dueBefore"
+                    " and s.dueAt >= :overdueBefore and s.dueAt <= :dueBefore"
                             + " and s.workStatus <> :doneStatus");
-            parameters.put("now", query.now());
+            parameters.put("overdueBefore", query.overdueBefore());
             parameters.put("dueBefore", query.dueBefore());
             parameters.put("doneStatus", WorkStatus.DONE);
         }

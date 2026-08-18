@@ -44,8 +44,13 @@ public record SubWorkCreateResponse(
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
+    /*
+     * isDelayed는 dly_yn 컬럼이 아니라 조회 시점 판정값을 받는다 (#121). 원래 이 응답만
+     * 컬럼을 읽고 있었는데, 그 컬럼은 채우지 않기로 결정한 값이라(#117) 마감이 이미 지난
+     * 건으로 등록해도 여기서만 false가 나가 목록·상세와 갈렸다.
+     */
     public static SubWorkCreateResponse of(
-            SubWorkEntity subWork, List<SubWorkChecklistItemEntity> checklist) {
+            SubWorkEntity subWork, List<SubWorkChecklistItemEntity> checklist, boolean delayed) {
         OperationEntity operation = subWork.getOperation();
         return new SubWorkCreateResponse(
                 subWork.getId(),
@@ -64,7 +69,7 @@ public record SubWorkCreateResponse(
                 operation.getPriority(),
                 subWork.getContent(),
                 subWork.getExternalLink(),
-                subWork.isDelayed(),
+                delayed,
                 checklist.stream().map(SubWorkChecklistItemResponse::from).toList(),
                 toOffsetDateTime(operation.getCreatedAt()));
     }

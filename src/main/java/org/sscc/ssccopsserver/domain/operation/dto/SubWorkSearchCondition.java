@@ -50,14 +50,14 @@ public record SubWorkSearchCondition(
      * 문자열을 해석해 조회용 조건으로 바꾼다. 기준 코드 위반·커서 해독 실패는 여기서 걸러
      * Repository까지 내려가지 않게 한다.
      */
-    public SubWorkSearchQuery toQuery(Instant now) {
+    public SubWorkSearchQuery toQuery(Instant overdueBefore) {
         SubWorkSortOrder sortOrder = SubWorkSortOrder.from(sort);
         return new SubWorkSearchQuery(
                 toWorkStatus(),
                 toApprovalStatuses(),
                 Boolean.TRUE.equals(isOverdue),
                 dueBefore == null ? null : dueBefore.toInstant(),
-                now,
+                overdueBefore,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 SubWorkCursor.decode(cursor, sortOrder));

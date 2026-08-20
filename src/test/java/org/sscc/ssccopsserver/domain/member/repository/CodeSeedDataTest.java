@@ -95,37 +95,6 @@ class CodeSeedDataTest {
     }
 
     /*
-     * 직위 코드(role_pstn_cd) 시드 (#118). 승인·투표 자격이 역할명 문자열이 아니라 이 값으로
-     * 갈리므로, 비어 있으면 예산지출을 승인할 사람도 투표할 사람도 없는 상태로 배포된다.
-     *
-     * **프로젝트장·스터디장·최고관리자가 NULL인 것도 함께 못 박는다.** 값이 없으면 승인도
-     * 투표도 되지 않는다는 것이 그 셋을 운영 의사결정에서 빼는 방법이고, 여기에 무심코 코드를
-     * 채우면 스터디장이 예산지출에 투표하게 된다.
-     *
-     * 코드값을 enum이 아니라 문자열로 적는 것은 이 클래스의 다른 기대값과 같은 이유다 —
-     * 상수 이름이 바뀌었을 때 테스트가 따라 바뀌어 조용히 통과하면 안 된다.
-     */
-    @Test
-    void seedsPositionCodesThatDecideApprovalAndVotingRights() {
-        assertThat(memberRoleRepository.findAll())
-                .extracting(
-                        MemberRoleEntity::getName,
-                        role ->
-                                role.getPositionCode() == null
-                                        ? null
-                                        : role.getPositionCode().name())
-                .contains(
-                        tuple("회장", "PRESIDENT"),
-                        tuple("부회장", "VICE_PRESIDENT"),
-                        tuple("총무", "TREASURER"),
-                        tuple("국장", "DIRECTOR"),
-                        tuple("국원", "STAFF"),
-                        tuple("프로젝트장", null),
-                        tuple("스터디장", null),
-                        tuple("최고관리자", null));
-    }
-
-    /*
      * 최초 가입자 부트스트랩(#71)이 딛고 서는 시드 세 가지 — 역할·권한·매핑.
      *
      * 이름을 문자열로 적는 것은 MemberServiceImpl.BOOTSTRAP_ROLE_NAME과 data.sql이 **문자열로**

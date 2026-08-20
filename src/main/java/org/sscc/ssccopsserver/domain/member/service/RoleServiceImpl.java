@@ -9,7 +9,6 @@ import java.util.Objects;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.dto.RoleCreateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.RoleDetailResponse;
@@ -22,7 +21,6 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleMemberCount;
-import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.RequiredArgsConstructor;
@@ -107,11 +105,9 @@ public class RoleServiceImpl implements RoleService {
     /*
      * 생성. 갓 만든 역할에는 권한도 재임자도 없다 — "권한 없는 역할은 아무것도 못 한다"가
      * 기본값이므로(#9) 여기서 어떤 권한도 함께 붙이지 않는다. 권한은 역할 관리 화면에서
-     * PUT /v1/roles/{roleId}/authorities로 따로 붙인다.
-     *
-     * 직위 코드(rolePstnCd)도 같은 태도다 — 생략하면 NULL이고 그 역할은 승인도 투표도 하지
-     * 못한다(#118). 이름이 '국장'으로 끝난다는 이유로 자격이 따라붙던 자리를 명시적 지정이
-     * 대신한다.
+     * PUT /v1/roles/{roleId}/authorities로 따로 붙인다. 승인·투표 자격(결재 권한·APPROVAL_VOTE)
+     * 도 같은 길로 부여한다(#123) — 이름이 '국장'으로 끝난다는 이유로 자격이 따라붙던 자리를
+     * 명시적 부여가 대신한다.
      */
     @Override
     @Transactional
@@ -126,11 +122,7 @@ public class RoleServiceImpl implements RoleService {
 
         MemberRoleEntity role =
                 memberRoleRepository.saveAndFlush(
-                        MemberRoleEntity.create(
-                                displayOrder,
-                                name,
-                                classification,
-                                positionCodeOf(request.rolePstnCd(), null)));
+                        MemberRoleEntity.create(displayOrder, name, classification));
 
         // 새 역할에 재임자가 있을 수 없으므로 집계 질의를 돌리지 않는다
         return RoleResponse.of(role, 0L);
@@ -143,10 +135,6 @@ public class RoleServiceImpl implements RoleService {
      * 역할이 그 값을 들고 새 분류로 넘어가면, 그 분류에 이미 4번이 있으면 나란히 서고 없으면
      * 1·2 다음에 빈 자리를 두고 선다 — 어느 쪽이든 '분류 안에서 1부터 이어지는 표시 순번'이라는
      * 성질이 깨진다. 순번을 명시했다면 그 값을 그대로 쓴다.
-     *
-     * **직위 코드만 '해제'라는 뜻을 더 갖는다** — 빈 문자열이면 NULL로 지운다(#118,
-     * RoleUpdateRequest 주석 참고). 이름·분류·순번은 비울 수 없어 null이 '그대로 두라'
-     * 하나로만 읽히지만, 직위 코드는 잘못 지정했을 때 되돌릴 길이 있어야 한다.
      */
     @Override
     @Transactional
@@ -175,11 +163,7 @@ public class RoleServiceImpl implements RoleService {
                             : role.getDisplayOrder();
         }
 
-        role.update(
-                displayOrder,
-                name,
-                classification,
-                positionCodeOf(request.rolePstnCd(), role.getPositionCode()));
+        role.update(displayOrder, name, classification);
         memberRoleRepository.flush();
 
         return RoleResponse.of(role, currentMemberCounts(List.of(roleId)).getOrDefault(roleId, 0L));
@@ -229,28 +213,6 @@ public class RoleServiceImpl implements RoleService {
                 .findById(roleClsfCd.trim())
                 .orElseThrow(
                         () -> new GeneralException(MemberErrorCode.ROLE_CLASSIFICATION_NOT_FOUND));
-    }
-
-    /*
-     * 직위 코드 문자열 해석 (#118). **생성과 수정이 같은 함수를 쓴다** — 같은 필드에 같은 값을
-     * 넣었는데 두 엔드포인트가 다른 뜻으로 읽으면 화면이 두 갈래로 처리해야 한다.
-     *
-     * null = 현재 값 유지 · 빈 문자열 = 해제 · 그 밖 = 그 코드. 생성에는 '현재 값'이 없어
-     * current로 null을 넘기므로 두 경우가 자연히 '지정 없음' 하나로 모인다.
-     */
-    private static RolePositionCode positionCodeOf(String requested, RolePositionCode current) {
-        if (requested == null) {
-            return current;
-        }
-        String code = requested.trim();
-        if (code.isEmpty()) {
-            return null;
-        }
-        try {
-            return RolePositionCode.valueOf(code);
-        } catch (IllegalArgumentException e) {
-            throw new GeneralException(CommonErrorCode.INVALID_CODE_VALUE);
-        }
     }
 
     private int displayOrderOf(Integer requested, String roleClsfCd) {

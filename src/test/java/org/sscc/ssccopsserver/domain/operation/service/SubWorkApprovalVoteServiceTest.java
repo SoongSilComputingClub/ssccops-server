@@ -712,8 +712,8 @@ class SubWorkApprovalVoteServiceTest {
     }
 
     /*
-     * 역할 관리 화면의 개명과 같은 조작 (#118). 직위 코드는 그대로 두고 이름만 바꾼다 —
-     * 개명이 자격을 건드리지 않는다는 것이 확인 대상이므로 코드까지 같이 바꾸면 뜻이 없다.
+     * 역할 관리 화면의 개명과 같은 조작 (#118 → #123). 권한 부여는 그대로 두고 이름만 바꾼다 —
+     * 개명이 자격을 건드리지 않는다는 것이 확인 대상이므로 부여까지 같이 바꾸면 뜻이 없다.
      */
     private void renameRole(String currentName, String newName) {
         MemberRoleEntity role =
@@ -721,11 +721,7 @@ class SubWorkApprovalVoteServiceTest {
                         .filter(it -> currentName.equals(it.getName()))
                         .findFirst()
                         .orElseThrow();
-        role.update(
-                role.getDisplayOrder(),
-                newName,
-                role.getRoleClassification(),
-                role.getPositionCode());
+        role.update(role.getDisplayOrder(), newName, role.getRoleClassification());
         entityManager.flush();
         entityManager.clear();
     }

@@ -4,7 +4,6 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
-import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 
 /*
@@ -23,10 +22,6 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
  * use_yn 같은 활성 여부 필드는 없다 — 데이터사전의 role에 그 컬럼이 없고, 응답에만 만들어
  * 두면 화면이 존재하지 않는 상태를 그리게 된다.
  *
- * rolePstnCd는 승인·투표 자격을 가르는 직위 코드다 (#118). 지정되지 않은 역할은 null이며
- * 그 상태에서는 어느 쪽 자격도 없다 — 화면은 이 값으로 '승인권 있음' 표시를 그린다.
- * 분류(roleClsfCd)와 축이 다르므로 둘을 같은 칸에 그리지 말 것.
- *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record RoleResponse(
@@ -35,7 +30,6 @@ public record RoleResponse(
         String roleNm,
         String roleClsfCd,
         String roleClsfNm,
-        RolePositionCode rolePstnCd,
         long memberCount,
         OffsetDateTime crtDt,
         OffsetDateTime mdfcnDt) {
@@ -49,7 +43,6 @@ public record RoleResponse(
                 role.getName(),
                 role.getRoleClassification().getCode(),
                 role.getRoleClassification().getName(),
-                role.getPositionCode(),
                 memberCount,
                 toOffsetDateTime(role.getCreatedAt()),
                 toOffsetDateTime(role.getUpdatedAt()));

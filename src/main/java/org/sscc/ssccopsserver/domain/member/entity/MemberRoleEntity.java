@@ -5,8 +5,6 @@ import java.time.Instant;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -18,7 +16,6 @@ import jakarta.persistence.Table;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
-import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -48,19 +45,6 @@ public class MemberRoleEntity {
     @JoinColumn(name = "role_clsf_cd", nullable = false)
     private MemberRoleClassificationEntity roleClassification;
 
-    /*
-     * 이 역할이 어느 직위인가 (#118). 승인·투표 자격 판정이 role_nm 문자열 대신 보는 값이다.
-     *
-     * **UNIQUE를 걸지 않는다** — 홍보국장·행정국장·학술국장이 모두 DIRECTOR를 가져야 하므로
-     * 식별자가 아니라 두 번째 축의 분류값이다(RolePositionCode 주석 참고).
-     *
-     * NULL이 기본이며 그 상태에서는 승인도 투표도 되지 않는다. 프로젝트장·스터디장이 그렇고,
-     * 화면에서 만든 사용자 정의 역할도 지정하기 전까지 그렇다.
-     */
-    @Enumerated(EnumType.STRING)
-    @Column(name = "role_pstn_cd", length = 20)
-    private RolePositionCode positionCode;
-
     @CreatedDate
     @Column(name = "crt_dt", updatable = false)
     private Instant createdAt;
@@ -69,28 +53,20 @@ public class MemberRoleEntity {
     @Column(name = "mdfcn_dt")
     private Instant updatedAt;
 
+    /*
+     * 직위 코드(role_pstn_cd, #118)는 승인·투표 자격이 권한 시스템으로 통합되며 삭제됐다(#123).
+     * 자격은 이제 이 행이 아니라 역할↔권한 매핑(role_authrt_rel)에 실린다 — 역할 행에는
+     * 판정에 쓰이는 값이 없다.
+     */
     public static MemberRoleEntity create(
             Integer displayOrder, String name, MemberRoleClassificationEntity roleClassification) {
-        return create(displayOrder, name, roleClassification, null);
-    }
-
-    public static MemberRoleEntity create(
-            Integer displayOrder,
-            String name,
-            MemberRoleClassificationEntity roleClassification,
-            RolePositionCode positionCode) {
-        return new MemberRoleEntity(
-                null, displayOrder, name, roleClassification, positionCode, null, null);
+        return new MemberRoleEntity(null, displayOrder, name, roleClassification, null, null);
     }
 
     public void update(
-            Integer displayOrder,
-            String name,
-            MemberRoleClassificationEntity roleClassification,
-            RolePositionCode positionCode) {
+            Integer displayOrder, String name, MemberRoleClassificationEntity roleClassification) {
         this.displayOrder = displayOrder;
         this.name = name;
         this.roleClassification = roleClassification;
-        this.positionCode = positionCode;
     }
 }

@@ -1,19 +1,15 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
-import java.util.EnumSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
 
 import org.springframework.stereotype.Component;
-import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
-import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
-import org.sscc.ssccopsserver.domain.member.service.MemberService;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
-import org.sscc.ssccopsserver.domain.operation.entity.AuthorizerRole;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -25,55 +21,27 @@ import lombok.extern.slf4j.Slf4j;
  * "누가 승인·반려할 수 있고 누가 투표할 수 있는가"의 유일한 구현 (#47).
  *
  * 권한 인가(#9)와 층이 다르다. 그쪽은 "이 사람이 업무를 다룰 수 있는가"(WORK_MANAGE)를
- * 애노테이션으로 보고, 여기는 "이 건의 승인자 본인인가"를 본다 — 건마다 답이 달라지므로
- * 권한 코드로 표현되지 않는다. 판정을 한 곳에 모아 두지 않으면 승인함이 그리는 버튼과
- * 실제 전이가 어긋난다.
+ * 애노테이션으로 보고, 여기는 "이 건의 승인자 본인인가"를 본다 — 유형마다 답이 달라지므로
+ * @RequireAuthority 하나로 표현되지 않는다. 판정을 한 곳에 모아 두지 않으면 승인함이 그리는
+ * 버튼과 실제 전이가 어긋난다.
  *
- * 회원의 역할은 회원 도메인 Service를 경유해서만 읽는다 (AR-07·LY-10) — 다른 도메인의
- * Repository를 직접 주입하지 않는다.
- *
- * **판정이 보는 값은 역할명이 아니라 직위 코드(role.role_pstn_cd)다** (#118). 승인 자격과
- * 투표 자격 두 가지가 모두 여기 있고 둘 다 같은 값을 본다 — 한쪽만 코드로 옮기면 '총무'를
- * '재무'로 개명했을 때 승인은 되는데 투표가 안 되는(또는 그 반대) 절반짜리 상태가 된다.
+ * **판정 재료는 직위 코드(role.role_pstn_cd)가 아니라 권한이다** (#123). 승인 자격은 유형이
+ * 지정한 결재 권한(sub_work_type.autzr_authrt_cd), 투표 자격은 APPROVAL_VOTE 권한이며, 둘 다
+ * AuthorityPolicy의 펼침(회원 → 유효 역할 → 권한 → 자손)으로 판정한다. 규칙을 여기서 한 벌
+ * 더 적지 않는 것(BR-M28)은 물론이고, 자격이 세션 capabilities에 그대로 실리므로 화면이
+ * 투표 버튼을 서버 판정 없이 그릴 수 있다. 누가 자격을 갖는지는 역할↔권한 매핑(운영 데이터)이
+ * 정한다 — 직위 코드 시절처럼 자격 대상을 바꾸는 데 배포가 필요하지 않다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class ApprovalAuthorityPolicy {
 
-    /*
-     * 투표할 수 있는 운영진 판정 (#47 · #118). 정의서 OPS-015의 '회장단'보다 넓다 — 이슈 본문이
-     * "회장/부회장/총무/국장/국원 등 사전에 운영진 권한을 가진 운영자 누구나"라고 못박고 있다.
-     *
-     * 실제 직책은 부서별로 나뉜다(홍보국장 · 행정국원 …). 부서가 늘 때마다 목록을 고치지
-     * 않도록 원래는 '국장'·'국원' **접미사**로 판정했는데, 그러면 화면에서 만든 사용자 정의
-     * 역할이 이름만으로 투표 자격을 얻고 '총무'를 '재무'로 개명하면 자격이 사라졌다. 지금은
-     * 역할의 직위 코드(role.role_pstn_cd)를 본다 — 부서별 역할에는 그 코드를 지정한다.
-     *
-     * **승인 자격(AuthorizerRole)과 같은 값을 본다.** 한쪽만 코드로 옮기면 개명 뒤에 승인은
-     * 되는데 투표가 안 되는(또는 그 반대) 상태가 된다.
-     *
-     * 프로젝트장·스터디장은 빠진다 — 활동 단위의 장이지 운영 의사결정 주체가 아니다. 코드로
-     * 옮긴 뒤에는 그 역할들이 애초에 직위 코드를 갖지 않아 목록에 적을 필요조차 없는데,
-     * 그래도 '값이 있으면 통과'가 아니라 집합을 명시한다 — 나중에 투표에 넣지 말아야 할
-     * 직위(자문 등)가 늘면 암묵적 규칙은 조용히 그것까지 통과시킨다.
-     *
-     * role.indct_seqno(서열 순번)로 "n위 이내"를 판정하지 않는 것은, 그 순번이 화면 정렬용이라
-     * 역할이 하나 끼어들면 기준이 조용히 바뀌기 때문이다.
-     */
-    private static final Set<RolePositionCode> VOTING_POSITION_CODES =
-            EnumSet.of(
-                    RolePositionCode.PRESIDENT,
-                    RolePositionCode.VICE_PRESIDENT,
-                    RolePositionCode.TREASURER,
-                    RolePositionCode.DIRECTOR,
-                    RolePositionCode.STAFF);
-
-    private final MemberService memberService;
+    private final AuthorityPolicy authorityPolicy;
 
     /*
-     * 최종 승인·반려(TR-03·TR-04)를 할 수 있는 사람인지. 유형이 지정한 승인자 역할
-     * (autzr_role_cd) 보유자만 통과한다.
+     * 최종 승인·반려(TR-03·TR-04)를 할 수 있는 사람인지. 유형이 지정한 결재 권한
+     * (autzr_authrt_cd) 보유자만 통과한다.
      *
      * 승인이 필요 없는 유형은 검사하지 않는다 — 승인 단계 자체가 없어 승인자도 없으므로,
      * 여기서 막으면 저위험 업무(REQ-016)를 아무도 완료할 수 없게 된다. 그 유형의 완료는
@@ -90,29 +58,28 @@ public class ApprovalAuthorityPolicy {
          * 이 조회는 실패 경로에서만 돈다 — 통과하는 요청에 쿼리를 더하지 않는다.
          */
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
-        Optional<AuthorizerRole> required =
-                AuthorizerRole.from(subWorkType.getAuthorizerRoleCode());
+        Optional<AuthorityCode> required =
+                AuthorityCode.fromSubWorkApproverCode(subWorkType.getAuthorizerAuthorityCode());
         if (required.isEmpty()) {
             /*
-             * 승인이 필요한데 승인자 역할이 비었거나 기준 코드에 없는 값이다. 유형 저장
+             * 승인이 필요한데 승인자 권한이 비었거나 결재 권한 목록에 없는 값이다. 유형 저장
              * (OPS-019)이 막는 조합이라 정상 경로로는 생기지 않는다 — 데이터가 깨진 것이다.
              */
             log.error(
-                    "승인자 역할 코드가 유효하지 않다. subWorkId={}, subWorkTypeId={}, autzrRoleCd={}",
+                    "승인자 권한 코드가 유효하지 않다. subWorkId={}, subWorkTypeId={}, autzrAuthrtCd={}",
                     subWork.getId(),
                     subWorkType.getId(),
-                    subWorkType.getAuthorizerRoleCode());
+                    subWorkType.getAuthorizerAuthorityCode());
         } else {
             /*
-             * 판정에 쓴 양쪽 값을 남긴다. 직위 코드로 옮긴 뒤에도(#118) 이 로그가 필요한 것은,
-             * 부서별 국장 역할에 DIRECTOR를 지정하지 않으면 여전히 승인자가 없는 것과 같기
-             * 때문이다 — 이제 그 경우가 '보유=[]'(직위 코드가 없는 역할뿐)로 드러난다.
+             * 판정에 쓴 양쪽 값을 남긴다. 결재 권한을 어느 역할에도 매핑하지 않으면 여전히
+             * 승인자가 없는 것과 같기 때문이다 — 그 경우가 '보유=[]'로 드러난다.
              */
             log.warn(
-                    "승인자 역할 불일치. subWorkId={}, 필요={}, 보유={}",
+                    "승인자 권한 불일치. subWorkId={}, 필요={}, 보유={}",
                     subWork.getId(),
-                    required.get().getPositionCode(),
-                    positionCodesOf(performer));
+                    required.get().code(),
+                    heldApproverCodesOf(performer));
         }
         throw new GeneralException(OperationErrorCode.FORBIDDEN);
     }
@@ -133,52 +100,56 @@ public class ApprovalAuthorityPolicy {
         if (member == null) {
             return false;
         }
-        return canDecide(subWork, positionCodesOf(member));
+        return canDecide(subWork, authorityPolicy.capabilitiesOf(member.getId()));
     }
 
     /*
      * 목록의 카드마다 같은 판정을 묻기 위한 형태 (승인함 OPS-017의 canApprove·canReject · #62).
      *
-     * 역할은 회원의 것이지 하위 업무의 것이 아니므로 **한 번만 읽어 재사용한다** — 카드마다
-     * canDecide를 부르면 판정 자체는 맞지만 회원 역할 조회가 카드 수만큼 따라붙는다 (DB-13).
+     * 권한은 회원의 것이지 하위 업무의 것이 아니므로 **한 번만 읽어 재사용한다** — 카드마다
+     * canDecide를 부르면 판정 자체는 맞지만 권한 조회가 카드 수만큼 따라붙는다 (DB-13).
      * 규칙은 아래 canDecide 한 곳에만 있어 상세(#58)·전이 검사와 갈리지 않는다.
      */
     public Predicate<SubWorkEntity> decidableBy(MemberEntity member) {
-        List<RolePositionCode> positionCodes = member == null ? List.of() : positionCodesOf(member);
-        return subWork -> canDecide(subWork, positionCodes);
+        Set<String> capabilities =
+                member == null ? Set.of() : authorityPolicy.capabilitiesOf(member.getId());
+        return subWork -> canDecide(subWork, capabilities);
     }
 
-    private boolean canDecide(SubWorkEntity subWork, List<RolePositionCode> positionCodes) {
+    private boolean canDecide(SubWorkEntity subWork, Set<String> capabilities) {
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         if (!subWorkType.isApprovalNeeded()) {
             return true;
         }
-        return AuthorizerRole.from(subWorkType.getAuthorizerRoleCode())
-                .filter(required -> positionCodes.stream().anyMatch(required::matches))
+        return AuthorityCode.fromSubWorkApproverCode(subWorkType.getAuthorizerAuthorityCode())
+                .filter(required -> capabilities.contains(required.code()))
                 .isPresent();
     }
 
     /*
-     * 찬반 투표(OPS-015)를 할 수 있는 사람인지. 사전에 운영진 권한을 가진 회원이면 누구나
-     * 통과한다 — 승인자만의 권한이 아니다.
+     * 찬반 투표(OPS-015)를 할 수 있는 사람인지 — APPROVAL_VOTE 권한 보유자다. '운영진 누구나'
+     * 라는 정의서 규칙은 시드가 회장·부회장·총무·국장·국원 역할에 이 권한을 부여하는 것으로
+     * 데이터화됐고(#123), 대상을 넓히고 좁히는 것은 이제 역할별 권한 화면의 몫이다.
      *
      * 승인자 본인과 등록자 본인도 막지 않는다. "운영진은 누구나"라는 규칙에 예외를 두지
      * 않았고, 자가 승인도 차단이 아니라 표시로 다루는 것이 현재 정책이기 때문이다(POL-006).
      */
     public void requireStaff(MemberEntity member) {
-        if (positionCodesOf(member).stream().noneMatch(VOTING_POSITION_CODES::contains)) {
+        if (member == null
+                || !authorityPolicy.hasAuthority(member.getId(), AuthorityCode.APPROVAL_VOTE)) {
             throw new GeneralException(OperationErrorCode.FORBIDDEN);
         }
     }
 
     /*
-     * 회원이 지금 맡고 있는 역할들의 직위 코드. 지정되지 않은 역할(프로젝트장·스터디장·사용자
-     * 정의 역할)은 null이라 빼고 담는다 — 판정 두 곳 모두 '값이 있는 것 중 일치'를 묻는다.
+     * 회원이 보유한 결재 권한만 추린다 — 거절 로그의 '보유' 자리에 회원의 권한 전부를 찍으면
+     * 판정과 무관한 코드가 섞여 원인을 읽기 어렵다. 실패 경로에서만 돈다.
      */
-    private List<RolePositionCode> positionCodesOf(MemberEntity member) {
-        return memberService.findCurrentRoles(member.getId()).stream()
-                .map(MemberRoleResponse::rolePstnCd)
-                .filter(Objects::nonNull)
+    private List<String> heldApproverCodesOf(MemberEntity member) {
+        Set<String> capabilities = authorityPolicy.capabilitiesOf(member.getId());
+        return AuthorityCode.subWorkApprovers().stream()
+                .map(AuthorityCode::code)
+                .filter(capabilities::contains)
                 .toList();
     }
 }

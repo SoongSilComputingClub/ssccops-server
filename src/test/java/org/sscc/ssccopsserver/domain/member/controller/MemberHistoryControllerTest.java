@@ -355,8 +355,7 @@ class MemberHistoryControllerTest {
                                 role.update(
                                         role.getDisplayOrder(),
                                         "홍보부장",
-                                        role.getRoleClassification(),
-                                        role.getPositionCode()));
+                                        role.getRoleClassification()));
         flushAndClear();
 
         mockMvc.perform(histories(MANAGER, targetMemberId).param("type", "ROLE"))

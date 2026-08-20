@@ -22,6 +22,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -30,6 +31,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
@@ -129,6 +131,7 @@ class SubWorkServiceImplTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
+    @Autowired private AuthorityRepository authorityRepository;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -183,7 +186,8 @@ class SubWorkServiceImplTest {
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new AuthorityNameFinder(authorityRepository),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
@@ -255,7 +259,12 @@ class SubWorkServiceImplTest {
                 SubWorkTypeFixture.entityOf(
                         subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
         subWorkType.update(
-                subWorkType.getTypeName(), true, "PRESIDENT", false, null, List.of("새 점검 항목"));
+                subWorkType.getTypeName(),
+                true,
+                "SUB_WORK_APPROVE_PRESIDENT",
+                false,
+                null,
+                List.of("새 점검 항목"));
         entityManager.flush();
         entityManager.clear();
 
@@ -648,15 +657,17 @@ class SubWorkServiceImplTest {
     }
 
     /*
-     * 승인이 필요한 유형은 승인자 판정에 회원의 현재 역할이 필요해 한 번 더 조회한다 (4회).
-     * 정족수 유형이 아니면 회차·찬성 수·내 표는 세지 않는다 — 투표 자체가 없는 유형이다.
+     * 승인이 필요한 유형은 7회다: 기본 3(하위 업무·체크리스트·최근 반려) + 승인자 판정의
+     * 권한 펼침 3(#123 — capabilitiesOf: 유효 역할 1 + 부여된 권한 1 + 트리 간선 1) +
+     * 승인자 결재 권한 표시명 1. 정족수 유형이 아니면 회차·찬성 수·내 표는 세지 않는다 —
+     * 투표 자체가 없는 유형이다.
      */
     @Test
-    void getSubWorkRunsOneMoreQueryForApprovalNeededType() {
+    void getSubWorkRunsSevenQueriesForApprovalNeededType() {
         Long subWorkId =
                 subWorkService.createSubWork(request(approvalNeededTypeId), registrant).subWorkId();
 
-        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(4);
+        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(7);
     }
 
     private long queryCountOfDetail(Long subWorkId) {

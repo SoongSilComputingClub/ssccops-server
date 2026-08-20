@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.operation.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.groups.Tuple.tuple;
 
 import java.util.List;
 
@@ -12,13 +13,16 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.domain.operation.dto.AuthorizerAuthorityResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeActivationRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeSaveRequest;
-import org.sscc.ssccopsserver.domain.operation.entity.AuthorizerRole;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
+import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
@@ -35,6 +39,7 @@ import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 class SubWorkTypeServiceImplTest {
 
     @Autowired private SubWorkTypeRepository subWorkTypeRepository;
+    @Autowired private AuthorityRepository authorityRepository;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkTypeService subWorkTypeService;
@@ -48,7 +53,9 @@ class SubWorkTypeServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        subWorkTypeService = new SubWorkTypeServiceImpl(subWorkTypeRepository);
+        subWorkTypeService =
+                new SubWorkTypeServiceImpl(
+                        subWorkTypeRepository, new AuthorityNameFinder(authorityRepository));
         expenditureTypeId =
                 SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.EXPENDITURE);
         approvalFreeTypeId =
@@ -62,14 +69,15 @@ class SubWorkTypeServiceImplTest {
                         request(
                                 "문서제출",
                                 true,
-                                AuthorizerRole.PRESIDENT,
+                                "SUB_WORK_APPROVE_PRESIDENT",
                                 false,
                                 null,
                                 List.of("제출처 확인", "사본 보관")));
 
         assertThat(response.useYn()).isTrue();
         assertThat(response.typeName()).isEqualTo("문서제출");
-        assertThat(response.authorizerRoleCode()).isEqualTo("PRESIDENT");
+        assertThat(response.authorizerAuthorityCode()).isEqualTo("SUB_WORK_APPROVE_PRESIDENT");
+        assertThat(response.authorizerAuthorityName()).isEqualTo("회장 결재");
         assertThat(response.completionCheckArticles()).containsExactly("제출처 확인", "사본 보관");
 
         // 기준 금액·지출 여부는 이 API의 범위 밖이라 화면에서 받지 않는다
@@ -86,10 +94,10 @@ class SubWorkTypeServiceImplTest {
     void createSubWorkTypeClearsApprovalPolicyWhenApprovalNotNeeded() {
         SubWorkTypeResponse response =
                 subWorkTypeService.createSubWorkType(
-                        request("스터디운영2", false, AuthorizerRole.DIRECTOR, true, 3, List.of()));
+                        request("스터디운영2", false, "SUB_WORK_APPROVE_DIRECTOR", true, 3, List.of()));
 
         assertThat(response.approvalNeeded()).isFalse();
-        assertThat(response.authorizerRoleCode()).isNull();
+        assertThat(response.authorizerAuthorityCode()).isNull();
         assertThat(response.minAgreeCountNeeded()).isFalse();
         assertThat(response.minAgreeCount()).isNull();
     }
@@ -105,6 +113,44 @@ class SubWorkTypeServiceImplTest {
                         "errorCode", OperationErrorCode.INVALID_APPROVAL_POLICY);
     }
 
+    /*
+     * 결재 권한 목록 밖의 코드는 거절한다 (#123). 직위 enum으로 받던 시절에는 역직렬화가
+     * 걸렀던 검증이라 응답 코드도 그때와 같다 — 임의 권한(WORK_MANAGE 등)을 승인자로
+     * 지정하는 것도 같은 이유로 막힌다.
+     */
+    @Test
+    void createSubWorkTypeRejectsCodeOutsideApproverVocabulary() {
+        assertThatThrownBy(
+                        () ->
+                                subWorkTypeService.createSubWorkType(
+                                        request(
+                                                "임의권한",
+                                                true,
+                                                "WORK_MANAGE",
+                                                false,
+                                                null,
+                                                List.of())))
+                .isInstanceOf(GeneralException.class)
+                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.INVALID_CODE_VALUE);
+    }
+
+    /*
+     * 유형 폼의 승인자 선택지 (#123). 코드 어휘는 고정 4종이고 표시명은 authrt_nm(운영 데이터)
+     * 에서 온다 — 웹이 코드 → 이름 사전을 하드코딩하던 자리(AUTZR_ROLE_NM)를 대신한다.
+     */
+    @Test
+    void authorizerAuthoritiesListTheFourApproverCodesWithSeededNames() {
+        assertThat(subWorkTypeService.getAuthorizerAuthorities())
+                .extracting(
+                        AuthorizerAuthorityResponse::authrtCd,
+                        AuthorizerAuthorityResponse::authrtNm)
+                .containsExactly(
+                        tuple("SUB_WORK_APPROVE_PRESIDENT", "회장 결재"),
+                        tuple("SUB_WORK_APPROVE_VICE_PRESIDENT", "부회장 결재"),
+                        tuple("SUB_WORK_APPROVE_TREASURER", "총무 결재"),
+                        tuple("SUB_WORK_APPROVE_DIRECTOR", "국장 결재"));
+    }
+
     @Test
     void createSubWorkTypeRejectsQuorumWithoutCount() {
         assertThatThrownBy(
@@ -113,7 +159,7 @@ class SubWorkTypeServiceImplTest {
                                         request(
                                                 "정족수인원없음",
                                                 true,
-                                                AuthorizerRole.TREASURER,
+                                                "SUB_WORK_APPROVE_TREASURER",
                                                 true,
                                                 null,
                                                 List.of())))
@@ -130,7 +176,7 @@ class SubWorkTypeServiceImplTest {
     void createSubWorkTypeAcceptsQuorumOfOne() {
         SubWorkTypeResponse response =
                 subWorkTypeService.createSubWorkType(
-                        request("정족수1", true, AuthorizerRole.TREASURER, true, 1, List.of()));
+                        request("정족수1", true, "SUB_WORK_APPROVE_TREASURER", true, 1, List.of()));
 
         assertThat(response.minAgreeCountNeeded()).isTrue();
         assertThat(response.minAgreeCount()).isEqualTo(1);
@@ -144,7 +190,7 @@ class SubWorkTypeServiceImplTest {
                                         request(
                                                 "예산지출",
                                                 true,
-                                                AuthorizerRole.TREASURER,
+                                                "SUB_WORK_APPROVE_TREASURER",
                                                 false,
                                                 null,
                                                 List.of())))
@@ -187,7 +233,13 @@ class SubWorkTypeServiceImplTest {
 
         subWorkTypeService.updateSubWorkType(
                 expenditureTypeId,
-                request("예산지출", true, AuthorizerRole.TREASURER, false, null, List.of("영수증 첨부")));
+                request(
+                        "예산지출",
+                        true,
+                        "SUB_WORK_APPROVE_TREASURER",
+                        false,
+                        null,
+                        List.of("영수증 첨부")));
 
         SubWorkTypeEntity saved = entity(expenditureTypeId);
         assertThat(saved.isExpenditure()).isTrue();
@@ -260,14 +312,14 @@ class SubWorkTypeServiceImplTest {
     private SubWorkTypeSaveRequest request(
             String typeName,
             boolean approvalNeeded,
-            AuthorizerRole authorizerRole,
+            String authorizerAuthorityCode,
             boolean minAgreeCountNeeded,
             Integer minAgreeCount,
             List<String> completionCheckArticles) {
         return new SubWorkTypeSaveRequest(
                 typeName,
                 approvalNeeded,
-                authorizerRole,
+                authorizerAuthorityCode,
                 minAgreeCountNeeded,
                 minAgreeCount,
                 completionCheckArticles);

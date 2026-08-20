@@ -147,11 +147,15 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
 -- 부여한 것이지만, 자손을 가졌다고 상위가 생기지는 않는다.
 --
 --   SUPER 최고 관리자
---   └── EXECUTIVE 임원
---       ├── OPERATOR 운영자
---       │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW · MEETING_MANAGE
---       │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
---       ├── SUB_WORK_TYPE_MANAGE · FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
+--   ├── EXECUTIVE 임원
+--   │   ├── OPERATOR 운영자
+--   │   │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW · MEETING_MANAGE
+--   │   │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
+--   │   ├── FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
+--   ├── SUB_WORK_TYPE_MANAGE (#101에서 EXECUTIVE 밑에서 분리)
+--   └── APPROVAL 결재·투표 (#123 그룹)
+--       ├── APPROVAL_VOTE · SUB_WORK_APPROVE_PRESIDENT · SUB_WORK_APPROVE_VICE_PRESIDENT
+--       └── SUB_WORK_APPROVE_TREASURER · SUB_WORK_APPROVE_DIRECTOR
 --
 -- indct_seqno는 형제들 사이의 표시 순번이다(각 부모 아래에서 1부터). 서열이 아니다 —
 -- 인가는 순번이 아니라 트리의 부모-자식 관계로만 판정한다.
@@ -238,6 +242,43 @@ INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, in
 SELECT 'FORM_STATUS_CHANGE', '폼 접수 상태 변경', 'FORM_MANAGE', '폼의 접수 시작·마감 전이.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_STATUS_CHANGE');
 
+-- #123: 결재·투표 자격. 직위 코드(role.role_pstn_cd)로 갈리던 승인·투표 자격을 권한으로 옮겼다.
+--
+-- APPROVAL은 다섯을 묶는 **그룹 노드**다. sys_yn = FALSE인 것은 코드가 이 코드를 참조하지
+-- 않기 때문이다(sys_yn의 뜻은 '코드가 참조하는 권한') — 화면에서 만든 사용자 정의 묶음과 같은
+-- 취급이라 이름·트리 위치를 바꾸거나 자식을 옮겨 해체해도 판정은 흔들리지 않는다. 그룹이
+-- SUPER 직속이므로 최고관리자는 결재·투표 자격을 자동 보유한다 — #118의 '시스템 관리와 조직
+-- 결재를 섞지 않는다'는 결정은 유지하지 않는다(ssccops#108 확정). 분리가 다시 필요하면 역할
+-- 구성으로 해결한다.
+--
+-- 나머지 다섯은 코드가 참조하는 판정 재료라 sys_yn = TRUE다. APPROVAL_VOTE는 찬반 투표
+-- (OPS-015 — requireStaff), SUB_WORK_APPROVE_*는 유형(sub_work_type.autzr_authrt_cd)이
+-- 지정하는 승인자 자격이다. 부서별 국장(홍보국장 …) 역할에는 역할별 권한 화면에서
+-- SUB_WORK_APPROVE_DIRECTOR를 부여한다 — 직위 코드 시절의 'DIRECTOR 지정'을 대신하는 경로다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'APPROVAL', '결재·투표', 'SUPER', '하위 업무 승인·반려와 찬반 투표 자격 묶음.', FALSE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'APPROVAL');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'APPROVAL_VOTE', '찬반 투표', 'APPROVAL', '정족수 유형 하위 업무의 찬반 투표 참여.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'APPROVAL_VOTE');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_APPROVE_PRESIDENT', '회장 결재', 'APPROVAL', '승인자가 회장 결재인 하위 업무 유형의 최종 승인·반려.', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_APPROVE_PRESIDENT');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_APPROVE_VICE_PRESIDENT', '부회장 결재', 'APPROVAL', '승인자가 부회장 결재인 하위 업무 유형의 최종 승인·반려.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_APPROVE_VICE_PRESIDENT');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_APPROVE_TREASURER', '총무 결재', 'APPROVAL', '승인자가 총무 결재인 하위 업무 유형의 최종 승인·반려.', TRUE, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_APPROVE_TREASURER');
+
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_APPROVE_DIRECTOR', '국장 결재', 'APPROVAL', '승인자가 국장 결재인 하위 업무 유형의 최종 승인·반려.', TRUE, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_APPROVE_DIRECTOR');
+
 -- 이미 시드된 DB(dev·prod)에는 EXECUTIVE가 최상위(up_authrt_cd IS NULL)로 들어가 있다.
 -- 위 INSERT는 건너뛰므로 여기서 SUPER 아래로 옮긴다 — sub_work_type.autzr_role_cd와 같은
 -- 가드 UPDATE다. IS NULL 조건이 멱등성과 "화면에서 손댄 값은 건드리지 않는다"를 함께 지킨다:
@@ -319,6 +360,49 @@ FROM role r
 WHERE r.role_nm = '국원'
   AND NOT EXISTS (
     SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'MEETING_AGENDA_WRITE');
+
+-- #123: 찬반 투표(OPS-015 '사전에 운영진 권한을 가진 운영자 누구나')의 데이터화. 직위 코드
+-- 시절의 VOTING_POSITION_CODES(회장·부회장·총무·국장·국원)를 역할↔권한 매핑으로 옮겼다.
+-- 프로젝트장·스터디장은 여기 이름이 없어 그대로 제외된다 — 활동 단위의 장이지 운영 의사결정
+-- 주체가 아니다. 시드는 초기값일 뿐이며(BR-M30) 투표 자격을 넓히고 좁히는 것은 이제 배포가
+-- 아니라 역할별 권한 화면의 조작이다.
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'APPROVAL_VOTE', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm IN ('회장', '부회장', '총무', '국장', '국원')
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'APPROVAL_VOTE');
+
+-- #123: 결재 권한. 직위 코드 시절의 role_pstn_cd 시드(회장 → PRESIDENT …)와 같은 대응이다.
+-- 직위마다 결재 권한이 따로인 것은 유형이 승인자를 직위 단위로 지정하기 때문이다 — 하나로
+-- 합치면 '총무 승인' 유형을 국장이 승인하게 된다.
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'SUB_WORK_APPROVE_PRESIDENT', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '회장'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUB_WORK_APPROVE_PRESIDENT');
+
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'SUB_WORK_APPROVE_VICE_PRESIDENT', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '부회장'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUB_WORK_APPROVE_VICE_PRESIDENT');
+
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'SUB_WORK_APPROVE_TREASURER', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '총무'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUB_WORK_APPROVE_TREASURER');
+
+INSERT INTO role_authrt_rel (role_id, authrt_cd, crt_dt)
+SELECT r.role_id, 'SUB_WORK_APPROVE_DIRECTOR', CURRENT_TIMESTAMP
+FROM role r
+WHERE r.role_nm = '국장'
+  AND NOT EXISTS (
+    SELECT 1 FROM role_authrt_rel x WHERE x.role_id = r.role_id AND x.authrt_cd = 'SUB_WORK_APPROVE_DIRECTOR');
 
 -- 하위 업무 유형(sub_work_type). 운영 등록 화면의 업무 유형 4종과 1:1로 대응한다.
 -- 유형은 코드가 아니라 기준 데이터라서 여기서 넣는다 (REQ-010 · POL-005 — 승인 정책의 데이터화).

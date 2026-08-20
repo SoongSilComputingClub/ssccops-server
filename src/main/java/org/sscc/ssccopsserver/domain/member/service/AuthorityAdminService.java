@@ -1,6 +1,8 @@
 package org.sscc.ssccopsserver.domain.member.service;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 import org.sscc.ssccopsserver.domain.member.dto.AuthorityCreateRequest;
 import org.sscc.ssccopsserver.domain.member.dto.AuthorityResponse;
@@ -39,4 +41,11 @@ public interface AuthorityAdminService {
      */
     RoleAuthorityResponse replaceRoleAuthorities(
             Long roleId, List<String> authrtCds, Long requesterMemberId);
+
+    /*
+     * 권한 코드 → 표시명(authrt_nm) (#123). 운영 도메인이 승인자 권한 이름을 응답에 실을 때
+     * 쓴다 — 다른 도메인의 Repository를 직접 주입하지 않는 규칙(AR-07)의 진입점이다.
+     * 없는 코드는 결과에서 빠진다.
+     */
+    Map<String, String> authorityNamesOf(Collection<String> authrtCds);
 }

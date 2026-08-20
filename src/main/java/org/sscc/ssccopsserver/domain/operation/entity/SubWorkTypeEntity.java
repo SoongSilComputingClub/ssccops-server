@@ -19,7 +19,9 @@ import jakarta.persistence.UniqueConstraint;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.AccessLevel;
@@ -67,15 +69,18 @@ public class SubWorkTypeEntity {
     private boolean approvalNeeded;
 
     /*
-     * 승인 주체 역할 코드(PRESIDENT/VICE_PRESIDENT/TREASURER/DIRECTOR). 이 역할을 가진
-     * 사람만 이 유형의 하위 업무를 최종 승인(TR-03 승인·완료)할 수 있다.
+     * 승인자 결재 권한 코드(authrt.authrt_cd — AuthorityCode.subWorkApprovers 중 하나, #123).
+     * 이 권한을 가진 사람만 이 유형의 하위 업무를 최종 승인(TR-03 승인·완료)할 수 있다.
+     *
+     * 직위 코드(autzr_role_cd → RolePositionCode)를 참조하던 것을 권한 시스템으로 옮겼다 —
+     * 누가 결재 권한을 갖는지는 이제 역할↔권한 매핑(role_authrt_rel)이 정하고, 판정은
+     * ApprovalAuthorityPolicy가 AuthorityPolicy의 펼침으로 한다.
      *
      * 승인이 필요 없는 유형(aprv_need_yn = FALSE)에서는 NULL이다 — 승인 주체만 있고 승인은
-     * 거치지 않는 모순된 상태를 만들지 않기 위해서다. 실제 승인자 판정은 승인 처리(OPS-014)에서
-     * 붙는다. 아래 approveAndComplete 주석대로 지금은 아무도 이 값을 강제하지 않는다.
+     * 거치지 않는 모순된 상태를 만들지 않기 위해서다.
      */
-    @Column(name = "autzr_role_cd", length = 20)
-    private String authorizerRoleCode;
+    @Column(name = "autzr_authrt_cd", length = 50)
+    private String authorizerAuthorityCode;
 
     /*
      * 의사결정 방식. FALSE면 단독 — 승인자가 승인 한 번으로 최종 승인을 끝낸다.
@@ -137,7 +142,7 @@ public class SubWorkTypeEntity {
     public static SubWorkTypeEntity create(
             String typeName,
             boolean approvalNeeded,
-            String authorizerRoleCode,
+            String authorizerAuthorityCode,
             boolean minAgreeCountNeeded,
             Integer minAgreeCount,
             List<String> completionCheckArticles) {
@@ -147,7 +152,7 @@ public class SubWorkTypeEntity {
         type.active = true;
         type.apply(
                 approvalNeeded,
-                authorizerRoleCode,
+                authorizerAuthorityCode,
                 minAgreeCountNeeded,
                 minAgreeCount,
                 completionCheckArticles);
@@ -167,14 +172,14 @@ public class SubWorkTypeEntity {
     public void update(
             String typeName,
             boolean approvalNeeded,
-            String authorizerRoleCode,
+            String authorizerAuthorityCode,
             boolean minAgreeCountNeeded,
             Integer minAgreeCount,
             List<String> completionCheckArticles) {
         this.typeName = typeName;
         apply(
                 approvalNeeded,
-                authorizerRoleCode,
+                authorizerAuthorityCode,
                 minAgreeCountNeeded,
                 minAgreeCount,
                 completionCheckArticles);
@@ -202,7 +207,7 @@ public class SubWorkTypeEntity {
      */
     private void apply(
             boolean approvalNeeded,
-            String authorizerRoleCode,
+            String authorizerAuthorityCode,
             boolean minAgreeCountNeeded,
             Integer minAgreeCount,
             List<String> completionCheckArticles) {
@@ -210,15 +215,22 @@ public class SubWorkTypeEntity {
         this.approvalNeeded = approvalNeeded;
 
         if (!approvalNeeded) {
-            this.authorizerRoleCode = null;
+            this.authorizerAuthorityCode = null;
             this.minAgreeCountNeeded = false;
             this.minAgreeCount = null;
             return;
         }
-        if (authorizerRoleCode == null || authorizerRoleCode.isBlank()) {
+        if (authorizerAuthorityCode == null || authorizerAuthorityCode.isBlank()) {
             throw new GeneralException(OperationErrorCode.INVALID_APPROVAL_POLICY);
         }
-        this.authorizerRoleCode = authorizerRoleCode;
+        /*
+         * 결재 권한 목록 밖의 코드는 거절한다 (#123). 직위 enum(AuthorizerRole)으로 받던
+         * 시절에는 역직렬화가 걸렀던 검증이라 같은 코드(INVALID_CODE_VALUE)로 응답한다.
+         */
+        if (AuthorityCode.fromSubWorkApproverCode(authorizerAuthorityCode).isEmpty()) {
+            throw new GeneralException(CommonErrorCode.INVALID_CODE_VALUE);
+        }
+        this.authorizerAuthorityCode = authorizerAuthorityCode;
         this.minAgreeCountNeeded = minAgreeCountNeeded;
 
         if (!minAgreeCountNeeded) {

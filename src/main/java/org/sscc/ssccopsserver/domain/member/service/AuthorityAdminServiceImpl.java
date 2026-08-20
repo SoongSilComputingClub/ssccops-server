@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.member.service;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -307,19 +306,6 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
      * 시스템 권한과 사용자 정의 권한의 코드를 나누는 것은 막다른 길인지 아닌지가 다르기 때문이다
      * (MemberErrorCode 주석 참고).
      */
-    /*
-     * 권한 코드 → 표시명 (#123). 판정이 아니라 표시용 조회라 AuthorityPolicy가 아니라 여기에
-     * 둔다 — 저 클래스는 "무엇을 할 수 있는가"만 알아야 한다(BR-M28).
-     */
-    @Override
-    public Map<String, String> authorityNamesOf(Collection<String> authrtCds) {
-        if (authrtCds == null || authrtCds.isEmpty()) {
-            return Map.of();
-        }
-        return authorityRepository.findAllById(authrtCds).stream()
-                .collect(Collectors.toMap(AuthorityEntity::getCode, AuthorityEntity::getName));
-    }
-
     private static void rejectCodeChange(AuthorityEntity authority, String requestedCode) {
         String code = trimToNull(requestedCode);
         if (code == null || code.equals(authority.getCode())) {

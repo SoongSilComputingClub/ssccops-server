@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
@@ -72,10 +73,13 @@ class MemberSignupBootstrapTest {
     /*
      * capabilities에 권한 코드 **전부**가 담겨야 한다.
      *
-     * SUPER 하나만 부여했는데 14종이 전부 나오는 것이 이 설계의 핵심이다 — AuthorityPolicy에
+     * SUPER 하나만 부여했는데 전 코드가 나오는 것이 이 설계의 핵심이다 — AuthorityPolicy에
      * SUPER를 특별 취급하는 분기는 없고, 트리에서 SUPER가 EXECUTIVE의 부모라는 사실 하나가
      * 나머지를 전부 끌고 온다(BR-M35). 코드를 하나 더 추가하고 트리에 매달지 않으면 여기서
      * 잡힌다.
+     *
+     * enum 밖의 'APPROVAL'이 하나 더 실리는 것은 시드가 만든 결재·투표 **그룹 노드**라서다
+     * (#123) — 트리의 자손이면 enum 여부와 무관하게 펼침에 담긴다(사용자 정의 묶음과 같다).
      */
     @Test
     void bootstrapOpensEveryAuthorityCodeThroughTheTree() throws Exception {
@@ -85,8 +89,12 @@ class MemberSignupBootstrapTest {
                         jsonPath("$.data.capabilities")
                                 .value(
                                         Matchers.containsInAnyOrder(
-                                                Arrays.stream(AuthorityCode.values())
-                                                        .map(AuthorityCode::code)
+                                                Stream.concat(
+                                                                Arrays.stream(
+                                                                                AuthorityCode
+                                                                                        .values())
+                                                                        .map(AuthorityCode::code),
+                                                                Stream.of("APPROVAL"))
                                                         .toArray())));
     }
 

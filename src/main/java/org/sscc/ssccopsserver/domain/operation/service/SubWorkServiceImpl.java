@@ -14,6 +14,7 @@ import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalQuorumResponse;
@@ -78,6 +79,9 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     private final SubWorkRejectionRepository subWorkRejectionRepository;
     private final MemberService memberService;
+
+    // 승인자 결재 권한의 표시명(authrt_nm)을 상세 응답에 싣는다 (#123, AR-07 경유)
+    private final AuthorityNameFinder authorityNameFinder;
 
     // 승인자·투표자 판정은 한 곳에만 둔다 (권한 인가 #9와 층이 다르다 — 그쪽 주석 참고)
     private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
@@ -259,7 +263,20 @@ public class SubWorkServiceImpl implements SubWorkService {
                         subWorkRejectionRepository
                                 .findFirstBySubWorkOrderByRejectedAtDescIdDesc(subWork)
                                 .orElse(null)),
-                canDecideOn(subWork, viewer));
+                canDecideOn(subWork, viewer),
+                authorizerAuthorityNameOf(subWorkType));
+    }
+
+    /*
+     * 승인자 결재 권한의 표시명 (#123). 권한 이름은 화면에서 바뀌는 운영 데이터라 웹이
+     * 코드 → 이름 사전을 가질 수 없어 서버가 실어 내린다. 승인이 필요 없는 유형은 NULL이다.
+     */
+    private String authorizerAuthorityNameOf(SubWorkTypeEntity subWorkType) {
+        String code = subWorkType.getAuthorizerAuthorityCode();
+        if (code == null) {
+            return null;
+        }
+        return authorityNameFinder.namesOf(List.of(code)).get(code);
     }
 
     /*

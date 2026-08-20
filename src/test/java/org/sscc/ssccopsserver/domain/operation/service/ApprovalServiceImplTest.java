@@ -18,7 +18,9 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -27,6 +29,8 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
@@ -104,6 +108,8 @@ class ApprovalServiceImplTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
+    @Autowired private AuthorityRepository authorityRepository;
+    @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -153,7 +159,8 @@ class ApprovalServiceImplTest {
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new AuthorityNameFinder(authorityRepository),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
@@ -165,19 +172,28 @@ class ApprovalServiceImplTest {
                         subWorkStatusHistoryRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
+                        new AuthorityNameFinder(authorityRepository),
                         FIXED_CLOCK);
 
         registrant = saveMember("20200001", "김도현", null);
         president = saveMember("20200002", "백승우", MemberRoleFixture.PRESIDENT);
         staff = saveMember("20200003", "박지훈", MemberRoleFixture.PLANNING_STAFF);
+        // 기획국원은 시드에 없는 역할이라 투표 자격(APPROVAL_VOTE)을 직접 부여한다 (#123)
+        MemberRoleFixture.grantAuthorities(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                MemberRoleFixture.PLANNING_STAFF,
+                AuthorityCode.APPROVAL_VOTE);
 
         SubWorkTypeEntity quorumType =
                 SubWorkTypeFixture.entityOf(subWorkTypeRepository, SubWorkTypeFixture.ANNOUNCEMENT);
         quorumType.update(
                 quorumType.getTypeName(),
                 true,
-                "PRESIDENT",
+                "SUB_WORK_APPROVE_PRESIDENT",
                 true,
                 REQUIRED_AGREE_COUNT,
                 List.of("공지 문안 검수", "게시 채널 확정"));
@@ -275,7 +291,8 @@ class ApprovalServiceImplTest {
         assertThat(card.title()).isEqualTo("9월 신입 모집 포스터");
         assertThat(card.approvalStatus()).isEqualTo(ApprovalStatus.PENDING);
         assertThat(card.subWorkTypeName()).isEqualTo(SubWorkTypeFixture.ANNOUNCEMENT);
-        assertThat(card.authorizerRoleCode()).isEqualTo("PRESIDENT");
+        assertThat(card.authorizerAuthorityCode()).isEqualTo("SUB_WORK_APPROVE_PRESIDENT");
+        assertThat(card.authorizerAuthorityName()).isEqualTo("회장 결재");
         assertThat(card.registrantName()).isEqualTo("김도현");
         // 등록 일시가 아니라 검토요청 시각이다
         assertThat(card.requestedAt()).isEqualTo(NOW);
@@ -342,7 +359,7 @@ class ApprovalServiceImplTest {
     }
 
     /*
-     * 카드가 승인·반려 버튼을 그릴지 정하는 값 (#62). 유형이 지정한 승인자 역할(PRESIDENT)을
+     * 카드가 승인·반려 버튼을 그릴지 정하는 값 (#62). 유형이 지정한 결재 권한(SUB_WORK_APPROVE_PRESIDENT)을
      * 가진 사람만 true다 — 없으면 화면은 운영진 전원에게 버튼을 그리고, 승인자가 아닌 사람은
      * 누른 뒤에야 403을 본다.
      */
@@ -383,7 +400,7 @@ class ApprovalServiceImplTest {
      * 드러나지 않는다.
      */
     @Test
-    void searchRunsNineQueriesRegardlessOfRowCount() {
+    void searchRunsTwelveQueriesRegardlessOfRowCount() {
         for (int index = 0; index < 5; index++) {
             /*
              * 카드마다 요청자가 다르고, 그 요청자가 담당자와도 다르다. 등록자와 담당자가 같으면
@@ -414,7 +431,7 @@ class ApprovalServiceImplTest {
         assertThat(response.approvals())
                 .extracting(ApprovalInboxItemResponse::latestRejectionReason)
                 .doesNotContainNull();
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(9);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(12);
     }
 
     /*

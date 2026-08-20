@@ -412,9 +412,10 @@ WHERE r.role_nm = '국장'
 -- 멱등 판정은 유형명으로 한다(uk_sub_work_type_name이 있어 이름이 곧 키다).
 -- 완료 점검 항목(cmptn_chck_artcl_cn)은 한 줄에 하나씩 적고, 하위 업무 등록 시 그대로 체크리스트가 된다.
 --
--- 승인자 역할(autzr_role_cd)은 웹 AUTZR_ROLE_NM 어휘를 쓴다. 배정 근거는 완료 점검 항목이다 —
--- 예산지출은 '회계 장부 반영'이 걸려 있어 총무(TREASURER), 대외공지는 '대외 명의 사용 확인'이
--- 걸려 있어 대표 명의를 가진 회장(PRESIDENT)이 승인 주체다.
+-- 승인자(autzr_authrt_cd)는 결재 권한 코드(AuthorityCode.subWorkApprovers)를 가리킨다(#123).
+-- 배정 근거는 완료 점검 항목이다 — 예산지출은 '회계 장부 반영'이 걸려 있어 총무 결재
+-- (SUB_WORK_APPROVE_TREASURER), 대외공지는 '대외 명의 사용 확인'이 걸려 있어 대표 명의를 가진
+-- 회장 결재(SUB_WORK_APPROVE_PRESIDENT)가 승인 주체다.
 -- 승인이 필요 없는 유형(aprv_need_yn = FALSE)은 승인자를 두지 않는다 — 승인 주체가 있는데
 -- 승인을 거치지 않는다는 모순된 상태를 데이터로 만들지 않기 위해서다. 웹도 같은 규칙으로 저장한다.
 --
@@ -424,18 +425,18 @@ WHERE r.role_nm = '국장'
 -- use_yn도 마찬가지다. prod 수동 DDL에는 DEFAULT TRUE를 걸지만, local/dev/test는 엔티티에서
 -- 생성한 스키마라 기본값이 없다 — 프로필에 따라 갈리지 않도록 시드가 값을 직접 적는다.
 INSERT INTO sub_work_type (
-    type_nm, aprv_need_yn, autzr_role_cd,
+    type_nm, aprv_need_yn, autzr_authrt_cd,
     min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn, use_yn, crt_dt, mdfcn_dt)
-SELECT '예산지출', TRUE, 'TREASURER', FALSE, TRUE, '견적서·영수증 확보
+SELECT '예산지출', TRUE, 'SUB_WORK_APPROVE_TREASURER', FALSE, TRUE, '견적서·영수증 확보
 예산 항목·잔액 확인
 지출 승인 완료
 회계 장부 반영', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '예산지출');
 
 INSERT INTO sub_work_type (
-    type_nm, aprv_need_yn, autzr_role_cd,
+    type_nm, aprv_need_yn, autzr_authrt_cd,
     min_need_agre_cnt_yn, expnd_yn, cmptn_chck_artcl_cn, use_yn, crt_dt, mdfcn_dt)
-SELECT '대외공지', TRUE, 'PRESIDENT', FALSE, FALSE, '공지 문안 검수
+SELECT '대외공지', TRUE, 'SUB_WORK_APPROVE_PRESIDENT', FALSE, FALSE, '공지 문안 검수
 게시 채널·일정 확정
 대외 명의 사용 확인
 게시 결과 링크 첨부', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -459,14 +460,9 @@ SELECT '스터디운영', FALSE, FALSE, FALSE, '커리큘럼·일정 공유
 운영 결과 정리', TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '스터디운영');
 
--- 위 INSERT는 이미 시드된 DB(dev/prod)에서는 건너뛰므로, 비워 둔 채 들어가 있던 승인자 역할을
--- 여기서 채운다. autzr_role_cd IS NULL 조건이 멱등성과 함께 "화면에서 지정한 값은 건드리지 않는다"를
--- 같이 보장한다.
-UPDATE sub_work_type SET autzr_role_cd = 'TREASURER'
-WHERE type_nm = '예산지출' AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
-
-UPDATE sub_work_type SET autzr_role_cd = 'PRESIDENT'
-WHERE type_nm = '대외공지' AND aprv_need_yn = TRUE AND autzr_role_cd IS NULL;
+-- 직위 코드 시절의 승인자 백필 UPDATE(autzr_role_cd)는 #123에서 컬럼과 함께 걷어냈다.
+-- prod(main)는 아직 배포되지 않았고 dev는 DB를 통째로 재생성하므로(ddl-auto: update가 컬럼
+-- 삭제를 반영하지 않는다), 이미 시드된 DB를 위한 값 이전 경로를 남기지 않는다 (ssccops#108).
 
 -- 폼 라벨(form_lbl)은 일부러 시드하지 않는다 (#31에서 결정).
 -- 후보로 거론된 어휘(신규모집·회원연장·행사·스터디·연도·학기) 중 연도·학기는 해마다 값이

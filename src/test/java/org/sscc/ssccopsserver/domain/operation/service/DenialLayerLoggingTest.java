@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.aspectj.lang.JoinPoint;
@@ -20,12 +21,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.TestingAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
-import org.sscc.ssccopsserver.domain.member.code.RolePositionCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
-import org.sscc.ssccopsserver.domain.member.dto.MemberRoleResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
-import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
@@ -47,9 +45,9 @@ import org.sscc.ssccopsserver.support.LogCapture;
  *
  * 이 테스트가 못 박는 것은 두 가지다.
  *  - 세 층이 각자 다른 로거로 서로 구별되는 문구를 남기고, 판정에 쓴 값(요구 권한 · 담당자 ·
- *    승인자 역할)이 그 안에 들어 있다.
+ *    승인자 권한)이 그 안에 들어 있다.
  *  - **통과 경로에는 아무것도 남지 않고 조회도 늘지 않는다.** 1·2층의 로그가 실패 경로에서만
- *    도는지를 mock 호출로 확인한다 — 3층이 roleNamesOf를 실패 경로에서만 부르는 이유와 같다.
+ *    도는지를 mock 호출로 확인한다 — 3층이 보유 결재 권한 조회를 실패 경로에서만 하는 이유와 같다.
  */
 class DenialLayerLoggingTest {
 
@@ -59,13 +57,11 @@ class DenialLayerLoggingTest {
     private static final Long SUB_WORK_TYPE_ID = 5L;
 
     private AuthorityPolicy authorityPolicy;
-    private MemberService memberService;
     private MemberEntity performer;
 
     @BeforeEach
     void setUp() {
         authorityPolicy = mock(AuthorityPolicy.class);
-        memberService = mock(MemberService.class);
         performer = mock(MemberEntity.class);
         given(performer.getId()).willReturn(MEMBER_ID);
     }
@@ -194,10 +190,9 @@ class DenialLayerLoggingTest {
         SubWorkEntity ownershipTarget = subWorkOwnedBy(OWNER_ID);
         given(authorityPolicy.hasAuthority(MEMBER_ID, AuthorityCode.WORK_MANAGE)).willReturn(false);
 
-        SubWorkEntity approvalTarget = subWorkNeedingApprovalBy("PRESIDENT");
-        given(memberService.findCurrentRoles(MEMBER_ID))
-                .willReturn(
-                        List.of(new MemberRoleResponse(1L, "기획국원", RolePositionCode.STAFF, true)));
+        SubWorkEntity approvalTarget = subWorkNeedingApprovalBy("SUB_WORK_APPROVE_PRESIDENT");
+        // 투표 자격만 있고 결재 권한은 없는 회원 — 3층 거절 로그의 '보유'가 비는 경우다 (#123)
+        given(authorityPolicy.capabilitiesOf(MEMBER_ID)).willReturn(Set.of("APPROVAL_VOTE"));
 
         try (LogCapture ownership = LogCapture.of(SubWorkOwnershipPolicy.class);
                 LogCapture approval = LogCapture.of(ApprovalAuthorityPolicy.class)) {
@@ -209,12 +204,12 @@ class DenialLayerLoggingTest {
                     .isInstanceOf(GeneralException.class);
             assertThatThrownBy(
                             () ->
-                                    new ApprovalAuthorityPolicy(memberService)
+                                    new ApprovalAuthorityPolicy(authorityPolicy)
                                             .requireApprover(approvalTarget, performer))
                     .isInstanceOf(GeneralException.class);
 
             assertThat(ownership.warnMessages()).singleElement().asString().contains("picId=");
-            assertThat(approval.warnMessages()).singleElement().asString().contains("승인자 역할");
+            assertThat(approval.warnMessages()).singleElement().asString().contains("승인자 권한");
         }
     }
 
@@ -251,10 +246,10 @@ class DenialLayerLoggingTest {
         return subWork;
     }
 
-    private static SubWorkEntity subWorkNeedingApprovalBy(String authorizerRoleCode) {
+    private static SubWorkEntity subWorkNeedingApprovalBy(String authorizerAuthorityCode) {
         SubWorkTypeEntity subWorkType = mock(SubWorkTypeEntity.class);
         given(subWorkType.isApprovalNeeded()).willReturn(true);
-        given(subWorkType.getAuthorizerRoleCode()).willReturn(authorizerRoleCode);
+        given(subWorkType.getAuthorizerAuthorityCode()).willReturn(authorizerAuthorityCode);
         given(subWorkType.getId()).willReturn(SUB_WORK_TYPE_ID);
 
         SubWorkEntity subWork = mock(SubWorkEntity.class);

@@ -42,7 +42,8 @@ public record ApprovalInboxItemResponse(
         String title,
         ApprovalStatus approvalStatus,
         String subWorkTypeName,
-        String authorizerRoleCode,
+        String authorizerAuthorityCode,
+        String authorizerAuthorityName,
         String registrantName,
         OffsetDateTime requestedAt,
         OffsetDateTime dueAt,
@@ -63,14 +64,16 @@ public record ApprovalInboxItemResponse(
             long totalItems,
             VoteChoice myVote,
             String latestRejectionReason,
-            boolean canDecide) {
+            boolean canDecide,
+            String authorizerAuthorityName) {
         MemberEntity registrant = subWork.getOperation().getRegistrant();
         return new ApprovalInboxItemResponse(
                 subWork.getId(),
                 subWork.getTitle(),
                 subWork.getApprovalStatus(),
                 subWork.getSubWorkType().getTypeName(),
-                subWork.getSubWorkType().getAuthorizerRoleCode(),
+                subWork.getSubWorkType().getAuthorizerAuthorityCode(),
+                authorizerAuthorityName,
                 registrant == null ? null : registrant.getName(),
                 toOffsetDateTime(requestedAt),
                 toOffsetDateTime(subWork.getDueAt()),

@@ -119,12 +119,16 @@ class AuthorityControllerTest {
                 .andExpect(jsonPath("$.data[0].authrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].upAuthrtCd").doesNotExist())
                 .andExpect(jsonPath("$.data[0].sysYn").value(true))
-                .andExpect(jsonPath("$.data[0].children", hasSize(2)))
+                .andExpect(jsonPath("$.data[0].children", hasSize(3)))
                 .andExpect(jsonPath("$.data[0].children[0].authrtCd").value("EXECUTIVE"))
                 .andExpect(jsonPath("$.data[0].children[0].authrtNm").value("임원"))
                 .andExpect(jsonPath("$.data[0].children[0].upAuthrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].children[1].authrtCd").value("SUB_WORK_TYPE_MANAGE"))
                 .andExpect(jsonPath("$.data[0].children[1].upAuthrtCd").value("SUPER"))
+                // #123: 결재·투표 그룹. 시드가 만든 묶음이라 sys_yn = false다
+                .andExpect(jsonPath("$.data[0].children[2].authrtCd").value("APPROVAL"))
+                .andExpect(jsonPath("$.data[0].children[2].sysYn").value(false))
+                .andExpect(jsonPath("$.data[0].children[2].children", hasSize(5)))
                 .andExpect(jsonPath("$.data[0].children[0].children", hasSize(4)))
                 // 형제 순서는 indct_seqno다
                 .andExpect(jsonPath("$.data[0].children[0].children[0].authrtCd").value("OPERATOR"))

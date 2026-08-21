@@ -499,6 +499,61 @@ class MeetingControllerTest {
 
     // ------------------------------------------------------------------ 헬퍼
 
+    // ------------------------------------------------------------------ 삭제 (#125)
+
+    @Test
+    void deleteMeetingReturns200() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+
+        mockMvc.perform(authenticated(delete("/v1/meetings/{meetingId}", meetingId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        mockMvc.perform(
+                        get("/v1/meetings/{meetingId}", meetingId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * 상태와 무관하게 항상 삭제할 수 있다 — 종료·취소된 회의도 예외가 아니다(#125 결정).
+     * CANCEL은 SCHEDULED에서 바로 갈 수 있는 가장 짧은 경로라 이 경로로 확인한다.
+     */
+    @Test
+    void deleteMeetingAllowsCanceledMeeting() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        mockMvc.perform(transition(meetingId, "CANCEL", "일정 취소")).andExpect(status().isOk());
+
+        mockMvc.perform(authenticated(delete("/v1/meetings/{meetingId}", meetingId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    void deleteUnknownMeetingReturns404() throws Exception {
+        mockMvc.perform(authenticated(delete("/v1/meetings/{meetingId}", 999_999L)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void deleteAlreadyDeletedMeetingReturns409() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        mockMvc.perform(authenticated(delete("/v1/meetings/{meetingId}", meetingId)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(authenticated(delete("/v1/meetings/{meetingId}", meetingId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_DELETED"));
+    }
+
+    @Test
+    void deleteMeetingWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(delete("/v1/meetings/{meetingId}", 1L))
+                .andExpect(status().isUnauthorized());
+    }
+
     private Long createMeeting(Long personInChargeId) throws Exception {
         String body =
                 """

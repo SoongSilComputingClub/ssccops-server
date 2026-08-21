@@ -6,6 +6,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -103,5 +104,19 @@ public class WorkController {
             @Valid @ModelAttribute WorkSearchCondition condition) {
         WorkSearchResponse result = workService.searchWorks(condition);
         return ApiResponse.success(result.works(), result.page());
+    }
+
+    /*
+     * 업무 삭제(#125). work 자기 자신과 그 아래 살아있는 sub-work 전체를 함께 소프트
+     * 삭제한다(계단식). 소유권(담당자 본인 여부)은 보지 않고 WORK_DELETE 보유 여부만으로
+     * 판정한다 — 다른 하위 업무 쓰기 작업이 쓰는 소유권 계층(SubWorkOwnershipPolicy)과
+     * 다른 결정이다. 204가 아니라 data가 null인 200인 것은 다른 삭제 엔드포인트와 같은
+     * ApiResponse 컨벤션이다.
+     */
+    @RequireAuthority(AuthorityCode.WORK_DELETE)
+    @DeleteMapping("/{workId}")
+    public ApiResponse<Void> deleteWork(@PathVariable Long workId) {
+        workService.deleteWork(workId);
+        return ApiResponse.successWithNoData();
     }
 }

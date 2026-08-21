@@ -6,6 +6,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -174,5 +175,18 @@ public class SubWorkController {
             @CurrentMember MemberEntity performer) {
         return ApiResponse.success(
                 subWorkService.updateChecklistItem(subWorkId, checklistItemId, request, performer));
+    }
+
+    /*
+     * 하위 업무 삭제(#125). 자기 자신만 소프트 삭제한다(work·다른 sub-work는 건드리지
+     * 않는다). 소유권(담당자 본인 여부)은 보지 않고 SUB_WORK_DELETE 보유 여부만으로
+     * 판정한다 — 다른 메서드들이 쓰는 WORK_READ + SubWorkOwnershipPolicy 조합과 다른
+     * 결정이다(WorkController.deleteWork와 같은 이유).
+     */
+    @RequireAuthority(AuthorityCode.SUB_WORK_DELETE)
+    @DeleteMapping("/{subWorkId}")
+    public ApiResponse<Void> deleteSubWork(@PathVariable Long subWorkId) {
+        subWorkService.deleteSubWork(subWorkId);
+        return ApiResponse.successWithNoData();
     }
 }

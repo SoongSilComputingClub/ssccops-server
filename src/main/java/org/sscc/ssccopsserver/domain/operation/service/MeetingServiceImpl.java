@@ -265,6 +265,31 @@ public class MeetingServiceImpl implements MeetingService {
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.MEETING_NOT_FOUND));
     }
 
+    /*
+     * 회의 삭제(#125). 자기 operation만 소프트 삭제한다 — 안건(mtg_dtl)은 지우지 않는다.
+     *
+     * 대상 존재 여부와 삭제 여부를 함께 판정해야 하므로(404 vs 409) findByIdAndOperationDeletedAtIsNull
+     * 대신 필터 없는 findById를 쓴다 — WorkServiceImpl.deleteWork와 같은 이유다.
+     *
+     * 상태(mtg_stts_cd)와 무관하게 항상 허용한다 — 종료(CLOSED)·취소(CANCELED)된 회의도
+     * 삭제할 수 있다.
+     */
+    @Override
+    @Transactional
+    public void deleteMeeting(Long meetingId) {
+        MeetingEntity meeting =
+                meetingRepository
+                        .findById(meetingId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.MEETING_NOT_FOUND));
+
+        OperationEntity operation = meeting.getOperation();
+        if (operation.isDeleted()) {
+            throw new GeneralException(OperationErrorCode.ALREADY_DELETED);
+        }
+        operation.softDelete(Instant.now(clock));
+    }
+
     private MeetingAgendaEntity findAgenda(MeetingEntity meeting, Long agendaId) {
         return meetingAgendaRepository
                 .findByIdAndMeeting(agendaId, meeting)

@@ -43,6 +43,20 @@ public enum AuthorityCode {
     /** 업무·하위 업무 조회 전용(#101). WORK_MANAGE의 자식이라 그 보유자는 자동으로 포함한다 */
     WORK_READ,
 
+    /*
+     * 업무 소프트 삭제(#125). WORK_MANAGE의 자식이라 그 보유자(국장 이상)는 자동으로
+     * 포함한다. 다른 하위 업무 쓰기 작업과 달리 SubWorkOwnershipPolicy 같은 소유권 계층을
+     * 두지 않는다 — 담당자 본인이라도 이 권한이 없으면 삭제할 수 없다(운영진 전용 삭제,
+     * 삭제만 먼저 authrt 트리 하나로 판정하기로 한 결정).
+     */
+    WORK_DELETE,
+
+    /*
+     * 하위 업무 소프트 삭제(#125). 별도의 SUB_WORK_MANAGE 권한이 없어(하위 업무 등록도
+     * WORK_MANAGE로 게이트돼 있다) WORK_DELETE와 같은 부모 아래 둔다.
+     */
+    SUB_WORK_DELETE,
+
     /** 회의 등록·조회·상태 전이·안건 관리 */
     MEETING_MANAGE,
 
@@ -51,6 +65,12 @@ public enum AuthorityCode {
 
     /** 회의 안건 등록·수정·철회 전용(#101) — 회의 자체의 생성·전이는 MEETING_MANAGE만의 몫이다 */
     MEETING_AGENDA_WRITE,
+
+    /*
+     * 회의 소프트 삭제(#125). MEETING_MANAGE의 자식이라 그 보유자는 자동으로 포함한다.
+     * WORK_DELETE와 같은 결정으로, 회의 책임자 본인이라도 이 권한이 없으면 삭제할 수 없다.
+     */
+    MEETING_DELETE,
 
     /** 하위 업무 유형 조회 */
     SUB_WORK_TYPE_READ,

@@ -173,6 +173,7 @@ class SubWorkServiceImplTest {
                         subWorkRepository,
                         subWorkChecklistItemRepository,
                         memberService,
+                        FIXED_CLOCK,
                         entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
@@ -1343,6 +1344,59 @@ class SubWorkServiceImplTest {
 
         assertThat(subWorkService.countOngoingByOwner(ownerId)).isEqualTo(1);
         assertThat(subWorkService.countOngoingByOwner(registrant.getId())).isZero();
+    }
+
+    // ---------------------------------------------------------------- 삭제 (#125)
+
+    // sub-work 삭제는 자기 operation만 소프트 삭제한다 — 상위 work·다른 sub-work는 건드리지 않는다
+    @Test
+    void deleteSubWorkSoftDeletesOnlyItsOwnOperation() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        subWorkService.deleteSubWork(subWorkId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(subWorkRepository.findById(subWorkId).orElseThrow().getOperation().isDeleted())
+                .isTrue();
+        assertThat(workRepository.findById(parentWorkId).orElseThrow().getOperation().isDeleted())
+                .isFalse();
+    }
+
+    // 상태와 무관하게 항상 삭제할 수 있다 — 완료(DONE)된 sub-work도 예외가 아니다
+    @Test
+    void deleteSubWorkAllowsCompletedSubWork() {
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
+        completeChecklist(subWorkId);
+        transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+        entityManager.flush();
+        entityManager.clear();
+
+        subWorkService.deleteSubWork(subWorkId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(subWorkRepository.findById(subWorkId).orElseThrow().getOperation().isDeleted())
+                .isTrue();
+    }
+
+    @Test
+    void deleteSubWorkWithUnknownIdThrowsNotFound() {
+        assertThatThrownBy(() -> subWorkService.deleteSubWork(999_999L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
+    @Test
+    void deleteAlreadyDeletedSubWorkThrowsAlreadyDeleted() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        subWorkService.deleteSubWork(subWorkId);
+
+        assertThatThrownBy(() -> subWorkService.deleteSubWork(subWorkId))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.ALREADY_DELETED);
     }
 
     private Long createSubWork(long subWorkTypeId) {

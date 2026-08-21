@@ -55,15 +55,6 @@ public interface SubWorkRepository
     List<SubWorkEntity> findAllByWorkWithOwner(@Param("work") WorkEntity work);
 
     /*
-     * 상위 업무 진행률 집계용. 소프트 삭제 여부는 부모 oper가 관리하므로(sub_work에는
-     * del_dt가 없다) 조인해서 걸러낸다 — 삭제된 하위 업무는 분모에 들어가면 안 된다.
-     */
-    long countByWorkAndOperationDeletedAtIsNull(WorkEntity work);
-
-    long countByWorkAndWorkStatusAndOperationDeletedAtIsNull(
-            WorkEntity work, WorkStatus workStatus);
-
-    /*
      * 목록 조회(OPS-008)가 화면 우상단에 표시하는 '전체 N건'. 필터를 걸지 않았을 때의 건수라
      * 조건이 없고, 삭제된 건을 빼는 기준만 목록과 같아야 한다 (AGG-03).
      */

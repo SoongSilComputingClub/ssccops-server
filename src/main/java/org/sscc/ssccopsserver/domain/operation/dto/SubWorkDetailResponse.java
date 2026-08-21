@@ -28,8 +28,10 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * 이름까지 내려야 해서 등록 응답의 ownerId(숫자)를 owner(객체)로 바꿔야 하는데, 그러면
  * 이미 나간 등록 API 계약이 깨진다. 목록·단건의 DTO를 나누는 AP-14와도 같은 방향이다.
  *
- * approvalRequired·authorizerRoleCode는 화면의 "완료 전환은 회장·국장 승인이 필요합니다"
+ * approvalRequired·authorizerAuthorityCode는 화면의 "완료 전환은 회장 결재 승인이 필요합니다"
  * 안내를 그리기 위한 값으로, 하위 업무가 아니라 그 유형(sub_work_type)이 갖고 있다.
+ * 표시명(authorizerAuthorityName)을 함께 내리는 것은 권한 이름이 화면에서 바뀌는 데이터라
+ * 웹이 코드 → 이름 사전을 하드코딩할 수 없기 때문이다 (#123).
  *
  * workTitle은 상세 화면의 '상위 업무' 행이다 (#70). 식별자만 내리면 화면이 이름을 얻으려고
  * OPS-003을 한 번 더 불러야 하는데, 그 응답에는 하위 업무 목록까지 실려 있어 이름 한 줄을
@@ -60,7 +62,8 @@ public record SubWorkDetailResponse(
         WorkStatus workStatus,
         ApprovalStatus approvalStatus,
         boolean approvalRequired,
-        String authorizerRoleCode,
+        String authorizerAuthorityCode,
+        String authorizerAuthorityName,
         MemberSummaryResponse owner,
         MemberSummaryResponse registrant,
         List<MemberSummaryResponse> collaborators,
@@ -93,7 +96,7 @@ public record SubWorkDetailResponse(
     private static final List<MemberSummaryResponse> NO_COLLABORATORS = List.of();
 
     /*
-     * delayed는 엔티티의 dly_yn 컬럼이 아니라 조회 시점에 판정한 값이다 (SubWorkEntity.isDelayedAt).
+     * delayed는 엔티티의 dly_yn 컬럼이 아니라 조회 시점에 판정한 값이다 (SubWorkEntity.isDelayedBefore).
      * 조회가 컬럼을 갱신하지는 않으므로(AP-07) 저장된 값과 어긋날 수 있다.
      *
      * canDecide 하나로 canApprove·canReject를 함께 채운다 — 승인과 반려의 권한 규칙이 지금은
@@ -108,7 +111,8 @@ public record SubWorkDetailResponse(
             ApprovalQuorumResponse quorum,
             VoteChoice myVote,
             SubWorkRejectionResponse latestRejection,
-            boolean canDecide) {
+            boolean canDecide,
+            String authorizerAuthorityName) {
         OperationEntity operation = subWork.getOperation();
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         List<SubWorkChecklistItemResponse> checklistItems =
@@ -126,7 +130,8 @@ public record SubWorkDetailResponse(
                 subWork.getWorkStatus(),
                 subWork.getApprovalStatus(),
                 subWorkType.isApprovalNeeded(),
-                subWorkType.getAuthorizerRoleCode(),
+                subWorkType.getAuthorizerAuthorityCode(),
+                authorizerAuthorityName,
                 MemberSummaryResponse.from(operation.getPersonInCharge()),
                 MemberSummaryResponse.from(operation.getRegistrant()),
                 NO_COLLABORATORS,

@@ -140,6 +140,69 @@ class CodeSeedDataTest {
                 .isEqualTo("SUPER");
     }
 
+    /*
+     * 결재·투표 권한 시드 (#123). 직위 코드(role_pstn_cd)를 대신하는 자격 어휘라, 빠지면
+     * 예산지출을 승인할 사람도 투표할 사람도 없는 상태로 배포된다.
+     *
+     * APPROVAL 그룹은 sys_yn = FALSE다 — 코드가 참조하지 않는 시드 그룹이라 화면에서 만든
+     * 사용자 정의 묶음과 같은 취급이고, 나머지 다섯은 판정이 코드로 가리키므로 TRUE다.
+     */
+    @Test
+    void seedsApprovalAuthoritiesUnderTheApprovalGroup() {
+        assertThat(authorityRepository.findById("APPROVAL"))
+                .get()
+                .satisfies(
+                        group -> {
+                            assertThat(group.getParent().getCode()).isEqualTo("SUPER");
+                            assertThat(group.isSystemDefined()).isFalse();
+                        });
+
+        for (String code :
+                List.of(
+                        "APPROVAL_VOTE",
+                        "SUB_WORK_APPROVE_PRESIDENT",
+                        "SUB_WORK_APPROVE_VICE_PRESIDENT",
+                        "SUB_WORK_APPROVE_TREASURER",
+                        "SUB_WORK_APPROVE_DIRECTOR")) {
+            assertThat(authorityRepository.findById(code))
+                    .get()
+                    .satisfies(
+                            authority -> {
+                                assertThat(authority.getParent().getCode()).isEqualTo("APPROVAL");
+                                assertThat(authority.isSystemDefined()).isTrue();
+                            });
+        }
+    }
+
+    /*
+     * 역할별 결재·투표 부여 (#123). 직위 코드 시드(회장 → PRESIDENT …)와 같은 대응이며,
+     * 국원까지 투표 자격을 갖는 것이 OPS-015("운영진 누구나")의 데이터화다. 프로젝트장·
+     * 스터디장은 부여가 없어 승인도 투표도 하지 못한다 — 여기에 무심코 부여를 더하면
+     * 스터디장이 예산지출에 투표하게 된다.
+     */
+    @Test
+    void grantsApprovalAndVotingAuthoritiesToSeededRoles() {
+        assertThat(grantedCodesOf("회장")).contains("APPROVAL_VOTE", "SUB_WORK_APPROVE_PRESIDENT");
+        assertThat(grantedCodesOf("부회장"))
+                .contains("APPROVAL_VOTE", "SUB_WORK_APPROVE_VICE_PRESIDENT");
+        assertThat(grantedCodesOf("총무")).contains("APPROVAL_VOTE", "SUB_WORK_APPROVE_TREASURER");
+        assertThat(grantedCodesOf("국장")).contains("APPROVAL_VOTE", "SUB_WORK_APPROVE_DIRECTOR");
+        assertThat(grantedCodesOf("국원")).contains("APPROVAL_VOTE");
+        assertThat(grantedCodesOf("프로젝트장")).isEmpty();
+        assertThat(grantedCodesOf("스터디장")).isEmpty();
+    }
+
+    private List<String> grantedCodesOf(String roleName) {
+        MemberRoleEntity role =
+                memberRoleRepository.findAll().stream()
+                        .filter(candidate -> roleName.equals(candidate.getName()))
+                        .findFirst()
+                        .orElseThrow();
+        return roleAuthorityRelationRepository.findAllByRoleId(role.getId()).stream()
+                .map(relation -> relation.getAuthority().getCode())
+                .toList();
+    }
+
     private List<String> rolesOfClassification(String roleClassificationCode) {
         return memberRoleRepository.findAll().stream()
                 .filter(
@@ -153,21 +216,21 @@ class CodeSeedDataTest {
 
     // 승인이 필요한 유형에는 승인자가 있고, 필요 없는 유형에는 없어야 한다
     @Test
-    void assignsAuthorizerRoleOnlyToTypesThatNeedApproval() {
+    void assignsAuthorizerAuthorityOnlyToTypesThatNeedApproval() {
         assertThat(subWorkTypeRepository.findAll())
                 .allSatisfy(
                         type ->
-                                assertThat(type.getAuthorizerRoleCode() != null)
+                                assertThat(type.getAuthorizerAuthorityCode() != null)
                                         .isEqualTo(type.isApprovalNeeded()));
 
         assertThat(subWorkTypeRepository.findById(1L))
                 .get()
-                .extracting(SubWorkTypeEntity::getAuthorizerRoleCode)
-                .isEqualTo("TREASURER");
+                .extracting(SubWorkTypeEntity::getAuthorizerAuthorityCode)
+                .isEqualTo("SUB_WORK_APPROVE_TREASURER");
         assertThat(subWorkTypeRepository.findById(2L))
                 .get()
-                .extracting(SubWorkTypeEntity::getAuthorizerRoleCode)
-                .isEqualTo("PRESIDENT");
+                .extracting(SubWorkTypeEntity::getAuthorizerAuthorityCode)
+                .isEqualTo("SUB_WORK_APPROVE_PRESIDENT");
     }
 
     /*

@@ -14,6 +14,7 @@ import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalQuorumResponse;
@@ -79,13 +80,19 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkRejectionRepository subWorkRejectionRepository;
     private final MemberService memberService;
 
+    // 승인자 결재 권한의 표시명(authrt_nm)을 상세 응답에 싣는다 (#123, AR-07 경유)
+    private final AuthorityNameFinder authorityNameFinder;
+
     // 승인자·투표자 판정은 한 곳에만 둔다 (권한 인가 #9와 층이 다르다 — 그쪽 주석 참고)
     private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
 
     // "담당자 본인인가"의 유일한 구현 (#101) — WORK_MANAGE가 없는 회원(국원)은 이 판정을 거친다
     private final SubWorkOwnershipPolicy subWorkOwnershipPolicy;
 
-    // 마감 경과 판정 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
+    // 지연 판정 경계(오늘 0시)를 만드는 유일한 자리 (#121). 상세·목록·대시보드가 같은 값을 쓴다
+    private final DeadlinePolicy deadlinePolicy;
+
+    // 상태 전이·투표 일시 등 '지금'이 필요한 자리. 테스트에서 고정할 수 있도록 주입받는다
     private final Clock clock;
 
     /*
@@ -162,9 +169,9 @@ public class SubWorkServiceImpl implements SubWorkService {
                                 toInstant(request.dueAt())));
 
         List<SubWorkChecklistItemEntity> checklist = createChecklist(subWork, subWorkType);
-        recalculateParentProgressRate(parentWork);
 
-        return SubWorkCreateResponse.of(subWork, checklist);
+        return SubWorkCreateResponse.of(
+                subWork, checklist, subWork.isDelayedBefore(deadlinePolicy.overdueBefore()));
     }
 
     /*
@@ -235,6 +242,32 @@ public class SubWorkServiceImpl implements SubWorkService {
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
     }
 
+    /*
+     * 하위 업무 삭제(#125). 자기 operation만 소프트 삭제한다 — work의 다른 sub-work나 상위
+     * work 자체는 건드리지 않는다(work 삭제의 계단식과는 반대 방향).
+     *
+     * 대상 존재 여부와 삭제 여부를 함께 판정해야 하므로(404 vs 409) findByIdAndOperationDeletedAtIsNull
+     * 대신 필터 없는 findById를 쓴다 — WorkServiceImpl.deleteWork와 같은 이유다.
+     *
+     * 상태(work_stts_cd·aprv_stts_cd)와 무관하게 항상 허용한다. 체크리스트·투표·반려 이력은
+     * 지우지 않고 그대로 둔다.
+     */
+    @Override
+    @Transactional
+    public void deleteSubWork(Long subWorkId) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findById(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+
+        OperationEntity operation = subWork.getOperation();
+        if (operation.isDeleted()) {
+            throw new GeneralException(OperationErrorCode.ALREADY_DELETED);
+        }
+        operation.softDelete(Instant.now(clock));
+    }
+
     private SubWorkDetailResponse buildDetail(SubWorkEntity subWork, MemberEntity viewer) {
         List<SubWorkChecklistItemEntity> checklist =
                 subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);
@@ -249,14 +282,27 @@ public class SubWorkServiceImpl implements SubWorkService {
         return SubWorkDetailResponse.of(
                 subWork,
                 checklist,
-                subWork.isDelayedAt(clock.instant()),
+                subWork.isDelayedBefore(deadlinePolicy.overdueBefore()),
                 quorumOf(subWork, approvalSequence),
                 myVoteOn(subWork, viewer, approvalSequence),
                 SubWorkRejectionResponse.from(
                         subWorkRejectionRepository
                                 .findFirstBySubWorkOrderByRejectedAtDescIdDesc(subWork)
                                 .orElse(null)),
-                canDecideOn(subWork, viewer));
+                canDecideOn(subWork, viewer),
+                authorizerAuthorityNameOf(subWorkType));
+    }
+
+    /*
+     * 승인자 결재 권한의 표시명 (#123). 권한 이름은 화면에서 바뀌는 운영 데이터라 웹이
+     * 코드 → 이름 사전을 가질 수 없어 서버가 실어 내린다. 승인이 필요 없는 유형은 NULL이다.
+     */
+    private String authorizerAuthorityNameOf(SubWorkTypeEntity subWorkType) {
+        String code = subWorkType.getAuthorizerAuthorityCode();
+        if (code == null) {
+            return null;
+        }
+        return authorityNameFinder.namesOf(List.of(code)).get(code);
     }
 
     /*
@@ -312,12 +358,13 @@ public class SubWorkServiceImpl implements SubWorkService {
      * 몇 건이든 이 수는 변하지 않는다 (DB-13). 진행률 집계는 이번 페이지에 실린 건에 대해서만
      * 돌리며, 목록이 비면 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라 문법 오류다.
      *
-     * 지연·마감임박 판정 시각은 한 번만 읽어 목록과 건수가 같은 '지금'을 보게 한다.
+     * 지연·마감임박 판정 경계는 한 번만 읽어 목록·건수·응답의 isDelayed가 모두 같은 값을
+     * 보게 한다. 그 값은 '지금'이 아니라 오늘 0시다 (DeadlinePolicy, #121).
      */
     @Override
     public SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition) {
-        Instant now = clock.instant();
-        SubWorkSearchQuery query = condition.toQuery(now);
+        Instant overdueBefore = deadlinePolicy.overdueBefore();
+        SubWorkSearchQuery query = condition.toQuery(overdueBefore);
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<SubWorkEntity> fetched = subWorkRepository.search(query);
@@ -326,7 +373,9 @@ public class SubWorkServiceImpl implements SubWorkService {
 
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
         List<SubWorkSummaryResponse> subWorks =
-                rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
+                rows.stream()
+                        .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
+                        .toList();
 
         PageResponse page =
                 new PageResponse(
@@ -364,12 +413,12 @@ public class SubWorkServiceImpl implements SubWorkService {
     private SubWorkSummaryResponse toSummary(
             SubWorkEntity subWork,
             Map<Long, SubWorkChecklistProgress> progressBySubWorkId,
-            Instant now) {
+            Instant overdueBefore) {
         SubWorkChecklistProgress progress = progressBySubWorkId.get(subWork.getId());
         long completedItems = progress == null ? 0L : progress.getCompletedCount();
         long totalItems = progress == null ? 0L : progress.getTotalCount();
         return SubWorkSummaryResponse.of(
-                subWork, completedItems, totalItems, subWork.isDelayedAt(now));
+                subWork, completedItems, totalItems, subWork.isDelayedBefore(overdueBefore));
     }
 
     /*
@@ -444,8 +493,6 @@ public class SubWorkServiceImpl implements SubWorkService {
             subWorkApprovalRepository.save(
                     SubWorkApprovalEntity.record(
                             subWork, performer, history, occurredAt, selfApproval));
-            // 완료 개수가 바뀌는 전이는 이것뿐이다. 완료에서 빠져나가는 전이는 전이표에 없다
-            recalculateParentProgressRate(subWork.getWork());
         } else if (action == TransitionAction.REJECT) {
             subWorkRejectionRepository.save(
                     SubWorkRejectionEntity.record(
@@ -571,15 +618,20 @@ public class SubWorkServiceImpl implements SubWorkService {
      */
     @Override
     public List<SubWorkSummaryResponse> findMyTasks(MemberEntity owner) {
-        Instant now = clock.instant();
+        Instant overdueBefore = deadlinePolicy.overdueBefore();
         List<SubWorkEntity> rows = subWorkRepository.findAllByOwnerId(owner.getId());
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        return rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
+        return rows.stream()
+                .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
+                .toList();
     }
 
     /*
      * 대시보드 '다가오는 마감' (OPS-038). 조회 시점 기준 ±5일 범위에 마감이 있고 아직
      * 완료되지 않은 하위 업무다(이슈#60). ownerId가 있으면 그 담당자의 것만 본다(#101).
+     *
+     * 여기서만 '지금'과 지연 경계를 둘 다 쓴다 — 범위는 명세대로 조회 시점 기준 ±5일이고,
+     * 각 행의 isDelayed는 목록·상세와 같은 날짜 단위 판정이다 (#121).
      */
     @Override
     public List<SubWorkSummaryResponse> findUpcomingDeadlines(Long ownerId) {
@@ -593,7 +645,10 @@ public class SubWorkServiceImpl implements SubWorkService {
                         : subWorkRepository.findAllDueBetweenExcludingStatusAndOwnerId(
                                 from, to, WorkStatus.DONE, ownerId);
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        return rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
+        Instant overdueBefore = deadlinePolicy.overdueBefore();
+        return rows.stream()
+                .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
+                .toList();
     }
 
     /*
@@ -603,10 +658,12 @@ public class SubWorkServiceImpl implements SubWorkService {
      */
     @Override
     public List<SubWorkSummaryResponse> listSubWorks() {
-        Instant now = clock.instant();
+        Instant overdueBefore = deadlinePolicy.overdueBefore();
         List<SubWorkEntity> rows = subWorkRepository.findAllAlive();
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        return rows.stream().map(subWork -> toSummary(subWork, progressBySubWorkId, now)).toList();
+        return rows.stream()
+                .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
+                .toList();
     }
 
     /*
@@ -697,18 +754,6 @@ public class SubWorkServiceImpl implements SubWorkService {
             items.add(SubWorkChecklistItemEntity.create(subWork, articles.get(index), index + 1));
         }
         return subWorkChecklistItemRepository.saveAll(items);
-    }
-
-    /*
-     * 상위 업무의 진행률은 하위 업무 완료율에서 나오므로 하위 업무가 하나 늘 때마다 다시 센다.
-     * 방금 등록한 건은 기획 상태라 분모만 늘어 진행률이 내려간다 — 의도된 동작이다.
-     */
-    private void recalculateParentProgressRate(WorkEntity parentWork) {
-        long total = subWorkRepository.countByWorkAndOperationDeletedAtIsNull(parentWork);
-        long completed =
-                subWorkRepository.countByWorkAndWorkStatusAndOperationDeletedAtIsNull(
-                        parentWork, WorkStatus.DONE);
-        parentWork.recalculateProgressRate(completed, total);
     }
 
     private void validatePeriod(Instant beginAt, Instant endAt) {

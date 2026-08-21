@@ -44,4 +44,14 @@ public interface WorkService {
      * 정렬은 OPS-020의 기본값과 같은 등록 최신순이다.
      */
     List<WorkListItemResponse> listWorks();
+
+    /*
+     * 업무를 소프트 삭제한다 (#125). 자기 operation뿐 아니라 그 아래 살아있는 sub-work
+     * 전체의 operation도 함께 del_dt를 채운다(계단식). 상태와 무관하게 항상 허용하며,
+     * WORK_DELETE 보유 여부만으로 게이트가 걸린다 — 담당자 본인 여부는 보지 않는다.
+     *
+     * 대상이 아예 없으면 WORK_NOT_FOUND(404), 있지만 이미 삭제됐으면 ALREADY_DELETED(409)다 —
+     * 조회 계열(소프트 삭제도 404로 숨김)과는 다른 판단이다.
+     */
+    void deleteWork(Long workId);
 }

@@ -105,7 +105,9 @@ public class RoleServiceImpl implements RoleService {
     /*
      * 생성. 갓 만든 역할에는 권한도 재임자도 없다 — "권한 없는 역할은 아무것도 못 한다"가
      * 기본값이므로(#9) 여기서 어떤 권한도 함께 붙이지 않는다. 권한은 역할 관리 화면에서
-     * PUT /v1/roles/{roleId}/authorities로 따로 붙인다.
+     * PUT /v1/roles/{roleId}/authorities로 따로 붙인다. 승인·투표 자격(결재 권한·APPROVAL_VOTE)
+     * 도 같은 길로 부여한다(#123) — 이름이 '국장'으로 끝난다는 이유로 자격이 따라붙던 자리를
+     * 명시적 부여가 대신한다.
      */
     @Override
     @Transactional

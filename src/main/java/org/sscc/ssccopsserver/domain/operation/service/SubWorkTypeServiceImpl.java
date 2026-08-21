@@ -1,11 +1,15 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.domain.operation.dto.AuthorizerAuthorityResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeActivationRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeSaveRequest;
@@ -21,10 +25,14 @@ import lombok.RequiredArgsConstructor;
 public class SubWorkTypeServiceImpl implements SubWorkTypeService {
 
     private final SubWorkTypeRepository subWorkTypeRepository;
+    private final AuthorityNameFinder authorityNameFinder;
 
     /*
      * 커서 페이징을 두지 않는다. 유형은 기준 데이터라 건수가 수십 단위이고, 관리 화면도 등록 폼
      * 드롭다운도 전량을 한 번에 그린다. 지금 페이징을 넣으면 화면이 쓰지 않는 계약이 먼저 굳는다.
+     *
+     * 승인자 표시명은 결재 권한 이름(authrt_nm)이라 유형 수와 무관하게 이름 조회 한 번을
+     * 더한다 — 어휘가 결재 권한 4종뿐이라 유형별로 묻지 않는다.
      */
     @Override
     public List<SubWorkTypeResponse> getSubWorkTypes(Boolean useYn) {
@@ -32,7 +40,24 @@ public class SubWorkTypeServiceImpl implements SubWorkTypeService {
                 useYn == null
                         ? subWorkTypeRepository.findAllByOrderByIdAsc()
                         : subWorkTypeRepository.findAllByActiveOrderByIdAsc(useYn);
-        return subWorkTypes.stream().map(SubWorkTypeResponse::from).toList();
+        Map<String, String> names = approverAuthorityNames();
+        return subWorkTypes.stream()
+                .map(type -> SubWorkTypeResponse.of(type, authorizerNameOf(type, names)))
+                .toList();
+    }
+
+    /*
+     * 유형 폼의 승인자 선택지 (#123). 코드 어휘는 AuthorityCode.subWorkApprovers()가 정하고
+     * (선언 순서 = 표시 순서), 표시명은 authrt_nm(운영 데이터)에서 온다. 권한 트리 API
+     * (/v1/authorities)를 쓰지 않는 것은 그쪽이 ROLE_MANAGE로 잠겨 있어서다 — 유형 관리
+     * 화면의 권한(SUB_WORK_TYPE_READ)으로 닿는 자리가 따로 필요하다.
+     */
+    @Override
+    public List<AuthorizerAuthorityResponse> getAuthorizerAuthorities() {
+        Map<String, String> names = approverAuthorityNames();
+        return AuthorityCode.subWorkApprovers().stream()
+                .map(code -> new AuthorizerAuthorityResponse(code.code(), names.get(code.code())))
+                .toList();
     }
 
     @Override
@@ -47,11 +72,11 @@ public class SubWorkTypeServiceImpl implements SubWorkTypeService {
                 SubWorkTypeEntity.create(
                         typeName,
                         request.approvalNeeded(),
-                        request.authorizerRoleCodeName(),
+                        request.authorizerAuthorityCode(),
                         request.minAgreeCountNeeded(),
                         request.minAgreeCount(),
                         request.completionCheckArticles());
-        return SubWorkTypeResponse.from(save(subWorkType));
+        return toResponse(save(subWorkType));
     }
 
     /*
@@ -72,11 +97,11 @@ public class SubWorkTypeServiceImpl implements SubWorkTypeService {
         subWorkType.update(
                 typeName,
                 request.approvalNeeded(),
-                request.authorizerRoleCodeName(),
+                request.authorizerAuthorityCode(),
                 request.minAgreeCountNeeded(),
                 request.minAgreeCount(),
                 request.completionCheckArticles());
-        return SubWorkTypeResponse.from(save(subWorkType));
+        return toResponse(save(subWorkType));
     }
 
     /*
@@ -89,7 +114,7 @@ public class SubWorkTypeServiceImpl implements SubWorkTypeService {
             Long subWorkTypeId, SubWorkTypeActivationRequest request) {
         SubWorkTypeEntity subWorkType = getEntity(subWorkTypeId);
         subWorkType.changeActivation(request.useYn());
-        return SubWorkTypeResponse.from(subWorkType);
+        return toResponse(subWorkType);
     }
 
     private SubWorkTypeEntity getEntity(Long subWorkTypeId) {
@@ -110,5 +135,21 @@ public class SubWorkTypeServiceImpl implements SubWorkTypeService {
         } catch (DataIntegrityViolationException e) {
             throw new GeneralException(OperationErrorCode.DUPLICATE_SUB_WORK_TYPE_NAME);
         }
+    }
+
+    private SubWorkTypeResponse toResponse(SubWorkTypeEntity subWorkType) {
+        return SubWorkTypeResponse.of(
+                subWorkType, authorizerNameOf(subWorkType, approverAuthorityNames()));
+    }
+
+    /** 결재 권한 4종의 코드 → 표시명. 어휘가 고정이라 어느 응답에서든 통째로 받는다 */
+    private Map<String, String> approverAuthorityNames() {
+        return authorityNameFinder.namesOf(
+                AuthorityCode.subWorkApprovers().stream().map(AuthorityCode::code).toList());
+    }
+
+    private static String authorizerNameOf(SubWorkTypeEntity type, Map<String, String> names) {
+        String code = type.getAuthorizerAuthorityCode();
+        return code == null ? null : names.get(code);
     }
 }

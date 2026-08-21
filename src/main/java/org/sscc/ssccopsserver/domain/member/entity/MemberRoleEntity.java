@@ -53,6 +53,11 @@ public class MemberRoleEntity {
     @Column(name = "mdfcn_dt")
     private Instant updatedAt;
 
+    /*
+     * 직위 코드(role_pstn_cd, #118)는 승인·투표 자격이 권한 시스템으로 통합되며 삭제됐다(#123).
+     * 자격은 이제 이 행이 아니라 역할↔권한 매핑(role_authrt_rel)에 실린다 — 역할 행에는
+     * 판정에 쓰이는 값이 없다.
+     */
     public static MemberRoleEntity create(
             Integer displayOrder, String name, MemberRoleClassificationEntity roleClassification) {
         return new MemberRoleEntity(null, displayOrder, name, roleClassification, null, null);

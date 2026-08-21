@@ -206,6 +206,12 @@ public class OperationEntity {
         this.personInCharge = personInCharge;
     }
 
+    /*
+     * work·sub-work·meeting 삭제(#125)가 이 메서드로 del_dt를 채운다. work 삭제는 자기
+     * operation과 그 하위 sub-work들의 operation을 함께, sub-work·meeting 삭제는 자기
+     * operation만 이 메서드로 소프트 삭제한다. #117 당시에는 삭제 엔드포인트가 없어 테스트가
+     * 소프트 삭제 상태를 만드는 용도로만 썼다.
+     */
     public void softDelete(Instant deletedAt) {
         this.deletedAt = deletedAt;
     }

@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -11,6 +12,7 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxSearchCondition;
@@ -42,9 +44,10 @@ import lombok.RequiredArgsConstructor;
  * 직전 반려 사유·승인 권한)이며, 전부 목록 전체를 한 번에 집계해 붙인다 (DB-13 — 카드마다
  * 조회하면 N+1이다).
  *
- * 쿼리 수는 페이지 크기와 무관하게 9회다: 목록 1 + 건수 2(필터·전체) + 이력 1 + 체크리스트 1 +
- * 투표 집계 1 + 내 표 1 + 반려 1 + 보는 사람의 역할 1. 테스트가 이 숫자를 못 박는다 — 이전 주석은
- * 체크리스트 집계를 빠뜨린 6회였고, 세지 않은 쿼리는 늘어도 아무도 모른다 (#62).
+ * 쿼리 수는 페이지 크기와 무관하게 12회다: 목록 1 + 건수 2(필터·전체) + 이력 1 + 체크리스트 1 +
+ * 투표 집계 1 + 내 표 1 + 반려 1 + 보는 사람의 권한 3(유효 역할·부여 권한·트리 간선, #123) +
+ * 승인자 권한 표시명 1. 테스트가 이 숫자를 못 박는다 — 이전 주석은 체크리스트 집계를 빠뜨린
+ * 6회였고, 세지 않은 쿼리는 늘어도 아무도 모른다 (#62).
  */
 @Service
 @RequiredArgsConstructor
@@ -57,6 +60,9 @@ public class ApprovalServiceImpl implements ApprovalService {
     private final SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     private final SubWorkRejectionRepository subWorkRejectionRepository;
     private final ApprovalAuthorityPolicy approvalAuthorityPolicy;
+
+    // 승인자 결재 권한의 표시명(authrt_nm)을 카드에 싣는다 (#123, AR-07 경유)
+    private final AuthorityNameFinder authorityNameFinder;
 
     private final Clock clock;
 
@@ -153,6 +159,18 @@ public class ApprovalServiceImpl implements ApprovalService {
          */
         Predicate<SubWorkEntity> decidable = approvalAuthorityPolicy.decidableBy(viewer);
 
+        /*
+         * 승인자 결재 권한의 표시명 (#123). 코드는 카드마다 달라도 어휘가 결재 권한 4종뿐이라
+         * 이름 조회는 페이지에 한 번이다 — 카드마다 물으면 그대로 N+1이다.
+         */
+        Map<String, String> authorizerNames =
+                authorityNameFinder.namesOf(
+                        rows.stream()
+                                .map(row -> row.getSubWorkType().getAuthorizerAuthorityCode())
+                                .filter(Objects::nonNull)
+                                .distinct()
+                                .toList());
+
         return rows.stream()
                 .map(
                         subWork ->
@@ -163,7 +181,8 @@ public class ApprovalServiceImpl implements ApprovalService {
                                         agreedCounts.getOrDefault(subWork.getId(), Map.of()),
                                         myVotes.get(subWork.getId()),
                                         latestRejections.get(subWork.getId()),
-                                        decidable.test(subWork)))
+                                        decidable.test(subWork),
+                                        authorizerNames))
                 .toList();
     }
 
@@ -174,7 +193,8 @@ public class ApprovalServiceImpl implements ApprovalService {
             Map<Integer, Long> agreedCountBySequence,
             SubWorkApprovalVoteEntity myVote,
             SubWorkLatestRejection latestRejection,
-            boolean canDecide) {
+            boolean canDecide,
+            Map<String, String> authorizerNames) {
         /*
          * 회차는 검토 진입 횟수다. 검토요청을 한 번도 하지 않은 건은 이력이 없어 0인데,
          * 대기 탭은 검토 상태만 담으므로 실제로는 승인·반려 탭에서만 그런 행이 나올 수 있다.
@@ -191,6 +211,7 @@ public class ApprovalServiceImpl implements ApprovalService {
                         ? myVote.choice()
                         : null;
 
+        String authorizerAuthorityCode = subWork.getSubWorkType().getAuthorizerAuthorityCode();
         return ApprovalInboxItemResponse.of(
                 subWork,
                 requestedAt,
@@ -199,6 +220,9 @@ public class ApprovalServiceImpl implements ApprovalService {
                 totalItems,
                 choice,
                 latestRejection == null ? null : latestRejection.getReason(),
-                canDecide);
+                canDecide,
+                authorizerAuthorityCode == null
+                        ? null
+                        : authorizerNames.get(authorizerAuthorityCode));
     }
 }

@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -723,6 +724,55 @@ class SubWorkControllerTest {
                         .header("Authorization", "Bearer any-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body));
+    }
+
+    // ------------------------------------------------------------------ 삭제 (#125)
+
+    @Test
+    void deleteSubWorkReturns200() throws Exception {
+        Long subWorkId = createSubWork();
+
+        mockMvc.perform(
+                        delete("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        mockMvc.perform(
+                        get("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void deleteUnknownSubWorkReturns404() throws Exception {
+        mockMvc.perform(
+                        delete("/v1/sub-works/{subWorkId}", 999_999L)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void deleteAlreadyDeletedSubWorkReturns409() throws Exception {
+        Long subWorkId = createSubWork();
+        mockMvc.perform(
+                        delete("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        delete("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer any-token"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ALREADY_DELETED"));
+    }
+
+    @Test
+    void deleteSubWorkWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(delete("/v1/sub-works/{subWorkId}", 1L))
+                .andExpect(status().isUnauthorized());
     }
 
     private Long createSubWork() throws Exception {

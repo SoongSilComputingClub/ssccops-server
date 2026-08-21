@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -53,6 +54,9 @@ public class WorkServiceImpl implements WorkService {
     private final SubWorkRepository subWorkRepository;
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
     private final MemberService memberService;
+
+    // 삭제 일시 등 '지금'이 필요한 자리. 테스트에서 고정할 수 있도록 주입받는다 (#125)
+    private final Clock clock;
 
     /*
      * 수정(updateWork)이 mdfcn_dt를 바로 응답에 실어야 해서 필요하다 — @LastModifiedDate는
@@ -154,6 +158,38 @@ public class WorkServiceImpl implements WorkService {
         return workRepository
                 .findByIdAndOperationDeletedAtIsNull(workId)
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.WORK_NOT_FOUND));
+    }
+
+    /*
+     * 업무 삭제(#125). work 자기 operation과 그 아래 살아있는 sub-work 전체의 operation을
+     * 한 트랜잭션에서 함께 소프트 삭제한다 — 계단식 삭제라 하나만 남으면 지워진 상위 업무
+     * 아래 지워지지 않은 하위 업무가 남는 모순이 생긴다(AR-11과 같은 결의 경계).
+     *
+     * 대상 존재 여부와 삭제 여부를 함께 판정해야 하므로(404 vs 409) 조회 계열이 쓰는
+     * findByIdAndOperationDeletedAtIsNull이 아니라 필터 없는 findById를 쓴다 — 그 조회는
+     * 이미 삭제된 건도 없는 것으로 묶어 버려 이 구분이 불가능하다.
+     *
+     * 상태(work_stts_cd)와 무관하게 항상 허용한다 — 완료(DONE)된 업무도 지울 수 있다.
+     * 하위 레코드(체크리스트·투표·반려 이력)는 지우지 않고 그대로 둔다.
+     */
+    @Override
+    @Transactional
+    public void deleteWork(Long workId) {
+        WorkEntity work =
+                workRepository
+                        .findById(workId)
+                        .orElseThrow(() -> new GeneralException(OperationErrorCode.WORK_NOT_FOUND));
+
+        OperationEntity operation = work.getOperation();
+        if (operation.isDeleted()) {
+            throw new GeneralException(OperationErrorCode.ALREADY_DELETED);
+        }
+
+        Instant deletedAt = Instant.now(clock);
+        operation.softDelete(deletedAt);
+        for (SubWorkEntity subWork : subWorkRepository.findAllByWorkWithOwner(work)) {
+            subWork.getOperation().softDelete(deletedAt);
+        }
     }
 
     private WorkDetailResponse buildDetail(WorkEntity work) {

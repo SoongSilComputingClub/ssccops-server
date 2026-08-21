@@ -16,6 +16,10 @@ import jakarta.validation.constraints.Size;
  * indctSeqno는 생략할 수 있다. 채워 넣는 값은 같은 분류(roleClsfCd) 안의 최대값 + 1이며
  * (RoleServiceImpl 참고) 분류를 가로지르는 서열이 아니라 분류 안의 표시 순번이다 (VR-M11).
  * 상한이 32767인 것은 컬럼이 SMALLINT이기 때문이다.
+ *
+ * 승인·투표 자격 필드는 없다 (#123). 새 역할은 아무 자격 없이 만들어지고, 결재·투표 권한은
+ * 역할별 권한 화면(PUT /v1/roles/{roleId}/authorities)에서 부여한다 — "권한 없는 역할은
+ * 아무것도 못 한다"가 기본값이라 역할을 만드는 것만으로 의사결정 자격이 딸려 오지 않는다.
  */
 public record RoleCreateRequest(
         @NotBlank @Size(max = 100) String roleNm,

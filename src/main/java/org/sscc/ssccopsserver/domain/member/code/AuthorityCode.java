@@ -1,5 +1,8 @@
 package org.sscc.ssccopsserver.domain.member.code;
 
+import java.util.List;
+import java.util.Optional;
+
 /*
  * 코드가 직접 가리키는 권한 코드(#9 · ssccops#68 BR-M20).
  *
@@ -40,6 +43,20 @@ public enum AuthorityCode {
     /** 업무·하위 업무 조회 전용(#101). WORK_MANAGE의 자식이라 그 보유자는 자동으로 포함한다 */
     WORK_READ,
 
+    /*
+     * 업무 소프트 삭제(#125). WORK_MANAGE의 자식이라 그 보유자(국장 이상)는 자동으로
+     * 포함한다. 다른 하위 업무 쓰기 작업과 달리 SubWorkOwnershipPolicy 같은 소유권 계층을
+     * 두지 않는다 — 담당자 본인이라도 이 권한이 없으면 삭제할 수 없다(운영진 전용 삭제,
+     * 삭제만 먼저 authrt 트리 하나로 판정하기로 한 결정).
+     */
+    WORK_DELETE,
+
+    /*
+     * 하위 업무 소프트 삭제(#125). 별도의 SUB_WORK_MANAGE 권한이 없어(하위 업무 등록도
+     * WORK_MANAGE로 게이트돼 있다) WORK_DELETE와 같은 부모 아래 둔다.
+     */
+    SUB_WORK_DELETE,
+
     /** 회의 등록·조회·상태 전이·안건 관리 */
     MEETING_MANAGE,
 
@@ -48,6 +65,12 @@ public enum AuthorityCode {
 
     /** 회의 안건 등록·수정·철회 전용(#101) — 회의 자체의 생성·전이는 MEETING_MANAGE만의 몫이다 */
     MEETING_AGENDA_WRITE,
+
+    /*
+     * 회의 소프트 삭제(#125). MEETING_MANAGE의 자식이라 그 보유자는 자동으로 포함한다.
+     * WORK_DELETE와 같은 결정으로, 회의 책임자 본인이라도 이 권한이 없으면 삭제할 수 없다.
+     */
+    MEETING_DELETE,
 
     /** 하위 업무 유형 조회 */
     SUB_WORK_TYPE_READ,
@@ -77,10 +100,62 @@ public enum AuthorityCode {
     MEMBER_MANAGE,
 
     /** 역할·권한 관리 */
-    ROLE_MANAGE;
+    ROLE_MANAGE,
+
+    /*
+     * 하위 업무 찬반 투표 자격 (OPS-015 · #123). 직위 코드(role.role_pstn_cd)로 갈리던 투표
+     * 자격을 권한으로 옮긴 것이다 — 자격 대상은 이제 코드가 아니라 역할↔권한 매핑이 정한다.
+     * 시드는 회장·부회장·총무·국장·국원 역할에 부여한다.
+     */
+    APPROVAL_VOTE,
+
+    /*
+     * 하위 업무 유형이 승인자로 지정하는 결재 권한 4종 (#123). 유형의 autzr_authrt_cd가 이 중
+     * 하나를 가리키고, 그 권한 보유자만 그 유형의 하위 업무를 최종 승인·반려할 수 있다.
+     *
+     * 직위(AuthorizerRole·RolePositionCode)를 권한으로 옮긴 것이라 이름에 직위가 남아 있지만,
+     * 판정 재료는 직위가 아니라 권한이다 — 부서별 국장(홍보국장 …) 역할에는 역할별 권한
+     * 화면에서 SUB_WORK_APPROVE_DIRECTOR를 부여한다. 어휘가 코드(enum)인 것은 유형 저장
+     * 화면의 선택지이자 저장 검증 기준이기 때문이며(@RequireAuthority가 코드를 가리키는 것과
+     * 같은 이유), 누가 그 권한을 갖는지는 여전히 데이터가 정한다.
+     */
+    SUB_WORK_APPROVE_PRESIDENT,
+    SUB_WORK_APPROVE_VICE_PRESIDENT,
+    SUB_WORK_APPROVE_TREASURER,
+    SUB_WORK_APPROVE_DIRECTOR;
+
+    /*
+     * 유형이 승인자로 지정할 수 있는 권한들. 선언 순서가 곧 화면 선택지의 표시 순서다.
+     * enum 전체가 아니라 부분집합인 것은, 임의 권한(WORK_MANAGE 등)을 승인자로 지정하는 것을
+     * 허용하면 '결재 자격'이라는 어휘가 흐려지고 유형 저장 검증이 사라지기 때문이다.
+     */
+    private static final List<AuthorityCode> SUB_WORK_APPROVERS =
+            List.of(
+                    SUB_WORK_APPROVE_PRESIDENT,
+                    SUB_WORK_APPROVE_VICE_PRESIDENT,
+                    SUB_WORK_APPROVE_TREASURER,
+                    SUB_WORK_APPROVE_DIRECTOR);
 
     /** authrt_cd 컬럼에 저장되는 코드값. enum 이름과 같다 */
     public String code() {
         return name();
+    }
+
+    /** 하위 업무 유형이 승인자로 지정할 수 있는 결재 권한 목록 (#123) */
+    public static List<AuthorityCode> subWorkApprovers() {
+        return SUB_WORK_APPROVERS;
+    }
+
+    /*
+     * 저장된 승인자 권한 코드를 상수로 되돌린다. 값이 없거나 결재 권한이 아니면 비어 있다 —
+     * 승인 정책이 깨진 상태이므로 호출부가 '권한 없음'과 나눠 다룬다 (ApprovalAuthorityPolicy).
+     */
+    public static Optional<AuthorityCode> fromSubWorkApproverCode(String code) {
+        if (code == null || code.isBlank()) {
+            return Optional.empty();
+        }
+        return SUB_WORK_APPROVERS.stream()
+                .filter(approver -> approver.name().equals(code))
+                .findFirst();
     }
 }

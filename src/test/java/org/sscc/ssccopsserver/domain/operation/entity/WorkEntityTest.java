@@ -12,37 +12,12 @@ class WorkEntityTest {
         return WorkEntity.create(null, WorkType.EVENT, null);
     }
 
+    /*
+     * 진행률 컬럼은 등록 시 0으로 굳고 그 뒤 갱신하지 않는다 (AGG-05, #117) —
+     * 응답의 진행률은 ProgressRate.average가 조회 때 계산한다.
+     */
     @Test
     void progressRateStartsAtZero() {
         assertThat(work().getProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
-    }
-
-    @Test
-    void recalculateProgressRateUsesCompletedRatioAsPercent() {
-        WorkEntity work = work();
-
-        work.recalculateProgressRate(1, 4);
-
-        assertThat(work.getProgressRate()).isEqualByComparingTo(new BigDecimal("25.00"));
-    }
-
-    // work_prgrs_rt가 NUMERIC(5,2)이라 나누어떨어지지 않는 비율은 소수 2자리로 반올림한다
-    @Test
-    void recalculateProgressRateRoundsToTwoDecimals() {
-        WorkEntity work = work();
-
-        work.recalculateProgressRate(2, 3);
-
-        assertThat(work.getProgressRate()).isEqualByComparingTo(new BigDecimal("66.67"));
-    }
-
-    @Test
-    void recalculateProgressRateWithoutSubWorksIsZero() {
-        WorkEntity work = work();
-        work.recalculateProgressRate(3, 3);
-
-        work.recalculateProgressRate(0, 0);
-
-        assertThat(work.getProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
     }
 }

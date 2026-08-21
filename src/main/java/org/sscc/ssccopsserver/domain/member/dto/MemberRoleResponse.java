@@ -10,6 +10,8 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
  *
  * 이 목록은 **표시용**이다. 인가 판정은 역할이 아니라 그 역할에 부여된 권한으로 하며(#9),
  * 화면이 버튼을 감출 때 쓰는 값은 여기가 아니라 MemberProfileResponse.capabilities다.
+ * 예외였던 직위 코드(rolePstnCd, #118)는 승인·투표 자격이 권한 시스템으로 통합되며
+ * 사라졌다(#123) — 이제 이 목록에는 판정에 쓰이는 값이 하나도 없다.
  */
 public record MemberRoleResponse(Long roleId, String roleName, boolean representative) {
 

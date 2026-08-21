@@ -17,7 +17,10 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -26,6 +29,8 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
@@ -107,6 +112,8 @@ class SubWorkApprovalVoteServiceTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
+    @Autowired private AuthorityRepository authorityRepository;
+    @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -146,6 +153,7 @@ class SubWorkApprovalVoteServiceTest {
                         subWorkRepository,
                         subWorkChecklistItemRepository,
                         memberService,
+                        FIXED_CLOCK,
                         entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
@@ -159,8 +167,10 @@ class SubWorkApprovalVoteServiceTest {
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new AuthorityNameFinder(authorityRepository),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -172,6 +182,12 @@ class SubWorkApprovalVoteServiceTest {
         studyLeader = saveMember("20200006", "정하늘", MemberRoleFixture.STUDY_LEADER);
 
         /*
+         * 기획국원은 시드에 없는 부서별 역할이라 권한도 비어 있다. 투표 자격(APPROVAL_VOTE)을
+         * 직접 부여한다 — 역할별 권한 화면에서 부서별 국원에 부여해 주는 것과 같은 준비다(#123).
+         */
+        grantAuthorities(MemberRoleFixture.PLANNING_STAFF, AuthorityCode.APPROVAL_VOTE);
+
+        /*
          * 시드에는 정족수 유형이 없다(4종 모두 단독). 승인자가 회장인 '대외공지'를 정족수로
          * 바꿔 쓴다 — 유형 관리 화면(#43)에서 의사결정을 '정족수'로 바꾼 것과 같은 상태다.
          */
@@ -180,7 +196,7 @@ class SubWorkApprovalVoteServiceTest {
         quorumType.update(
                 quorumType.getTypeName(),
                 true,
-                "PRESIDENT",
+                "SUB_WORK_APPROVE_PRESIDENT",
                 true,
                 REQUIRED_AGREE_COUNT,
                 List.of("공지 문안 검수"));
@@ -283,15 +299,28 @@ class SubWorkApprovalVoteServiceTest {
     }
 
     /*
-     * 국장은 부서별로 나뉜다(홍보국장·행정국장 …). 유형이 지정하는 승인자 코드는 DIRECTOR 하나뿐이라
-     * 부서명이 앞에 붙은 역할도 승인자로 인정돼야 한다 — 아니면 국장 승인 유형을 아무도 승인할 수 없다.
+     * 국장은 부서별로 나뉜다(홍보국장·행정국장 …). 유형이 지정하는 승인자는 국장 결재
+     * (SUB_WORK_APPROVE_DIRECTOR) 하나뿐이라 부서별 역할도 승인자로 인정돼야 한다 — 아니면
+     * 국장 승인 유형을 아무도 승인할 수 없다.
+     *
+     * **인정의 근거가 이름에서 권한으로 바뀌었다** (#118 → #123). 예전에는 '국장'으로 끝나는
+     * 이름을 통과시켰고 지금은 그 역할에 결재 권한이 부여돼 있어야 한다 — 픽스처가 홍보국장에
+     * 권한을 붙여 두는 것이 역할별 권한 화면에서 부여해 주는 것과 같은 준비다. 근거가 갈린
+     * 자리는 아래 customRoleNamedLikeADirector… 가 반대 방향에서 못 박는다.
      */
     @Test
     void departmentalDirectorIsRecognizedAsAuthorizer() {
         SubWorkTypeEntity soleType =
                 SubWorkTypeFixture.entityOf(subWorkTypeRepository, SubWorkTypeFixture.EXPENDITURE);
-        soleType.update(soleType.getTypeName(), true, "DIRECTOR", false, null, List.of("영수증 첨부"));
+        soleType.update(
+                soleType.getTypeName(),
+                true,
+                "SUB_WORK_APPROVE_DIRECTOR",
+                false,
+                null,
+                List.of("영수증 첨부"));
         MemberEntity prDirector = saveMember("20200007", "최유진", MemberRoleFixture.PR_DIRECTOR);
+        grantAuthorities(MemberRoleFixture.PR_DIRECTOR, AuthorityCode.SUB_WORK_APPROVE_DIRECTOR);
 
         Long subWorkId = subWorkInReview(soleTypeId);
         completeChecklist(subWorkId);
@@ -300,6 +329,91 @@ class SubWorkApprovalVoteServiceTest {
                 transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null, prDirector);
 
         assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
+    }
+
+    /* ── 역할명과 자격의 분리 (#118) ─────────────────────── */
+
+    /*
+     * **역할명을 바꿔도 승인 자격이 그대로여야 한다.** role_nm은 NOT NULL도 UNIQUE도 아니고
+     * 역할 관리 화면에서 바뀌는 값인데, 판정이 그 문자열을 보던 동안에는 '총무'를 '재무'로
+     * 개명하는 것만으로 예산지출을 승인할 사람이 사라졌다 — 겉으로는 평범한 403이라 원인을
+     * 찾기도 어려웠다. 자격은 역할에 부여된 권한(role_authrt_rel)에 실려 있으므로 개명은
+     * 표시만 바꾼다.
+     */
+    @Test
+    void renamingARoleKeepsItsApprovalRight() {
+        renameRole(MemberRoleFixture.TREASURER, "재무");
+
+        Long subWorkId = subWorkInReview(soleTypeId);
+        completeChecklist(subWorkId);
+
+        SubWorkTransitionResponse response =
+                transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null, treasurer);
+
+        assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
+    }
+
+    /*
+     * 투표 자격도 같이 옮겨졌는지 (#118). 승인만 코드로 옮기고 투표를 역할명에 남겨 두면
+     * 개명 뒤에 "승인은 되는데 투표가 안 되는" 절반짜리 상태가 된다 — 두 판정이 같은 값을
+     * 본다는 것을 개명이라는 같은 조작으로 확인한다.
+     */
+    @Test
+    void renamingARoleKeepsItsVotingRight() {
+        renameRole(MemberRoleFixture.TREASURER, "재무");
+
+        Long subWorkId = subWorkInReview(quorumTypeId);
+
+        assertThat(vote(subWorkId, VoteChoice.AGREE, treasurer).currentCount()).isEqualTo(1);
+    }
+
+    /*
+     * **이름이 '국장'으로 끝난다는 이유만으로는 승인권이 생기지 않는다** (#118 D2).
+     *
+     * 예전에는 부서별 직책을 걸러 내려고 DIRECTOR만 접미사로 판정했고, 그 때문에 화면에서 만든
+     * '동아리방국장' 같은 사용자 정의 역할이 만들어지는 순간 예산지출 승인권을 얻었다. 자격은
+     * 이제 직위 코드를 지정해야만 생긴다 — 위 departmentalDirector… 와 이 테스트의 차이는
+     * 역할 이름이 아니라 코드가 붙어 있는지 하나뿐이다.
+     */
+    @Test
+    void customRoleNamedLikeADirectorIsNotAnAuthorizer() {
+        SubWorkTypeEntity soleType =
+                SubWorkTypeFixture.entityOf(subWorkTypeRepository, SubWorkTypeFixture.EXPENDITURE);
+        soleType.update(
+                soleType.getTypeName(),
+                true,
+                "SUB_WORK_APPROVE_DIRECTOR",
+                false,
+                null,
+                List.of("영수증 첨부"));
+        MemberEntity roomKeeper = saveMember("20200008", "한지우", "동아리방국장");
+
+        Long subWorkId = subWorkInReview(soleTypeId);
+        completeChecklist(subWorkId);
+
+        assertThatThrownBy(
+                        () ->
+                                transition(
+                                        subWorkId,
+                                        TransitionAction.APPROVE_COMPLETE,
+                                        null,
+                                        roomKeeper))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.FORBIDDEN);
+    }
+
+    /** 투표 자격도 마찬가지다 — '국원'으로 끝나는 사용자 정의 역할이 운영진 취급을 받지 않는다 */
+    @Test
+    void customRoleNamedLikeAStaffCannotVote() {
+        MemberEntity clubRoomStaff = saveMember("20200009", "서지호", "동아리방국원");
+
+        Long subWorkId = subWorkInReview(quorumTypeId);
+
+        assertThatThrownBy(() -> vote(subWorkId, VoteChoice.AGREE, clubRoomStaff))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.FORBIDDEN);
     }
 
     // 단독 유형은 투표 없이 승인자의 승인 한 번으로 끝난다
@@ -596,6 +710,31 @@ class SubWorkApprovalVoteServiceTest {
         entityManager.flush();
         entityManager.clear();
         return subWorkService.getSubWork(subWorkId, viewer);
+    }
+
+    /*
+     * 역할 관리 화면의 개명과 같은 조작 (#118 → #123). 권한 부여는 그대로 두고 이름만 바꾼다 —
+     * 개명이 자격을 건드리지 않는다는 것이 확인 대상이므로 부여까지 같이 바꾸면 뜻이 없다.
+     */
+    private void renameRole(String currentName, String newName) {
+        MemberRoleEntity role =
+                memberRoleRepository.findAll().stream()
+                        .filter(it -> currentName.equals(it.getName()))
+                        .findFirst()
+                        .orElseThrow();
+        role.update(role.getDisplayOrder(), newName, role.getRoleClassification());
+        entityManager.flush();
+        entityManager.clear();
+    }
+
+    private void grantAuthorities(String roleName, AuthorityCode... codes) {
+        MemberRoleFixture.grantAuthorities(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                roleName,
+                codes);
     }
 
     private MemberEntity saveMember(String studentNumber, String name, String roleName) {

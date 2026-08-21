@@ -21,6 +21,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -29,6 +30,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
@@ -91,6 +93,9 @@ class SubWorkServiceImplSearchTest {
     private static final OffsetDateTime SOON = NOW.plusDays(2);
     private static final OffsetDateTime LATER = NOW.plusDays(10);
 
+    // 마감일은 오늘인데 마감 시각은 이미 지난 건. 두 칩의 경계가 갈리는 자리다 (#121)
+    private static final OffsetDateTime DUE_TODAY = NOW.minusHours(3);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -109,6 +114,7 @@ class SubWorkServiceImplSearchTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
+    @Autowired private AuthorityRepository authorityRepository;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -151,6 +157,7 @@ class SubWorkServiceImplSearchTest {
                         subWorkRepository,
                         subWorkChecklistItemRepository,
                         memberService,
+                        FIXED_CLOCK,
                         entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
@@ -164,8 +171,10 @@ class SubWorkServiceImplSearchTest {
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new AuthorityNameFinder(authorityRepository),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -282,8 +291,8 @@ class SubWorkServiceImplSearchTest {
     }
 
     /*
-     * 화면 '지연' 칩. dly_yn 컬럼이 아니라 조회 시점 판정이다 — 그 컬럼은 등록 시 false로
-     * 고정된 뒤 갱신하는 주체가 없어 지연된 건도 항상 false다.
+     * 화면 '지연' 칩. dly_yn 컬럼이 아니라 조회 시점 판정이다 — 그 컬럼은 채우지 않기로
+     * 결정했으므로(#117) 지연된 건도 저장값은 false이고, 그래도 필터에 잡혀야 한다.
      */
     @Test
     void overdueChipReturnsOnlyPastDueAndUnfinished() {
@@ -293,7 +302,11 @@ class SubWorkServiceImplSearchTest {
         Long doneOverdue = createSubWork(springMtWorkId, "늦게 끝난 건", OVERDUE);
         complete(doneOverdue);
 
-        assertThat(subWorkRepository.findById(overdue).orElseThrow().isDelayed()).isFalse();
+        // 어떤 행도 dly_yn이 켜져 있지 않다. 필터가 컬럼을 읽는다면 아래에서 빈 목록이 나온다
+        assertThat(subWorkRepository.findAll())
+                .extracting(SubWorkEntity::isDelayed)
+                .containsOnly(false);
+
         SubWorkSearchResponse response = search(condition().isOverdue(true).build());
 
         assertThat(idsOf(response)).containsExactly(overdue);
@@ -323,6 +336,23 @@ class SubWorkServiceImplSearchTest {
 
         assertThat(idsOf(search(condition().dueBefore(NOW.plusDays(3)).build())))
                 .containsExactly(soon);
+    }
+
+    /*
+     * 마감일이 오늘인 건은 마감 시각이 지났어도 '지연' 칩이 아니라 '마감임박' 칩에 잡힌다
+     * (#121). 두 칩이 같은 값(오늘 0시)을 경계로 쓰므로 사이로 빠지는 건이 없다 — 지연만
+     * 날짜 단위로 옮기고 마감임박 하한을 '지금'으로 두면 이 건은 어느 칩에서도 보이지 않는다.
+     */
+    @Test
+    void subWorkDueTodayGoesToDueBeforeChipInsteadOfOverdueChip() {
+        Long dueToday = createSubWork(springMtWorkId, "오늘 아침 마감", DUE_TODAY);
+
+        assertThat(idsOf(search(condition().isOverdue(true).build()))).isEmpty();
+        assertThat(idsOf(search(condition().dueBefore(NOW.plusDays(3)).build())))
+                .containsExactly(dueToday);
+        assertThat(search(condition().build()).subWorks())
+                .extracting(SubWorkSummaryResponse::isDelayed)
+                .containsExactly(false);
     }
 
     // 화면 '완료' 칩

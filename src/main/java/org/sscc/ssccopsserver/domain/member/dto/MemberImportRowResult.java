@@ -15,7 +15,9 @@ import org.sscc.ssccopsserver.domain.member.code.MemberImportRowStatus;
  * - reasons: 이관을 막는 사유. status가 OK면 비어 있다
  * - warnings: **이관을 막지 않는** 지적. 지금은 연락처 누락 하나다(ssccops#78 A안 — 연락처가 빈
  *   회원은 나중에 스스로 계정을 연결할 수 없다). 오류와 같은 목록에 담지 않는 것은 화면이
- *   "고쳐야 진행되는 것"과 "고치면 좋은 것"을 다르게 그려야 하기 때문이다
+ *   "고쳐야 진행되는 것"과 "고치면 좋은 것"을 다르게 그려야 하기 때문이다.
+ *   **status가 OK가 아니면 비어 있다** — 그 행은 이관되지 않으므로 "이관은 되지만 나중에 불편하다"가
+ *   그 행에 대해 거짓이다(#109). 사유를 고쳐 다시 검증하면 그때 경고가 나타난다
  */
 public record MemberImportRowResult(
         long rowNo,

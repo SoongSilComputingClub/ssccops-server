@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.operation.dto.AuthorizerAuthorityResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeActivationRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeSaveRequest;
@@ -63,7 +64,21 @@ public class SubWorkTypeController {
         return ApiResponse.success(subWorkTypeService.getSubWorkTypes(useYn));
     }
 
-    @Operation(summary = "하위 업무 유형 추가", description = "승인 여부·승인자 역할·의사결정·완료 점검 항목을 담은 새 유형을 만든다.")
+    /*
+     * 유형 폼의 승인자 선택지 (#123). 결재 권한 코드는 고정 어휘지만 표시명(authrt_nm)은
+     * 운영 데이터라 서버가 합쳐 내린다. 권한 트리 API(/v1/authorities)는 ROLE_MANAGE로 잠겨
+     * 있어 유형 관리 화면이 부를 수 없으므로 이 컨트롤러의 권한(SUB_WORK_TYPE_READ)으로 연다.
+     */
+    @Operation(summary = "승인자 결재 권한 목록 조회", description = "유형 등록·수정 폼의 승인자 선택지 — 결재 권한 코드와 표시명.")
+    @RequireAuthority(AuthorityCode.SUB_WORK_TYPE_READ)
+    @GetMapping("/authorizer-authorities")
+    public ApiResponse<List<AuthorizerAuthorityResponse>> getAuthorizerAuthorities() {
+        return ApiResponse.success(subWorkTypeService.getAuthorizerAuthorities());
+    }
+
+    @Operation(
+            summary = "하위 업무 유형 추가",
+            description = "승인 여부·승인자 결재 권한·의사결정·완료 점검 항목을 담은 새 유형을 만든다.")
     @RequireAuthority(AuthorityCode.SUB_WORK_TYPE_MANAGE)
     @PostMapping
     public ResponseEntity<ApiResponse<SubWorkTypeResponse>> createSubWorkType(

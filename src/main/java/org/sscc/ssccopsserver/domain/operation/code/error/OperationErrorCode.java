@@ -109,12 +109,25 @@ public enum OperationErrorCode implements ErrorCode {
             HttpStatus.CONFLICT, "COMPLETION_CRITERIA_UNMET", "완료 조건을 모두 확인해주세요."),
 
     /*
+     * 409 — 이미 소프트 삭제된 work·sub-work·meeting을 다시 삭제하려 할 때 (#125).
+     * 조회 계열의 WORK_NOT_FOUND 등(소프트 삭제도 404로 묶어 존재를 숨김)과는 다른 판단이다 —
+     * 삭제 엔드포인트는 대상이 아예 없는 경우(404)와 있지만 이미 삭제된 경우(이 코드)를
+     * 구분해야 한다는 결정이라, 삭제 경로의 조회는 deletedAt 필터가 없는 조회를 쓴다.
+     */
+    ALREADY_DELETED(HttpStatus.CONFLICT, "ALREADY_DELETED", "이미 삭제된 항목입니다."),
+
+    /*
      * 422 — 반려 사유 누락. Bean Validation으로 잡으면 전역 핸들러가 VALIDATION_FAILED(400)로
      * 바꿔 버리므로, 사유의 필수 여부는 전이 메서드가 판단해 이 코드로 던진다 (VR-O06).
      */
     REASON_REQUIRED(HttpStatus.UNPROCESSABLE_ENTITY, "REASON_REQUIRED", "사유를 입력해주세요."),
 
-    // 500 — 감사 로그 기록 실패. 원 트랜잭션도 함께 롤백된다 (EX-13, BR-O12)
+    /*
+     * 500 — 감사 로그 기록 실패. 원 트랜잭션도 함께 롤백된다 (EX-13, BR-O12).
+     *
+     * 아직 던지는 곳이 없다. 감사 로그(#8)가 확정되면 쓸 코드라 남긴다(#117) — 정의서가
+     * 명시한 코드이고, 지웠다가 다시 넣으면 그 사이에 다른 이름이 붙어 명세와 갈린다.
+     */
     AUDIT_LOG_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "AUDIT_LOG_FAILED", "감사 로그 기록에 실패했습니다.");
 
     private final HttpStatus httpStatus;

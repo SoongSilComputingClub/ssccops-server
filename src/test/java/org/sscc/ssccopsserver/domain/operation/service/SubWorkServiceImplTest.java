@@ -22,6 +22,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -30,6 +31,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
@@ -102,6 +104,15 @@ class SubWorkServiceImplTest {
 
     private static final Clock FIXED_CLOCK = Clock.fixed(NOW.toInstant(), KST);
 
+    /*
+     * 지연 판정은 시각이 아니라 일자로 한다 (#121). 그 경계를 재는 값들이라 NOW에서 파생한다 —
+     * 날짜를 따로 적으면 NOW를 옮겼을 때 한쪽만 따라오지 않는다.
+     */
+    private static final OffsetDateTime TODAY_START =
+            NOW.toLocalDate().atStartOfDay().atOffset(KST);
+    private static final OffsetDateTime TODAY_MORNING = NOW.minusHours(3);
+    private static final OffsetDateTime YESTERDAY_END = TODAY_START.minusMinutes(1);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -120,6 +131,7 @@ class SubWorkServiceImplTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
+    @Autowired private AuthorityRepository authorityRepository;
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
@@ -161,6 +173,7 @@ class SubWorkServiceImplTest {
                         subWorkRepository,
                         subWorkChecklistItemRepository,
                         memberService,
+                        FIXED_CLOCK,
                         entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
@@ -174,8 +187,10 @@ class SubWorkServiceImplTest {
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new AuthorityNameFinder(authorityRepository),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -245,7 +260,12 @@ class SubWorkServiceImplTest {
                 SubWorkTypeFixture.entityOf(
                         subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
         subWorkType.update(
-                subWorkType.getTypeName(), true, "PRESIDENT", false, null, List.of("새 점검 항목"));
+                subWorkType.getTypeName(),
+                true,
+                "SUB_WORK_APPROVE_PRESIDENT",
+                false,
+                null,
+                List.of("새 점검 항목"));
         entityManager.flush();
         entityManager.clear();
 
@@ -306,6 +326,26 @@ class SubWorkServiceImplTest {
         assertThat(response.registrantId()).isEqualTo(registrant.getId());
     }
 
+    /*
+     * 등록 응답의 isDelayed도 조회 시점 판정값이다 (#121). 이 자리만 dly_yn 컬럼을 읽고 있어서,
+     * 마감이 이미 지난 건으로 등록하면 등록 응답은 false인데 곧바로 여는 목록·상세는 true인
+     * 상태가 됐다. 그 컬럼은 채우지 않기로 결정한 값이라 언제나 false다 (#117).
+     */
+    @Test
+    void createSubWorkResponseJudgesDelayInsteadOfReadingDeadColumn() {
+        SubWorkCreateResponse response = createWithDueAt(NOW.minusDays(1));
+
+        assertThat(response.isDelayed()).isTrue();
+        assertThat(subWorkRepository.findById(response.subWorkId()).orElseThrow().isDelayed())
+                .isFalse();
+    }
+
+    // 그리고 그 판정도 날짜 단위다 — 오늘 아침 마감으로 등록해도 등록 응답은 지연이 아니다
+    @Test
+    void createSubWorkResponseIsNotDelayedWhenDueToday() {
+        assertThat(createWithDueAt(TODAY_MORNING).isDelayed()).isFalse();
+    }
+
     // 화면 안내: "완료 체크리스트 4항목이 기본 생성되며, 등록 직후 단계는 기획입니다"
     @Test
     void createSubWorkCopiesTypeChecklistAndStartsInPlanning() {
@@ -338,9 +378,9 @@ class SubWorkServiceImplTest {
                 .isEqualTo(ApprovalStatus.NOT_REQUIRED);
     }
 
-    // 상위 업무 진행률은 하위 업무 완료율에서 나온다. 기획 상태 하위 업무만 있으면 0이다
+    // 하위 업무를 등록해도 상위 업무의 저장 진행률은 건드리지 않는다 (AGG-05, #117)
     @Test
-    void createSubWorkRecalculatesParentProgressRate() {
+    void createSubWorkDoesNotTouchStoredParentProgressRate() {
         subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
         subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
 
@@ -557,6 +597,29 @@ class SubWorkServiceImplTest {
         assertThat(detailOf(subWorkWithDueAt(NOW.minusDays(1))).isDelayed()).isTrue();
     }
 
+    /*
+     * 마감일이 오늘이면 마감 시각이 지났어도 지연이 아니다 (#121). 초 단위로 재던 동안에는
+     * 이 건이 대시보드에서 'D-DAY'(화면의 날짜 단위 D-day)와 '지연'(서버 판정)으로 동시에
+     * 표시됐다 — 결함이 살아남은 것은 기존 검증이 전부 NOW ± N일이라 같은 날 안의 시각차를
+     * 아무도 보지 않았기 때문이다.
+     */
+    @Test
+    void isDelayedIsFalseWhenDueTodayEvenAfterDueTime() {
+        assertThat(detailOf(subWorkWithDueAt(TODAY_MORNING)).isDelayed()).isFalse();
+    }
+
+    // 오늘 0시 마감도 오늘 하루는 지연이 아니다 — 경계는 마감 '일자'이지 시각이 아니다
+    @Test
+    void isDelayedIsFalseWhenDueAtTodayMidnight() {
+        assertThat(detailOf(subWorkWithDueAt(TODAY_START)).isDelayed()).isFalse();
+    }
+
+    // 그리고 자정을 넘기는 순간 지연이 된다 — 어제 23:59 마감은 오늘 지연이다
+    @Test
+    void isDelayedTurnsTrueAtMidnightAfterDueDate() {
+        assertThat(detailOf(subWorkWithDueAt(YESTERDAY_END)).isDelayed()).isTrue();
+    }
+
     // 늦게 끝났더라도 완료된 건은 지연이 아니다 — 화면은 지금 손봐야 하는 건만 표시한다
     @Test
     void isDelayedIsFalseAfterDueDateWhenDone() {
@@ -595,15 +658,17 @@ class SubWorkServiceImplTest {
     }
 
     /*
-     * 승인이 필요한 유형은 승인자 판정에 회원의 현재 역할이 필요해 한 번 더 조회한다 (4회).
-     * 정족수 유형이 아니면 회차·찬성 수·내 표는 세지 않는다 — 투표 자체가 없는 유형이다.
+     * 승인이 필요한 유형은 7회다: 기본 3(하위 업무·체크리스트·최근 반려) + 승인자 판정의
+     * 권한 펼침 3(#123 — capabilitiesOf: 유효 역할 1 + 부여된 권한 1 + 트리 간선 1) +
+     * 승인자 결재 권한 표시명 1. 정족수 유형이 아니면 회차·찬성 수·내 표는 세지 않는다 —
+     * 투표 자체가 없는 유형이다.
      */
     @Test
-    void getSubWorkRunsOneMoreQueryForApprovalNeededType() {
+    void getSubWorkRunsSevenQueriesForApprovalNeededType() {
         Long subWorkId =
                 subWorkService.createSubWork(request(approvalNeededTypeId), registrant).subWorkId();
 
-        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(4);
+        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(7);
     }
 
     private long queryCountOfDetail(Long subWorkId) {
@@ -656,8 +721,12 @@ class SubWorkServiceImplTest {
     }
 
     /*
-     * TR-03 승인·완료. 승인과 완료가 한 단계라 승인 상태와 업무 상태가 함께 바뀌고,
-     * 완료 일시와 상위 업무 진행률도 이 전이에서 갱신된다.
+     * TR-03 승인·완료. 승인과 완료가 한 단계라 승인 상태와 업무 상태가 함께 바뀌고
+     * 완료 일시가 채워진다.
+     *
+     * parentWorkProgressRate는 저장 컬럼을 그대로 읽는 필드라 0이다 — 그 컬럼을 채우지 않기로
+     * 했기 때문이다 (AGG-05, #117). 진행률의 정본은 상세(OPS-003)·목록(OPS-020)이 계산해
+     * 내려주는 AGG-01이며, 웹도 이 필드를 받지 않는다.
      */
     @Test
     void approveCompleteMarksDoneAndRecordsCompletedAt() {
@@ -671,8 +740,25 @@ class SubWorkServiceImplTest {
         assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
         assertThat(response.approvalStatus()).isEqualTo(ApprovalStatus.APPROVED);
         assertThat(response.completedAt()).isEqualTo(NOW);
-        assertThat(response.parentWorkProgressRate())
-                .isEqualByComparingTo(new BigDecimal("100.00"));
+        assertThat(response.parentWorkProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    /*
+     * 완료 승인은 하위 업무만 바꾸고 상위 업무 행은 건드리지 않는다 (AGG-05, #117).
+     * 예전에는 이 전이가 완료 개수를 다시 세어 work_prgrs_rt를 UPDATE 했다 — 그 값이
+     * 응답의 진행률(AGG-01 평균)과 어긋나는 원인이었다.
+     */
+    @Test
+    void approveCompleteDoesNotTouchStoredParentProgressRate() {
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
+        completeChecklist(subWorkId);
+
+        transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(workRepository.findById(parentWorkId).orElseThrow().getProgressRate())
+                .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     // 승인이 필요 없는 유형은 승인 상태를 승인으로 바꾸지 않는다 — 승인 절차를 아예 타지 않는다
@@ -1260,6 +1346,59 @@ class SubWorkServiceImplTest {
         assertThat(subWorkService.countOngoingByOwner(registrant.getId())).isZero();
     }
 
+    // ---------------------------------------------------------------- 삭제 (#125)
+
+    // sub-work 삭제는 자기 operation만 소프트 삭제한다 — 상위 work·다른 sub-work는 건드리지 않는다
+    @Test
+    void deleteSubWorkSoftDeletesOnlyItsOwnOperation() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        subWorkService.deleteSubWork(subWorkId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(subWorkRepository.findById(subWorkId).orElseThrow().getOperation().isDeleted())
+                .isTrue();
+        assertThat(workRepository.findById(parentWorkId).orElseThrow().getOperation().isDeleted())
+                .isFalse();
+    }
+
+    // 상태와 무관하게 항상 삭제할 수 있다 — 완료(DONE)된 sub-work도 예외가 아니다
+    @Test
+    void deleteSubWorkAllowsCompletedSubWork() {
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
+        completeChecklist(subWorkId);
+        transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+        entityManager.flush();
+        entityManager.clear();
+
+        subWorkService.deleteSubWork(subWorkId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(subWorkRepository.findById(subWorkId).orElseThrow().getOperation().isDeleted())
+                .isTrue();
+    }
+
+    @Test
+    void deleteSubWorkWithUnknownIdThrowsNotFound() {
+        assertThatThrownBy(() -> subWorkService.deleteSubWork(999_999L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
+    }
+
+    @Test
+    void deleteAlreadyDeletedSubWorkThrowsAlreadyDeleted() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        subWorkService.deleteSubWork(subWorkId);
+
+        assertThatThrownBy(() -> subWorkService.deleteSubWork(subWorkId))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.ALREADY_DELETED);
+    }
+
     private Long createSubWork(long subWorkTypeId) {
         return subWorkService.createSubWork(request(subWorkTypeId), registrant).subWorkId();
     }
@@ -1308,21 +1447,23 @@ class SubWorkServiceImplTest {
     }
 
     private Long subWorkWithDueAt(OffsetDateTime dueAt) {
-        return subWorkService
-                .createSubWork(
-                        new SubWorkCreateRequest(
-                                parentWorkId,
-                                "마감 판정용 하위 업무",
-                                approvalFreeTypeId,
-                                ownerId,
-                                null,
-                                null,
-                                dueAt,
-                                null,
-                                null,
-                                null),
-                        registrant)
-                .subWorkId();
+        return createWithDueAt(dueAt).subWorkId();
+    }
+
+    private SubWorkCreateResponse createWithDueAt(OffsetDateTime dueAt) {
+        return subWorkService.createSubWork(
+                new SubWorkCreateRequest(
+                        parentWorkId,
+                        "마감 판정용 하위 업무",
+                        approvalFreeTypeId,
+                        ownerId,
+                        null,
+                        null,
+                        dueAt,
+                        null,
+                        null,
+                        null),
+                registrant);
     }
 
     private SubWorkDetailResponse detailOf(Long subWorkId) {

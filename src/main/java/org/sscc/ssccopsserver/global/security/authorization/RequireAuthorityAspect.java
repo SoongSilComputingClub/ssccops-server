@@ -17,6 +17,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /*
  * @RequireAuthority가 붙은 핸들러의 인가 판정 (#9).
@@ -40,9 +41,15 @@ import lombok.RequiredArgsConstructor;
  * 존재나 내용이 새지는 않지만(검증 규칙만 드러난다) 알고 있어야 하는 순서다. 반대로
  * `@CurrentMember`의 미가입 판정(SIGNUP_REQUIRED)도 같은 이유로 여기보다 먼저 도는데, 그쪽은
  * 이 애스펙트가 내리는 응답과 같아 결과가 갈리지 않는다.
+ *
+ * **거절은 로그로만 층이 구분된다** (#118). 운영 도메인의 거절은 이 애스펙트(1층) ·
+ * SubWorkOwnershipPolicy(2층) · ApprovalAuthorityPolicy(3층)가 순서대로 걸고 세 층 모두
+ * 403 FORBIDDEN 하나로 응답한다 — 존재·소유 관계를 응답으로 흘리지 않으려는 의도된 설계라
+ * 층별로 에러 코드를 나누지 않는다. 대신 어느 층에서 막혔는지는 서버 로그로 알아본다.
  */
 @Aspect
 @Component
+@Slf4j
 @RequiredArgsConstructor
 public class RequireAuthorityAspect {
 
@@ -68,7 +75,23 @@ public class RequireAuthorityAspect {
             throw new GeneralException(MemberErrorCode.SIGNUP_REQUIRED);
         }
 
-        if (!authorityPolicy.hasAuthority(user.member().getId(), required.value())) {
+        Long memberId = user.member().getId();
+        if (!authorityPolicy.hasAuthority(memberId, required.value())) {
+            /*
+             * 요구 권한과 요청자가 실제로 가진 권한을 함께 남긴다. 겉으로는 평범한 403이라
+             * 로그가 없으면 '권한이 모자란 사람이 눌렀다'와 '역할↔권한 매핑이 비어 있다'를
+             * 구분할 수 없다. capabilityListOf는 **실패 경로에서만** 돈다 — 통과하는 요청에
+             * 쿼리를 더하지 않는다 (3층 ApprovalAuthorityPolicy와 같은 패턴).
+             *
+             * 레벨이 warn인 것은 권한 없는 사용자가 링크를 여는 일이 운영 중 흔한 정상
+             * 거절이기 때문이다. 데이터 파손을 뜻하는 3층의 error와 구분된다.
+             */
+            log.warn(
+                    "권한 부족으로 거절. memberId={}, 필요={}, 보유={}, handler={}",
+                    memberId,
+                    required.value().code(),
+                    authorityPolicy.capabilityListOf(memberId),
+                    joinPoint.getSignature().toShortString());
             throw new GeneralException(MemberErrorCode.AUTHORITY_REQUIRED);
         }
     }

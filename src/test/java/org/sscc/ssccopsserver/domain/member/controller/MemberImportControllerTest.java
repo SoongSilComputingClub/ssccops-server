@@ -433,6 +433,83 @@ class MemberImportControllerTest {
                 .andExpect(jsonPath("$.data.rows[0].warnings[0].field").value("telno"));
     }
 
+    /*
+     * 이미 ERROR인 행에는 경고를 싣지 않는다 (#109). 경고 문구가 "이관은 되지만 나중에 스스로 계정을
+     * 연결할 수 없다"인데 이 행은 실행에서 FAILED로 등록되지 않으므로 그 문장이 거짓이다 — 연락처를
+     * 채워 넣어도 여전히 들어가지 않으니, 읽고 할 일이 없는 지적을 목록에 남기지 않는다.
+     */
+    @Test
+    void errorRowDoesNotCarryWarning() throws Exception {
+        String csv =
+                HEADER_LINE
+                        + "\n"
+                        // 등급 명칭이 기준 코드에 없어 ERROR이고, 전화번호도 비어 있다
+                        + "홍길동,20211234,30,컴퓨터학부,3,,hong@sscc.org,2021-03-02,없는등급,재학\n";
+
+        mockMvc.perform(validationRequest(csv, FULL_MAPPING, managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.errorCount").value(1))
+                .andExpect(jsonPath("$.data.summary.warningCount").value(0))
+                .andExpect(jsonPath("$.data.rows[0].status").value("ERROR"))
+                .andExpect(jsonPath("$.data.rows[0].reasons[0].field").value("mbrGrdCd"))
+                .andExpect(jsonPath("$.data.rows[0].warnings").isEmpty());
+    }
+
+    /*
+     * DUPLICATE도 같다. 성격은 오류와 다르지만(고칠 값이 있는 것이 아니라 운영자의 판단이 필요한
+     * 것) 실행이 SKIPPED로 건너뛰어 등록하지 않는다는 결과는 같다(BR-M40). 기준은 사유의 종류가
+     * 아니라 '이 행이 실제로 이관되는가' 하나다.
+     */
+    @Test
+    void duplicateRowDoesNotCarryWarning() throws Exception {
+        // 20260301은 setUp의 회원관리자가 이미 쓰고 있는 학번이다
+        String csv =
+                HEADER_LINE + "\n" + "홍길동,20260301,30,컴퓨터학부,3,,hong@sscc.org,2021-03-02,정회원,재학\n";
+
+        mockMvc.perform(validationRequest(csv, FULL_MAPPING, managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.duplicateCount").value(1))
+                .andExpect(jsonPath("$.data.summary.warningCount").value(0))
+                .andExpect(jsonPath("$.data.rows[0].status").value("DUPLICATE"))
+                .andExpect(jsonPath("$.data.rows[0].warnings").isEmpty());
+    }
+
+    /*
+     * 네 종류가 섞인 파일에서 warningCount는 **okCount의 부분집합**이다. 요약의 세 버킷이 겹치지
+     * 않는다는 계약에 더해, 경고까지 "실제로 이관될 행 중 몇 건"으로 읽을 수 있어야 화면의
+     * "경고는 이관을 막지 않는다"는 안내가 참이 된다.
+     */
+    @Test
+    void warningCountOnlyCountsRowsThatWillBeImported() throws Exception {
+        String csv =
+                HEADER_LINE
+                        + "\n"
+                        // OK · 연락처 있음 → 경고 없음
+                        + enrolledRow("김도현", "20211230")
+                        + "\n"
+                        // OK · 연락처 없음 → 유일한 경고
+                        + "이서연,20211231,30,컴퓨터학부,2,,seoyeon@sscc.org,2021-03-04,정회원,재학\n"
+                        // ERROR · 연락처 없음 → 경고 아님
+                        + "오류행,,,,,,,,없는등급,재학\n"
+                        // DUPLICATE(mbr에 이미 있는 학번) · 연락처 없음 → 경고 아님
+                        + "중복행,20260301,30,컴퓨터학부,3,,,2021-03-02,정회원,재학\n";
+
+        mockMvc.perform(validationRequest(csv, FULL_MAPPING, managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.totalCount").value(4))
+                .andExpect(jsonPath("$.data.summary.okCount").value(2))
+                .andExpect(jsonPath("$.data.summary.errorCount").value(1))
+                .andExpect(jsonPath("$.data.summary.duplicateCount").value(1))
+                .andExpect(jsonPath("$.data.summary.warningCount").value(1))
+                .andExpect(jsonPath("$.data.rows[0].warnings").isEmpty())
+                .andExpect(jsonPath("$.data.rows[1].status").value("OK"))
+                .andExpect(jsonPath("$.data.rows[1].warnings[0].field").value("telno"))
+                .andExpect(jsonPath("$.data.rows[2].status").value("ERROR"))
+                .andExpect(jsonPath("$.data.rows[2].warnings").isEmpty())
+                .andExpect(jsonPath("$.data.rows[3].status").value("DUPLICATE"))
+                .andExpect(jsonPath("$.data.rows[3].warnings").isEmpty());
+    }
+
     // ------------------------------------------------------------------ 아무것도 쓰지 않는다
 
     /*

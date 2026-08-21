@@ -20,6 +20,10 @@ import jakarta.validation.constraints.Size;
  *
  * roleClsfCd만 바꾸고 indctSeqno를 생략하면 순번은 새 분류 안의 최대값 + 1로 다시 매겨진다
  * (RoleServiceImpl 참고) — 옛 분류에서 쓰던 숫자는 새 분류 안에서 아무 뜻이 없기 때문이다.
+ *
+ * 승인·투표 자격 필드는 없다 (#123). 직위 코드(rolePstnCd) 시절에는 이 요청만 '빈 문자열 =
+ * 해제'라는 특례를 가졌는데 — 필드를 모르는 화면이 이름만 고쳐 보내도 자격이 지워지지 않게
+ * 하려는 방어였다 — 자격이 역할별 권한 화면으로 옮겨 가며 특례째 사라졌다.
  */
 public record RoleUpdateRequest(
         @Size(max = 100) @Pattern(regexp = ".*\\S.*") String roleNm,

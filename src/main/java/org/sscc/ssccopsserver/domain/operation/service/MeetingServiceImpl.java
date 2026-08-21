@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.service;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -43,6 +44,9 @@ public class MeetingServiceImpl implements MeetingService {
     private final MeetingRepository meetingRepository;
     private final MeetingAgendaRepository meetingAgendaRepository;
     private final MemberService memberService;
+
+    // 전이 일시의 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
+    private final Clock clock;
 
     /*
      * oper(공통)·mtg(확장)·mtg_dtl(안건, 함께 제출된 경우)을 한 트랜잭션에서 INSERT 한다
@@ -189,7 +193,7 @@ public class MeetingServiceImpl implements MeetingService {
                 action == MeetingTransitionAction.CLOSE
                         && meetingAgendaRepository.existsByMeetingAndProcessStatus(
                                 meeting, AgendaProcessStatus.PENDING);
-        Instant changedAt = Instant.now();
+        Instant changedAt = Instant.now(clock);
         meeting.applyTransition(action, request.reason(), hasUnresolvedAgenda);
 
         return MeetingTransitionResponse.of(meeting, action, previousStatus, changedAt);
@@ -259,6 +263,31 @@ public class MeetingServiceImpl implements MeetingService {
         return meetingRepository
                 .findByIdAndOperationDeletedAtIsNull(meetingId)
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.MEETING_NOT_FOUND));
+    }
+
+    /*
+     * 회의 삭제(#125). 자기 operation만 소프트 삭제한다 — 안건(mtg_dtl)은 지우지 않는다.
+     *
+     * 대상 존재 여부와 삭제 여부를 함께 판정해야 하므로(404 vs 409) findByIdAndOperationDeletedAtIsNull
+     * 대신 필터 없는 findById를 쓴다 — WorkServiceImpl.deleteWork와 같은 이유다.
+     *
+     * 상태(mtg_stts_cd)와 무관하게 항상 허용한다 — 종료(CLOSED)·취소(CANCELED)된 회의도
+     * 삭제할 수 있다.
+     */
+    @Override
+    @Transactional
+    public void deleteMeeting(Long meetingId) {
+        MeetingEntity meeting =
+                meetingRepository
+                        .findById(meetingId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.MEETING_NOT_FOUND));
+
+        OperationEntity operation = meeting.getOperation();
+        if (operation.isDeleted()) {
+            throw new GeneralException(OperationErrorCode.ALREADY_DELETED);
+        }
+        operation.softDelete(Instant.now(clock));
     }
 
     private MeetingAgendaEntity findAgenda(MeetingEntity meeting, Long agendaId) {

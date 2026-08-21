@@ -22,6 +22,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -29,6 +30,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepos
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
@@ -104,6 +106,7 @@ class WorkServiceImplSearchTest {
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
+    @Autowired private AuthorityRepository authorityRepository;
     @Autowired private TestEntityManager entityManager;
 
     private WorkService workService;
@@ -135,6 +138,7 @@ class WorkServiceImplSearchTest {
                         subWorkRepository,
                         subWorkChecklistItemRepository,
                         memberService,
+                        FIXED_CLOCK,
                         entityManager.getEntityManager());
         subWorkService =
                 new SubWorkServiceImpl(
@@ -148,8 +152,10 @@ class WorkServiceImplSearchTest {
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
                         memberService,
-                        new ApprovalAuthorityPolicy(memberService),
+                        new AuthorityNameFinder(authorityRepository),
+                        new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
 
@@ -261,8 +267,8 @@ class WorkServiceImplSearchTest {
      * 진행률은 하위 업무 진행률의 평균이다 (AGG-01). 하나는 4개 중 1개를 체크해 25.00,
      * 다른 하나는 완료라 100.00이므로 카드에는 62.50이 실린다.
      *
-     * 저장 컬럼(work_prgrs_rt)은 완료 개수 비율이라 같은 시점에 50.00이다. 응답이 그 값을
-     * 읽지 않는다는 것을 여기서 못 박는다 (AGG-05).
+     * 저장 컬럼(work_prgrs_rt)은 채우지 않기로 결정했으므로(#117) 같은 시점에 0이다.
+     * 응답이 그 값을 읽지 않는다는 것을 여기서 못 박는다 (AGG-05).
      */
     @Test
     void progressRateAveragesSubWorkRatesInsteadOfStoredColumn() {
@@ -277,7 +283,7 @@ class WorkServiceImplSearchTest {
         assertThat(card.progressRate()).isEqualByComparingTo(new BigDecimal("62.50"));
         assertThat(card.subWorkCount()).isEqualTo(2);
         assertThat(workRepository.findById(workId).orElseThrow().getProgressRate())
-                .isEqualByComparingTo(new BigDecimal("50.00"));
+                .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     // 하위 업무가 없으면 진행률은 0이고 건수도 0이다. 분모가 0인 나눗셈을 하지 않는다

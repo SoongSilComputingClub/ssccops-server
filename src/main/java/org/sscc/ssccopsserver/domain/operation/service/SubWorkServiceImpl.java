@@ -242,6 +242,32 @@ public class SubWorkServiceImpl implements SubWorkService {
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
     }
 
+    /*
+     * 하위 업무 삭제(#125). 자기 operation만 소프트 삭제한다 — work의 다른 sub-work나 상위
+     * work 자체는 건드리지 않는다(work 삭제의 계단식과는 반대 방향).
+     *
+     * 대상 존재 여부와 삭제 여부를 함께 판정해야 하므로(404 vs 409) findByIdAndOperationDeletedAtIsNull
+     * 대신 필터 없는 findById를 쓴다 — WorkServiceImpl.deleteWork와 같은 이유다.
+     *
+     * 상태(work_stts_cd·aprv_stts_cd)와 무관하게 항상 허용한다. 체크리스트·투표·반려 이력은
+     * 지우지 않고 그대로 둔다.
+     */
+    @Override
+    @Transactional
+    public void deleteSubWork(Long subWorkId) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findById(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+
+        OperationEntity operation = subWork.getOperation();
+        if (operation.isDeleted()) {
+            throw new GeneralException(OperationErrorCode.ALREADY_DELETED);
+        }
+        operation.softDelete(Instant.now(clock));
+    }
+
     private SubWorkDetailResponse buildDetail(SubWorkEntity subWork, MemberEntity viewer) {
         List<SubWorkChecklistItemEntity> checklist =
                 subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork);

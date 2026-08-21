@@ -123,6 +123,7 @@ class WorkServiceImplTest {
                         subWorkRepository,
                         subWorkChecklistItemRepository,
                         memberService,
+                        Clock.systemDefaultZone(),
                         entityManager.getEntityManager());
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
@@ -673,5 +674,66 @@ class WorkServiceImplTest {
         Instant persistedUpdatedAt =
                 operationRepository.findById(updated.operationId()).orElseThrow().getUpdatedAt();
         assertThat(updated.updatedAt().toInstant()).isEqualTo(persistedUpdatedAt);
+    }
+
+    // ---------------------------------------------------------------- 삭제 (#125)
+
+    /*
+     * work 삭제는 자기 operation뿐 아니라 그 아래 살아있는 sub-work 전체의 operation도
+     * 함께 소프트 삭제한다(계단식). 이미 삭제된 sub-work는 건드리지 않는다.
+     */
+    @Test
+    void deleteWorkCascadesToAliveSubWorksButLeavesAlreadyDeletedOnesAlone() {
+        Long workId = createWork("삭제할 업무", null);
+        Long aliveSubWorkId = addSubWork(workId, "살아있는 하위 업무", null, 0, 0);
+        Long deletedSubWorkId = addSubWork(workId, "이미 삭제된 하위 업무", null, 0, 0);
+        softDeleteSubWork(deletedSubWorkId);
+        Instant previousDeletedAt =
+                subWorkRepository
+                        .findById(deletedSubWorkId)
+                        .orElseThrow()
+                        .getOperation()
+                        .getDeletedAt();
+
+        workService.deleteWork(workId);
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(workRepository.findById(workId).orElseThrow().getOperation().isDeleted())
+                .isTrue();
+        assertThat(
+                        subWorkRepository
+                                .findById(aliveSubWorkId)
+                                .orElseThrow()
+                                .getOperation()
+                                .isDeleted())
+                .isTrue();
+        // 이미 삭제됐던 시각을 덮어쓰지 않는다 — 계단식 삭제는 살아있는 건만 대상이다
+        assertThat(
+                        subWorkRepository
+                                .findById(deletedSubWorkId)
+                                .orElseThrow()
+                                .getOperation()
+                                .getDeletedAt())
+                .isEqualTo(previousDeletedAt);
+    }
+
+    @Test
+    void deleteWorkWithUnknownIdThrowsNotFound() {
+        assertThatThrownBy(() -> workService.deleteWork(999_999L))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.WORK_NOT_FOUND);
+    }
+
+    @Test
+    void deleteAlreadyDeletedWorkThrowsAlreadyDeleted() {
+        Long workId = createWork("이미 삭제된 업무", null);
+        workService.deleteWork(workId);
+
+        assertThatThrownBy(() -> workService.deleteWork(workId))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.ALREADY_DELETED);
     }
 }

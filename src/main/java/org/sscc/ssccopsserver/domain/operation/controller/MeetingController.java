@@ -130,4 +130,17 @@ public class MeetingController {
         meetingService.withdrawAgenda(meetingId, agendaId);
         return ApiResponse.successWithNoData();
     }
+
+    /*
+     * 회의 삭제(#125). 자기 자신만 소프트 삭제한다 — 안건(mtg_dtl)은 지우지 않는다. 회의
+     * 책임자(의장) 본인 여부는 보지 않고 MEETING_DELETE 보유 여부만으로 판정한다 — 개회·
+     * 회의록작성·종료(TR-M1~M3)가 의장 본인만 허용하는 것과 다른 결정이다. 상태와 무관하게
+     * 항상 허용한다(종료·취소된 회의도 삭제 가능).
+     */
+    @RequireAuthority(AuthorityCode.MEETING_DELETE)
+    @DeleteMapping("/{meetingId}")
+    public ApiResponse<Void> deleteMeeting(@PathVariable Long meetingId) {
+        meetingService.deleteMeeting(meetingId);
+        return ApiResponse.successWithNoData();
+    }
 }

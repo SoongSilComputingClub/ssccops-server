@@ -32,4 +32,13 @@ public interface MeetingService {
             Long meetingId, Long agendaId, MeetingAgendaUpdateRequest request);
 
     void withdrawAgenda(Long meetingId, Long agendaId);
+
+    /*
+     * 회의를 소프트 삭제한다 (#125). 자기 operation만 del_dt를 채운다 — 안건(mtg_dtl)은
+     * 지우지 않고 그대로 둔다. 상태와 무관하게 항상 허용한다(완료·취소된 회의도 삭제 가능).
+     * MEETING_DELETE 보유 여부만으로 게이트가 걸린다 — 회의 책임자 본인 여부는 보지 않는다.
+     *
+     * 대상이 아예 없으면 MEETING_NOT_FOUND(404), 있지만 이미 삭제됐으면 ALREADY_DELETED(409)다.
+     */
+    void deleteMeeting(Long meetingId);
 }

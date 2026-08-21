@@ -205,6 +205,19 @@ INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, in
 SELECT 'WORK_READ', '업무·하위 업무 조회', 'WORK_MANAGE', '업무·하위 업무의 목록·상세 조회.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'WORK_READ');
 
+-- #125: 업무 소프트 삭제. WORK_MANAGE의 자식이라 그 보유자(국장 이상)는 자동 보유한다.
+-- 다른 하위 업무 쓰기 작업과 달리 소유권 계층(SubWorkOwnershipPolicy)을 두지 않는다 —
+-- 담당자 본인이라도 이 권한이 없으면 삭제할 수 없다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'WORK_DELETE', '업무 삭제', 'WORK_MANAGE', '업무 삭제 권한.', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'WORK_DELETE');
+
+-- #125: 하위 업무 소프트 삭제. 별도의 SUB_WORK_MANAGE가 없어(하위 업무 등록도 WORK_MANAGE로
+-- 게이트돼 있다) WORK_DELETE와 같은 부모 아래 둔다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'SUB_WORK_DELETE', '하위 업무 삭제', 'WORK_MANAGE', '하위 업무 삭제 권한.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_DELETE');
+
 -- #101: 회의를 조회만 할 수 있는 권한. WORK_READ와 같은 이유로 MEETING_MANAGE의 자식이다.
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'MEETING_READ', '회의 조회', 'MEETING_MANAGE', '회의의 목록·상세·안건 조회.', TRUE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -215,6 +228,12 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_READ');
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'MEETING_AGENDA_WRITE', '회의 안건 작성', 'MEETING_MANAGE', '회의 안건의 등록·수정·철회.', TRUE, 2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_AGENDA_WRITE');
+
+-- #125: 회의 소프트 삭제. MEETING_MANAGE의 자식이라 그 보유자는 자동 보유한다. WORK_DELETE와
+-- 같은 결정으로, 회의 책임자 본인이라도 이 권한이 없으면 삭제할 수 없다(상태 무관 허용).
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'MEETING_DELETE', '회의 삭제', 'MEETING_MANAGE', '회의 및 안건 삭제 권한.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_DELETE');
 
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'FORM_MANAGE', '폼 관리', 'OPERATOR', '폼 조회·작성·접수 상태 변경을 아우르는 묶음.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP

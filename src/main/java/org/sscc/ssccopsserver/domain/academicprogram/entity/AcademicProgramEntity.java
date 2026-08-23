@@ -21,8 +21,10 @@ import jakarta.persistence.UniqueConstraint;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -37,8 +39,8 @@ import lombok.NoArgsConstructor;
  * event_id UNIQUE인 것은 AcademicProgram이 Event의 확장이지 별도 생성 단위가 아니기 때문이다.
  * 신입회원 모집·홈커밍데이처럼 학술 활동이 아닌 Event는 이 테이블에 연결되지 않는다.
  *
- * 소프트 삭제를 두지 않는다(설계 결정 #2) — REJECTED가 종결 상태 역할을 하므로 물리 삭제
- * 유스케이스가 없다.
+ * 소프트 삭제를 두지 않는다(설계 결정 #2) — 반려는 이제 폼 응답 단계(#141)에서 끝나 이 행
+ * 자체가 만들어지지 않으므로, 승인 이후 만들어진 행을 지울 유스케이스가 없다.
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
@@ -97,12 +99,13 @@ public class AcademicProgramEntity {
     private MemberEntity proposer;
 
     /*
-     * 스터디장/팀장. 승인 시점에 prpsrMbrId로 채워지므로(#133) 생성 직후에는 항상 NULL이다.
-     * 정적 권한 코드가 아니라 이 필드 본인 여부로 "이 활동 한정" 소유권을 판정한다
-     * (학술관리_데이터모델.md §5).
+     * 스터디장/팀장. 생성 시점부터 prpsrMbrId와 같은 값으로 채워지며 NOT NULL이다(#133,
+     * 2026-08-24 재설계 — 승인이 곧 생성이라 "승인 전" 구간 자체가 없다). 정적 권한 코드가
+     * 아니라 이 필드 본인 여부로 "이 활동 한정" 소유권을 판정한다(AcademicProgramOwnershipPolicy,
+     * 학술관리_데이터모델.md §5).
      */
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "leadr_mbr_id")
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "leadr_mbr_id", nullable = false)
     private MemberEntity leader;
 
     @CreatedDate
@@ -114,13 +117,14 @@ public class AcademicProgramEntity {
     private Instant updatedAt;
 
     /*
-     * 생성 팩토리. 상태는 항상 PROPOSED이고 리더는 항상 NULL이다 — 승인 전에는 스터디장/팀장이
-     * 확정되지 않는다(학술관리_데이터모델.md §4).
+     * 생성 팩토리. 상태는 항상 APPROVED이고 리더는 항상 proposer와 같은 값이다(#133,
+     * 2026-08-24 재설계) — 승인이 곧 생성이므로 "승인 전" 구간 자체가 없다.
      *
      * 이 팩토리를 부르는 자리는 #131이 아니다 — 기획안 접수는 폼 도메인이 맡고, 폼 응답이
      * 승인될 때 서버가 Event·AcademicProgram·CurriculumItem을 만드는 이관(ssccops#148,
-     * 2026-08-23 설계 변경)이 실제 호출부가 된다. #131은 이렇게 만들어진 행을 조회만 한다.
-     * `PROPOSED` 고정과 `leader = null` 고정은 그 이관 설계가 다시 볼 여지가 있다.
+     * #150)이 실제 호출부다. 생성 직후 같은 트랜잭션에서 승인 후속 처리
+     * (AcademicProgramApprovalEffectsService, #133)가 스터디장/팀장 역할 부여와 빈 모집 폼
+     * 생성을 이어서 한다. #131은 이렇게 만들어진 행을 조회만 한다.
      */
     public static AcademicProgramEntity create(
             EventEntity event,
@@ -135,15 +139,32 @@ public class AcademicProgramEntity {
                 null,
                 event,
                 type,
-                AcademicProgramStatus.PROPOSED,
+                AcademicProgramStatus.APPROVED,
                 goalContent,
                 prepContent,
                 scheduleText,
                 capacityMinCount,
                 capacityMaxCount,
                 proposer,
-                null,
+                proposer,
                 null,
                 null);
+    }
+
+    /*
+     * 상태 전이(#133 · POST /v1/academic-programs/{id}/transitions). 전이표는
+     * AcademicProgramTransition이 갖고, 여기서는 그 표를 어겼을 때 무엇으로 거절할지만 맡는다 —
+     * FormEntity.changeStatus와 같은 역할 분담이다.
+     *
+     * 전이 이력은 이 메서드가 남기지 않는다 — APPROVE_COMPLETION의 academic_program_aprv 기록은
+     * 호출부(AcademicProgramServiceImpl.transition)가 별도로 남긴다. START_RECRUITMENT는 폼
+     * 전이·모집 기간 반영과 한 트랜잭션으로 오케스트레이션되므로 그 부수 효과도 호출부가 맡는다.
+     */
+    public void changeStatus(AcademicProgramTransition transition) {
+        if (!transition.isAllowedFrom(this.status)) {
+            throw new GeneralException(
+                    AcademicProgramErrorCode.INVALID_ACADEMIC_PROGRAM_TRANSITION);
+        }
+        this.status = transition.targetStatus();
     }
 }

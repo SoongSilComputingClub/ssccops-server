@@ -7,15 +7,21 @@ import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCondition;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramDetailResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSummaryResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramService;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,14 +29,14 @@ import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 
 /*
- * 학술 활동(스터디/프로젝트) 조회 API (#131). 인증만 요구한다(일반 회원 누구나).
+ * 학술 활동(스터디/프로젝트) 조회(#131) + 국장 전용 상태 전이(#133) API. 조회는 인증만
+ * 요구한다(일반 회원 누구나).
  *
- * 등록(POST)은 이 이슈 범위에서 빠졌다 — 2026-08-23 설계 변경(이슈 코멘트)으로 기획안 접수는
+ * 등록(POST)은 이 컨트롤러에 없다 — 2026-08-23 설계 변경(이슈 코멘트)으로 기획안 접수는
  * 폼 도메인(sys_form_cd='PROPOSAL')이 맡고, 폼 응답이 승인될 때 서버가
- * academic_program·event·curriculum_item을 만드는 이관으로 대체된다(ssccops#148, 커리큘럼
- * 구조화도 그 시점으로 옮긴다). AcademicProgram 엔티티 자체는 회차·출석·모집·팀원·진행률의
- * 앵커라 그대로 필요하며, 여기 남는 것은 그렇게 만들어진 행을 들여다보는 조회 두 개뿐이다.
- * `PROPOSED` 상태·`academic_program_aprv(PROPOSAL)`의 위치는 이관 설계(#148)와 함께 다시 본다.
+ * academic_program·event·curriculum_item을 만드는 이관(#150)으로 대체된다. AcademicProgram
+ * 엔티티 자체는 회차·출석·모집·팀원·진행률의 앵커라 그대로 필요하며, 여기 남는 것은 그렇게
+ * 만들어진 행을 들여다보는 조회 둘과 이후 운영(모집 시작·종료 승인)을 미는 전이 하나다.
  *
  * isLeader/isProposer 판정에 요청자 본인 식별이 필요해 조회에도 @CurrentMember를 쓴다
  * (설계 결정 #4) — 클라이언트가 leadrMbrId === 내 mbrId를 재계산하지 않는다.
@@ -58,5 +64,30 @@ public class AcademicProgramController {
         AcademicProgramSearchResponse result =
                 academicProgramService.searchAcademicPrograms(condition, viewer);
         return ApiResponse.success(result.academicPrograms(), result.page());
+    }
+
+    /*
+     * 상태 전이 (#133). 상세 화면의 '모집 시작'·'종료 승인' 버튼이 이 하나의 액션 경로를 쓴다
+     * (work·form 도메인의 전이 엔드포인트 선례). START_RECRUITMENT/APPROVE_COMPLETION 둘 다
+     * 학술국장 전용이라 클래스가 아니라 메서드에 건다 — 조회 두 개는 인증만 요구한다.
+     *
+     * 전이 가능 여부·폼 오케스트레이션·승인 이력 기록은 서비스와 도메인이 판단하므로 여기서
+     * 분기하지 않는다. 상태 변경은 생성이 아니므로 200이다.
+     */
+    @Operation(
+            summary = "학술 활동 상태 전이",
+            description =
+                    "transition은 START_RECRUITMENT 또는 APPROVE_COMPLETION이다."
+                        + " APPROVED→ONGOING·ONGOING→COMPLETED만 허용하며 그 밖의 전이는 409"
+                        + " INVALID_ACADEMIC_PROGRAM_TRANSITION으로 응답한다. START_RECRUITMENT는 연결된"
+                        + " Form을 OPEN 전이한다 — 문항이 없으면 폼 도메인의 400 FORM_HAS_NO_QUESTION이 그대로 전파된다.")
+    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
+    @PostMapping("/{academicProgramId}/transitions")
+    public ApiResponse<AcademicProgramTransitionResponse> transition(
+            @PathVariable Long academicProgramId,
+            @Valid @RequestBody AcademicProgramTransitionRequest request,
+            @CurrentMember MemberEntity performer) {
+        return ApiResponse.success(
+                academicProgramService.transition(academicProgramId, request, performer));
     }
 }

@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.form.service;
 
+import java.time.Instant;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
@@ -10,6 +11,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /** 폼 조회·생성·수정·복제(#32)와 접수 상태 전이(#33). 폼 관리 화면이 전부 이 인터페이스를 소비한다. */
@@ -37,4 +39,21 @@ public interface FormService {
 
     /** 복제. 생성자는 원본 생성자가 아니라 복제를 수행한 회원이다 */
     FormDuplicateResponse duplicateForm(Long formId, MemberEntity creator);
+
+    /*
+     * 문항 0개인 DRAFT 폼 생성 (#133 학술 활동 승인 후속 처리 전용, 공개 API 아님).
+     *
+     * createForm과 갈리는 것은 반환 타입과 호출부다 — 이쪽은 DTO가 아니라 엔티티를 돌려준다.
+     * 호출부(AcademicProgramApprovalEffectsServiceImpl)가 같은 트랜잭션에서 그 폼을
+     * EventEntity에 즉시 연결해야 하는데, DTO로는 그 연결을 만들 수 없다. qitem_cpst_cn은
+     * NOT NULL 컬럼이라 NULL 대신 빈 배열로 채운다.
+     */
+    FormEntity createEmptyDraft(String title, MemberEntity creator);
+
+    /*
+     * 접수 기간만 갱신 (#133 학술 활동 모집 시작 오케스트레이션 전용, 공개 API 아님). 제목·문항
+     * 구성·라벨은 건드리지 않는다 — updateForm은 본문 전체를 요구해 이 좁은 용도에 쓰면 학술
+     * 도메인이 알지도 못하는 폼 내용을 덮어쓰게 된다.
+     */
+    void changeReceiptPeriod(Long formId, Instant receiptBeginAt, Instant receiptEndAt);
 }

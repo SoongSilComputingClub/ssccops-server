@@ -33,6 +33,15 @@ public interface MemberRoleRepository extends JpaRepository<MemberRoleEntity, Lo
     List<MemberRoleEntity> findAllByNameForUpdate(@Param("name") String name);
 
     /*
+     * 잠금 없이 이름으로 역할 하나를 찾는다 (#133 학술 활동 승인 후속 처리 — 스터디장/팀장
+     * 역할 부여). 부트스트랩(findAllByNameForUpdate)과 달리 '역할이 존재하는가'를 다투는
+     * 동시성 문제가 없다 — 시드 데이터라 경합 대상이 아니다. role_nm이 UNIQUE가 아니므로
+     * 같은 이름이 여럿이면 role_id가 가장 작은 것(시드가 넣은 원본)을 고른다.
+     */
+    @Query("select r from MemberRoleEntity r where r.name = :name order by r.id asc")
+    List<MemberRoleEntity> findAllByNameOrderByIdAsc(@Param("name") String name);
+
+    /*
      * 분류별 소속 역할 수(#80 역할 분류 목록). 분류마다 count를 부르면 그대로 N+1이 되므로
      * GROUP BY 한 번으로 받아 호출부에서 분류별로 나눈다 (DB-13).
      *

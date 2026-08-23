@@ -135,14 +135,17 @@ class AuthorityControllerTest {
                 .andExpect(
                         jsonPath("$.data[0].children[0].children[3].authrtCd").value("ROLE_MANAGE"))
                 // 증손자까지 중첩된다 — EXECUTIVE > OPERATOR > FORM_MANAGE > FORM_READ.
-                // OPERATOR 자식 6개: WORK_MANAGE·SUB_WORK_TYPE_READ·FORM_MANAGE·RESPONSE_REVIEW·
-                // MEETING_MANAGE(#83)·ACADEMIC_PROGRAM_MANAGE(#130)
-                .andExpect(jsonPath("$.data[0].children[0].children[0].children", hasSize(6)))
+                // OPERATOR 자식 7개: WORK_MANAGE·SUB_WORK_TYPE_READ·FORM_MANAGE·RESPONSE_REVIEW·
+                // MEETING_MANAGE(#83)·EVENT_MANAGE(ssccops#134)·ACADEMIC_PROGRAM_MANAGE(#130)
+                .andExpect(jsonPath("$.data[0].children[0].children[0].children", hasSize(7)))
                 .andExpect(
                         jsonPath("$.data[0].children[0].children[0].children[2].authrtCd")
                                 .value("FORM_MANAGE"))
                 .andExpect(
                         jsonPath("$.data[0].children[0].children[0].children[5].authrtCd")
+                                .value("EVENT_MANAGE"))
+                .andExpect(
+                        jsonPath("$.data[0].children[0].children[0].children[6].authrtCd")
                                 .value("ACADEMIC_PROGRAM_MANAGE"))
                 .andExpect(
                         jsonPath(

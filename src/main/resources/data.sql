@@ -144,7 +144,7 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
 --   ├── EXECUTIVE 임원
 --   │   ├── OPERATOR 운영자
 --   │   │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW · MEETING_MANAGE
---   │   │   ├── ACADEMIC_PROGRAM_MANAGE (#130)
+--   │   │   ├── EVENT_MANAGE (ssccops#134) · ACADEMIC_PROGRAM_MANAGE (#130)
 --   │   │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
 --   │   ├── FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
 --   ├── SUB_WORK_TYPE_MANAGE (#101에서 EXECUTIVE 밑에서 분리)
@@ -199,8 +199,9 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_MANAGE');
 
 -- #130: 학술 활동(스터디/프로젝트) 관리. OPERATOR의 자식이라 국장 이상(OPERATOR를 직접
 -- 부여받은 역할)은 트리 펼침으로 자동 보유하고, SUPER도 EXECUTIVE > OPERATOR 경로로 닿는다.
+-- indct_seqno 7은 develop에서 먼저 합류한 EVENT_MANAGE(ssccops#134, 6번)의 다음 자리다.
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
-SELECT 'ACADEMIC_PROGRAM_MANAGE', '학술 활동 관리', 'OPERATOR', '학술 활동(스터디/프로젝트)의 기획안·회차·종료 승인, 모집 시작, 유형 코드테이블 관리.', TRUE, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+SELECT 'ACADEMIC_PROGRAM_MANAGE', '학술 활동 관리', 'OPERATOR', '학술 활동(스터디/프로젝트)의 기획안·회차·종료 승인, 모집 시작, 유형 코드테이블 관리.', TRUE, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'ACADEMIC_PROGRAM_MANAGE');
 
 -- #101: 업무·하위 업무를 조회만 할 수 있는 권한. WORK_MANAGE의 자식이라 그 보유자(국장 이상,
@@ -261,6 +262,14 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_WRITE');
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'FORM_STATUS_CHANGE', '폼 접수 상태 변경', 'FORM_MANAGE', '폼의 접수 시작·마감 전이.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_STATUS_CHANGE');
+
+-- ssccops#134: 행사 관리(wave2 · D8). 행사 CRUD·게시 전이·신청 심사·참가자 등록·승격을 하나로
+-- 묶는 권한이다. OPERATOR의 자식이라 국장 이상 + SUPER가 트리 펼침으로 자동 보유한다 —
+-- 역할 매핑을 따로 넣지 않는 것은 그래서다. 공개 조회는 익명(permitAll)이라 EVENT_READ를
+-- 두지 않는다(필요해지면 그때 자식으로 추가).
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'EVENT_MANAGE', '행사 관리', 'OPERATOR', '행사 등록·게시와 신청 심사·참가자 등록·승격.', TRUE, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'EVENT_MANAGE');
 
 -- #123: 결재·투표 자격. 직위 코드(role.role_pstn_cd)로 갈리던 승인·투표 자격을 권한으로 옮겼다.
 --
@@ -483,6 +492,27 @@ WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '스터디운영')
 -- 직위 코드 시절의 승인자 백필 UPDATE(autzr_role_cd)는 #123에서 컬럼과 함께 걷어냈다.
 -- prod(main)는 아직 배포되지 않았고 dev는 DB를 통째로 재생성하므로(ddl-auto: update가 컬럼
 -- 삭제를 반영하지 않는다), 이미 시드된 DB를 위한 값 이전 경로를 남기지 않는다 (ssccops#108).
+
+-- 행사 분류(event_clsf, ssccops#134 · D13). role_clsf처럼 화면에서 추가·수정하는 운영 데이터
+-- 코드테이블이라 여기 넣는 것은 고정 어휘가 아니라 초기값이다 — 서버 코드에 enum으로 굳히지
+-- 않는다. 코드값·명칭은 데이터사전 표준코드 시트(event_clsf_cd)와 글자 하나까지 맞춘다.
+-- 행사 상태(event_stts_cd)·참가자 상태(ptcp_stts_cd)는 EventStatus·EventParticipantStatus
+-- enum이 코드값을 갖는 고정코드라 여기 시드할 것이 없다 — form_stts_cd와 같은 성격이다.
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'RECRUIT', '모집', 1
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'RECRUIT');
+
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'SEMINAR', '세미나', 2
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'SEMINAR');
+
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'PROJECT', '프로젝트', 3
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'PROJECT');
+
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'EVENT', '행사', 4
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'EVENT');
 
 -- 폼 라벨(form_lbl)은 일부러 시드하지 않는다 (#31에서 결정).
 -- 후보로 거론된 어휘(신규모집·회원연장·행사·스터디·연도·학기) 중 연도·학기는 해마다 값이

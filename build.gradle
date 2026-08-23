@@ -51,6 +51,7 @@ dependencyManagement {
     imports {
         mavenBom 'io.opentelemetry:opentelemetry-bom:1.44.1'
         mavenBom 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.11.0-alpha'
+        mavenBom 'software.amazon.awssdk:bom:2.29.29'
     }
 }
 
@@ -84,6 +85,10 @@ dependencies {
     // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
     // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
     implementation 'org.apache.commons:commons-csv:1.12.0'
+
+    // Cloudflare R2 (S3 호환 오브젝트 스토리지, ssccops#113). R2 전용 SDK는 없고 S3 API와
+    // 호환되므로 AWS SDK v2의 S3 모듈을 그대로 쓴다 — 엔드포인트만 R2로 덮어쓴다(R2Config).
+    implementation 'software.amazon.awssdk:s3'
 
     // Lombok
     compileOnly 'org.projectlombok:lombok'

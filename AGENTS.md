@@ -10,7 +10,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 - 단일 테스트 메서드: `./gradlew test --tests "*.MemberServiceImplTest.메서드명"`
 - 포맷 검사: `./gradlew spotlessCheck` / 자동 정렬·수정: `./gradlew spotlessApply`
 - 스타일 검사: `./gradlew checkstyleMain checkstyleTest` (설정: `config/checkstyle/checkstyle.xml`, Naver 컨벤션 변형 — 상단 주석에 원본과의 차이가 정리되어 있음)
-- 로컬 실행: `local` 프로필(`-Dspring.profiles.active=local`)이 PostgreSQL 접속 정보(`DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD`)와 Supabase JWKS URI(`SUPABASE_URL`), CORS 허용 오리진(`FRONTEND_URL`)을 요구한다. **`.env` 한 벌을 `docker compose`와 `./gradlew bootRun`이 함께 읽는다**(`cp .env.example .env` 후 값 채우기 — compose는 이 디렉터리의 `.env`를 자동으로, `bootRun`은 `build.gradle`이 파싱해 JVM 환경변수로 주입). 두 가지 방식이 있다:
+- 로컬 실행: `local` 프로필(`-Dspring.profiles.active=local`)이 PostgreSQL 접속 정보(`DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USERNAME`/`DB_PASSWORD`)와 Supabase JWKS URI(`SUPABASE_URL`), CORS 허용 오리진(`FRONTEND_URL`), Cloudflare R2 접속 정보(`R2_ACCOUNT_ID`/`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`/`R2_BUCKET_NAME`, ssccops#113)를 요구한다. R2 엔드포인트는 `R2_ACCOUNT_ID`로 서버가 직접 조립하므로 별도 env가 없다. **`.env` 한 벌을 `docker compose`와 `./gradlew bootRun`이 함께 읽는다**(`cp .env.example .env` 후 값 채우기 — compose는 이 디렉터리의 `.env`를 자동으로, `bootRun`은 `build.gradle`이 파싱해 JVM 환경변수로 주입). 두 가지 방식이 있다:
   - `docker compose up`으로 `backend`(local 프로필)와 `postgres`를 함께 띄운다. 컨테이너 안에서는 DB 주소가 달라야 하므로 `docker-compose.yml`이 `DB_HOST=postgres`·`DB_PORT=5432`로 덮어쓴다.
   - `docker compose up postgres`로 DB만 띄우고(호스트 포트 `DB_PORT`, 기본 `15432`) 앱은 `./gradlew bootRun`으로 실행한다. `.env`의 `DB_HOST=localhost`·`DB_PORT=15432`가 그대로 쓰인다. 로컬에 PostgreSQL을 직접 설치해 쓴다면 `createdb ssccops_server_db` 후 `DB_PORT=5432`로 바꾼다.
 
@@ -33,6 +33,7 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 - `domain/{member,auth,operation,...}` — 도메인별로 `controller/service/repository/entity/dto/code` 하위 구조를 반복하는 계층형 패키지. 새 도메인을 추가할 때 이 구조를 그대로 따른다. (`admin`/`applyform`/`user`는 Supabase 인증 전환에 맞춰 재설계 예정이라 제거됨 — 잔재를 찾는 코드가 있다면 지우면 된다.)
 - `domain/example` — 위 6계층 구조를 보여주는 참고용 템플릿 도메인(실제 기능 아님). 새 도메인을 추가할 때 이 구조를 복사해서 시작하면 된다.
+- `global/config/R2Config` — Cloudflare R2(S3 호환 오브젝트 스토리지, ssccops#113) 연결용 `S3Client` 빈. R2 전용 SDK가 없어 AWS SDK v2의 S3 모듈을 그대로 쓰되, 리전은 R2가 요구하는 고정값 `"auto"`이고 `forcePathStyle(true)`가 필요하다(꺼져 있으면 R2가 모르는 가상 호스트 이름으로 요청이 나가 연결 자체가 실패한다). 업로드·조회 API 자체는 스터디·프로젝트 인증사진 업로드(#128)의 몫이고 이 설정은 연결만 준비한다.
 - `global/apipayload` — 모든 API 응답의 공통 껍데기.
   - `ApiResponse<T>` — 생성자는 private, `success`/`successWithNoData`/`created`/`fail` 정적 팩토리로만 생성.
   - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 `CommonErrorCode`가 전역 에러를 구현하고, 도메인 전용 에러가 필요하면 같은 방식으로 도메인 패키지 아래 `code/error` enum을 구현한다. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.

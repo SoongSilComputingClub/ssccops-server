@@ -33,6 +33,13 @@ springdoc:
   swagger-ui:
     enabled: false # /swagger-ui.html
 
+# Cloudflare R2 (S3 호환 오브젝트 스토리지, ssccops#113)
+r2:
+  account-id: ${PROD_R2_ACCOUNT_ID}
+  access-key-id: ${PROD_R2_ACCESS_KEY_ID}
+  secret-access-key: ${PROD_R2_SECRET_ACCESS_KEY}
+  bucket-name: ${PROD_R2_BUCKET_NAME}
+
 # Frontend Configuration (CORS 허용 오리진)
 frontend:
   url: ${PROD_FRONTEND_URL}

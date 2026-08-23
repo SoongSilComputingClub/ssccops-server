@@ -220,6 +220,18 @@ public class FormEntity {
     }
 
     /*
+     * 접수 기간만 갱신(#133 학술 활동 모집 시작 오케스트레이션 전용). update()와 달리 제목·문항
+     * 구성·라벨을 건드리지 않는다 — 학술 도메인은 모집 기간을 반영해야 할 뿐 자신이 모르는
+     * 문항 구성을 덮어쓰면 안 된다. changeStatus(OPEN)보다 먼저 불러야 requireOpenable()의
+     * 접수 기간 정합성 검사가 새 기간을 본다.
+     */
+    public void changeReceiptPeriod(Instant receiptBeginAt, Instant receiptEndAt) {
+        requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
+        this.receiptBeginAt = receiptBeginAt;
+        this.receiptEndAt = receiptEndAt;
+    }
+
+    /*
      * 접수 기간 정합성. 폼 생성·수정(#32)은 아직 엔티티가 없는 값을 검사해야 하므로 static이다 —
      * 같은 규칙을 서비스에 한 벌 더 두면 저장 경로와 전이 경로의 판단이 갈린다.
      *

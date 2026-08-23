@@ -233,6 +233,33 @@ public class FormServiceImpl implements FormService {
         return FormStatusChangeResponse.of(form, formReceiptPolicy.receiptStatusOf(form));
     }
 
+    /*
+     * 문항 0개인 DRAFT 폼 생성 (#133). requireOpenable()은 DRAFT를 만들 때는 돌지 않으므로
+     * 빈 qitems가 그대로 통과한다 — 문항 0개 금지는 여는(OPEN) 쪽에만 걸린다(FormEntity 주석).
+     */
+    @Override
+    @Transactional
+    public FormEntity createEmptyDraft(String title, MemberEntity creator) {
+        return formRepository.save(
+                FormEntity.create(
+                        creator,
+                        title,
+                        new QuestionCompositionContent(null, List.of()),
+                        null,
+                        null));
+    }
+
+    /*
+     * 접수 기간만 갱신 (#133). changeStatus(OPEN)보다 먼저 불러야 requireOpenable()의 접수 기간
+     * 정합성 검사가 갱신된 기간을 본다 — 호출 순서는 이 메서드가 아니라 호출부의 책임이다.
+     */
+    @Override
+    @Transactional
+    public void changeReceiptPeriod(Long formId, Instant receiptBeginAt, Instant receiptEndAt) {
+        FormEntity form = findForm(formId);
+        form.changeReceiptPeriod(receiptBeginAt, receiptEndAt);
+    }
+
     private FormEntity findForm(Long formId) {
         return formRepository
                 .findById(formId)

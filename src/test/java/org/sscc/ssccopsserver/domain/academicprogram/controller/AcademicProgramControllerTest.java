@@ -93,17 +93,18 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data.title").value("조회용 스터디"))
                 .andExpect(jsonPath("$.data.typeCd").value("STUDY"))
                 .andExpect(jsonPath("$.data.typeNm").value("스터디"))
-                .andExpect(jsonPath("$.data.sttsCd").value("PROPOSED"))
+                .andExpect(jsonPath("$.data.sttsCd").value("APPROVED"))
                 .andExpect(jsonPath("$.data.prpsrMbrId").value(proposer.getId()))
                 .andExpect(jsonPath("$.data.prpsrMbrNm").value("제출자"))
-                .andExpect(jsonPath("$.data.leadrMbrId").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.leadrMbrId").value(proposer.getId()))
+                .andExpect(jsonPath("$.data.leadrMbrNm").value("제출자"))
                 .andExpect(jsonPath("$.data.formId").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.formReceiptStatus").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.progress.totalSessionCount").value(0))
                 .andExpect(jsonPath("$.data.progress.approvedSessionCount").value(0))
                 .andExpect(jsonPath("$.data.curriculumItemCount").value(2))
                 .andExpect(jsonPath("$.data.isProposer").value(true))
-                .andExpect(jsonPath("$.data.isLeader").value(false));
+                .andExpect(jsonPath("$.data.isLeader").value(true));
     }
 
     // 제출자가 아닌 회원이 조회하면 isProposer가 false다 — 서버가 본인 여부를 판정한다(설계 결정 #4)
@@ -141,10 +142,10 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data[0].academicProgramId").value(academicProgram.getId()))
                 .andExpect(jsonPath("$.data[0].title").value("목록용 스터디"))
                 .andExpect(jsonPath("$.data[0].typeCd").value("STUDY"))
-                .andExpect(jsonPath("$.data[0].sttsCd").value("PROPOSED"))
-                .andExpect(jsonPath("$.data[0].leadrMbrNm").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].sttsCd").value("APPROVED"))
+                .andExpect(jsonPath("$.data[0].leadrMbrNm").value("제출자"))
                 .andExpect(jsonPath("$.data[0].progressRatio").value(0))
-                .andExpect(jsonPath("$.data[0].isLeader").value(false))
+                .andExpect(jsonPath("$.data[0].isLeader").value(true))
                 .andExpect(jsonPath("$.page.size").value(20))
                 .andExpect(jsonPath("$.page.sort").value("-createdAt"))
                 .andExpect(jsonPath("$.page.hasNext").value(false))
@@ -163,12 +164,12 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data[0].title").value("필터용 프로젝트"));
     }
 
-    // 픽스처가 만드는 학술 활동은 전부 PROPOSED다 — 다른 상태로 필터링하면 결과가 없어야 한다(404가 아니다)
+    // 픽스처가 만드는 학술 활동은 전부 APPROVED다 — 다른 상태로 필터링하면 결과가 없어야 한다(404가 아니다)
     @Test
     void searchWithNonMatchingSttsCdReturnsEmptyArray() throws Exception {
         createAcademicProgram("STUDY", "상태 필터용 스터디", "1주차");
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("sttsCd", "APPROVED"))
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("sttsCd", "ONGOING"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.data").isEmpty())

@@ -26,6 +26,9 @@ public final class AcademicProgramFixture {
 
     private AcademicProgramFixture() {}
 
+    private static final Instant DEFAULT_EVENT_BGNG_DT = Instant.parse("2026-09-01T00:00:00Z");
+    private static final Instant DEFAULT_EVENT_END_DT = Instant.parse("2026-12-01T00:00:00Z");
+
     public static AcademicProgramEntity save(
             EventRepository eventRepository,
             EventClassificationRepository eventClassificationRepository,
@@ -36,6 +39,37 @@ public final class AcademicProgramFixture {
             String title,
             MemberEntity proposer,
             List<String> curriculumTitles) {
+        return save(
+                eventRepository,
+                eventClassificationRepository,
+                academicProgramRepository,
+                academicProgramTypeRepository,
+                curriculumItemRepository,
+                typeCd,
+                title,
+                proposer,
+                curriculumTitles,
+                DEFAULT_EVENT_BGNG_DT,
+                DEFAULT_EVENT_END_DT);
+    }
+
+    /*
+     * 정렬·페이징 테스트처럼 등록 순서가 아니라 event_bgng_dt로 결과 순서를 통제해야 하는
+     * 경우를 위한 오버로드다 — createdAt은 감사 컬럼이라 값을 직접 지정할 수 없고, 두 행을
+     * 빠르게 연달아 만들면 시각 분해능에 따라 같은 값으로 찍혀 정렬이 흔들릴 수 있다.
+     */
+    public static AcademicProgramEntity save(
+            EventRepository eventRepository,
+            EventClassificationRepository eventClassificationRepository,
+            AcademicProgramRepository academicProgramRepository,
+            AcademicProgramTypeRepository academicProgramTypeRepository,
+            CurriculumItemRepository curriculumItemRepository,
+            String typeCd,
+            String title,
+            MemberEntity proposer,
+            List<String> curriculumTitles,
+            Instant eventBgngDt,
+            Instant eventEndDt) {
         // 행사 분류는 학술 활동 전용 코드가 없다 — wave2가 시드하는 일반 분류를 그대로 쓴다
         // (event_clsf 결정은 #148의 몫, 2026-08-23 설계 변경).
         EventClassificationEntity classification =
@@ -52,8 +86,8 @@ public final class AcademicProgramFixture {
                                 "본문",
                                 null,
                                 null,
-                                Instant.parse("2026-09-01T00:00:00Z"),
-                                Instant.parse("2026-12-01T00:00:00Z"),
+                                eventBgngDt,
+                                eventEndDt,
                                 null,
                                 null));
 

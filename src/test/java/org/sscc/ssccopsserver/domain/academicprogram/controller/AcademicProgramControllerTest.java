@@ -207,31 +207,38 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data[0].title").value("네트워크 스터디"));
     }
 
+    /*
+     * 기본 정렬(createdAt desc)은 두 행을 빠르게 연달아 만들면 CI 환경의 시각 분해능에 따라
+     * 같은 값으로 찍혀 순서가 흔들릴 수 있다(실제로 CI에서 이 이유로 떨어졌다) — 그래서 여기서는
+     * 픽스처가 직접 통제할 수 있는 eventBgngDt 오름차순으로 정렬해 순서를 결정론적으로 만든다.
+     */
     @Test
     void searchWithSizeOnePaginatesWithCursor() throws Exception {
-        createAcademicProgram("STUDY", "페이지1", "1주차");
-        createAcademicProgram("STUDY", "페이지2", "1주차");
+        createAcademicProgramWithPeriod("STUDY", "페이지1", Instant.parse("2026-09-01T00:00:00Z"));
+        createAcademicProgramWithPeriod("STUDY", "페이지2", Instant.parse("2026-09-08T00:00:00Z"));
 
         String firstPage =
-                mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("size", "1"))
+                mockMvc.perform(
+                                authorized(get(PROGRAMS), proposerToken)
+                                        .param("size", "1")
+                                        .param("sort", "eventBgngDt"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                        .andExpect(jsonPath("$.data[0].title").value("페이지1"))
                         .andExpect(jsonPath("$.page.hasNext").value(true))
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        // 기본 정렬은 등록 최신순이라 나중에 만든 "페이지2"가 먼저 나온다
-        String firstTitle = JsonPath.parse(firstPage).read("$.data[0].title", String.class);
-        org.assertj.core.api.Assertions.assertThat(firstTitle).isEqualTo("페이지2");
         String cursor = JsonPath.parse(firstPage).read("$.page.nextCursor", String.class);
 
         mockMvc.perform(
                         authorized(get(PROGRAMS), proposerToken)
                                 .param("size", "1")
+                                .param("sort", "eventBgngDt")
                                 .param("cursor", cursor))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
-                .andExpect(jsonPath("$.data[0].title").value("페이지1"))
+                .andExpect(jsonPath("$.data[0].title").value("페이지2"))
                 .andExpect(jsonPath("$.page.hasNext").value(false));
     }
 
@@ -263,6 +270,22 @@ class AcademicProgramControllerTest {
                 title,
                 proposer,
                 List.of(curriculumTitles));
+    }
+
+    private AcademicProgramEntity createAcademicProgramWithPeriod(
+            String typeCd, String title, Instant eventBgngDt) {
+        return AcademicProgramFixture.save(
+                eventRepository,
+                eventClassificationRepository,
+                academicProgramRepository,
+                academicProgramTypeRepository,
+                curriculumItemRepository,
+                typeCd,
+                title,
+                proposer,
+                List.of("1주차"),
+                eventBgngDt,
+                eventBgngDt.plusSeconds(60 * 60 * 24 * 30));
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

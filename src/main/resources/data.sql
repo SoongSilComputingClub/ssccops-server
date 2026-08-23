@@ -144,6 +144,7 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
 --   ├── EXECUTIVE 임원
 --   │   ├── OPERATOR 운영자
 --   │   │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW · MEETING_MANAGE
+--   │   │   ├── ACADEMIC_PROGRAM_MANAGE (#130)
 --   │   │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
 --   │   ├── FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
 --   ├── SUB_WORK_TYPE_MANAGE (#101에서 EXECUTIVE 밑에서 분리)
@@ -195,6 +196,12 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_TYPE_READ');
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'MEETING_MANAGE', '회의 관리', 'OPERATOR', '회의의 등록·조회·상태 전이와 안건 관리.', TRUE, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_MANAGE');
+
+-- #130: 학술 활동(스터디/프로젝트) 관리. OPERATOR의 자식이라 국장 이상(OPERATOR를 직접
+-- 부여받은 역할)은 트리 펼침으로 자동 보유하고, SUPER도 EXECUTIVE > OPERATOR 경로로 닿는다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'ACADEMIC_PROGRAM_MANAGE', '학술 활동 관리', 'OPERATOR', '학술 활동(스터디/프로젝트)의 기획안·회차·종료 승인, 모집 시작, 유형 코드테이블 관리.', TRUE, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'ACADEMIC_PROGRAM_MANAGE');
 
 -- #101: 업무·하위 업무를 조회만 할 수 있는 권한. WORK_MANAGE의 자식이라 그 보유자(국장 이상,
 -- 그리고 WORK_MANAGE를 직접 부여받은 임의의 역할)는 트리 펼침으로 자동 보유한다.
@@ -484,3 +491,18 @@ WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '스터디운영')
 -- 데이터라 초기값을 서버가 정할 근거가 없다 — 기준 코드(mbr_grd·mbr_stts)와 다른 성격이다.
 -- 폼 상태(form_stts_cd)는 FormStatus enum이 코드값을 갖고 명칭은 화면이 갖는 어휘라
 -- 별도 코드 테이블이 없어 여기 시드할 것도 없다.
+
+-- 학술 활동 유형(academic_program_type, #130). enum이 아니라 코드테이블인 것은 세미나·특강·
+-- 대회 등 새 유형이 배포 없이 시드 추가만으로 열려야 하기 때문이다(학술관리_기능범위.md §2).
+-- event_clsf(wave2 D13)와 같은 멱등 시드 패턴을 따른다.
+--
+-- academic_program_type_cd는 지정한다(sub_work_type과 달리 IDENTITY가 아니라 코드 문자열
+-- PK다 — authrt와 같은 이유). 감사 컬럼(crt_dt·mdfcn_dt)·use_yn은 이 파일이 JPA를 거치지
+-- 않는 순수 SQL이라 직접 넣는다 — 빠뜨리면 NOT NULL 위반으로 기동이 깨진다.
+INSERT INTO academic_program_type (academic_program_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
+SELECT 'STUDY', '스터디', 1, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM academic_program_type WHERE academic_program_type_cd = 'STUDY');
+
+INSERT INTO academic_program_type (academic_program_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
+SELECT 'PROJECT', '프로젝트', 2, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM academic_program_type WHERE academic_program_type_cd = 'PROJECT');

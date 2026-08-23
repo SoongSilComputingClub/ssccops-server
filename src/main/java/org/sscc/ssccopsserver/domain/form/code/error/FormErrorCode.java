@@ -244,7 +244,29 @@ public enum FormErrorCode implements ErrorCode {
      * 라벨만 이 규칙으로 검사한다.
      */
     FORM_LABEL_NOT_USABLE(
-            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다.");
+            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다."),
+
+    /*
+     * 404 — 존재하지 않는 폼 템플릿 (#142). 비활성(use_yn = false) 템플릿은 여기에 걸리지
+     * 않는다 — 지워지지 않고 살아 있으며 조회·수정도 된다 (FORM_LABEL_NOT_FOUND와 같은 갈래).
+     *
+     * 폼의 404가 공통 NOT_FOUND를 쓰는 것과 달리 전용 코드를 두는 것은
+     * POST /v1/form-templates/{id}/forms·POST /v1/forms/{formId}/templates처럼 한 요청에
+     * 폼과 템플릿이 함께 등장하는 경로가 있기 때문이다. 코드가 같으면 프론트는 무엇을
+     * 찾지 못한 것인지 알 수 없다.
+     */
+    FORM_TEMPLATE_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_TEMPLATE_NOT_FOUND", "폼 템플릿을 찾을 수 없습니다."),
+
+    /*
+     * 400 — 비활성(use_yn = false) 템플릿으로 새 폼을 만들려 할 때 (#142).
+     *
+     * FORM_LABEL_NOT_USABLE과 같은 규칙이다 — 비활성은 "새로 고를 수 없다"는 뜻이지
+     * "이미 만들어진 것을 되돌려라"는 뜻이 아니다. 그래서 이 템플릿으로 이미 만들어 둔 폼은
+     * 아무 영향도 받지 않고, 템플릿 자체의 조회·수정도 막지 않는다(내려놓은 템플릿의 오타를
+     * 고친 뒤 다시 켜는 것이 정상 경로다). 막는 것은 '여기서 새 폼을 시작하는 것' 하나다.
+     */
+    FORM_TEMPLATE_NOT_USABLE(
+            HttpStatus.BAD_REQUEST, "FORM_TEMPLATE_NOT_USABLE", "비활성 템플릿으로는 새 폼을 만들 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

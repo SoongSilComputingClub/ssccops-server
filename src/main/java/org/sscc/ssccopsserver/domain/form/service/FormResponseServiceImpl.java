@@ -10,21 +10,24 @@ import java.util.Optional;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -37,6 +40,13 @@ public class FormResponseServiceImpl implements FormResponseService {
 
     private final FormRepository formRepository;
     private final FormResponseHistoryRepository formResponseHistoryRepository;
+
+    /*
+     * 검토 처리 이력 (#141). 상태를 바꾸는 트랜잭션 안에서 함께 쓰기 때문에 별도 서비스로
+     * 나누지 않는다 — 나누면 "심사한다"와 "남긴다"가 두 경계에 걸려 한쪽만 성공할 자리가 생긴다.
+     */
+    private final FormResponseReviewHistoryRepository formResponseReviewHistoryRepository;
+
     private final ResponseAnswerValidator responseAnswerValidator;
 
     /*
@@ -85,29 +95,31 @@ public class FormResponseServiceImpl implements FormResponseService {
         Instant submittedAt = clock.instant();
 
         /*
-         * 이미 행이 있으면 상태로 갈린다. 임시저장(DRAFT)은 아직 낸 것이 아니라 그 행을 제출로
-         * 바꾸고(#36이 만들 행이다), 그 밖의 상태는 이미 낸 것이라 409다.
+         * 이미 행이 있으면 그 행을 제출로 바꾼다. (form_id, mbr_id) UNIQUE 때문에 새 행을 만들
+         * 수도 없으므로, 이 분기가 없으면 자동 저장(#36)을 쓴 응답자는 영영 제출할 수 없다.
          *
-         * (form_id, mbr_id) UNIQUE 때문에 새 행을 만들 수도 없으므로, 이 분기가 없으면 자동
-         * 저장을 쓴 응답자는 영영 제출할 수 없게 된다.
+         * **지금 낼 수 있는 상태인가는 여기서 따지지 않는다** (#141). 임시저장의 최초 제출과
+         * 수정요청 응답의 재제출은 되고 그 밖은 409인데, 그 판정을 서비스에 두면 상태 어휘가
+         * 늘 때마다 규칙이 복제된다 — 엔티티의 submit()이 상태를 보고 끊고 회차도 거기서 오른다
+         * (LY-02).
          */
         Optional<FormResponseHistoryEntity> existing =
                 formResponseHistoryRepository.findByFormAndMember(form, respondent);
         if (existing.isPresent()) {
             FormResponseHistoryEntity response = existing.get();
-            if (response.getStatus() != ResponseStatus.DRAFT) {
-                throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
-            }
             response.submit(content, submittedAt);
+            recordSubmission(response, respondent, submittedAt);
             formResponseHistoryRepository.flush();
             return FormResponseSubmitResponse.from(response);
         }
 
-        return FormResponseSubmitResponse.from(
+        FormResponseHistoryEntity response =
                 saveOrTranslateConflict(
                         FormResponseHistoryEntity.createSubmitted(
                                 form, respondent, content, submittedAt),
-                        FormErrorCode.RESPONSE_ALREADY_SUBMITTED));
+                        FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
+        recordSubmission(response, respondent, submittedAt);
+        return FormResponseSubmitResponse.from(response);
     }
 
     /*
@@ -210,8 +222,17 @@ public class FormResponseServiceImpl implements FormResponseService {
         FormEntity form = findForm(formId);
         FormResponseHistoryEntity response = findResponse(form, formResponseId);
 
+        /*
+         * 처리 이력은 상태와 무관하게 싣는다 (#141). DRAFT 응답에는 아직 아무 처리도 없어 빈
+         * 배열이지만, 상태로 분기해 아예 조회하지 않으면 "이력이 없다"와 "이력을 안 봤다"가
+         * 같은 응답이 된다.
+         */
+        List<FormResponseReviewHistoryEntity> reviewHistories =
+                formResponseReviewHistoryRepository.findAllByResponseOrderByProcessedAtAscIdAsc(
+                        response);
+
         if (response.getStatus() == ResponseStatus.DRAFT) {
-            return FormResponseDetailResponse.of(response, null, null);
+            return FormResponseDetailResponse.of(response, reviewHistories, null, null);
         }
 
         List<Long> orderedIds =
@@ -222,35 +243,63 @@ public class FormResponseServiceImpl implements FormResponseService {
         Long nextId =
                 index >= 0 && index < orderedIds.size() - 1 ? orderedIds.get(index + 1) : null;
 
-        return FormResponseDetailResponse.of(response, previousId, nextId);
+        return FormResponseDetailResponse.of(response, reviewHistories, previousId, nextId);
     }
 
     /*
-     * 응답 상태 변경 (#37). 전이 규칙은 엔티티(FormResponseHistoryEntity.changeStatus)가 갖고
-     * 여기서는 범위 검사와 조립만 한다 — 서비스에 if로 옮겨 적으면 상태를 바꾸는 다른 경로가
-     * 생길 때 규칙이 갈린다 (LY-02 · FormServiceImpl.changeStatus와 같은 방식).
+     * 검토 처리 (#141). 전이 규칙과 처리 구분 판정은 엔티티(FormResponseHistoryEntity.review)가
+     * 갖고 여기서는 범위 검사와 조립만 한다 — 서비스에 if로 옮겨 적으면 상태를 바꾸는 다른
+     * 경로가 생길 때 규칙이 갈린다 (LY-02 · FormServiceImpl.changeStatus와 같은 방식).
      *
-     * **수행자를 기록하지 않는다.** 데이터사전에 응답 상태 이력 테이블이 없어 남는 것은
-     * mdfcn_dt뿐이고, "누가 승인했는지"는 감사 로그(#8)가 확정되기 전까지 어디에도 남지 않는다.
-     * 이 이슈에서 새 테이블을 만들지 않기로 한 결정이며(폼 상태 전이 #33과 같다), 그래서
-     * 컨트롤러가 받는 @CurrentMember도 서비스로 넘기지 않는다 — 넘겨 두면 기록되고 있는 것처럼
-     * 읽힌다.
+     * **상태 변경과 이력 INSERT는 한 트랜잭션이다.** 상태만 바뀌고 이력이 없으면 그 심사는
+     * 근거를 잃고, 이력 행은 updatable = false로 잠겨 있어 나중에 채워 넣을 경로도 없다 —
+     * 등급·상태 변경(#78)이 세운 것과 같은 규칙이며 이력 저장이 실패하면 상태도 되돌아간다
+     * (FormResponseReviewRollbackTest가 못 박는다).
+     *
+     * **처리자는 요청 본문이 아니라 @CurrentMember에서 온 회원이다.** 본문으로 받으면 "누가
+     * 승인했는가"를 스스로 적어 넣을 수 있어 이력이 증거가 되지 못한다. #37에서 컨트롤러가 받은
+     * @CurrentMember를 서비스로 넘기지 않았던 것은 남길 자리가 없었기 때문이고, 이 이슈가 그
+     * 자리를 만들었으므로 이제는 넘긴다.
+     *
+     * 검토 의견 필수 여부는 여기서 보지 않는다 — 처리 구분마다 다르고, 그 판단과 거절은
+     * ResponseReviewAction · FormResponseReviewHistoryEntity.record가 한 벌로 갖는다.
      *
      * 접수 가능 여부(FormReceiptPolicy)는 보지 않는다. 심사는 접수가 끝난 뒤에 하는 일이라
      * 응답자 경로와 같은 판정을 걸면 마감한 폼의 응답을 아무도 승인할 수 없다.
      */
     @Override
     @Transactional
-    public FormResponseSummaryResponse changeResponseStatus(
-            Long formId, Long formResponseId, FormResponseStatusChangeRequest request) {
+    public FormResponseSummaryResponse reviewResponse(
+            Long formId,
+            Long formResponseId,
+            FormResponseReviewRequest request,
+            MemberEntity reviewer) {
 
         FormResponseHistoryEntity response = findResponse(findForm(formId), formResponseId);
-        response.changeStatus(request.rspnsSttsCd());
+        ResponseReviewAction action = response.review(request.rspnsSttsCd());
+
+        formResponseReviewHistoryRepository.save(
+                FormResponseReviewHistoryEntity.record(
+                        response, action, reviewer, request.rvwOpnnCn(), clock.instant()));
 
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (updateDraft 주석과 같은 이유)
         formResponseHistoryRepository.flush();
 
         return FormResponseSummaryResponse.from(response);
+    }
+
+    /*
+     * 제출 이력 한 줄 (#141). 최초 제출과 재제출 모두 남긴다.
+     *
+     * 검토 이력 테이블에 제출이 들어가는 이유는 엔티티 주석에 있다 — 타임라인이 "제출 →
+     * 수정요청 → 재제출 → 승인"으로 읽히려면 회차가 오른 시점이 그 안에 있어야 한다.
+     * 처리자는 검토자가 아니라 응답자 본인이며, 제출에는 검토 의견이 없다.
+     */
+    private void recordSubmission(
+            FormResponseHistoryEntity response, MemberEntity respondent, Instant submittedAt) {
+        formResponseReviewHistoryRepository.save(
+                FormResponseReviewHistoryEntity.record(
+                        response, ResponseReviewAction.SUBMIT, respondent, null, submittedAt));
     }
 
     /*

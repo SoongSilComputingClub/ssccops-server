@@ -7,7 +7,7 @@ import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
@@ -69,9 +69,18 @@ public interface FormResponseService {
     FormResponseDetailResponse getResponse(Long formId, Long formResponseId);
 
     /*
-     * 응답 상태 변경 (#37). SUBMITTED ↔ ACCEPTED ↔ REJECTED만 오갈 수 있고 DRAFT가 얽힌 전이는
-     * 거절한다. 수행자는 어디에도 남지 않는다 (응답 상태 이력 테이블이 없다 — 감사 로그 #8).
+     * 검토 처리 (#141). 상태 변경과 처리 이력 INSERT를 **한 트랜잭션**으로 묶는다 — "심사한다"와
+     * "그 사실을 남긴다"는 나눌 수 없는 한 건이라, 이력 저장이 실패하면 상태도 되돌아간다
+     * (#78의 MemberChangeRollbackTest 선례).
+     *
+     * 도달할 수 있는 상태는 ACCEPTED · CHANGES_REQUESTED · REJECTED 셋이며 수정요청·반려는
+     * 검토 의견이 필수다. 승인·반려는 종결이라 그 뒤로는 어떤 검토도 걸 수 없다(전이표는
+     * FormResponseHistoryEntity.changeStatus). 처리자(reviewer)는 요청 본문이 아니라
+     * @CurrentMember에서 온다.
      */
-    FormResponseSummaryResponse changeResponseStatus(
-            Long formId, Long formResponseId, FormResponseStatusChangeRequest request);
+    FormResponseSummaryResponse reviewResponse(
+            Long formId,
+            Long formResponseId,
+            FormResponseReviewRequest request,
+            MemberEntity reviewer);
 }

@@ -68,6 +68,23 @@ public interface EventParticipantRepository extends JpaRepository<EventParticipa
      */
     Optional<EventParticipantEntity> findByIdAndEvent(Long id, EventEntity event);
 
+    /*
+     * 내 신청 목록의 참가 상태 (ssccops#145). 행사가 몇 건이든 질의는 하나다 — 신청마다
+     * "명단에 있나"를 물으면 그대로 N+1이다 (DB-13 · countByEventIds와 같은 자리).
+     *
+     * UNIQUE(uk_event_ptcp_event_member) 덕에 (행사, 회원)당 최대 한 줄이라 호출부가 행사
+     * 식별자로 바로 접을 수 있다.
+     *
+     * 상태를 가리지 않는다 — 취소(CANCELLED)된 신청도 신청자에게 보여야 할 결과이고, 명단은
+     * 활동 이력으로 영구 보존된다(D16).
+     */
+    @Query(
+            "select e.id as eventId, p.id as eventPtcpId, p.status as ptcpSttsCd"
+                    + " from EventParticipantEntity p join p.event e"
+                    + " where p.member = :member and e.id in :eventIds")
+    List<MyApplicationParticipation> findAllByMemberAndEventIdIn(
+            @Param("member") MemberEntity member, @Param("eventIds") Collection<Long> eventIds);
+
     /** 중복 등록 선조회. UNIQUE(uk_event_ptcp_event_member)가 최종 방어선이다 */
     boolean existsByEventAndMember(EventEntity event, MemberEntity member);
 

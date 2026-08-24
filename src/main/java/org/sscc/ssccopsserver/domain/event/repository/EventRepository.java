@@ -49,6 +49,24 @@ public interface EventRepository extends JpaRepository<EventEntity, Long> {
     Optional<EventEntity> findByIdAndStatus(Long id, EventStatus status);
 
     /*
+     * 내 신청 목록이 쓰는 "이 폼들이 붙은 행사" (ssccops#145). 폼은 행사에 전속이므로
+     * (uk_event_form) 폼 하나가 행사 하나로 풀린다.
+     *
+     * **행사 상태를 조건에 넣지 않는다.** 공개 목록(#156)이 PUBLISHED만 내보내는 것과 갈리는
+     * 지점인데, 그쪽이 지키는 것은 "아직 공개하지 않은 것을 남에게 보이지 않는다"이고 여기 대상은
+     * **본인이 실제로 낸 신청**이다. 운영자가 행사를 보관(ARCHIVED)하거나 작성 중으로 되돌린다고
+     * 해서 내가 낸 신청이 사라지면 그 목록이 사실과 어긋난다 — 신청 이력은 행사의 게시 상태와
+     * 독립이다.
+     *
+     * 분류명(eventClsfNm)이 응답에 실리므로 분류를 함께 페치한다 — 없으면 신청 한 줄마다 조회가
+     * 더 나간다 (DB-13).
+     */
+    @Query(
+            "select e from EventEntity e join fetch e.classification join fetch e.form f"
+                    + " where f.id in :formIds")
+    List<EventEntity> findAllByFormIdIn(@Param("formIds") Collection<Long> formIds);
+
+    /*
      * 폼 전속(D11) 선조회. UNIQUE(uk_event_form)가 최종 방어선이지만 선조회가 있어야
      * 대부분의 요청이 500이 아니라 바로 409 FORM_ALREADY_LINKED를 받는다.
      */

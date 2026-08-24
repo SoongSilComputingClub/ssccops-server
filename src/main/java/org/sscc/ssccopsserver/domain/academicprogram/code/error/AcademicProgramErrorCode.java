@@ -135,6 +135,20 @@ public enum AcademicProgramErrorCode implements ErrorCode {
             HttpStatus.BAD_REQUEST, "REVISION_REASON_REQUIRED", "수정요청은 사유를 반드시 입력해야 합니다."),
 
     /*
+     * 409 — 모집이 아직 시작되지 않은 활동(APPROVED)에 신청자 조회·선발을 시도했을 때 (#138).
+     *
+     * 모집 폼은 승인 후속 처리가 만들어 두지만 그때는 DRAFT라 신청 자체가 존재할 수 없고,
+     * 그 상태의 조회는 빈 목록이 아니라 "아직 물어볼 것이 없다"이다 — 빈 배열로 답하면 화면은
+     * "아무도 지원하지 않았다"를 그리고 운영자는 모집을 시작했다고 믿는다(EVENT_HAS_NO_FORM을
+     * 빈 목록으로 대신하지 않는 것과 같은 판단).
+     *
+     * COMPLETED는 여기 걸리지 않는다. 이름 그대로 **ONGOING 이전**만 막는 것이고, 끝난 활동의
+     * 신청 명부는 지나간 사실이라 조회를 막을 이유가 없다 — 그 시점의 선발은 참가 상태 전이
+     * (PATCH /v1/events/{eventId}/participants/{eventPtcpId})가 이미 막는다.
+     */
+    RECRUITMENT_NOT_STARTED(HttpStatus.CONFLICT, "RECRUITMENT_NOT_STARTED", "아직 모집이 시작되지 않았습니다."),
+
+    /*
      * 400 — 인증사진 업로드(#137)의 fileExt가 허용 목록 밖일 때. 허용 목록 자체는 행사 이미지와
      * 같은 EventImageType이며(형식을 늘리는 자리를 한 곳으로 묶는다) SVG를 빼는 이유도 같다 —
      * 공개 도메인에서 그대로 열리므로 스크립트를 담을 수 있는 문서를 허용하면 XSS 경로가 된다.

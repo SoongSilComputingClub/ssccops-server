@@ -37,6 +37,11 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 있지만, 그것만으로는 사용자가 저장을 누르기 전까지 알 수 없다. qitemVer를 함께 내리는 것은
  * 편집기가 자기가 받아 온 구성이 아직 최신인지 판단할 근거로 쓰기 위해서다.
  *
+ * mltplRspnsYn(#143)을 싣는 것은 편집기가 이 응답을 그대로 초안으로 받아 PUT으로 돌려보내기
+ * 때문이다 — 빼면 폼을 한 번 저장할 때마다 다중 응답 설정이 false로 되돌아간다(요청의 생략이
+ * false이므로 조용히 꺼진다). 상세를 요청 DTO와 같은 이름으로 맞춰 두는 규칙이 여기서 값을
+ * 지킨다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormDetailResponse(
@@ -50,6 +55,7 @@ public record FormDetailResponse(
         String sysFormCd,
         boolean sysYn,
         int qitemVer,
+        boolean mltplRspnsYn,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
         FormResponseStatusSummary responseSummary,
@@ -76,6 +82,7 @@ public record FormDetailResponse(
                 form.getSystemFormCode(),
                 form.isSystemForm(),
                 form.getQuestionVersion(),
+                form.isMultipleResponseAllowed(),
                 labels,
                 responseSummary.total(),
                 responseSummary,

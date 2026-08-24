@@ -57,6 +57,33 @@ public interface FormResponseHistoryRepository
             @Param("form") FormEntity form, @Param("member") MemberEntity member);
 
     /*
+     * "내가 행사에 낸 신청" 전부 (ssccops#145 · GET /v1/events/my-applications).
+     *
+     * 행사에 연결된 폼의 응답만 고른다 — 폼 응답 전부를 끌어와 서비스에서 거르면 행사와 무관한
+     * 지원서·설문 응답까지 메모리로 올라오고, 그 수는 회원이 오래 활동할수록 는다. 폼은 행사에
+     * 전속(uk_event_form)이라 exists 하나로 끝난다.
+     *
+     * 상태 집합을 호출부가 넘기는 것은 이 리포지토리의 다른 질의와 같다 — 내 신청 조회는
+     * ResponseStatus.submittedOrLater()를 넘겨 DRAFT를 뺀다(제출 전 초안은 신청이 아니다).
+     * 같은 EnumSet을 여기 적어 굳히면 그 기준이 두 벌이 된다.
+     *
+     * 폼을 함께 페치하는 것은 호출부가 form_id로 행사를 짝지어야 하기 때문이다 — LAZY 프록시의
+     * 식별자 접근에 기대면 매핑을 조금만 손대도 조용히 N+1로 되돌아간다 (findAllForOperatorList
+     * 주석과 같은 자리).
+     *
+     * 정렬은 '최신 신청 순'(제출 일시 내림차순)이고 동률은 식별자로 끊는다 — DRAFT가 빠져
+     * sbmsn_dt가 언제나 있으므로 운영자 목록과 달리 coalesce가 필요 없다.
+     */
+    @Query(
+            "select r from FormResponseHistoryEntity r join fetch r.form f"
+                    + " where r.member = :member and r.status in :statuses"
+                    + " and exists (select e.id from EventEntity e where e.form = f)"
+                    + " order by r.submittedAt desc, r.id desc")
+    List<FormResponseHistoryEntity> findEventApplicationsByMember(
+            @Param("member") MemberEntity member,
+            @Param("statuses") Collection<ResponseStatus> statuses);
+
+    /*
      * 문항 식별자 보호(#32 수정)의 판단 근거. 상태를 가리지 않고 한 건이라도 있으면 참이다 —
      * 임시저장(DRAFT) 응답의 rspns_cn도 key가 qitemId라, 제출 전이라고 해서 문항을 지워도
      * 되는 것은 아니다. 목록의 responseCount가 DRAFT를 빼는 것과는 판단 기준이 다르다.

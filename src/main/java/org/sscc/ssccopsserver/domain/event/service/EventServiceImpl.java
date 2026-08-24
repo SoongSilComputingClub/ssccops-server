@@ -25,13 +25,11 @@ import org.sscc.ssccopsserver.domain.event.repository.EventClassificationReposit
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantCount;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
-import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
-import org.sscc.ssccopsserver.domain.form.service.FormReceiptPolicy;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -44,8 +42,9 @@ import lombok.RequiredArgsConstructor;
  * 발생한 연결은 움직이지 않는다(D11 · EVENT_FORM_IN_USE), 참가자가 있는 행사는 지우지
  * 않는다(D9 · EVENT_HAS_PARTICIPANT).
  *
- * 모집 판정(receiptStatus)은 FormReceiptPolicy를, 진행 단계(eventPhase)는 EventPhasePolicy를
- * 호출만 한다 — 판정을 여기 복제하면 폼 화면과 행사 화면이 같은 폼을 다르게 말한다(D3).
+ * 모집 판정(receiptStatus)은 EventReceiptPolicy(그 안에서 FormReceiptPolicy)를, 진행 단계
+ * (eventPhase)는 EventPhasePolicy를 호출만 한다 — 판정을 여기 복제하면 폼 화면과 행사 화면이
+ * 같은 폼을 다르게 말한다(D3). 공개 조회(ssccops#143)도 같은 두 정책을 부른다.
  */
 @Service
 @RequiredArgsConstructor
@@ -63,7 +62,7 @@ public class EventServiceImpl implements EventService {
     private final EventParticipantRepository eventParticipantRepository;
     private final FormRepository formRepository;
     private final FormResponseHistoryRepository formResponseHistoryRepository;
-    private final FormReceiptPolicy formReceiptPolicy;
+    private final EventReceiptPolicy eventReceiptPolicy;
     private final EventPhasePolicy eventPhasePolicy;
 
     /*
@@ -78,8 +77,7 @@ public class EventServiceImpl implements EventService {
         Collection<EventStatus> statuses =
                 statusCode == null ? EnumSet.allOf(EventStatus.class) : EnumSet.of(statusCode);
 
-        List<EventEntity> events =
-                eventRepository.findAllForAdminList(statuses, classificationCode);
+        List<EventEntity> events = eventRepository.findAllForList(statuses, classificationCode);
         if (events.isEmpty()) {
             // IN () 은 DB에 따라 문법 오류이므로 뒤따르는 집계를 아예 보내지 않는다
             return List.of();
@@ -101,7 +99,7 @@ public class EventServiceImpl implements EventService {
                                 EventSummaryResponse.of(
                                         event,
                                         eventPhasePolicy.phaseOf(event),
-                                        receiptStatusOf(event),
+                                        eventReceiptPolicy.receiptStatusOf(event),
                                         confirmedCountByEventId.getOrDefault(event.getId(), 0L)))
                 .toList();
     }
@@ -275,11 +273,6 @@ public class EventServiceImpl implements EventService {
         }
     }
 
-    /** 모집 상태는 연결된 폼의 파생 값이다(D3). 폼이 없으면 계약대로 null이다 */
-    private FormReceiptStatus receiptStatusOf(EventEntity event) {
-        return event.getForm() == null ? null : formReceiptPolicy.receiptStatusOf(event.getForm());
-    }
-
     private EventDetailResponse toDetail(EventEntity event) {
         long confirmedCount =
                 eventParticipantRepository
@@ -288,7 +281,10 @@ public class EventServiceImpl implements EventService {
                         .mapToLong(EventParticipantCount::getConfirmedCount)
                         .sum();
         return EventDetailResponse.of(
-                event, eventPhasePolicy.phaseOf(event), receiptStatusOf(event), confirmedCount);
+                event,
+                eventPhasePolicy.phaseOf(event),
+                eventReceiptPolicy.receiptStatusOf(event),
+                confirmedCount);
     }
 
     private Instant toInstant(OffsetDateTime dateTime) {

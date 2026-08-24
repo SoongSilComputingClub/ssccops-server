@@ -37,7 +37,8 @@ import lombok.RequiredArgsConstructor;
  * **두 경로 모두 인증이 필요하다.** '공개'는 누구나 링크를 열 수 있다는 뜻이지 익명으로 제출할
  * 수 있다는 뜻이 아니다 — 응답자는 Google OAuth 회원가입을 먼저 마친 회원이며(ssccops #61),
  * 그래서 form_rspns_hstry.mbr_id가 NOT NULL을 유지한다. SecurityConfig의 permitAll 목록에
- * (Swagger·헬스 프로브뿐이다) 이 경로가 들어가지 않는지 확인할 것.
+ * 이 경로가 들어가지 않는지 확인할 것 — 그쪽에는 Swagger·헬스 프로브와 /public/v1/**
+ * (익명 행사 조회, ssccops#143)만 있고, 이 컨트롤러의 경로는 /v1 아래라 접두사부터 갈린다.
  *
  * 등급 제한은 두지 않는다. 가입 직후의 임시회원(TEMP)도 응답할 수 있어야 하며, 미가입 주체는
  * @CurrentMember 리졸버가 403 SIGNUP_REQUIRED로 끊는다.

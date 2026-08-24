@@ -5,6 +5,7 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +18,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
+import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSummaryResponse;
+import org.sscc.ssccopsserver.domain.event.service.EventImageService;
 import org.sscc.ssccopsserver.domain.event.service.EventService;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -46,6 +50,7 @@ import lombok.RequiredArgsConstructor;
 public class EventController {
 
     private final EventService eventService;
+    private final EventImageService eventImageService;
 
     /*
      * 행사 목록. 두 필터는 각각 선택이며 둘 다 주면 AND다. 본문(mtxtCn)은 목록에 싣지 않는다 —
@@ -142,5 +147,31 @@ public class EventController {
     public ApiResponse<Void> deleteEvent(@PathVariable Long eventId) {
         eventService.deleteEvent(eventId);
         return ApiResponse.successWithNoData();
+    }
+
+    /*
+     * 본문 이미지 업로드 URL 발급 (#161 · D6). **서버는 파일 바이트를 받지 않는다** — 이
+     * 컨트롤러에 multipart 핸들러를 더하지 말 것. 업로드는 웹 → R2 직행이고 서버가 하는 일은
+     * 짧게 사는 서명된 PUT 주소를 내주는 것뿐이다.
+     *
+     * 새 오브젝트 키를 발급하는 요청이라 201이며 **Location은 두지 않는다** — 그 시점에는
+     * 아직 아무것도 올라와 있지 않아 가리킬 자원이 없다(응답의 publicUrl이 업로드 뒤 열릴
+     * 주소다). 권한은 클래스 레벨 EVENT_MANAGE 그대로다.
+     */
+    @Operation(
+            summary = "행사 본문 이미지 업로드 URL 발급",
+            description =
+                    "R2로 직접 PUT 할 presigned URL을 발급한다(서버는 파일을 받지 않는다)."
+                            + " 웹은 uploadUrl로 요청 본문의 contentType과 **같은 Content-Type 헤더를 붙여**"
+                            + " 한 번 PUT 하고, 본문 마크다운에는 publicUrl을 넣는다."
+                            + " 허용 형식은 image/png·image/jpeg·image/webp·image/gif이며 확장자와"
+                            + " 어긋나면 400 UNSUPPORTED_IMAGE_TYPE, 10MB를 넘으면 413 IMAGE_TOO_LARGE,"
+                            + " 없는 행사는 404 EVENT_NOT_FOUND다."
+                            + " uploadUrl은 expiresInSeconds 뒤 만료되므로 저장해 두고 재사용하지 않는다.")
+    @PostMapping("/{eventId}/images")
+    public ResponseEntity<ApiResponse<EventImageUploadResponse>> issueImageUploadUrl(
+            @PathVariable Long eventId, @Valid @RequestBody EventImageUploadRequest request) {
+        EventImageUploadResponse response = eventImageService.issueUploadUrl(eventId, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
     }
 }

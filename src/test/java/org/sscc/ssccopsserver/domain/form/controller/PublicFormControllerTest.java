@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -34,13 +35,16 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -142,12 +146,17 @@ class PublicFormControllerTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormResponseReviewHistoryRepository formResponseReviewHistoryRepository;
 
     private MemberEntity respondent;
+
+    /** 재제출(#141) 표본을 만들 때 수정요청을 누르는 사람. 이 클래스의 인증 주체는 언제나 응답자다 */
+    private MemberEntity reviewer;
 
     @BeforeEach
     void setUp() {
         respondent = saveMember(AUTH_USER_ID, "20260001", "이서연", "actor@sscc.org");
+        reviewer = saveMember(UUID.randomUUID(), "20200001", "김운영", "reviewer@sscc.org");
     }
 
     /* ── 응답자용 폼 조회 ───────────────────────────────────── */
@@ -440,13 +449,14 @@ class PublicFormControllerTest {
     }
 
     /*
-     * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
-     *
-     * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
-     * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
-     * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
-     * 바뀐 뒤 제출되면 2가 찍혀야 한다.
-     */
+    <<<<<<< HEAD
+         * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
+         *
+         * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
+         * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
+         * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
+         * 바뀐 뒤 제출되면 2가 찍혀야 한다.
+         */
     @Test
     void submittedResponseCarriesTheQuestionVersionItAnsweredAgainst() throws Exception {
         Long formId = saveForm("버전 기록 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
@@ -473,6 +483,91 @@ class PublicFormControllerTest {
                 .andExpect(status().isCreated());
 
         assertThat(onlyResponse().getQuestionVersion()).isEqualTo(2);
+    }
+
+    /*
+     * **재제출 (#141).** 수정요청을 받은 응답은 같은 행을 다시 제출한다 — 응답은 회원당 폼당
+     * 1건(UNIQUE)이라 새 행을 만들 수 없고, DRAFT로 되돌리는 길도 없기 때문이다. 회차가 오르는
+     * 것이 요점이다: 회차가 없으면 이력의 처리들이 어느 제출본에 대한 것이었는지 알 수 없다.
+     */
+    @Test
+    void resubmitAfterChangesRequestedIncreasesSequence() throws Exception {
+        Long formId = saveForm("수정요청 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("SUBMITTED"));
+
+        FormResponseHistoryEntity resubmitted = onlyResponse();
+        assertThat(resubmitted.getStatus()).isEqualTo(ResponseStatus.SUBMITTED);
+        assertThat(resubmitted.getSubmissionSequence()).isEqualTo(2);
+        assertThat(resubmitted.getContent().answers()).containsEntry("q1", "김철수");
+        assertThat(formResponseHistoryRepository.count()).isEqualTo(1);
+    }
+
+    /*
+     * 재제출도 처리 이력에 SUBMIT 한 줄을 남긴다. 그 줄이 없으면 타임라인이 "수정요청 → 승인"으로
+     * 읽혀, 승인이 고쳐진 답을 보고 내려진 것인지 알 수 없다. 최초 제출도 같은 이유로 남는다.
+     */
+    @Test
+    void everySubmissionLeavesSubmitHistory() throws Exception {
+        Long formId = saveForm("이력 확인 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated());
+
+        List<FormResponseReviewHistoryEntity> histories =
+                formResponseReviewHistoryRepository.findAllByResponseOrderByProcessedAtAscIdAsc(
+                        onlyResponse());
+
+        assertThat(histories)
+                .extracting(
+                        FormResponseReviewHistoryEntity::getAction,
+                        FormResponseReviewHistoryEntity::getSubmissionSequence)
+                .containsExactly(
+                        tuple(ResponseReviewAction.SUBMIT, 1),
+                        tuple(ResponseReviewAction.REQUEST_CHANGES, 1),
+                        tuple(ResponseReviewAction.SUBMIT, 2));
+        // 제출 행의 처리자는 검토자가 아니라 응답자 본인이다
+        assertThat(histories.get(0).getProcessor().getId()).isEqualTo(respondent.getId());
+    }
+
+    /*
+     * **반려는 종결이다 (#141).** 수정요청과 갈리는 유일한 지점이며, 코드도 나눈다 —
+     * "이미 제출했다"는 기다리라는 뜻이지만 반려는 그 응답에 대해 끝났다는 뜻이라, 같은 문구를
+     * 돌려주면 응답자는 오지 않을 결과를 기다린다.
+     */
+    @Test
+    void resubmitAfterRejectionReturns409() throws Exception {
+        Long formId = saveForm("반려 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        onlyResponse().review(ResponseStatus.REJECTED);
+        formResponseHistoryRepository.flush();
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESPONSE_ALREADY_REJECTED"));
+
+        assertThat(onlyResponse().getContent().answers()).containsEntry("q1", "홍길동");
+        assertThat(onlyResponse().getSubmissionSequence()).isEqualTo(1);
     }
 
     @Test
@@ -587,6 +682,20 @@ class PublicFormControllerTest {
         return mockMvc.perform(
                 authenticatedPost(
                         "/v1/forms/" + formId + "/responses", "{\"rspnsCn\": " + answers + "}"));
+    }
+
+    /*
+     * 검토자의 수정요청을 흉내 낸다 (#141). 검토 API(POST .../reviews)는 RESPONSE_REVIEW 권한을
+     * 가진 검토자의 토큰을 요구하는데 이 클래스의 인증 주체는 고정된 응답자라, 응답자 경로만 보는
+     * 여기서는 엔티티와 리포지토리로 직접 옮긴다 — 그 경로 자체는 FormResponseControllerTest가 본다.
+     */
+    private void requestChanges() {
+        FormResponseHistoryEntity response = onlyResponse();
+        ResponseReviewAction action = response.review(ResponseStatus.CHANGES_REQUESTED);
+        formResponseReviewHistoryRepository.save(
+                FormResponseReviewHistoryEntity.record(
+                        response, action, reviewer, "지원 동기를 더 구체적으로 적어주세요.", NOW));
+        formResponseHistoryRepository.flush();
     }
 
     private FormResponseHistoryEntity onlyResponse() {

@@ -19,8 +19,8 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * creatrMbrId만 갖고 이름은 회원 스토어에서 따로 찾고 있어서다. 서버가 이름까지 같이 내리면
  * 그 조회가 사라지고, 식별자는 그대로 남아 있어 기존 코드가 깨지지 않는다.
  *
- * responseCount는 목록과 같은 기준(제출 이상만)이다. 상세 화면은 그 위에 '전체 · 제출 · 승인 ·
- * 반려' 네 숫자를 보여주므로 responseSummary를 함께 내린다 (#37) — 두 값은 같은 집계에서 나오고
+ * responseCount는 목록과 같은 기준(제출 이상만)이다. 상세 화면은 그 위에 '전체 · 제출 · 수정요청 ·
+ * 승인 · 반려' 다섯 숫자를 보여주므로 responseSummary를 함께 내린다 (#37) — 두 값은 같은 집계에서 나오고
  * responseSummary.total과 responseCount는 언제나 같다. 굳이 둘 다 두는 것은 목록(FormSummary)이
  * 이미 responseCount를 쓰고 있어 상세만 이름을 바꾸면 웹이 두 응답을 다르게 읽어야 하기 때문이다.
  *

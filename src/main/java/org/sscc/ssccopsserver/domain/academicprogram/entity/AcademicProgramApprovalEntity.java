@@ -29,9 +29,9 @@ import lombok.NoArgsConstructor;
  *
  * PROPOSAL은 aprv_pnt_cd에 없다 — 기획안 승인은 폼 응답 검토(#141)가 정본이다.
  *
- * session_id는 아직 엔티티 연관이 아니라 평범한 컬럼이다. Session 엔티티는 이 이슈(#133) 범위
- * 밖(#135·#136)이라 아직 없고, 이 이슈가 실제로 쓰는 것은 aprv_pnt_cd = COMPLETION(세션과
- * 무관, 항상 NULL)뿐이다. Session이 생기면 그때 @ManyToOne으로 승격한다.
+ * session은 #136에서 평범한 컬럼(Long)에서 @ManyToOne으로 승격했다 — #133 시점에는 Session
+ * 엔티티 자체가 없어 식별자만 들고 있었다. COMPLETION은 활동 단위 승인이라 이 값이 항상
+ * NULL이고(데이터모델 §2), SESSION일 때만 값이 있다.
  */
 @Entity
 @Table(name = "academic_program_aprv")
@@ -49,9 +49,15 @@ public class AcademicProgramApprovalEntity {
     @JoinColumn(name = "academic_program_id", nullable = false, updatable = false)
     private AcademicProgramEntity academicProgram;
 
-    /** 회차 승인일 때만 값이 있다(#136). COMPLETION은 항상 NULL이다 */
-    @Column(name = "session_id")
-    private Long sessionId;
+    /*
+     * 회차 승인일 때만 값이 있다(#136). COMPLETION은 활동 단위 승인이라 항상 NULL이다.
+     *
+     * updatable = false인 것은 이 행이 "그때 그 처리"를 가리키는 이력이기 때문이다 — 대상이
+     * 바뀌는 승인 이력은 이력이 아니다.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "session_id", updatable = false)
+    private SessionEntity session;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "aprv_pnt_cd", nullable = false, length = 20)
@@ -73,9 +79,34 @@ public class AcademicProgramApprovalEntity {
     private Instant approvedAt;
 
     /*
+     * 회차 승인·수정요청 기록(#136). 종료 승인과 마찬가지로 대기 없이 곧바로 결정을 담아
+     * 만든다 — 제출 시점에 PENDING 행을 깔아 두지 않는 이유는 AcademicProgramApprovalStatus
+     * 주석에 있다.
+     *
+     * 처리 상태를 전이 액션에서 꺼내 오는 것은 그 대응이 전이표의 일부이기 때문이다
+     * (SessionTransition.approvalStatus) — 여기서 다시 분기하면 표가 두 벌이 된다.
+     */
+    public static AcademicProgramApprovalEntity forSession(
+            AcademicProgramEntity academicProgram,
+            SessionEntity session,
+            SessionTransition transition,
+            MemberEntity approver,
+            String opinionContent,
+            Instant approvedAt) {
+        return new AcademicProgramApprovalEntity(
+                null,
+                academicProgram,
+                session,
+                AcademicProgramApprovalPoint.SESSION,
+                transition.approvalStatus(),
+                approver,
+                opinionContent,
+                approvedAt);
+    }
+
+    /*
      * 종료/수료 승인 기록(#133 APPROVE_COMPLETION). 대기 없이 곧바로 APPROVED로 확정되므로
-     * 상태·처리 일시를 함께 받는다 — 회차 승인(#136)처럼 PENDING으로 먼저 만들고 나중에
-     * 결정을 채우는 2단계가 아니다.
+     * 상태·처리 일시를 함께 받는다. 세션이 없는 유일한 지점이라 session은 NULL이다.
      */
     public static AcademicProgramApprovalEntity forCompletion(
             AcademicProgramEntity academicProgram, MemberEntity approver, Instant approvedAt) {

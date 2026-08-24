@@ -101,7 +101,33 @@ public enum AcademicProgramErrorCode implements ErrorCode {
     INVALID_ATTENDANCE_TARGET(
             HttpStatus.BAD_REQUEST,
             "INVALID_ATTENDANCE_TARGET",
-            "출석 대상이 아닌 참가자가 포함돼 있거나 같은 참가자가 중복됐습니다.");
+            "출석 대상이 아닌 참가자가 포함돼 있거나 같은 참가자가 중복됐습니다."),
+
+    /*
+     * 409 — SessionTransition 전이표에 없는 조합을 요청했을 때 (#136). 실제로 여기 걸리는 것은
+     * SUBMITTED가 아닌 회차에 대한 승인·수정요청이며, 그중 APPROVED는 되돌리지 않는다는 원칙
+     * (학술관리_데이터모델.md §3)이 만든 자리다.
+     *
+     * 재제출(#135)이 만나는 SESSION_NOT_EDITABLE과 코드를 나눈 것은 주체와 다음 행동이 다르기
+     * 때문이다 — 그쪽은 스터디장에게 "지금은 못 고친다"이고 이쪽은 국장에게 "이미 처리된
+     * 회차다"이다. 화면도 다르고, 한 코드로 묶으면 어느 화면의 안내를 골라야 할지 알 수 없다.
+     */
+    INVALID_SESSION_TRANSITION(
+            HttpStatus.CONFLICT, "INVALID_SESSION_TRANSITION", "허용되지 않는 회차 상태 전이입니다."),
+
+    /*
+     * 400 — 사유 없이 수정요청을 하려 할 때 (#136). 수정요청은 스터디장에게 "무엇을 고쳐야
+     * 하는가"를 알리는 통보이고, 그 사유가 남는 자리는 academic_program_aprv의 최신 행 하나뿐이라
+     * (재제출은 이력을 남기지 않는다, 데이터모델 §7) 비워 두면 통보 자체가 성립하지 않는다.
+     * 공백만 있는 문자열도 여기 걸린다 — DB의 NOT NULL이 막지 못하는 자리다.
+     *
+     * 승인은 사유가 선택이라 DTO의 @NotBlank로는 막을 수 없다. 필수 여부가 함께 온 transition에
+     * 달려 있고, 조건부 검증을 Bean Validation으로 표현해도 전역 핸들러가 VALIDATION_FAILED로
+     * 뭉개 웹이 "사유를 적으라"는 안내를 고를 수 없다(폼 응답 검토 #141의 REVIEW_OPINION_REQUIRED와
+     * 같은 판단). 실제로 막는 자리는 SessionEntity.changeStatus다.
+     */
+    REVISION_REASON_REQUIRED(
+            HttpStatus.BAD_REQUEST, "REVISION_REASON_REQUIRED", "수정요청은 사유를 반드시 입력해야 합니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

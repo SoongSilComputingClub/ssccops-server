@@ -55,9 +55,11 @@ import com.jayway.jsonpath.JsonPath;
 /*
  * 회차 기록 작성·조회 API (#135). 쓰기 둘은 스터디장/팀장 본인만, 조회 둘은 인증만 요구한다.
  *
- * 회차 승인(#136)이 아직 없어 REVISION_REQUESTED 상태는 API로 만들 수 없다 — 재제출 테스트는
- * 그 상태를 벌크 UPDATE로 직접 심는다(revertToRevisionRequested). 승인이 붙으면 그 경로로
- * 바꾸는 것이 맞지만, 그때까지 재제출 규칙을 테스트 없이 두는 편이 더 나쁘다.
+ * REVISION_REQUESTED·APPROVED는 이제 회차 승인 API(#136)로 만들 수 있지만, 재제출 테스트는
+ * 여전히 그 상태를 벌크 UPDATE로 심는다(revertToRevisionRequested) — 이 클래스가 확인하는 것은
+ * 재제출 규칙이고, 픽스처가 국장 권한 부여와 승인 전이까지 지고 가면 그 규칙과 무관한 실패가
+ * 이 테스트로 흘러든다. 승인 전이 뒤의 회차가 실제로 어떤 상태인지는 #136의
+ * AcademicProgramReviewControllerTest가 API로 확인한다.
  *
  * 실패를 기대하는 요청은 테스트마다 마지막에 한 번만 부른다 — 서비스가 @Transactional이라
  * 예외가 테스트 트랜잭션을 rollback-only로 표시하고, 그 뒤 이어지는 요청은
@@ -751,8 +753,8 @@ class AcademicProgramSessionControllerTest {
     }
 
     /*
-     * 회차 승인(#136)이 아직 없어 REVISION_REQUESTED·APPROVED를 만들 API 경로가 없다. 벌크
-     * UPDATE로 상태만 심고 영속성 컨텍스트를 비워 다음 조회가 DB를 다시 읽게 한다.
+     * 벌크 UPDATE로 상태만 심고 영속성 컨텍스트를 비워 다음 조회가 DB를 다시 읽게 한다 —
+     * 승인 API(#136)를 태우지 않는 이유는 클래스 주석에 있다.
      */
     private void changeStatus(Long sessionId, SessionStatus status) {
         entityManager.flush();

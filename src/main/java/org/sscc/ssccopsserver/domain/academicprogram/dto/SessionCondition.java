@@ -33,6 +33,8 @@ public record SessionCondition(
         return new SessionSearchQuery(
                 academicProgramId,
                 toStatus(),
+                // 활동 하나짜리 목록에는 검색어가 없다 — 활동을 가로지르는 목록(#136)만 쓴다
+                null,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 SessionCursor.decode(cursor, sortOrder));

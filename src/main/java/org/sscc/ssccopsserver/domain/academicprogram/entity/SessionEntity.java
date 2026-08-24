@@ -10,6 +10,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
@@ -44,7 +45,19 @@ import lombok.NoArgsConstructor;
         uniqueConstraints =
                 @UniqueConstraint(
                         name = "uk_session_curriculum_item",
-                        columnNames = {"curriculum_item_id"}))
+                        columnNames = {"curriculum_item_id"}),
+        /*
+         * 활동 횡단 조회(#136)가 쓰는 두 컬럼이다. 승인 대기 목록은 활동 경계 없이
+         * session_stts_cd = SUBMITTED만 골라 real_dt 순으로 읽으므로, 이 인덱스가 없으면
+         * 회차가 쌓일수록 전체 스캔 뒤 정렬이 된다.
+         *
+         * 계획일(curriculum_item.plan_dt)이 아니라 진행일을 정렬 키로 두는 이유는
+         * SessionSortOrder 주석에 있다(그쪽은 NULL을 허용해 커서 비교가 성립하지 않는다).
+         */
+        indexes = {
+            @Index(name = "idx_session_stts_cd", columnList = "session_stts_cd"),
+            @Index(name = "idx_session_real_dt", columnList = "real_dt")
+        })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -138,5 +151,26 @@ public class SessionEntity {
         this.noticeContent = noticeContent;
         this.registrant = registrant;
         this.status = SessionStatus.SUBMITTED;
+    }
+
+    /*
+     * 학술국장의 승인·수정요청(#136). 전이표는 SessionTransition이 갖고, 여기서는 그 표를
+     * 어겼을 때 무엇으로 거절할지만 맡는다 — AcademicProgramEntity.changeStatus·
+     * FormEntity.changeStatus와 같은 역할 분담이다.
+     *
+     * 전이 가능 여부를 사유보다 먼저 본다. 이미 승인된 회차에 사유 없는 수정요청이 오면
+     * 답해야 할 것은 "사유를 적어라"가 아니라 "이미 처리된 회차다"이기 때문이다.
+     *
+     * 승인 이력(academic_program_aprv)은 이 메서드가 남기지 않는다 — 호출부
+     * (SessionReviewServiceImpl)가 같은 트랜잭션에서 남긴다(활동 전이와 같은 경계).
+     */
+    public void changeStatus(SessionTransition transition, String reason) {
+        if (!transition.isAllowedFrom(this.status)) {
+            throw new GeneralException(AcademicProgramErrorCode.INVALID_SESSION_TRANSITION);
+        }
+        if (transition.requiresReason() && (reason == null || reason.isBlank())) {
+            throw new GeneralException(AcademicProgramErrorCode.REVISION_REASON_REQUIRED);
+        }
+        this.status = transition.targetStatus();
     }
 }

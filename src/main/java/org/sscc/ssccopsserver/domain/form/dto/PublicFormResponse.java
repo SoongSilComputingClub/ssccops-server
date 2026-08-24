@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.form.dto;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.List;
 
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
@@ -22,6 +23,18 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * alreadySubmitted·submittedAt은 재제출을 막기 위한 값이 아니라(그건 제출 API가 막는다) 웹이
  * 작성 화면 대신 제출 내역 화면을 고르기 위한 값이다.
  *
+ * ── alreadySubmitted의 뜻이 좁아졌다 (#143) ──────────────────
+ * **"냈는가"가 아니라 "더 낼 수 없는가"다.** 다중 응답을 허용하는 폼에서는 이미 낸 뒤에도 또
+ * 내는 것이 정상이므로 화면이 작성 폼을 계속 보여줘야 하는데, 예전 뜻대로면 첫 제출 직후부터
+ * 제출 내역 화면이 뜬다. 필드 이름을 바꾸지 않은 것은 단일 응답 폼(지금 있는 폼 전부)에서 두 뜻이
+ * 완전히 같아 웹이 이미 쓰는 자리를 깨뜨릴 이유가 없기 때문이다 — 다중 응답 폼에서만 갈린다.
+ *
+ * 그 대신 mltplRspnsYn(이 폼이 여러 건을 받는가)과 myResponseCount(내가 낸 건수)를 함께 내려
+ * 화면이 "이미 2건 제출했고 더 낼 수 있다"를 그릴 수 있게 한다. submittedAt은 **마지막** 제출
+ * 일시이며, 다중 응답 폼에서는 alreadySubmitted가 false인데도 값이 있을 수 있다 — 두 필드가
+ * 묻는 것이 다르기 때문이다(하나는 지금 낼 수 있는가, 다른 하나는 마지막으로 언제 냈는가).
+ * 건별 상태는 이 응답이 아니라 GET /v1/forms/{formId}/responses/mine이 준다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record PublicFormResponse(
@@ -30,21 +43,37 @@ public record PublicFormResponse(
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
         QuestionCompositionContent qitemCpstCn,
+        boolean mltplRspnsYn,
         boolean alreadySubmitted,
+        int myResponseCount,
         OffsetDateTime submittedAt) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
-    /** submitted가 null이면 아직 제출하지 않은 것이다 (임시저장 응답도 제출로 치지 않는다) */
-    public static PublicFormResponse of(FormEntity form, FormResponseHistoryEntity submitted) {
+    /*
+     * submittedResponses는 이 회원이 이 폼에 **낸** 응답들이다(임시저장은 낸 것이 아니라 빠져
+     * 있으며, 거르는 자리는 서비스다 — 목록·집계와 같은 기준을 써야 한다).
+     *
+     * 마지막 원소를 쓰는 것은 순번 오름차순으로 오기 때문이다.
+     */
+    public static PublicFormResponse of(
+            FormEntity form, List<FormResponseHistoryEntity> submittedResponses) {
+
+        FormResponseHistoryEntity latest =
+                submittedResponses.isEmpty()
+                        ? null
+                        : submittedResponses.get(submittedResponses.size() - 1);
+
         return new PublicFormResponse(
                 form.getId(),
                 form.getTitle(),
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
                 form.getQuestionComposition(),
-                submitted != null,
-                submitted == null ? null : toOffsetDateTime(submitted.getSubmittedAt()));
+                form.isMultipleResponseAllowed(),
+                latest != null && !form.isMultipleResponseAllowed(),
+                submittedResponses.size(),
+                latest == null ? null : toOffsetDateTime(latest.getSubmittedAt()));
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

@@ -11,6 +11,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
@@ -38,6 +39,15 @@ public interface FormResponseService {
 
     /** 응답자용 폼 조회. 지금 응답을 받지 않는 폼이면 문항을 내려주지 않고 끊는다 */
     PublicFormResponse getPublicForm(Long formId, MemberEntity respondent);
+
+    /*
+     * 내 응답 목록 (#143). 대상은 언제나 인증 주체 본인이라 자동 저장과 같은 이유로 회원
+     * 식별자를 받지 않는다.
+     *
+     * 작성 중(DRAFT)도 함께 돌려주며, 접수가 끝난 폼에서도 조회된다 — 이 조회는 쓰기와 짝을
+     * 이루지 않아 접수 판정을 걸 이유가 없고, 걸면 마감 직후부터 자기가 낸 것을 볼 수 없다.
+     */
+    List<MyFormResponseSummaryResponse> getMyResponses(Long formId, MemberEntity respondent);
 
     /** 응답 제출. 응답자·상태·제출 일시는 요청이 아니라 서버가 정한다 */
     FormResponseSubmitResponse submitResponse(

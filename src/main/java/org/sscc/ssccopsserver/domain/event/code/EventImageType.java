@@ -51,6 +51,27 @@ public enum EventImageType {
                 .findFirst();
     }
 
+    /*
+     * 확장자만으로 형식을 찾는다 (#137 · 출석 인증사진). 행사 이미지(#161)는 파일명과
+     * contentType을 함께 받아 서로 맞는지까지 보지만, 학술 인증사진 업로드 요청에는 fileExt
+     * 하나뿐이라 그 교차 검증이 성립하지 않는다 — 대신 서명에 실을 contentType을 이 표에서
+     * 끌어와 응답으로 돌려주고, 웹은 그 값을 그대로 PUT 헤더에 쓴다
+     * (SessionFileReferenceServiceImpl 주석).
+     *
+     * 허용 목록을 학술 도메인에 한 벌 더 적지 않고 이 표를 함께 쓰는 것은, 두 벌이 되면
+     * SVG를 뺀 이유 같은 판단이 한쪽에만 반영되기 때문이다(위 주석 — 형식을 늘리는 자리는
+     * 한 곳이다).
+     */
+    public static Optional<EventImageType> ofFileExtension(String fileExtension) {
+        if (fileExtension == null) {
+            return Optional.empty();
+        }
+        String normalized = fileExtension.trim().toLowerCase(Locale.ROOT);
+        return Arrays.stream(values())
+                .filter(type -> type.fileExtensions.contains(normalized))
+                .findFirst();
+    }
+
     /** 이 형식이 그 확장자를 인정하는가. 판단만 하고 거절은 서비스가 한다 */
     public boolean matchesExtension(String fileExtension) {
         return fileExtension != null

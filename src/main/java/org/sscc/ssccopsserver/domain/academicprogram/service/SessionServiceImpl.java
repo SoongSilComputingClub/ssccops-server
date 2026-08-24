@@ -30,6 +30,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramA
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AttendanceRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.FileReferenceRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionAttendanceCount;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
@@ -72,6 +73,7 @@ public class SessionServiceImpl implements SessionService {
     private final CurriculumItemRepository curriculumItemRepository;
     private final SessionRepository sessionRepository;
     private final AttendanceRepository attendanceRepository;
+    private final FileReferenceRepository fileReferenceRepository;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final EventParticipantRepository eventParticipantRepository;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
@@ -316,10 +318,19 @@ public class SessionServiceImpl implements SessionService {
         }
     }
 
+    /*
+     * 인증사진(#137)은 회차당 최대 한 행이라 상세마다 한 번 더 읽는다 — 목록과 달리 상세는
+     * 회차 하나짜리 응답이라 이 질의가 건수에 따라 늘지 않는다. session에 연관을 열어 두지
+     * 않은 것은 그 연관이 목록·계획 조회에도 딸려 와 쓰지 않는 조회를 만들기 때문이다.
+     */
     private SessionDetailResponse detailOf(SessionEntity session) {
         List<AttendanceEntity> attendances =
                 attendanceRepository.findAllBySessionOrderByIdAsc(session);
-        return SessionDetailResponse.of(session, attendances, latestOpinionOf(session));
+        return SessionDetailResponse.of(
+                session,
+                attendances,
+                fileReferenceRepository.findBySession(session).orElse(null),
+                latestOpinionOf(session));
     }
 
     /*

@@ -25,4 +25,16 @@ class SessionStatusTest {
         assertThat(SessionStatus.SUBMITTED.allowsRecording()).isFalse();
         assertThat(SessionStatus.APPROVED.allowsRecording()).isFalse();
     }
+
+    /*
+     * 출석 정정·인증사진(#137)은 APPROVED 하나만 잠근다 — allowsRecording과 답이 갈리는 값이
+     * SUBMITTED이고, 그 차이가 이 API가 존재하는 이유다(기록 본문은 못 고쳐도 출석은 고친다).
+     */
+    @Test
+    void onlyApprovedBlocksCorrection() {
+        assertThat(SessionStatus.NOT_SUBMITTED.allowsCorrection()).isTrue();
+        assertThat(SessionStatus.SUBMITTED.allowsCorrection()).isTrue();
+        assertThat(SessionStatus.REVISION_REQUESTED.allowsCorrection()).isTrue();
+        assertThat(SessionStatus.APPROVED.allowsCorrection()).isFalse();
+    }
 }

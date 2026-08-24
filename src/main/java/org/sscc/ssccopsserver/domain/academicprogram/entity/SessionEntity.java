@@ -135,6 +135,20 @@ public class SessionEntity {
     }
 
     /*
+     * 출석 정정·인증사진 업로드(#137)가 지금 성립하는가. 판정은 SessionStatus.allowsCorrection이
+     * 갖고 여기서는 무엇으로 거절할지만 맡는다 — requireResubmittable과 같은 역할 분담이다.
+     *
+     * 거절 코드가 재제출과 같은 SESSION_NOT_EDITABLE인 것은 답해야 할 말이 같기 때문이다
+     * ("지금은 이 회차를 손댈 수 없다"). 다만 **통과하는 상태 집합은 다르다** — 그 이유는
+     * SessionStatus.allowsCorrection 주석에 있다.
+     */
+    public void requireCorrectable() {
+        if (!this.status.allowsCorrection()) {
+            throw new GeneralException(AcademicProgramErrorCode.SESSION_NOT_EDITABLE);
+        }
+    }
+
+    /*
      * 재제출(#135 · PUT). 이전 내용을 덮어쓰고 이력을 남기지 않는다(데이터모델 §7 확정 원칙) —
      * 마지막 수정요청 사유만 academic_program_aprv의 최신 행에 남는다.
      */

@@ -97,6 +97,11 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      * 같은 참가자가 두 번 실려 온 것도 같은 코드다. 폼 라벨 교체가 중복을 한 번으로 접는 것과
      * 갈리는데, 라벨은 붙었는지 여부뿐이지만 출석은 값이 딸린 체크라 두 줄이 서로 다른 답을
      * 실을 수 있고 그중 무엇이 맞는지 정할 규칙이 없다.
+     *
+     * 출석 정정(#137 · PATCH)도 같은 코드를 쓰되 판정 기준이 한 겹 좁다 — 그쪽은 **그 회차의
+     * 출석부에 이미 줄이 있는** 참가자만 받는다. 정정은 명단을 바꾸는 일이 아니라 체크 값만
+     * 바꾸는 일이라, 줄이 없는 대상은 확정 팀원이더라도 여기로 온다
+     * (AttendanceServiceImpl.correctAttendances).
      */
     INVALID_ATTENDANCE_TARGET(
             HttpStatus.BAD_REQUEST,
@@ -127,7 +132,18 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      * 같은 판단). 실제로 막는 자리는 SessionEntity.changeStatus다.
      */
     REVISION_REASON_REQUIRED(
-            HttpStatus.BAD_REQUEST, "REVISION_REASON_REQUIRED", "수정요청은 사유를 반드시 입력해야 합니다.");
+            HttpStatus.BAD_REQUEST, "REVISION_REASON_REQUIRED", "수정요청은 사유를 반드시 입력해야 합니다."),
+
+    /*
+     * 400 — 인증사진 업로드(#137)의 fileExt가 허용 목록 밖일 때. 허용 목록 자체는 행사 이미지와
+     * 같은 EventImageType이며(형식을 늘리는 자리를 한 곳으로 묶는다) SVG를 빼는 이유도 같다 —
+     * 공개 도메인에서 그대로 열리므로 스크립트를 담을 수 있는 문서를 허용하면 XSS 경로가 된다.
+     *
+     * 코드 문자열이 EventErrorCode.UNSUPPORTED_IMAGE_TYPE과 같은 것은 화면이 고를 안내가 같기
+     * 때문이고, 그런데도 상수를 도메인마다 따로 두는 것은 이 레포의 규칙이다(AGENTS.md —
+     * 같은 의미라도 도메인이 다르면 별개 상수다).
+     */
+    UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

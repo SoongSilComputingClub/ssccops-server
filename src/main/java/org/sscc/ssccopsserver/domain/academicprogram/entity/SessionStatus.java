@@ -25,4 +25,23 @@ public enum SessionStatus {
     public boolean allowsRecording() {
         return this == NOT_SUBMITTED || this == REVISION_REQUESTED;
     }
+
+    /*
+     * 출석 정정·인증사진 업로드(#137)가 지금 허용되는가. **잠기는 것은 APPROVED 하나뿐이라
+     * allowsRecording과 답이 갈린다** — 검토 대기(SUBMITTED)인 회차의 출석은 고칠 수 있지만
+     * 기록 본문은 고칠 수 없다.
+     *
+     * 두 판정이 다른 것은 바꾸는 것의 무게가 다르기 때문이다. 기록 본문 재제출은 상태를 다시
+     * SUBMITTED로 되돌리는 전체 교체라 국장이 이미 보고 있는 회차를 발밑에서 갈아 치우는
+     * 일이지만, 출석 체크 하나를 바로잡는 것은 전이가 아니고 사실관계를 맞추는 일이다 —
+     * 학술관리_API설계.md §3.5가 이 API를 둔 이유가 "회차 기록과 별도로 출석만 나중에 고치는"
+     * 시나리오다. APPROVED만 막는 근거는 그 반대다(설계 결정 #2): 확정된 이력이 조회 시점마다
+     * 달라지면 안 된다.
+     *
+     * NOT_SUBMITTED가 통과 값으로 보이지만 실제로는 닿지 않는다 — 그 값은 session 행이 없다는
+     * 뜻이고, 행이 없으면 출석도 사진도 매달 자리가 없어 그 전에 404로 끊긴다.
+     */
+    public boolean allowsCorrection() {
+        return this != APPROVED;
+    }
 }

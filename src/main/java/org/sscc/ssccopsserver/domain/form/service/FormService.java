@@ -22,8 +22,15 @@ public interface FormService {
 
     FormSaveResponse createForm(FormSaveRequest request, MemberEntity creator);
 
-    /** 수정. 상태(formSttsCd)는 바꾸지 않는다 — 상태를 바꾸는 길은 changeStatus 하나다 (#33) */
-    FormSaveResponse updateForm(Long formId, FormSaveRequest request);
+    /*
+     * 수정. 상태(formSttsCd)는 바꾸지 않는다 — 상태를 바꾸는 길은 changeStatus 하나다 (#33).
+     *
+     * 수행자(actor)는 문항 구성 이력의 변경자로 쓰인다 (#140). 요청 본문이 아니라
+     * @CurrentMember에서 오며, 문항 구성이 실제로 바뀌지 않은 저장에서는 이력 자체가 남지 않아
+     * 쓰이지 않는다 — 그래도 인자로 받는 것은 어떤 저장이 버전을 올릴지 컨트롤러가 미리 알 수
+     * 없기 때문이다.
+     */
+    FormSaveResponse updateForm(Long formId, FormSaveRequest request, MemberEntity actor);
 
     /*
      * 접수 상태 전이 (#33). 전이표는 FormStatusAction이, 전이 가능 여부와 사전 검증은

@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -35,6 +36,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
@@ -449,14 +451,13 @@ class PublicFormControllerTest {
     }
 
     /*
-    <<<<<<< HEAD
-         * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
+     * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
          *
-         * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
-         * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
-         * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
-         * 바뀐 뒤 제출되면 2가 찍혀야 한다.
-         */
+     * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
+     * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
+     * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
+     * 바뀐 뒤 제출되면 2가 찍혀야 한다.
+     */
     @Test
     void submittedResponseCarriesTheQuestionVersionItAnsweredAgainst() throws Exception {
         Long formId = saveForm("버전 기록 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
@@ -474,7 +475,8 @@ class PublicFormControllerTest {
                 form.getTitle(),
                 new QuestionCompositionContent(pages, form.getQuestionComposition().qitems()),
                 null,
-                null);
+                null,
+                false);
         formRepository.saveAndFlush(form);
 
         submit(formId, """
@@ -647,6 +649,221 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.code").value("REQUIRED_ANSWER_MISSING"));
     }
 
+    /* ── 다중 응답 (#143) ──────────────────────────────────── */
+
+    /*
+     * 폼이 허용하면 같은 사람이 여러 건을 낸다. 새 행이 생기고 응답 순번이 1 늘어야 한다 —
+     * 같은 행을 다시 쓰면(제출 회차만 오르면) 첫 제안이 두 번째 제안으로 덮여 사라진다.
+     */
+    @Test
+    void submitTwiceOnMultipleResponseFormCreatesSecondResponse() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSeq").value(1));
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSeq").value(2));
+
+        assertThat(myResponses())
+                .extracting(
+                        FormResponseHistoryEntity::getResponseSequence,
+                        FormResponseHistoryEntity::getSubmissionSequence)
+                .containsExactly(tuple(1, 1), tuple(2, 1));
+    }
+
+    /*
+     * 단일 응답 폼의 동작은 그대로다 (#143 회귀 방어). 제약을 옮긴 것이지 없앤 것이 아니므로
+     * 두 번째 제출은 여전히 409이고 행도 늘지 않는다 — 그 확인은 위쪽
+     * submitResponseTwiceReturns409AndKeepsSingleRow가 맡는다.
+     *
+     * 여기서 보는 것은 **응답 순번이 1로 고정된다**는 사실이다. 서버가 이 값을 올려 버리면
+     * UNIQUE가 성립하지 않아 단일 응답 폼에서도 두 번째 행이 들어간다.
+     */
+    @Test
+    void singleResponseFormKeepsTheFirstSequence() throws Exception {
+        Long formId = saveForm("단일 응답 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSeq").value(1));
+
+        assertThat(onlyResponse().getResponseSequence()).isEqualTo(1);
+    }
+
+    /*
+     * alreadySubmitted의 뜻은 "냈는가"가 아니라 **"더 낼 수 없는가"**다 (#143). 다중 응답 폼에서
+     * 이미 낸 것을 이유로 true를 내리면 화면이 제출 내역만 보여줘 두 번째 제안을 낼 길이 없다.
+     * 대신 myResponseCount로 "이미 1건 냈다"를 전한다.
+     */
+    @Test
+    void publicFormOnMultipleResponseFormKeepsShowingTheWriteForm() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/public"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mltplRspnsYn").value(true))
+                .andExpect(jsonPath("$.data.alreadySubmitted").value(false))
+                .andExpect(jsonPath("$.data.myResponseCount").value(1))
+                // 마지막 제출 일시는 그대로 내려간다 — 두 필드가 묻는 것이 다르다
+                .andExpect(jsonPath("$.data.submittedAt").value(NOW_IN_SERVICE_ZONE));
+    }
+
+    /*
+     * 수정요청을 받은 응답이 있으면 다중 응답 폼에서도 **그 응답을 마무리하는 것이 먼저다**.
+     * 제출 경로에 응답 식별자가 없어 그 행을 지목할 방법이 없으므로, 새 응답을 우선하면
+     * 수정요청받은 응답은 영영 SUBMITTED로 돌아가지 못한다.
+     *
+     * 이때 오르는 것은 제출 회차(sbmsnSeq)뿐이고 응답 순번(rspnsSeq)은 그대로다 — 두 값이
+     * 다르다는 것을 가장 잘 보여주는 자리다.
+     */
+    @Test
+    void resubmitAfterChangesRequestedReusesTheRowEvenOnMultipleResponseForm() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSeq").value(1));
+
+        FormResponseHistoryEntity resubmitted = onlyResponse();
+        assertThat(resubmitted.getResponseSequence()).isEqualTo(1);
+        assertThat(resubmitted.getSubmissionSequence()).isEqualTo(2);
+        assertThat(resubmitted.getContent().answers()).containsEntry("q1", "김철수");
+    }
+
+    /*
+     * 반려는 그 응답에 대한 종결이지 그 폼에 대한 종결이 아니다 (#141이 말한 "오조작의 탈출구는
+     * 번복이 아니라 새 응답"의 실제 경로). 다중 응답 폼에서는 반려된 응답만 남아 있어도 새로 낼 수
+     * 있어야 하며, 반려된 행은 그대로 남는다.
+     */
+    @Test
+    void submitAfterRejectionIsAllowedOnMultipleResponseForm() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        reject();
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSeq").value(2));
+
+        assertThat(myResponses())
+                .extracting(FormResponseHistoryEntity::getStatus)
+                .containsExactly(ResponseStatus.REJECTED, ResponseStatus.SUBMITTED);
+    }
+
+    /* ── 내 응답 목록 (#143) ───────────────────────────────── */
+
+    /*
+     * 응답자 본인의 응답을 순번·상태와 함께 내려준다. 경로에 mbrId가 없다 (#36과 같은 규칙).
+     */
+    @Test
+    void getMyResponsesReturnsEachResponseWithItsSequence() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data[0].sbmsnSeq").value(1))
+                .andExpect(jsonPath("$.data[0].rspnsSttsCd").value("SUBMITTED"))
+                .andExpect(jsonPath("$.data[0].sbmsnDt").value(NOW_IN_SERVICE_ZONE))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(2))
+                // 응답 내용은 싣지 않는다 — 이 목록이 답하는 것은 "몇 건을 어떤 상태로 냈는가"다
+                .andExpect(jsonPath("$.data[0].rspnsCn").doesNotExist());
+    }
+
+    /*
+     * 작성 중(DRAFT) 응답도 내 목록에는 나온다. 운영자 목록이 DRAFT를 빼는 규칙은 "남의 제출 전
+     * 답안이 심사 목록에 섞이지 않게" 하는 것이라 내 것에는 해당하지 않는다 — 빼면 쓰다 만 응답이
+     * 화면에서 사라져 이어 쓸 방법이 없어진다.
+     */
+    @Test
+    void getMyResponsesIncludesDraft() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(form, respondent, null));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].rspnsSttsCd").value("DRAFT"))
+                .andExpect(jsonPath("$.data[0].sbmsnDt").value(Matchers.nullValue()));
+    }
+
+    // 남의 응답은 섞이지 않는다. 대상은 언제나 인증 주체 본인이며 지목할 자리조차 없다
+    @Test
+    void getMyResponsesDoesNotReturnAnotherMembersResponse() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260002", "박민수", "other@sscc.org");
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        form, other, ResponseContent.of(Map.of("q1", "박민수")), NOW));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    /*
+     * **접수가 끝난 폼에서도 조회된다.** 자동 저장 조회(GET .../responses/draft)와 갈리는 지점이며,
+     * 여기서 409를 내면 마감된 순간부터 응답자가 자기가 낸 것을 확인할 길이 사라진다.
+     */
+    @Test
+    void getMyResponsesWorksAfterTheFormIsClosed() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        form.changeStatus(FormStatusAction.CLOSE);
+        formRepository.saveAndFlush(form);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    @Test
+    void getMyResponsesOnUnknownFormReturns404() throws Exception {
+        mockMvc.perform(authenticatedGet("/v1/forms/999999/responses/mine"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
     /* ── 인증 ─────────────────────────────────────────────── */
 
     /*
@@ -696,6 +913,35 @@ class PublicFormControllerTest {
                 FormResponseReviewHistoryEntity.record(
                         response, action, reviewer, "지원 동기를 더 구체적으로 적어주세요.", NOW));
         formResponseHistoryRepository.flush();
+    }
+
+    /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */
+    private Long saveMultipleResponseForm(String title) throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
+        return formRepository
+                .saveAndFlush(
+                        FormEntity.create(
+                                respondent, title, content, null, null, FormStatus.OPEN, true))
+                .getId();
+    }
+
+    /** 검토자의 반려를 흉내 낸다 (requestChanges와 같은 이유로 엔티티를 직접 옮긴다) */
+    private void reject() {
+        FormResponseHistoryEntity response = onlyResponse();
+        ResponseReviewAction action = response.review(ResponseStatus.REJECTED);
+        formResponseReviewHistoryRepository.save(
+                FormResponseReviewHistoryEntity.record(
+                        response, action, reviewer, "이번 회차에는 반영하지 않습니다.", NOW));
+        formResponseHistoryRepository.flush();
+    }
+
+    /** 인증 주체(응답자)의 응답 전부. 순번 오름차순이라 몇 번째 응답인지로 읽을 수 있다 */
+    private List<FormResponseHistoryEntity> myResponses() {
+        return formResponseHistoryRepository.findAll().stream()
+                .filter(response -> response.getMember().getId().equals(respondent.getId()))
+                .sorted(Comparator.comparingInt(FormResponseHistoryEntity::getResponseSequence))
+                .toList();
     }
 
     private FormResponseHistoryEntity onlyResponse() {

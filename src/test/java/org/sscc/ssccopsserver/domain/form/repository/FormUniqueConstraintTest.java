@@ -98,11 +98,15 @@ class FormUniqueConstraintTest {
     }
 
     /*
-     * 한 회원이 한 폼에 두 행을 갖지 못한다 (#35 중복 제출 방지 · #36 자동 저장이 이어 쓸 행의 유일성).
-     * 임시저장과 제출을 각각 다른 행으로 만들려는 시도도 여기에 걸린다 — 같은 행의 상태만 바뀐다.
+     * 한 회원이 한 폼에 **같은 응답 순번으로** 두 행을 갖지 못한다 (#143에서 제약이
+     * (form_id, mbr_id) → (form_id, mbr_id, rspns_seq)로 옮겨졌다).
+     *
+     * 단일 응답 폼은 서버가 순번을 1로 고정하므로 두 번째 제출이 여기서 걸린다 — #35의 중복 제출
+     * 방지와 #36의 "자동 저장이 이어 쓸 행의 유일성"이 그대로 이 제약에 얹혀 있다. 임시저장과
+     * 제출을 각각 다른 행으로 만들려는 시도도 마찬가지다(같은 행의 상태만 바뀌어야 한다).
      */
     @Test
-    void rejectsTwoResponsesFromTheSameMemberOnTheSameForm() {
+    void rejectsTwoResponsesWithTheSameSequenceFromTheSameMember() {
         formResponseHistoryRepository.saveAndFlush(
                 FormResponseHistoryEntity.createDraft(
                         form, creator, ResponseContent.of(Map.of("q1", "홍길동"))));
@@ -116,6 +120,55 @@ class FormUniqueConstraintTest {
                                                 ResponseContent.of(Map.of("q1", "홍길동")),
                                                 Instant.parse("2026-03-10T12:00:00Z"))))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /*
+     * 순번이 다르면 같은 회원의 응답이 여러 건 쌓인다 (#143 · 다중 응답 폼).
+     *
+     * 제약을 옮긴 것이지 없앤 것이 아니라는 사실을 양쪽에서 고정해 둔다 — 위 테스트만 있으면
+     * 제약을 그대로 두고도 통과하고, 이 테스트만 있으면 통째로 지워도 통과한다.
+     */
+    @Test
+    void allowsAnotherResponseFromTheSameMemberWithTheNextSequence() {
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        form,
+                        creator,
+                        ResponseContent.of(Map.of("q1", "첫 번째 제안")),
+                        Instant.parse("2026-03-10T12:00:00Z"),
+                        1));
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        form,
+                        creator,
+                        ResponseContent.of(Map.of("q1", "두 번째 제안")),
+                        Instant.parse("2026-03-11T12:00:00Z"),
+                        2));
+
+        Assertions.assertThat(
+                        formResponseHistoryRepository
+                                .findAllByFormAndMemberOrderByResponseSequenceAsc(form, creator))
+                .extracting(FormResponseHistoryEntity::getResponseSequence)
+                .containsExactly(1, 2);
+    }
+
+    /*
+     * 다음 순번의 근거는 지금 있는 행 수가 아니라 **마지막 순번**이다. 지워진 응답이 있으면
+     * 세는 방식은 이미 쓴 번호를 다시 배정해 UNIQUE에 걸린다.
+     */
+    @Test
+    void lastResponseSequenceIsZeroWhenNoResponseExists() {
+        Assertions.assertThat(
+                        formResponseHistoryRepository.findLastResponseSequence(form, creator))
+                .isZero();
+
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(
+                        form, creator, ResponseContent.of(Map.of("q1", "홍길동")), 3));
+
+        Assertions.assertThat(
+                        formResponseHistoryRepository.findLastResponseSequence(form, creator))
+                .isEqualTo(3);
     }
 
     /*

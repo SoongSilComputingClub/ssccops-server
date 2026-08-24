@@ -30,11 +30,15 @@ import org.sscc.ssccopsserver.global.config.JsonFormatMapperConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
 /*
- * 이 이슈에서 새로 건 UNIQUE 제약 두 개가 실제로 DDL까지 내려가는지 확인한다.
+ * 폼 도메인의 UNIQUE 제약이 실제로 DDL까지 내려가는지 확인한다.
  *
- * 두 제약 모두 "선조회로는 못 막는 동시 요청"을 막으려고 둔 것이라, 애플리케이션 코드가
- * 아니라 DB가 거절하는지를 봐야 의미가 있다. @Table(uniqueConstraints = ...)를 적어 두고도
- * ddl-auto가 만드는 스키마에 빠지는 실수를 여기서 잡는다.
+ * 제약들이 막는 것은 "선조회로는 못 막는 동시 요청"이라, 애플리케이션 코드가 아니라 DB가
+ * 거절하는지를 봐야 의미가 있다. @Table(uniqueConstraints = ...)를 적어 두고도 ddl-auto가
+ * 만드는 스키마에 빠지는 실수를 여기서 잡는다.
+ *
+ * uk_form_sys_form_cd(#140)는 다른 둘과 성격이 조금 다르다 — 동시 요청보다는 "코드가 가리키는
+ * 폼은 환경당 하나"라는 사실 자체를 DB가 지키게 하는 쪽이고, NULL을 여러 개 허용한다는 전제에
+ * 기대고 있어 그 전제까지 함께 확인한다.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -64,14 +68,7 @@ class FormUniqueConstraintTest {
                         "홍길동",
                         "20260101@soongsil.ac.kr");
 
-        form =
-                formRepository.saveAndFlush(
-                        FormEntity.create(
-                                creator,
-                                "2026 신규모집 지원서",
-                                new QuestionCompositionContent(List.of(), List.of()),
-                                null,
-                                null));
+        form = formRepository.saveAndFlush(newForm("2026 신규모집 지원서"));
     }
 
     // 같은 라벨을 같은 폼에 두 번 달면 상세에 라벨이 두 번 뜨고 라벨별 폼 수 집계가 부푼다
@@ -121,6 +118,48 @@ class FormUniqueConstraintTest {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    /*
+     * 코드가 가리키는 폼은 환경당 하나다 (#140). 둘이면 findBySystemFormCode가 어느 쪽을
+     * 돌려줄지 알 수 없고, 잠금이 걸린 폼과 코드가 실제로 읽는 폼이 갈릴 수 있다.
+     */
+    @Test
+    void rejectsTwoFormsWithTheSameSystemFormCode() {
+        form.designateAsSystemForm("PROPOSAL");
+        formRepository.saveAndFlush(form);
+
+        FormEntity another = newForm("또 하나의 시스템 폼");
+        another.designateAsSystemForm("PROPOSAL");
+
+        assertThatThrownBy(() -> formRepository.saveAndFlush(another))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /*
+     * 시스템 폼이 아닌 폼은 sys_form_cd가 NULL이며 얼마든지 쌓인다 — PostgreSQL·H2 모두 UNIQUE가
+     * NULL을 여러 개 허용한다는 사실에 기대고 있으므로, 그 전제가 깨지면 평범한 폼을 두 개째
+     * 만들 수 없게 된다. 실제로 확인해 둔다.
+     */
+    @Test
+    void allowsManyFormsWithoutASystemFormCode() {
+        formRepository.saveAndFlush(newForm("평범한 폼 1"));
+        formRepository.saveAndFlush(newForm("평범한 폼 2"));
+
+        Assertions.assertThat(formRepository.count()).isEqualTo(3);
+    }
+
+    // 코드가 폼을 찾는 유일한 경로. form_id는 IDENTITY라 환경마다 다르므로 코드가 가리킬 수 없다
+    @Test
+    void findsFormBySystemFormCode() {
+        form.designateAsSystemForm("PROPOSAL");
+        formRepository.saveAndFlush(form);
+
+        Assertions.assertThat(formRepository.findBySystemFormCode("PROPOSAL"))
+                .get()
+                .extracting(FormEntity::getId)
+                .isEqualTo(form.getId());
+        Assertions.assertThat(formRepository.findBySystemFormCode("UNKNOWN")).isEmpty();
+    }
+
     // 다른 회원의 응답은 같은 폼에 얼마든지 쌓인다
     @Test
     void allowsResponsesFromDifferentMembersOnTheSameForm() {
@@ -140,5 +179,10 @@ class FormUniqueConstraintTest {
                 FormResponseHistoryEntity.createDraft(form, other, null));
 
         Assertions.assertThat(formResponseHistoryRepository.count()).isEqualTo(2);
+    }
+
+    private FormEntity newForm(String title) {
+        return FormEntity.create(
+                creator, title, new QuestionCompositionContent(List.of(), List.of()), null, null);
     }
 }

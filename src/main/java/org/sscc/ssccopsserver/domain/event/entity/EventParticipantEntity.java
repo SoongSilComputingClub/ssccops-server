@@ -20,8 +20,10 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
+import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -97,6 +99,9 @@ public class EventParticipantEntity {
     /*
      * 참가자 등록 팩토리. 상태(확정/대기)는 운영자의 명시적 선택이라 팩토리가 기본값을 정하지
      * 않는다 — 수락된 응답을 자동으로 확정하는 경로를 만들지 않는 것이 수동 심사(D5)의 전제다.
+     *
+     * 등록으로 도달할 수 있는 상태인지는 여기서 끊는다(ssccops#146). 정원 초과는 **끊지
+     * 않는다** — 정원은 참고치이고(D5) 초과 여부는 응답에 실려 화면이 경고한다.
      */
     public static EventParticipantEntity register(
             EventEntity event,
@@ -104,7 +109,41 @@ public class EventParticipantEntity {
             EventParticipantStatus status,
             FormResponseHistoryEntity formResponse,
             MemberEntity registrant) {
+        if (!status.isRegistrable()) {
+            throw new GeneralException(EventErrorCode.INVALID_PARTICIPANT_REGISTRATION_STATUS);
+        }
         return new EventParticipantEntity(
                 null, event, member, status, formResponse, registrant, null, null);
+    }
+
+    /*
+     * 참가 상태 전이 (ssccops#146 · D14 · PATCH .../participants/{eventPtcpId}).
+     *
+     * 전이표를 엔티티가 갖는 것은 FormEntity.changeStatus·EventEntity.changeStatus와 같은
+     * 자리다 — 서비스에 if로 옮겨 적으면 상태를 바꾸는 경로가 늘 때마다 규칙이 복제된다.
+     *
+     *   WAITLISTED → CONFIRMED   승격 (결원이 나면 운영자가 수동으로 올린다)
+     *   CONFIRMED  → CANCELLED   취소 (확정된 사람이 못 오게 됐을 때, 운영자만)
+     *
+     * 그 밖은 전부 400이다. 특히 **CANCELLED에서 나가는 길이 없다** — 취소를 되돌리는 것은
+     * 새로 확정하는 것과 결과가 같은데, 그 사이의 정원 판단·대기 순서를 무시하고 되살리는
+     * 경로가 되기 때문이다. 대기자를 바로 취소로 보내는 길도 없다: 그 사람은 참가자였던 적이
+     * 없으므로 명단의 취소가 아니라 신청 철회이며, 그것은 본인의 행위라 별도 이슈다(D14).
+     * 같은 상태로의 재지정도 400이다 — 아무것도 바꾸지 않는 요청을 통과시키면 mdfcn_dt만
+     * 갱신돼 실제 승격·취소 시점을 못 찾는다(#78 NO_CHANGE와 같은 이유).
+     *
+     * 정원은 여기서 보지 않는다. 승격이 정원을 넘겨도 막지 않는 것이 D5이고, 넘겼다는 사실은
+     * 서비스가 응답에 실어 화면이 경고한다.
+     */
+    public void changeStatus(EventParticipantStatus nextStatus) {
+        boolean allowed =
+                (this.status == EventParticipantStatus.WAITLISTED
+                                && nextStatus == EventParticipantStatus.CONFIRMED)
+                        || (this.status == EventParticipantStatus.CONFIRMED
+                                && nextStatus == EventParticipantStatus.CANCELLED);
+        if (!allowed) {
+            throw new GeneralException(EventErrorCode.INVALID_PARTICIPANT_STATUS_TRANSITION);
+        }
+        this.status = nextStatus;
     }
 }

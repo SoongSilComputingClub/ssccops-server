@@ -54,6 +54,8 @@ r2:
   access-key-id: test-access-key
   secret-access-key: test-secret-key
   bucket-name: test-bucket
+  # 공개 읽기용 도메인 (#161). 이미지 발급 테스트가 publicUrl 접두사로 이 값을 확인한다
+  public-base-url: https://images.test.local
 
 # Frontend Configuration (CORS 허용 오리진)
 frontend:

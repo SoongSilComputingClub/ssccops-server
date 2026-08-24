@@ -31,6 +31,8 @@ r2:
   access-key-id: ${DEV_R2_ACCESS_KEY_ID}
   secret-access-key: ${DEV_R2_SECRET_ACCESS_KEY}
   bucket-name: ${DEV_R2_BUCKET_NAME}
+  # 공개 읽기용 도메인 (#161). 기본값이 없으므로 값을 넣지 않으면 부팅이 실패한다 (의도된 것이다)
+  public-base-url: ${DEV_R2_PUBLIC_BASE_URL}
 
 # Frontend Configuration (CORS 허용 오리진)
 frontend:

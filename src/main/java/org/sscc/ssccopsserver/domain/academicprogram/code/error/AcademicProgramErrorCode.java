@@ -61,7 +61,47 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      * (AcademicProgramApprovalEffectsService)가 생성 시점에 항상 빈 폼을 만들어 연결하므로
      * 정상 흐름에서는 발생하지 않는다 — 데이터 정합성이 깨진 경우에 대한 방어적 코드다.
      */
-    FORM_NOT_LINKED(HttpStatus.CONFLICT, "FORM_NOT_LINKED", "연결된 모집 폼이 없습니다.");
+    FORM_NOT_LINKED(HttpStatus.CONFLICT, "FORM_NOT_LINKED", "연결된 모집 폼이 없습니다."),
+
+    /*
+     * 404 — 회차 기록(#135)이 가리키는 curriculumItemId가 그 활동의 것이 아닐 때. 없는
+     * 식별자와 남의 활동 커리큘럼을 같은 코드로 묶는다 — 코드를 나누면 번호를 바꿔 가며
+     * 부르는 것만으로 다른 활동에 몇 번 회차가 있는지가 새어 나간다(폼 응답의
+     * FORM_RESPONSE_NOT_FOUND와 같은 판단).
+     */
+    CURRICULUM_ITEM_NOT_FOUND(
+            HttpStatus.NOT_FOUND, "CURRICULUM_ITEM_NOT_FOUND", "커리큘럼 항목을 찾을 수 없습니다."),
+
+    // 404 — 없는 sessionId이거나 다른 활동에 속한 회차일 때 (#135). 위와 같은 이유로 한 코드다
+    SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "회차 기록을 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 실적이 있는 커리큘럼 항목에 신규 제출(POST)을 시도했을 때 (#135). 계획 1개당
+     * 실적은 최대 1개다(curriculum_item_id UNIQUE). 선조회만으로는 동시 요청을 막지 못하므로
+     * UNIQUE 위반(DataIntegrityViolationException)도 같은 코드로 옮긴다.
+     */
+    SESSION_ALREADY_EXISTS(HttpStatus.CONFLICT, "SESSION_ALREADY_EXISTS", "이미 기록된 회차입니다."),
+
+    /*
+     * 409 — 지금 쓸 수 있는 상태가 아닌 회차에 재제출(PUT)을 시도했을 때 (#135). 재제출은
+     * REVISION_REQUESTED 전용이며 SUBMITTED(국장 검토 대기)·APPROVED(확정 이력)는 손대지
+     * 않는다 — 판정 자체는 SessionStatus.allowsRecording이 갖는다.
+     */
+    SESSION_NOT_EDITABLE(HttpStatus.CONFLICT, "SESSION_NOT_EDITABLE", "지금은 회차 기록을 수정할 수 없습니다."),
+
+    /*
+     * 400 — attendances에 그 활동의 확정 팀원(event_ptcp, CONFIRMED)이 아닌 대상이 실려 왔을 때
+     * (#135, 설계 결정 #3). 대기자·취소자·다른 활동의 참가자가 모두 여기로 온다 — 조용히
+     * 버리면 출석부의 totalCount가 화면이 보낸 명단과 어긋난 채로 저장된다.
+     *
+     * 같은 참가자가 두 번 실려 온 것도 같은 코드다. 폼 라벨 교체가 중복을 한 번으로 접는 것과
+     * 갈리는데, 라벨은 붙었는지 여부뿐이지만 출석은 값이 딸린 체크라 두 줄이 서로 다른 답을
+     * 실을 수 있고 그중 무엇이 맞는지 정할 규칙이 없다.
+     */
+    INVALID_ATTENDANCE_TARGET(
+            HttpStatus.BAD_REQUEST,
+            "INVALID_ATTENDANCE_TARGET",
+            "출석 대상이 아닌 참가자가 포함돼 있거나 같은 참가자가 중복됐습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

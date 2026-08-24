@@ -449,14 +449,14 @@ class PublicFormControllerTest {
     }
 
     /*
-<<<<<<< HEAD
-     * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
-     *
-     * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
-     * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
-     * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
-     * 바뀐 뒤 제출되면 2가 찍혀야 한다.
-     */
+    <<<<<<< HEAD
+         * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
+         *
+         * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
+         * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
+         * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
+         * 바뀐 뒤 제출되면 2가 찍혀야 한다.
+         */
     @Test
     void submittedResponseCarriesTheQuestionVersionItAnsweredAgainst() throws Exception {
         Long formId = saveForm("버전 기록 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);

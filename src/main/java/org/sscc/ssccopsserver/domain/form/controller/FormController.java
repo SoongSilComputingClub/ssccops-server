@@ -42,9 +42,10 @@ import lombok.RequiredArgsConstructor;
  * 받은 역할은 셋 모두에 닿고, 필요하면 조회만 떼어 줄 수도 있다 — 클래스에 하나로 걸지 않은
  * 이유가 이것이다. **응답자용 PublicFormController에는 권한 요구가 없다**(인증만).
  *
- * 생성·복제만 @CurrentMember를 받는다. 폼의 생성자를 서버가 채워야 하는 쓰기이기 때문이며,
- * 조회와 수정은 주체를 기록하지 않으므로 회원을 요구하지 않는다 — 수정 이력을 남기게 되면
- * 그때 주체를 받는다.
+ * 조회를 뺀 쓰기는 전부 @CurrentMember를 받는다. 생성·복제는 폼의 생성자를 서버가 채워야 해서고,
+ * 수정은 문항 구성 이력의 변경자를 채워야 해서다(#140 — 그전까지 수정은 남기는 것이 없어 주체를
+ * 요구하지 않았다). 상태 전이만 주체를 서비스로 넘기지 않는데, 폼 상태 이력 테이블이 없어 남길
+ * 자리가 없기 때문이다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -107,6 +108,10 @@ public class FormController {
      *
      * 본문의 formSttsCd는 무시한다 (#33). 자동 저장이 상세 응답을 그대로 되돌려 보내므로 그 값을
      * 받아 쓰면 타이핑 한 번이 접수 상태를 덮어쓴다 — 상태는 액션 경로에서만 바뀐다.
+     *
+     * @CurrentMember를 받는 것은 #140부터다. 문항 구성이 실제로 바뀐 저장은 form_qitem_hstry에
+     * 한 행을 남기는데 그 변경자가 여기서 온다 — 요청 본문으로 받으면 남의 이름으로 이력을
+     * 쓸 수 있어 이력이 증거가 되지 못한다 (#78이 세운 규칙과 같다).
      */
     @Operation(
             summary = "폼 수정",
@@ -115,12 +120,18 @@ public class FormController {
                             + " 본문에 실려 와도 무시한다 — POST /v1/forms/{formId}/status를 쓴다."
                             + " labelIds를 생략하거나 빈 배열로 보내면 라벨을 모두 뗀다."
                             + " 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 바꾸면 409 QUESTION_ITEM_IN_USE로"
-                            + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다.")
+                            + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다."
+                            + " 시스템 폼(sysYn = true)에서 코드가 요구하는 qitemId를 지우면 400"
+                            + " SYSTEM_FORM_CONTRACT_VIOLATION이며, 문구 수정·문항 추가·순서 변경은 허용한다."
+                            + " 문항 구성이 실제로 바뀐 저장에서만 qitemVer가 1 오르고 그 시점 구성이 이력에 남는다"
+                            + " — 제목·접수 기간만 바꾼 저장에는 버전이 오르지 않는다.")
     @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PutMapping("/{formId}")
     public ApiResponse<FormSaveResponse> updateForm(
-            @PathVariable Long formId, @Valid @RequestBody FormSaveRequest request) {
-        return ApiResponse.success(formService.updateForm(formId, request));
+            @PathVariable Long formId,
+            @Valid @RequestBody FormSaveRequest request,
+            @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(formService.updateForm(formId, request, actor));
     }
 
     /*

@@ -155,6 +155,34 @@ public enum FormErrorCode implements ErrorCode {
             HttpStatus.CONFLICT, "QUESTION_ITEM_IN_USE", "이미 응답이 있는 폼에서는 기존 문항을 삭제하거나 변경할 수 없습니다."),
 
     /*
+     * 409 — 시스템 폼(sys_yn = true)을 지우려 할 때 (#140).
+     *
+     * 코드가 sys_form_cd로 직접 가리키는 폼이라, 지워지는 순간 그 폼을 찾는 기능이 통째로
+     * 무너진다. 화면 조작 한 번으로 도달할 수 있는 손실이므로 DB가 아니라 서버가 막는다
+     * (authrt의 SYSTEM_AUTHORITY_IMMUTABLE과 같은 판단이며 잠금 범위도 같다 — 삭제와 계약
+     * 위반만 막고 제목·접수 기간·라벨·상태 전이는 열어 둔다).
+     *
+     * 400이 아니라 409인 것은 요청 자체는 올바르고 대상 폼의 성격이 거절 이유이기 때문이다.
+     */
+    SYSTEM_FORM_IMMUTABLE(HttpStatus.CONFLICT, "SYSTEM_FORM_IMMUTABLE", "시스템 폼은 삭제할 수 없습니다."),
+
+    /*
+     * 400 — 시스템 폼에서 코드가 요구하는 qitemId를 지우려 할 때 (#140).
+     *
+     * 그 식별자로 값을 읽는 코드가 있다는 뜻이라 사라지면 조용히 빈 값이 읽힌다 — 터지지 않고
+     * 틀리는 종류다. 반대로 문구 수정·문항 추가·순서 변경은 계약을 깨지 않으므로 막지 않는다.
+     *
+     * QUESTION_ITEM_IN_USE(409)와 코드를 나눈 것은 기준도 프론트가 할 일도 다르기 때문이다.
+     * 그쪽은 "이미 받은 답이 끊긴다"라 응답이 없으면 지울 수 있고 되돌릴 방법이 없는 손실이지만,
+     * 이쪽은 응답이 한 건도 없어도 지울 수 없고 대신 지운 문항을 되돌리면 그대로 저장된다 —
+     * 편집기가 "이 문항은 시스템이 요구한다"고 안내하고 되돌리게 하면 되는 상황이다.
+     */
+    SYSTEM_FORM_CONTRACT_VIOLATION(
+            HttpStatus.BAD_REQUEST,
+            "SYSTEM_FORM_CONTRACT_VIOLATION",
+            "시스템 폼이 요구하는 문항은 삭제할 수 없습니다."),
+
+    /*
      * 422 — 저장된 문항 구성(qitem_cpst_cn) JSON을 읽을 수 없을 때.
      *
      * JSONB는 DB가 문법만 보장할 뿐 우리 구조까지 보장하지 않는다. 기준 코드 밖의
@@ -216,7 +244,29 @@ public enum FormErrorCode implements ErrorCode {
      * 라벨만 이 규칙으로 검사한다.
      */
     FORM_LABEL_NOT_USABLE(
-            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다.");
+            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다."),
+
+    /*
+     * 404 — 존재하지 않는 폼 템플릿 (#142). 비활성(use_yn = false) 템플릿은 여기에 걸리지
+     * 않는다 — 지워지지 않고 살아 있으며 조회·수정도 된다 (FORM_LABEL_NOT_FOUND와 같은 갈래).
+     *
+     * 폼의 404가 공통 NOT_FOUND를 쓰는 것과 달리 전용 코드를 두는 것은
+     * POST /v1/form-templates/{id}/forms·POST /v1/forms/{formId}/templates처럼 한 요청에
+     * 폼과 템플릿이 함께 등장하는 경로가 있기 때문이다. 코드가 같으면 프론트는 무엇을
+     * 찾지 못한 것인지 알 수 없다.
+     */
+    FORM_TEMPLATE_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_TEMPLATE_NOT_FOUND", "폼 템플릿을 찾을 수 없습니다."),
+
+    /*
+     * 400 — 비활성(use_yn = false) 템플릿으로 새 폼을 만들려 할 때 (#142).
+     *
+     * FORM_LABEL_NOT_USABLE과 같은 규칙이다 — 비활성은 "새로 고를 수 없다"는 뜻이지
+     * "이미 만들어진 것을 되돌려라"는 뜻이 아니다. 그래서 이 템플릿으로 이미 만들어 둔 폼은
+     * 아무 영향도 받지 않고, 템플릿 자체의 조회·수정도 막지 않는다(내려놓은 템플릿의 오타를
+     * 고친 뒤 다시 켜는 것이 정상 경로다). 막는 것은 '여기서 새 폼을 시작하는 것' 하나다.
+     */
+    FORM_TEMPLATE_NOT_USABLE(
+            HttpStatus.BAD_REQUEST, "FORM_TEMPLATE_NOT_USABLE", "비활성 템플릿으로는 새 폼을 만들 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

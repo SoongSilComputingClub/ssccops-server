@@ -204,4 +204,15 @@ public class EventEntity {
         }
         this.status = action.targetStatus();
     }
+
+    /*
+     * 연결 폼 지정 (#133 학술 활동 승인 후속 처리 전용). 학술 활동은 승인(=생성) 시점에
+     * Event만 먼저 만들고, 같은 트랜잭션에서 모집용 빈 폼을 만든 뒤 이 메서드로 연결한다 —
+     * create() 팩토리 하나로 두 순서를 다 감당하려 하면 "폼을 만들기 전에는 Event를 못 만든다"
+     * 는 제약이 생겨 승인 후속 처리 트랜잭션이 더 복잡해진다. uk_event_form(form.form_id
+     * UNIQUE)이 한 폼이 두 행사에 전속되는 것을 DB 레벨에서 막는다.
+     */
+    public void linkForm(FormEntity form) {
+        this.form = form;
+    }
 }

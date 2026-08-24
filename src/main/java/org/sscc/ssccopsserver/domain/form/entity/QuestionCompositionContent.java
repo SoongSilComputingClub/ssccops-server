@@ -3,6 +3,9 @@ package org.sscc.ssccopsserver.domain.form.entity;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.sscc.ssccopsserver.domain.form.code.QuestionItemType;
 
@@ -48,6 +51,27 @@ public record QuestionCompositionContent(List<Page> pages, List<QuestionItem> qi
                                 .map(page -> new Page(page.pageTtl(), page.pageDescCn()))
                                 .toList(),
                 qitems == null ? null : qitems.stream().map(QuestionItem::copy).toList());
+    }
+
+    /*
+     * 구성이 담고 있는 qitemId 집합.
+     *
+     * "문항 식별자가 그대로 남아 있는가"를 묻는 곳이 둘이라 여기에 둔다 — 응답이 있는 폼의
+     * 식별자 보호(QUESTION_ITEM_IN_USE)와 시스템 폼의 코드 계약(#140)이다. 두 판정은 기준이
+     * 다르지만 재료가 같아, 각자 스트림을 돌리면 NULL 처리 같은 사소한 차이가 갈릴 자리가 된다.
+     *
+     * qitems가 NULL일 수 있는 것은 이 record가 JSONB에서 그대로 역직렬화되기 때문이다.
+     * 저장 경로는 QuestionCompositionValidator를 지나 항상 리스트를 갖지만, 옛 데이터나
+     * 검증을 거치지 않은 값도 이 자리에 올 수 있어 빈 집합으로 받는다.
+     */
+    public static Set<String> qitemIdsOf(QuestionCompositionContent content) {
+        if (content == null || content.qitems() == null) {
+            return Set.of();
+        }
+        return content.qitems().stream()
+                .map(QuestionItem::qitemId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     /*

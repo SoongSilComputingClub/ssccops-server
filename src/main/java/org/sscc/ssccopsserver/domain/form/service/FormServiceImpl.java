@@ -26,10 +26,11 @@ import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormQuestionHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
-import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.QuestionItem;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormQuestionHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseCount;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
@@ -50,8 +51,15 @@ public class FormServiceImpl implements FormService {
     private final FormLabelRepository formLabelRepository;
     private final FormLabelRelationRepository formLabelRelationRepository;
     private final FormResponseHistoryRepository formResponseHistoryRepository;
+    private final FormQuestionHistoryRepository formQuestionHistoryRepository;
     private final QuestionCompositionValidator questionCompositionValidator;
     private final FormLabelService formLabelService;
+
+    /*
+     * 코드가 시스템 폼에 요구하는 qitemId 선언 (#140). 여기서 요구 목록을 들고 있지 않는 것은,
+     * 그 목록의 주인이 폼 도메인이 아니라 그 폼을 읽는 코드이기 때문이다.
+     */
+    private final SystemFormContract systemFormContract;
 
     /*
      * 접수 가능 판정·표시용 접수 상태의 유일한 구현 (#33). 여기서 직접 상태와 기간을 비교하지
@@ -121,6 +129,10 @@ public class FormServiceImpl implements FormService {
      *
      * 폼과 라벨 연결을 한 트랜잭션에 묶는 것은 둘 중 하나만 남으면 라벨 없는 폼이거나 폼 없는
      * 연결이 되기 때문이다 (AR-11).
+     *
+     * 생성 시점의 구성도 qitem_ver = 1로 이력에 한 행 남긴다 (#140). 수정에서만 남기면 1번
+     * 버전의 내용만 어디에도 없어, 이력을 처음부터 되짚으면 2번으로 바뀌기 전이 무엇이었는지
+     * 폼의 현재 값에서 역산해야 한다.
      */
     @Override
     @Transactional
@@ -147,6 +159,7 @@ public class FormServiceImpl implements FormService {
                                 receiptBeginAt,
                                 receiptEndAt,
                                 status));
+        recordQuestionComposition(form, creator);
 
         return FormSaveResponse.of(form, replaceLabels(form, request.labelIdsOrEmpty()));
     }
@@ -154,10 +167,15 @@ public class FormServiceImpl implements FormService {
     /*
      * 폼 수정. 문항 구성은 부분 갱신이 아니라 전체 교체다 (QuestionCompositionContent 주석).
      * 편집 자동 저장(ssccops #63)도 같은 엔드포인트를 쓰므로 자주 호출된다.
+     *
+     * 수행자(actor)를 받는 것은 #140부터다. 그전까지는 수정 이력을 남기지 않아 주체를 요구하지
+     * 않았는데, 문항 구성 이력(form_qitem_hstry)이 생기면서 변경자를 적을 자리가 생겼다.
+     * 요청 본문으로 받지 않는 것은 #78이 세운 규칙과 같다 — 받아 주면 "누가 바꿨는가"를 스스로
+     * 적어 넣을 수 있어 이력이 증거가 되지 못한다.
      */
     @Override
     @Transactional
-    public FormSaveResponse updateForm(Long formId, FormSaveRequest request) {
+    public FormSaveResponse updateForm(Long formId, FormSaveRequest request, MemberEntity actor) {
         FormEntity form = findForm(formId);
 
         QuestionCompositionContent composition =
@@ -169,6 +187,14 @@ public class FormServiceImpl implements FormService {
         ensureExistingQuestionItemsKept(form, composition);
 
         /*
+         * 시스템 폼의 코드 계약 검사 (#140). 응답 유무를 보는 위 검사와 나란히 두지만 기준이
+         * 다르다 — 이쪽은 응답이 한 건도 없어도 코드가 요구하는 qitemId를 지울 수 없다.
+         * 요구 목록은 폼이 아니라 그 폼을 읽는 코드가 선언한다(SystemFormContract).
+         */
+        form.requireSystemContractKept(
+                composition, systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
+
+        /*
          * 본문에 formSttsCd가 실려 와도 무시한다 (#33). 라벨(labelIds)과 해석이 갈리는데, 라벨은
          * 전체 교체가 곧 화면의 동작이라 생략이 "전부 떼기"인 반면 상태는 이 엔드포인트가 아예
          * 건드리지 않는 값이다.
@@ -178,7 +204,15 @@ public class FormServiceImpl implements FormService {
          * 늘 실려 있어, 거절하면 자동 저장이 통째로 멈춘다. 반대로 그 값을 받아 쓰면 타이핑
          * 한 번이 접수 상태를 덮어쓴다. 상태를 바꾸는 길은 POST /v1/forms/{formId}/status뿐이다.
          */
-        form.update(request.formTtlNm(), composition, receiptBeginAt, receiptEndAt);
+        /*
+         * 버전이 올랐을 때만 이력을 남긴다 (#140). 올랐는지는 엔티티가 판단해 돌려준다 —
+         * 여기서 구성을 한 번 더 비교하면 "구성이 바뀌었는가"라는 같은 규칙이 두 벌이 되고,
+         * 그때부터 버전과 이력이 갈릴 수 있다.
+         */
+        if (form.update(request.formTtlNm(), composition, receiptBeginAt, receiptEndAt)) {
+            recordQuestionComposition(form, actor);
+        }
+
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
         formRepository.flush();
 
@@ -194,6 +228,13 @@ public class FormServiceImpl implements FormService {
      * 복제한 폼에 지난 회차의 분류가 따라붙으면 목록 필터가 거짓말을 한다.
      *
      * 생성자는 원본 생성자가 아니라 복제를 수행한 회원이다 — 사본을 만든 사람이 사본의 주인이다.
+     *
+     * **시스템 폼의 사본은 시스템 폼이 아니다** (#140). sys_form_cd에 UNIQUE가 걸려 있어 승계하면
+     * 저장 자체가 실패하고, 실패하지 않더라도 코드가 두 폼 중 어느 쪽을 가리키는지 알 수 없게
+     * 된다. 문항 구성 버전도 승계하지 않고 1에서 다시 시작한다 — 사본의 이력은 여기서 시작하므로
+     * 원본의 버전을 물려받으면 그 앞 버전의 이력이 없는 채로 번호만 큰 폼이 된다. 해제 코드를
+     * 여기 적지 않고 FormEntity.create가 언제나 그 상태로 만들게 둔 것은, 새 폼을 만드는 경로가
+     * 늘 때마다 해제를 다시 적어야 하는 것을 피하기 위해서다.
      */
     @Override
     @Transactional
@@ -209,6 +250,7 @@ public class FormServiceImpl implements FormService {
                                 null,
                                 null,
                                 FormStatus.DRAFT));
+        recordQuestionComposition(copy, creator);
 
         return FormDuplicateResponse.of(copy, source.getId());
     }
@@ -233,6 +275,33 @@ public class FormServiceImpl implements FormService {
         return FormStatusChangeResponse.of(form, formReceiptPolicy.receiptStatusOf(form));
     }
 
+    /*
+     * 문항 0개인 DRAFT 폼 생성 (#133). requireOpenable()은 DRAFT를 만들 때는 돌지 않으므로
+     * 빈 qitems가 그대로 통과한다 — 문항 0개 금지는 여는(OPEN) 쪽에만 걸린다(FormEntity 주석).
+     */
+    @Override
+    @Transactional
+    public FormEntity createEmptyDraft(String title, MemberEntity creator) {
+        return formRepository.save(
+                FormEntity.create(
+                        creator,
+                        title,
+                        new QuestionCompositionContent(null, List.of()),
+                        null,
+                        null));
+    }
+
+    /*
+     * 접수 기간만 갱신 (#133). changeStatus(OPEN)보다 먼저 불러야 requireOpenable()의 접수 기간
+     * 정합성 검사가 갱신된 기간을 본다 — 호출 순서는 이 메서드가 아니라 호출부의 책임이다.
+     */
+    @Override
+    @Transactional
+    public void changeReceiptPeriod(Long formId, Instant receiptBeginAt, Instant receiptEndAt) {
+        FormEntity form = findForm(formId);
+        form.changeReceiptPeriod(receiptBeginAt, receiptEndAt);
+    }
+
     private FormEntity findForm(Long formId) {
         return formRepository
                 .findById(formId)
@@ -253,16 +322,25 @@ public class FormServiceImpl implements FormService {
             return;
         }
 
-        Set<String> nextIds =
-                next.qitems().stream().map(QuestionItem::qitemId).collect(Collectors.toSet());
-        boolean anyRemoved =
-                form.getQuestionComposition().qitems().stream()
-                        .map(QuestionItem::qitemId)
-                        .anyMatch(qitemId -> !nextIds.contains(qitemId));
+        Set<String> nextIds = QuestionCompositionContent.qitemIdsOf(next);
+        Set<String> currentIds =
+                QuestionCompositionContent.qitemIdsOf(form.getQuestionComposition());
 
-        if (anyRemoved) {
+        if (!nextIds.containsAll(currentIds)) {
             throw new GeneralException(FormErrorCode.QUESTION_ITEM_IN_USE);
         }
+    }
+
+    /*
+     * 문항 구성 이력 한 행 (#140). 생성·복제·버전이 오른 수정이 모두 이 자리를 지난다 —
+     * 세 경로가 각자 이력을 만들면 어느 한 곳만 빠져도 이력에 구멍이 생기고, 구멍이 있는
+     * 이력은 "그때 무엇이었는가"에 답하지 못해 없는 것과 같아진다.
+     *
+     * 버전과 구성을 넘기지 않는 것은 엔티티 팩토리가 폼에서 직접 읽기 때문이다
+     * (FormQuestionHistoryEntity.of 주석).
+     */
+    private void recordQuestionComposition(FormEntity form, MemberEntity changedBy) {
+        formQuestionHistoryRepository.save(FormQuestionHistoryEntity.of(form, changedBy));
     }
 
     /*

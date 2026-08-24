@@ -26,6 +26,11 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * 그리면 이미 응답을 받지 않는 폼이 목록에서 계속 '접수 중'으로 보인다. 배치로 상태를
  * 덮어쓰는 대신 이 필드로 나눈다 — 배지 문구는 이 값으로 고른다 (ssccops-web #9).
  *
+ * sysFormCd·sysYn·qitemVer는 #140에서 더했다. 목록 카드에도 싣는 것은 시스템 폼임을 상세로
+ * 들어가기 전에 알아야 하기 때문이다 — 목록에서 삭제 버튼을 눌러 보고 나서 409를 받는 것과
+ * 애초에 잠금 배지를 보는 것은 다르다. 문항 구성(qitemCpstCn)을 빼는 것과 어긋나 보이지만,
+ * 그쪽은 폼마다 수십 개로 늘어나는 값이고 이쪽은 세 개의 스칼라다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormSummaryResponse(
@@ -35,6 +40,9 @@ public record FormSummaryResponse(
         FormReceiptStatus receiptStatus,
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
+        String sysFormCd,
+        boolean sysYn,
+        int qitemVer,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
         OffsetDateTime mdfcnDt) {
@@ -53,6 +61,9 @@ public record FormSummaryResponse(
                 receiptStatus,
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
+                form.getSystemFormCode(),
+                form.isSystemForm(),
+                form.getQuestionVersion(),
                 labels,
                 responseCount,
                 toOffsetDateTime(form.getUpdatedAt()));

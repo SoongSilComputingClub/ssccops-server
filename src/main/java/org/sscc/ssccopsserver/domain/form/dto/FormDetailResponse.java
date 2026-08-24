@@ -32,6 +32,11 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 마감' 버튼 문구는 formSttsCd로 고르지만(전이표가 그 값으로 정의돼 있다), 사용자에게 보이는
  * 배지는 기간까지 반영해야 하므로 두 값을 함께 내린다.
  *
+ * sysFormCd·sysYn·qitemVer는 #140에서 더했다. 편집 화면이 시스템 폼임을 알아야 "이 문항은
+ * 시스템이 요구한다"를 미리 안내하고 삭제 버튼을 감출 수 있다 — 서버가 400·409로 거절할 수는
+ * 있지만, 그것만으로는 사용자가 저장을 누르기 전까지 알 수 없다. qitemVer를 함께 내리는 것은
+ * 편집기가 자기가 받아 온 구성이 아직 최신인지 판단할 근거로 쓰기 위해서다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormDetailResponse(
@@ -42,6 +47,9 @@ public record FormDetailResponse(
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
         QuestionCompositionContent qitemCpstCn,
+        String sysFormCd,
+        boolean sysYn,
+        int qitemVer,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
         FormResponseStatusSummary responseSummary,
@@ -65,6 +73,9 @@ public record FormDetailResponse(
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
                 form.getQuestionComposition(),
+                form.getSystemFormCode(),
+                form.isSystemForm(),
+                form.getQuestionVersion(),
                 labels,
                 responseSummary.total(),
                 responseSummary,

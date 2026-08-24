@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -436,6 +437,42 @@ class PublicFormControllerTest {
 
         assertThat(formResponseHistoryRepository.count()).isEqualTo(1);
         assertThat(onlyResponse().getSubmittedAt()).isEqualTo(NOW);
+    }
+
+    /*
+     * 응답은 "그 답이 어느 문항 구성에 대한 답인가"를 함께 남긴다 (#140 · form_rspns_hstry.qitem_ver).
+     *
+     * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
+     * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 임시저장을 시작한 시점이 아니라
+     * **마지막으로 답을 쓴 시점**의 버전이어야 하므로, 1번 구성에서 시작한 초안이 폼이 2번으로
+     * 바뀐 뒤 제출되면 2가 찍혀야 한다.
+     */
+    @Test
+    void submittedResponseCarriesTheQuestionVersionItAnsweredAgainst() throws Exception {
+        Long formId = saveForm("버전 기록 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        FormResponseHistoryEntity draft =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createDraft(form, respondent, null));
+        assertThat(draft.getQuestionVersion()).isEqualTo(1);
+
+        // 문항은 그대로 두고 페이지만 더해 구성을 바꾼다 — 기존 답이 그대로 제출될 수 있어야 하기 때문이다
+        List<QuestionCompositionContent.Page> pages =
+                new ArrayList<>(form.getQuestionComposition().pages());
+        pages.add(new QuestionCompositionContent.Page("덧붙인 페이지", null));
+        form.update(
+                form.getTitle(),
+                new QuestionCompositionContent(pages, form.getQuestionComposition().qitems()),
+                null,
+                null);
+        formRepository.saveAndFlush(form);
+
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        assertThat(onlyResponse().getQuestionVersion()).isEqualTo(2);
     }
 
     @Test

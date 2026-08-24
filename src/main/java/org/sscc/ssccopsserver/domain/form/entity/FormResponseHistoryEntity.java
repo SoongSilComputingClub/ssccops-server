@@ -16,6 +16,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
@@ -98,6 +99,23 @@ public class FormResponseHistoryEntity {
     @Column(name = "sbmsn_dt")
     private Instant submittedAt;
 
+    /*
+     * 이 답이 어느 문항 구성에 대한 답인가 (#140 · form.qitem_ver의 사본).
+     *
+     * 폼의 현재 버전을 나중에 다시 읽으면 되지 않는다 — 그 값은 이미 다음 버전일 수 있고,
+     * 그러면 "지원자가 무엇을 보고 답했는가"에 답할 수 없다. 이력(form_qitem_hstry)과 짝을
+     * 이루어야 비로소 그 시점의 폼을 되짚을 수 있다.
+     *
+     * 옛 버전 구성으로 응답을 다시 렌더하는 것은 이번 범위가 아니다. 응답 표시가 qitemId
+     * 기준이라 대체로 동작하고, 필요해지면 이 값과 이력만으로 열 수 있다.
+     *
+     * @ColumnDefault는 FormEntity의 sys_yn·qitem_ver와 같은 이유다 — 이미 행이 있는 dev·prod에
+     * DEFAULT 없는 NOT NULL 컬럼을 붙이면 ALTER가 실패한다.
+     */
+    @ColumnDefault("1")
+    @Column(name = "qitem_ver", nullable = false)
+    private Integer questionVersion;
+
     @CreatedDate
     @Column(name = "crt_dt", nullable = false, updatable = false)
     private Instant createdAt;
@@ -119,6 +137,7 @@ public class FormResponseHistoryEntity {
                 ResponseStatus.DRAFT,
                 content == null ? ResponseContent.of(null) : content,
                 null,
+                form.getQuestionVersion(),
                 null,
                 null);
     }
@@ -130,7 +149,15 @@ public class FormResponseHistoryEntity {
     public static FormResponseHistoryEntity createSubmitted(
             FormEntity form, MemberEntity member, ResponseContent content, Instant submittedAt) {
         return new FormResponseHistoryEntity(
-                null, form, member, ResponseStatus.SUBMITTED, content, submittedAt, null, null);
+                null,
+                form,
+                member,
+                ResponseStatus.SUBMITTED,
+                content,
+                submittedAt,
+                form.getQuestionVersion(),
+                null,
+                null);
     }
 
     /*
@@ -139,6 +166,7 @@ public class FormResponseHistoryEntity {
      */
     public void updateContent(ResponseContent content) {
         this.content = content;
+        stampQuestionVersion();
     }
 
     /** 제출 (#35). 상태와 제출 일시는 항상 함께 움직인다 */
@@ -146,6 +174,22 @@ public class FormResponseHistoryEntity {
         this.content = content;
         this.status = ResponseStatus.SUBMITTED;
         this.submittedAt = submittedAt;
+        stampQuestionVersion();
+    }
+
+    /*
+     * 답이 갱신될 때마다 그 시점의 문항 구성 버전을 다시 찍는다 (#140).
+     *
+     * 처음 만들 때만 찍으면 자동 저장으로 며칠에 걸쳐 쓴 응답은 첫 타이핑 시점의 버전을 달고
+     * 제출되는데, 그 사이 폼이 바뀌었다면 실제로 답한 구성과 어긋난다 — 마지막에 쓴 답이
+     * 마지막에 본 구성에 대한 답이다.
+     *
+     * 호출부에서 버전을 넘기지 않고 폼에서 직접 읽는 것은, 내용과 버전이 갈릴 자리를 만들지
+     * 않기 위해서다 (FormQuestionHistoryEntity.of와 같은 판단). 심사(changeStatus)에서는
+     * 찍지 않는다 — 답이 바뀌지 않는 조작이라 다시 찍으면 응답자가 보지도 않은 구성이 기록된다.
+     */
+    private void stampQuestionVersion() {
+        this.questionVersion = form.getQuestionVersion();
     }
 
     /*

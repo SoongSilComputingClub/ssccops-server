@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import jakarta.persistence.EntityManager;
@@ -41,12 +42,15 @@ import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormLabelEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormQuestionHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormQuestionHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
+import org.sscc.ssccopsserver.domain.form.service.SystemFormContract;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -111,6 +115,46 @@ class FormControllerTest {
             }
             """;
 
+    /*
+     * 시험용 시스템 폼 코드 (#140). 실제 선언(SystemFormContract.DECLARED)은 아직 비어 있다 —
+     * PROPOSAL 시드가 이번 범위에서 빠졌기 때문이다. 그래서 계약을 갈아 끼워(StubJwtDecoderConfig)
+     * 컨트롤러 → 서비스 → 엔티티 배선까지 실제 요청으로 확인한다. 판정 자체는
+     * FormSystemLockTest가 엔티티 단위로 본다.
+     */
+    private static final String SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM";
+
+    /** 계약 문항(q1)을 지운 구성. 시스템 폼에서는 400, 평범한 폼에서는 통과해야 한다 */
+    private static final String COMPOSITION_WITHOUT_CONTRACT_QUESTION =
+            """
+            {
+              "pages": [{"pageTtl": "한 장", "pageDescCn": null}],
+              "qitems": [
+                {
+                  "qitemId": "q2", "qitemLblNm": "지원 분야", "qitemTypeCd": "SINGLE_CHOICE",
+                  "reqYn": true, "pageSeq": 0, "optionList": ["백엔드", "프론트엔드"]
+                }
+              ]
+            }
+            """;
+
+    /** 계약 문항(q1)은 남기되 문구를 고치고 문항을 더하고 순서를 바꾼 구성. 전부 허용돼야 한다 */
+    private static final String CONTRACT_KEPT_COMPOSITION =
+            """
+            {
+              "pages": [{"pageTtl": "한 장", "pageDescCn": null}],
+              "qitems": [
+                {
+                  "qitemId": "q3", "qitemLblNm": "새로 더한 문항", "qitemTypeCd": "LONG_TEXT",
+                  "reqYn": false, "pageSeq": 0, "optionList": []
+                },
+                {
+                  "qitemId": "q1", "qitemLblNm": "다시 쓴 이름 문항", "qitemTypeCd": "SHORT_TEXT",
+                  "reqYn": true, "pageSeq": 0, "optionList": []
+                }
+              ]
+            }
+            """;
+
     @PersistenceContext private EntityManager entityManager;
 
     @Autowired private MockMvc mockMvc;
@@ -123,6 +167,7 @@ class FormControllerTest {
     @Autowired private FormRepository formRepository;
     @Autowired private FormLabelRepository formLabelRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormQuestionHistoryRepository formQuestionHistoryRepository;
     @Autowired private FormService formService;
 
     private Long actorId;
@@ -752,6 +797,155 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
+    /* ── 시스템 폼 잠금 · 문항 구성 버전 (#140) ───────────── */
+
+    /*
+     * 코드가 요구하는 qitemId를 지우면 400이다. 이 판정은 응답 유무를 보지 않는다 —
+     * 응답이 한 건도 없어도 코드가 그 식별자로 값을 읽으므로 사라지면 조용히 빈 값이 읽힌다.
+     */
+    @Test
+    void systemFormRejectsRemovingContractQuestionItem() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_CONTRACT_VIOLATION"));
+    }
+
+    /*
+     * 잠금 범위는 authrt.sys_yn 선례와 같다 — 계약을 지키는 한 제목·접수 기간·문구·문항 추가는
+     * 전부 열어 둔다. 운영진이 회차마다 손대는 값이라 잠그면 시스템 폼은 한 번 세운 뒤 아무도
+     * 운영할 수 없는 폼이 된다.
+     */
+    @Test
+    void systemFormAllowsChangesThatKeepTheContract() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId,
+                                """
+                                {"formTtlNm": "제목을 바꾼 시스템 폼",
+                                 "rcptBgngDt": "2026-03-01T00:00:00+09:00",
+                                 "qitemCpstCn": %s}
+                                """
+                                        .formatted(CONTRACT_KEPT_COMPOSITION)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formTtlNm").value("제목을 바꾼 시스템 폼"));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.sysYn").value(true))
+                .andExpect(jsonPath("$.data.sysFormCd").value(SYSTEM_FORM_CODE))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(2))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemId").value("q3"));
+    }
+
+    // 시스템 폼이 아닌 폼에는 계약이 걸리지 않는다 — 선언이 있어도 그 코드를 달고 있어야 성립한다
+    @Test
+    void ordinaryFormCanRemoveTheSameQuestionItem() throws Exception {
+        Long formId = createForm("평범한 폼", null, "[]");
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
+                .andExpect(status().isOk());
+    }
+
+    /*
+     * 편집 자동 저장(ssccops #63)은 매 타이핑마다 PUT을 쏜다. 제목만 바꾼 저장에도 버전이 오르면
+     * 한 번 고치는 동안 버전이 수백까지 뛰고 그만큼의 이력이 쌓여 되짚는 데 쓸모가 없어진다.
+     */
+    @Test
+    void questionVersionRisesOnlyWhenTheCompositionActuallyChanges() throws Exception {
+        Long formId = createForm("버전 확인 폼", null, "[]");
+        assertQuestionVersion(formId, 1);
+
+        // 같은 구성에 제목만 다른 저장 — 자동 저장이 실제로 보내는 본문이다
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId, saveBody("제목만 바꿈", null, null, null, "[]")))
+                .andExpect(status().isOk());
+        assertQuestionVersion(formId, 1);
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
+                .andExpect(status().isOk());
+        assertQuestionVersion(formId, 2);
+    }
+
+    /*
+     * 이력은 버전이 오를 때만 남고, 생성 시점의 구성도 1번으로 남는다 — 수정에서만 남기면
+     * 1번의 내용만 어디에도 없어 이력을 처음부터 되짚을 수 없다.
+     *
+     * 변경자는 요청 본문이 아니라 인증 주체에서 온다 (#78이 세운 규칙과 같다).
+     */
+    @Test
+    void questionCompositionHistoryIsWrittenOnCreateAndOnEachVersionBump() throws Exception {
+        Long formId = createForm("이력 확인 폼", null, "[]");
+
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId, saveBody("제목만 바꿈", null, null, null, "[]")))
+                .andExpect(status().isOk());
+        assertThat(historyOf(formId)).hasSize(1);
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
+                .andExpect(status().isOk());
+
+        List<FormQuestionHistoryEntity> history = historyOf(formId);
+        assertThat(history).hasSize(2);
+        assertThat(history)
+                .extracting(FormQuestionHistoryEntity::getQuestionVersion)
+                .containsExactly(1, 2);
+        assertThat(history.get(0).getQuestionComposition().qitems()).hasSize(2);
+        assertThat(history.get(1).getQuestionComposition().qitems()).hasSize(1);
+        assertThat(history)
+                .allSatisfy(row -> assertThat(row.getChangedBy().getId()).isEqualTo(actorId));
+    }
+
+    /*
+     * 사본은 시스템 폼이 아니다. sys_form_cd에 UNIQUE가 걸려 있어 승계하면 저장 자체가 실패하고,
+     * 실패하지 않더라도 코드가 두 폼 중 어느 쪽을 가리키는지 알 수 없게 된다. 버전도 1에서
+     * 다시 시작한다 — 사본의 이력은 여기서 시작하므로 원본의 번호를 물려받으면 그 앞 버전의
+     * 이력이 없는 채로 번호만 큰 폼이 된다.
+     */
+    @Test
+    void duplicateClearsSystemFormMarkAndRestartsQuestionVersion() throws Exception {
+        Long sourceId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(sourceId);
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + sourceId, saveBody("시스템 폼", null, null, null, "[]")))
+                .andExpect(status().isOk());
+
+        String response =
+                mockMvc.perform(authenticatedPost("/v1/forms/" + sourceId + "/duplicate", null))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long copyId = JsonPath.parse(response).read("$.data.formId", Long.class);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + copyId))
+                .andExpect(jsonPath("$.data.sysFormCd").isEmpty())
+                .andExpect(jsonPath("$.data.sysYn").value(false))
+                .andExpect(jsonPath("$.data.qitemVer").value(1));
+        assertThat(historyOf(copyId)).hasSize(1);
+    }
+
+    // 목록에도 싣는다 — 상세로 들어가기 전에 잠금 배지를 그릴 수 있어야 한다
+    @Test
+    void formListExposesSystemFormMarkAndQuestionVersion() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(authenticatedGet("/v1/forms"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].formId").value(formId))
+                .andExpect(jsonPath("$.data[0].sysFormCd").value(SYSTEM_FORM_CODE))
+                .andExpect(jsonPath("$.data[0].sysYn").value(true))
+                .andExpect(jsonPath("$.data[0].qitemVer").value(1));
+    }
+
     /* ── 접수 상태 전이 (#33) ─────────────────────────────── */
 
     /*
@@ -1015,6 +1209,35 @@ class FormControllerTest {
                 "/v1/forms/" + formId + "/status", "{\"action\": \"" + action + "\"}");
     }
 
+    /** 계약 문항(q1)을 지운 저장 본문 */
+    private String bodyWithoutContractQuestion() {
+        return """
+               {"formTtlNm": "문항을 지운 폼", "qitemCpstCn": %s}
+               """
+                .formatted(COMPOSITION_WITHOUT_CONTRACT_QUESTION);
+    }
+
+    /*
+     * 시스템 폼으로 세운다. API가 아니라 엔티티로 하는 것은 그것이 유일한 경로이기 때문이다 —
+     * 화면에서 지정할 수 있으면 운영자가 아무 폼에나 코드를 붙일 수 있고, 그 순간 이 잠금은
+     * 지키는 것이 없어진다 (FormEntity.designateAsSystemForm 주석).
+     */
+    private void designateAsSystemForm(Long formId) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        form.designateAsSystemForm(SYSTEM_FORM_CODE);
+        formRepository.saveAndFlush(form);
+    }
+
+    private void assertQuestionVersion(Long formId, int expected) throws Exception {
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.qitemVer").value(expected));
+    }
+
+    private List<FormQuestionHistoryEntity> historyOf(Long formId) {
+        return formQuestionHistoryRepository.findAllByFormOrderByQuestionVersionAsc(
+                formRepository.findById(formId).orElseThrow());
+    }
+
     private FormLabelEntity saveInactiveLabel(String name) {
         FormLabelEntity label = FormLabelEntity.create(name);
         label.changeActive(false);
@@ -1099,6 +1322,17 @@ class FormControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
+        }
+
+        /*
+         * 계약을 갈아 끼운다 (#140). 실제 선언은 아직 비어 있어(첫 시스템 폼 시드가 이번 범위
+         * 밖이다) 그대로 두면 잠금 배선 전체가 검증되지 못한 채 초록으로 남는다 —
+         * SystemFormContract를 상수가 아니라 빈으로 둔 이유가 이것이다.
+         */
+        @Bean
+        @Primary
+        SystemFormContract systemFormContract() {
+            return new SystemFormContract(Map.of(SYSTEM_FORM_CODE, Set.of("q1")));
         }
 
         @Bean

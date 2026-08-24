@@ -5,6 +5,7 @@ import java.util.List;
 
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AttendanceEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.FileReferenceEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
@@ -39,12 +40,16 @@ public record SessionDetailResponse(
         String latestOpinion) {
 
     /*
-     * fileReference는 아직 언제나 null이다(#137이 채운다, SessionFileReferenceResponse 주석).
-     * latestOpinion은 회차 승인·수정요청(#136)이 남긴 최신 academic_program_aprv(SESSION) 행의
-     * 사유이며, 아직 검토되지 않은 회차는 null이다 — 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
+     * fileReference는 출석 인증사진(#137)이 있으면 그 참조이고 없으면 null이다 — 사진을 아직
+     * 올리지 않은 회차가 흔한 상태라 빈 껍데기를 만들어 내리지 않는다. latestOpinion은 회차
+     * 승인·수정요청(#136)이 남긴 최신 academic_program_aprv(SESSION) 행의 사유이며, 아직
+     * 검토되지 않은 회차는 null이다 — 둘 다 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
      */
     public static SessionDetailResponse of(
-            SessionEntity session, List<AttendanceEntity> attendances, String latestOpinion) {
+            SessionEntity session,
+            List<AttendanceEntity> attendances,
+            FileReferenceEntity fileReference,
+            String latestOpinion) {
         CurriculumItemEntity curriculumItem = session.getCurriculumItem();
         MemberEntity registrant = session.getRegistrant();
 
@@ -64,10 +69,21 @@ public record SessionDetailResponse(
                 session.getStatus().name(),
                 registrant.getId(),
                 registrant.getName(),
-                null,
+                fileReferenceOf(fileReference),
                 rows,
                 presentCount,
                 rows.size(),
                 latestOpinion);
+    }
+
+    /*
+     * 참조가 없으면 블록 자체를 내리지 않는다(null) — 화면은 이 값의 유무 하나로 "사진 있음/
+     * 없음"을 가른다. 필드가 null인 껍데기를 내리면 그 판단이 fileUrl 검사로 한 겹 더 들어간다.
+     */
+    private static SessionFileReferenceResponse fileReferenceOf(FileReferenceEntity fileReference) {
+        return fileReference == null
+                ? null
+                : new SessionFileReferenceResponse(
+                        fileReference.getId(), fileReference.getFileUrl());
     }
 }

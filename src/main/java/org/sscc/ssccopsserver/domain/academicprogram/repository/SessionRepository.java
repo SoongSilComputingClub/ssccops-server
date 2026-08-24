@@ -3,8 +3,11 @@ package org.sscc.ssccopsserver.domain.academicprogram.repository;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
@@ -37,4 +40,21 @@ public interface SessionRepository
      * 접는다. 계획이 이미 활동으로 좁혀 읽히므로 여기서도 활동으로 좁힌다.
      */
     List<SessionEntity> findByCurriculumItemAcademicProgramId(Long academicProgramId);
+
+    /*
+     * 인증사진 업로드(#137)가 회차 행을 잠근다. 잠그는 대상이 file_reference가 아니라 session인
+     * 것은, 막아야 하는 경합이 "이미 있는 참조를 둘이 고치는 것"이 아니라 **"참조가 아직 없는
+     * 회차에 둘이 동시에 만드는 것"**이기 때문이다 — 없는 행은 잠글 수 없고, 그대로 두면 늦은
+     * 쪽이 uk_file_reference_session에 걸려 도메인 오류 코드 없는 500이 나간다.
+     *
+     * 재업로드를 UPSERT로 열어 둔 이상(설계 결정 #1) 그 경합의 정답은 거절이 아니라 순서를
+     * 세우는 것이다 — 뒤에 들어온 요청은 앞의 커밋을 보고 그 참조를 갈아 끼운다. 이 회차의
+     * 사진을 올릴 수 있는 사람은 스터디장 한 명뿐이라(소유권 정책) 잠금 경합 자체가 드물다.
+     *
+     * 반환값을 쓰지 않는 호출부가 있어도 질의는 필요하다 — 잠금은 SELECT ... FOR UPDATE가
+     * 실제로 나가야 걸린다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from SessionEntity s where s.id = :sessionId")
+    Optional<SessionEntity> lockById(@Param("sessionId") Long sessionId);
 }

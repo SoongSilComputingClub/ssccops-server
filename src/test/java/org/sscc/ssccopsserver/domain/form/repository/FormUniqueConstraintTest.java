@@ -158,16 +158,14 @@ class FormUniqueConstraintTest {
      */
     @Test
     void lastResponseSequenceIsZeroWhenNoResponseExists() {
-        Assertions.assertThat(
-                        formResponseHistoryRepository.findLastResponseSequence(form, creator))
+        Assertions.assertThat(formResponseHistoryRepository.findLastResponseSequence(form, creator))
                 .isZero();
 
         formResponseHistoryRepository.saveAndFlush(
                 FormResponseHistoryEntity.createDraft(
                         form, creator, ResponseContent.of(Map.of("q1", "홍길동")), 3));
 
-        Assertions.assertThat(
-                        formResponseHistoryRepository.findLastResponseSequence(form, creator))
+        Assertions.assertThat(formResponseHistoryRepository.findLastResponseSequence(form, creator))
                 .isEqualTo(3);
     }
 

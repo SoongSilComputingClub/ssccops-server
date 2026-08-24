@@ -117,16 +117,13 @@ class FormResponseDraftConflictTest {
          * 두 요청이 같은 마지막 순번(0)을 읽어 같은 다음 번호(1)를 계산하므로, #143에서 제약이
          * (form_id, mbr_id, rspns_seq)로 옮겨진 뒤에도 부딪히는 것은 그대로다.
          */
-        given(
-                        formResponseHistoryRepository.findByFormAndMemberAndStatus(
-                                any(), any(), any()))
+        given(formResponseHistoryRepository.findByFormAndMemberAndStatus(any(), any(), any()))
                 .willReturn(Optional.empty());
         given(formResponseHistoryRepository.existsByFormAndMember(any(), any())).willReturn(false);
         given(formResponseHistoryRepository.findLastResponseSequence(any(), any())).willReturn(0);
         given(formResponseHistoryRepository.saveAndFlush(any()))
                 .willThrow(
-                        new DataIntegrityViolationException(
-                                "uk_form_rspns_hstry_form_member_seq"));
+                        new DataIntegrityViolationException("uk_form_rspns_hstry_form_member_seq"));
 
         mockMvc.perform(
                         put("/v1/forms/" + formId + "/responses/draft")

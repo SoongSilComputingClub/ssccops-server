@@ -722,8 +722,7 @@ class FormResponseControllerTest {
         QuestionCompositionContent content =
                 objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
         return formRepository.saveAndFlush(
-                FormEntity.create(
-                        operator, title, content, null, null, FormStatus.OPEN, true));
+                FormEntity.create(operator, title, content, null, null, FormStatus.OPEN, true));
     }
 
     /*

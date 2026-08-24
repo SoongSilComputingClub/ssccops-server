@@ -40,8 +40,8 @@ public record SessionDetailResponse(
 
     /*
      * fileReference는 아직 언제나 null이다(#137이 채운다, SessionFileReferenceResponse 주석).
-     * latestOpinion도 회차 승인(#136)이 academic_program_aprv에 SESSION 행을 남기기 전까지는
-     * null이다 — 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
+     * latestOpinion은 회차 승인·수정요청(#136)이 남긴 최신 academic_program_aprv(SESSION) 행의
+     * 사유이며, 아직 검토되지 않은 회차는 null이다 — 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
      */
     public static SessionDetailResponse of(
             SessionEntity session, List<AttendanceEntity> attendances, String latestOpinion) {

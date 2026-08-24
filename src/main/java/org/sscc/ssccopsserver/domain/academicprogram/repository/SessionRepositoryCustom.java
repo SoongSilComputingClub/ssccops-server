@@ -18,6 +18,14 @@ public interface SessionRepositoryCustom {
      */
     List<SessionEntity> search(SessionSearchQuery query);
 
+    /*
+     * 활동을 가로지르는 회차 목록(#136). 조건·정렬·커서는 search와 완전히 같고 다른 것은 함께
+     * 읽어 오는 것뿐이다 — 이 목록은 줄마다 활동명·유형을 보여주므로 활동·행사·유형까지 한 번에
+     * 끌어온다. search로 합치고 fetch join만 늘리면 활동 상세 안의 목록도 쓰지 않는 조인을
+     * 매번 지고 간다.
+     */
+    List<SessionEntity> searchCross(SessionSearchQuery query);
+
     // 같은 조건의 총 건수. 커서·정렬과는 무관하다
     long countMatching(SessionSearchQuery query);
 

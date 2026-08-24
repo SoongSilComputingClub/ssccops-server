@@ -7,8 +7,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramAppro
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalPoint;
 
 /*
- * academic_program_aprv 저장소 (#133). 쓰기 경로는 아직 APPROVE_COMPLETION 하나뿐이다 —
- * 승인 이력 열람(GET .../approvals)은 후속 이슈의 몫이다.
+ * academic_program_aprv 저장소 (#133·#136). 쓰기 경로는 APPROVE_COMPLETION(#133)과 회차
+ * 승인·수정요청(#136) 둘이다 — 승인 이력 열람(GET .../approvals)은 후속 이슈의 몫이다.
  */
 public interface AcademicProgramApprovalRepository
         extends JpaRepository<AcademicProgramApprovalEntity, Long> {
@@ -21,7 +21,7 @@ public interface AcademicProgramApprovalRepository
      * 정렬을 처리 일시(aprv_dt)가 아니라 식별자로 하는 것은 그 컬럼이 PENDING이면 NULL이기
      * 때문이다 — 아직 처리되지 않은 최신 행이 정렬에서 뒤로 밀리면 "가장 최근"이 아니게 된다.
      *
-     * SESSION 행을 만드는 것은 회차 승인(#136)이라 그전까지 이 조회는 언제나 비어 있다.
+     * SESSION 행을 만드는 것은 회차 승인(#136)이며, 아직 검토되지 않은 회차는 비어 있다.
      */
     Optional<AcademicProgramApprovalEntity> findFirstBySessionIdAndPointOrderByIdDesc(
             Long sessionId, AcademicProgramApprovalPoint point);

@@ -1,0 +1,109 @@
+package org.sscc.ssccopsserver.domain.academicprogram.controller;
+
+import java.util.List;
+
+import jakarta.validation.Valid;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionCrossCondition;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionCrossListResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionCrossSearchResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionReviewCondition;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionTransitionRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionTransitionResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.service.SessionReviewService;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
+import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
+
+import io.swagger.v3.oas.annotations.Operation;
+
+import lombok.RequiredArgsConstructor;
+
+/*
+ * 학술국장 전용 회차 검토 API (#136 · 학술관리_API설계.md §1·§3.6). 회차 승인·수정요청과, 활동
+ * 경계를 넘어 회차를 훑는 두 목록이 여기 모인다.
+ *
+ * @RequireAuthority가 **클래스 레벨**인 것은 이 컨트롤러의 모든 핸들러가 같은 자격을 요구하기
+ * 때문이다 — 조회도 예외가 아니다(권한 관리 컨트롤러 #65와 같은 판단). 활동을 가로지르는
+ * 목록은 남의 활동 회차와 그 진행 상황을 그대로 보여주므로, "인증만"으로 열면 활동 상세에
+ * 걸어 둔 경계가 이 경로 하나로 무의미해진다.
+ *
+ * 회차 기록 컨트롤러(AcademicProgramSessionController, #135)와 나누는 것은 인가의 근거가 다르기
+ * 때문이다 — 그쪽은 활동 한정 소유권(leadrMbrId 본인)이라 AOP가 알 수 없고, 이쪽은 정적 권한
+ * 코드 하나로 끝난다. 경로 접두사가 겹치는 자리가 둘 있지만 스프링이 리터럴 세그먼트를 경로
+ * 변수보다 먼저 고르므로 충돌하지 않는다(폼 도메인의 PublicFormController ↔
+ * FormResponseController와 같은 자리다):
+ *   - GET /v1/academic-programs/sessions       (여기) ↔ GET /v1/academic-programs/{id} (활동 상세)
+ *   - GET /v1/academic-programs/reviews/sessions (여기) ↔ GET .../{id}/sessions (활동별 회차 목록)
+ *
+ * 활동 상태 전이(START_RECRUITMENT·APPROVE_COMPLETION, #133)는 아직
+ * AcademicProgramController에 있다. 설계 문서(§1)는 그것도 이 컨트롤러의 몫으로 적어 두었으나,
+ * 옮기는 것은 이 이슈의 계약을 바꾸지 않는 순수 이동이라 별도로 다룬다.
+ */
+@RestController
+@RequiredArgsConstructor
+@RequestMapping("/v1/academic-programs")
+@RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
+public class AcademicProgramReviewController {
+
+    private final SessionReviewService sessionReviewService;
+
+    @Operation(
+            summary = "회차 승인·수정요청",
+            description =
+                    "transition은 APPROVE 또는 REQUEST_REVISION이며 둘 다 SUBMITTED에서만 성립한다."
+                            + " 그 밖의 상태(APPROVED·REVISION_REQUESTED)는 409"
+                            + " INVALID_SESSION_TRANSITION이다 — 승인된 회차는 출석부·진행률의 기준선이라"
+                            + " 되돌리지 않는다. REQUEST_REVISION은 reason이 필수이며(400"
+                            + " REVISION_REASON_REQUIRED) 그 사유는 회차 상세의 latestOpinion으로 읽힌다."
+                            + " 처리 결과는 academic_program_aprv에 한 건 남는다.")
+    @PostMapping("/{academicProgramId}/sessions/{sessionId}/transitions")
+    public ApiResponse<SessionTransitionResponse> transitionSession(
+            @PathVariable Long academicProgramId,
+            @PathVariable Long sessionId,
+            @Valid @RequestBody SessionTransitionRequest request,
+            @CurrentMember MemberEntity approver) {
+        return ApiResponse.success(
+                sessionReviewService.transitionSession(
+                        academicProgramId, sessionId, request, approver));
+    }
+
+    @Operation(
+            summary = "회차 이력 조회(활동 횡단)",
+            description =
+                    "여러 활동의 회차를 활동 경계 없이 필터링·검색한다. keyword는 활동명과 회차 주제를"
+                            + " 함께 훑고, academicProgramId로 한 활동만 좁힐 수도 있다. 커서 페이징이며"
+                            + " 기본 정렬은 진행일 내림차순이다 — 활동을 가로지르면 회차 번호 순서는 뜻을"
+                            + " 잃는다. 활동 하나의 회차만 보는 화면은 이 API가 아니라 GET"
+                            + " /v1/academic-programs/{id}/sessions다.")
+    @GetMapping("/sessions")
+    public ApiResponse<List<SessionCrossListResponse>> searchCrossSessions(
+            @Valid @ModelAttribute SessionCrossCondition condition) {
+        SessionCrossSearchResponse result = sessionReviewService.searchCrossSessions(condition);
+        return ApiResponse.success(result.sessions(), result.page());
+    }
+
+    @Operation(
+            summary = "회차·출석 승인 대기 목록",
+            description =
+                    "여러 활동의 SUBMITTED 회차만 모아 보여주는 검토 목록이다. 상태 필터를 받지 않는다"
+                            + " — 검토를 기다리는 회차가 곧 SUBMITTED이며, 다른 상태까지 보려면 회차 이력"
+                            + " 조회(GET /v1/academic-programs/sessions)를 쓴다. 기본 정렬은 진행일"
+                            + " 오름차순이다(오래 기다린 건부터). page.overallCount는 대기 건수가 아니라"
+                            + " 회차 전체 건수다.")
+    @GetMapping("/reviews/sessions")
+    public ApiResponse<List<SessionCrossListResponse>> searchPendingSessions(
+            @Valid @ModelAttribute SessionReviewCondition condition) {
+        SessionCrossSearchResponse result = sessionReviewService.searchPendingSessions(condition);
+        return ApiResponse.success(result.sessions(), result.page());
+    }
+}

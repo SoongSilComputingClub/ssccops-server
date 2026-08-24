@@ -51,8 +51,8 @@ import lombok.extern.slf4j.Slf4j;
  * 만들어진다.
  *
  * 승인 이력(academic_program_aprv)에 행을 남기지 않는다. 제출은 검토를 기다리는 상태
- * (session_stts_cd = SUBMITTED)일 뿐이고, 그 테이블에 무엇을 언제 남길지는 회차 승인(#136)의
- * 몫이다 — 이 서비스는 그 최신 행의 사유를 읽기만 한다(latestOpinion).
+ * (session_stts_cd = SUBMITTED)일 뿐이고, 그 테이블에 남는 것은 국장의 **처리**다(#136,
+ * SessionReviewServiceImpl) — 이 서비스는 그 최신 행의 사유를 읽기만 한다(latestOpinion).
  */
 @Slf4j
 @Service
@@ -323,8 +323,8 @@ public class SessionServiceImpl implements SessionService {
     }
 
     /*
-     * 마지막 검토 의견. 회차 승인(#136)이 academic_program_aprv에 SESSION 행을 남기기 전까지는
-     * 언제나 null이다 — 값을 만들어 내지 않고 없으면 없는 대로 내린다.
+     * 마지막 검토 의견. 그 행을 남기는 것은 회차 승인(#136)이며, 아직 한 번도 검토되지 않은
+     * 회차는 null이다 — 값을 만들어 내지 않고 없으면 없는 대로 내린다.
      */
     private String latestOpinionOf(SessionEntity session) {
         return academicProgramApprovalRepository

@@ -17,7 +17,7 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * 쓰이지도 않는 JSON이 폼 수만큼 곱해져 목록 응답이 비대해진다 (AP-15의 반대편 — 값이 없어도
  * 필드는 내리되, 쓰지 않는 필드는 애초에 넣지 않는다).
  *
- * responseCount는 제출 이상(SUBMITTED·ACCEPTED·REJECTED)만 센다. 작성 중인 임시저장(DRAFT)은
+ * responseCount는 제출 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 센다. 작성 중인 임시저장(DRAFT)은
  * 아직 응답자가 낸 것이 아니라, 세면 운영진이 보는 "응답 N건"이 실제 접수 건수보다 부풀어
  * 마감 판단을 잘못하게 만든다.
  *

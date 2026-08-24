@@ -63,10 +63,10 @@ public class FormController {
     @Operation(
             summary = "폼 목록 조회",
             description =
-                    "폼 관리 화면의 카드 목록. statusCode·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다."
-                            + " 응답 건수(responseCount)는 제출 이상(SUBMITTED·ACCEPTED·REJECTED)만 세며"
-                            + " 작성 중인 임시저장 응답은 세지 않는다."
-                            + " 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
+                    "폼 관리 화면의 카드 목록. statusCode·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다. 응답"
+                        + " 건수(responseCount)는 제출"
+                        + " 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 세며 작성 중인 임시저장 응답은 세지"
+                        + " 않는다. 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping
     public ApiResponse<List<FormSummaryResponse>> getForms(

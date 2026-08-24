@@ -111,9 +111,25 @@ public enum FormErrorCode implements ErrorCode {
      * 둘 다 선조회를 통과하므로 (form_id, mbr_id) UNIQUE 위반도 같은 코드로 옮긴다
      * (#21 학번 중복·#34 라벨 이름 중복과 같은 방식).
      *
-     * 재제출·수정 제출은 이번 범위 밖이라 400(요청이 틀렸다)이 아니라 409(지금 상태에서 할 수 없다)다.
+     * 400(요청이 틀렸다)이 아니라 409(지금 상태에서 할 수 없다)인 것은 응답의 현재 상태가 거절
+     * 이유이기 때문이다. #141부터 이 코드는 "심사를 기다리는 중이거나 이미 승인된 응답"에만
+     * 붙는다 — 수정요청(CHANGES_REQUESTED)은 재제출이 열려 있고, 반려는 아래 코드로 갈렸다.
      */
     RESPONSE_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "RESPONSE_ALREADY_SUBMITTED", "이미 제출한 폼입니다."),
+
+    /*
+     * 409 — 반려된 응답을 응답자가 다시 제출하려 할 때 (#141).
+     *
+     * RESPONSE_ALREADY_SUBMITTED와 코드를 나눈 것은 응답자가 할 수 있는 일이 다르기 때문이다.
+     * "이미 제출했다"는 기다리면 결과가 나온다는 뜻이지만 반려는 그 응답에 대해 **끝났다**는
+     * 뜻이라, 같은 문구를 돌려주면 응답자는 심사를 기다리다 아무 통보도 받지 못한다. 웹도
+     * 두 경우에 다른 안내를 띄워야 한다.
+     *
+     * 검토자에게도 종결이다 (#141 전이표) — 반려를 승인·수정요청으로 되돌리는 길이 없으므로
+     * 이 응답으로 돌아올 방법은 없고, 남은 길은 새 응답뿐이다.
+     */
+    RESPONSE_ALREADY_REJECTED(
+            HttpStatus.CONFLICT, "RESPONSE_ALREADY_REJECTED", "반려된 응답은 다시 제출할 수 없습니다."),
 
     /*
      * 409 — 같은 응답 행을 두 요청이 동시에 만들려다 (form_id, mbr_id) UNIQUE에 걸렸을 때 (#36).
@@ -211,10 +227,14 @@ public enum FormErrorCode implements ErrorCode {
     /*
      * 400 — 허용되지 않는 응답 상태 전이 (#37).
      *
-     * SUBMITTED ↔ ACCEPTED ↔ REJECTED는 자유롭게 오간다(심사 번복). 여기에 걸리는 것은 DRAFT가
-     * 얽힌 전이뿐이다 — 작성 중인 응답을 운영자가 승인하면 응답자가 아직 쓰고 있던 내용이 그대로
-     * 심사 결과로 굳고, 반대로 제출된 응답을 DRAFT로 되돌리면 sbmsn_dt가 남아 있는 '미제출'
-     * 응답이 생겨 데이터가 스스로 모순된다. DRAFT → SUBMITTED는 오직 응답자의 제출로만 일어난다.
+     * 전이표는 FormResponseHistoryEntity.changeStatus가 갖는다 (#141에서 좁아졌다). 여기 걸리는
+     * 것은 넷이다 — DRAFT가 얽힌 전이, **결론을 낸 뒤의 번복(ACCEPTED·REJECTED에서 나가는 모든
+     * 전이)**, 검토로 SUBMITTED로 되돌리기, 같은 상태로의 재지정.
+     *
+     * 작성 중인 응답을 운영자가 승인하면 응답자가 아직 쓰고 있던 내용이 그대로 심사 결과로 굳고,
+     * 반대로 제출된 응답을 DRAFT로 되돌리면 sbmsn_dt가 남아 있는 '미제출' 응답이 생겨 데이터가
+     * 스스로 모순된다. SUBMITTED로 가는 길은 응답자의 제출·재제출뿐이다. 승인·반려를 되돌릴 수
+     * 없는 이유(승인 뒤 후속 처리가 이미 시작된다)는 전이표 주석에 있다.
      *
      * 400인 것은 폼 상태 전이(INVALID_FORM_STATUS_TRANSITION)와 같은 이유다 — 웹은 현재 상태를
      * 이미 화면에 들고 있어 보낼 수 있는 값이 정해지므로 "지금 할 수 없는 일"보다 "보내면 안 되는
@@ -222,6 +242,23 @@ public enum FormErrorCode implements ErrorCode {
      */
     INVALID_RESPONSE_STATUS_TRANSITION(
             HttpStatus.BAD_REQUEST, "INVALID_RESPONSE_STATUS_TRANSITION", "허용되지 않는 응답 상태 전이입니다."),
+
+    /*
+     * 400 — 검토 의견 없이 수정요청·반려를 하려 할 때 (#141).
+     *
+     * 두 처리는 응답자에게 "무엇을 해야 하는가"를 알리는 통보라 사유 없이 성립하지 않는다
+     * (하위 업무 반려 sub_work_rjct의 VR-O06과 같은 판단). 승인은 통보할 것이 없으므로 선택이며,
+     * 그 차이를 아는 유일한 자리는 ResponseReviewAction.requiresOpinion이다.
+     *
+     * 공백만 있는 문자열도 여기에 걸린다 — DB의 NOT NULL이 막지 못하는 자리이고, 통과시키면
+     * 이력 행은 남지만 "왜"가 비어 있어 이 이슈가 만들려던 증거가 되지 못한다.
+     *
+     * @NotBlank으로 DTO에서 막지 않는 것은 필수 여부가 함께 온 상태 값에 달려 있기 때문이다.
+     * Bean Validation으로는 필드 간 조건을 표현해도 VALIDATION_FAILED로 뭉개져 웹이 "의견을
+     * 적으라"는 안내를 고를 수 없다 (INVALID_RECEIPT_PERIOD와 같은 이유).
+     */
+    REVIEW_OPINION_REQUIRED(
+            HttpStatus.BAD_REQUEST, "REVIEW_OPINION_REQUIRED", "수정요청·반려는 검토 의견을 반드시 입력해야 합니다."),
 
     // 404 — 존재하지 않는 라벨. 비활성 라벨은 여기에 걸리지 않는다 (지워지지 않고 살아 있다)
     FORM_LABEL_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_LABEL_NOT_FOUND", "폼 라벨을 찾을 수 없습니다."),

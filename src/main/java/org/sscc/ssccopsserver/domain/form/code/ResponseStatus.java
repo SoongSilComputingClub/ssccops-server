@@ -15,6 +15,13 @@ import java.util.EnumSet;
  *
  * ACCEPTED·REJECTED로의 전이 규칙은 FormResponseHistoryEntity.changeStatus가 갖는다 (#37) —
  * 어떤 어휘가 있는지는 여기가, 그 사이를 어떻게 오갈 수 있는지는 엔티티가 정한다.
+ *
+ * CHANGES_REQUESTED(수정요청)는 #141에서 더했다. 그전까지 심사 결과는 승인 아니면 반려뿐이라
+ * "고쳐서 다시 내라"를 표현할 어휘가 없었고, 반려된 응답을 응답자가 고쳐 낼 길도 없었다 —
+ * DRAFT로는 되돌릴 수 없고(전이 금지) 응답은 회원당 폼당 1건(UNIQUE)이라 새로 만들 수도 없다.
+ * 이 상태가 그 되돌림 자리다: 응답자에게 편집권이 돌아가고, 재제출하면 SUBMITTED로 복귀하며
+ * sbmsn_seq가 1 늘어난다. ACCEPTED·REJECTED와 갈리는 지점이 여기다 — 그 둘은 **결론이라 종결**
+ * 이고(응답자도 검토자도 되돌릴 수 없다), 심사가 계속 열려 있는 상태는 SUBMITTED와 이것뿐이다.
  */
 public enum ResponseStatus {
 
@@ -24,10 +31,18 @@ public enum ResponseStatus {
     /** 응답자가 제출을 마친 상태. 심사 전 기본값 */
     SUBMITTED,
 
-    /** 운영진이 승인 */
+    /*
+     * 운영진이 수정요청 (#141). 응답자가 고쳐 다시 낼 수 있는 유일한 심사 결과다.
+     *
+     * 제출 이상(submittedOrLater)에 든다 — 응답자가 실제로 낸 응답이고, 심사가 끝나지 않았을
+     * 뿐이라 목록·집계에서 빠지면 운영자에게는 사라진 것처럼 보인다.
+     */
+    CHANGES_REQUESTED,
+
+    /** 운영진이 승인. 종결이며, 이 뒤로 활동 개설·역할 부여 같은 후속 처리가 시작된다 */
     ACCEPTED,
 
-    /** 운영진이 반려 */
+    /** 운영진이 반려. 종결이라 재제출도 번복도 막힌다 (#141) */
     REJECTED;
 
     /*
@@ -43,9 +58,13 @@ public enum ResponseStatus {
      *
      * 매번 새로 만드는 것은 EnumSet이 가변이기 때문이다. 상수로 두면 호출부가 add/remove로
      * 전역 기준을 조용히 바꿀 수 있다.
+     *
+     * #141에서 CHANGES_REQUESTED가 들어왔다. 심사가 끝나지 않은 상태지만 응답자는 이미 냈고,
+     * 빼면 수정요청을 누르는 순간 그 응답이 목록에서도 요약 숫자에서도 사라진다 — 운영자가
+     * 자기 조작으로 응답을 잃어버리는 셈이다. 기준은 여전히 "응답자가 실제로 냈는가" 하나다.
      */
     public static EnumSet<ResponseStatus> submittedOrLater() {
-        return EnumSet.of(SUBMITTED, ACCEPTED, REJECTED);
+        return EnumSet.of(SUBMITTED, CHANGES_REQUESTED, ACCEPTED, REJECTED);
     }
 
     public String code() {

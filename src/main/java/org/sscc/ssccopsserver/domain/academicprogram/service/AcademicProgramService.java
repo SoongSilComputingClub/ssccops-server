@@ -1,10 +1,13 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
+import java.util.List;
+
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCondition;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramDetailResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.CurriculumItemWithSessionResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
@@ -29,4 +32,12 @@ public interface AcademicProgramService {
             Long academicProgramId,
             AcademicProgramTransitionRequest request,
             MemberEntity performer);
+
+    /*
+     * 계획 + 실적 조인 조회(#134 · GET /v1/academic-programs/{id}/curriculum-items). 인증만
+     * 요구하지만 isEditable 판정에 요청자 본인 식별이 필요해 viewer를 받는다(상세 조회의
+     * isLeader와 같은 이유).
+     */
+    List<CurriculumItemWithSessionResponse> getCurriculumItems(
+            Long academicProgramId, MemberEntity viewer);
 }

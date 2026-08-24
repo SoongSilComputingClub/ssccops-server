@@ -16,9 +16,11 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchRe
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSummaryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.CurriculumItemWithSessionResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
@@ -42,6 +44,7 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     private final AcademicProgramRepository academicProgramRepository;
     private final CurriculumItemRepository curriculumItemRepository;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
+    private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
     private final FormService formService;
     private final Clock clock;
 
@@ -56,6 +59,34 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         long curriculumItemCount =
                 curriculumItemRepository.countByAcademicProgramId(academicProgramId);
         return AcademicProgramDetailResponse.of(academicProgram, (int) curriculumItemCount, viewer);
+    }
+
+    /*
+     * 계획 조회(#134). 존재하지 않는 활동은 빈 배열이 아니라 404다 — 커리큘럼이 0건인 활동과
+     * 활동 자체가 없는 것을 같은 응답으로 뭉개면 화면이 둘을 구별하지 못한다(단건 조회와 같은
+     * 태도).
+     *
+     * 소유권 판정은 활동당 한 번만 한다. 줄마다 물어봐도 답이 같은데(leadrMbrId는 회차별로
+     * 다르지 않다) 정책을 회차 수만큼 부르면 판정이 줄마다 다를 수 있다는 오해를 남긴다.
+     * requireLeader가 아니라 isLeader인 것은 이 API가 인증만 요구하기 때문이다 — 팀원·일반
+     * 회원도 표를 보되 편집 버튼만 꺼진다.
+     *
+     * Session 엔티티가 아직 없어(#135) 지금은 모든 줄이 NOT_SUBMITTED로 나간다. 실적 LEFT JOIN은
+     * 그 이슈가 이 메서드 안에서 더한다 — 조인이 붙어도 계약(항상 값이 있는 sessionSttsCd,
+     * 서버가 판정하는 isEditable)은 바뀌지 않는다.
+     */
+    @Override
+    public List<CurriculumItemWithSessionResponse> getCurriculumItems(
+            Long academicProgramId, MemberEntity viewer) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        boolean isLeader = academicProgramOwnershipPolicy.isLeader(academicProgram, viewer);
+
+        List<CurriculumItemEntity> curriculumItems =
+                curriculumItemRepository.findByAcademicProgramIdOrderBySeqnoAsc(academicProgramId);
+
+        return curriculumItems.stream()
+                .map(item -> CurriculumItemWithSessionResponse.withoutSession(item, isLeader))
+                .toList();
     }
 
     private AcademicProgramEntity findAcademicProgram(Long academicProgramId) {

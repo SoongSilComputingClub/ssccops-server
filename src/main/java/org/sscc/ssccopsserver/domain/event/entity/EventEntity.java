@@ -21,8 +21,11 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
+import org.sscc.ssccopsserver.domain.event.code.EventStatusAction;
+import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -154,6 +157,52 @@ public class EventEntity {
                 creator,
                 null,
                 null);
+    }
+
+    /*
+     * 행사 수정 (ssccops#139 · PUT). 상태(event_stts_cd)를 받지 않는다 — 폼 PUT과 같은 태도로,
+     * 상태를 바꾸는 길은 changeStatus 하나로 좁힌다. 생성자(creator)도 바꾸지 않는다
+     * (updatable = false).
+     *
+     * 폼 연결(form)을 여기서 함께 받는 것은 편집 화면이 본문·일시·폼 연결을 한 저장으로 다루기
+     * 때문이다. 신청 발생 후 연결 변경·해제 금지(D11)는 저장 전 검증이 필요해 서비스가 막는다 —
+     * 엔티티는 현재 폼의 응답 존재 여부를 조회할 수 없다.
+     */
+    public void update(
+            EventClassificationEntity classification,
+            String title,
+            String contentMarkdown,
+            String thumbnailUrlAddress,
+            FormEntity form,
+            Instant beginAt,
+            Instant endAt,
+            String placeName,
+            Integer participantLimitCount) {
+        this.classification = classification;
+        this.title = title;
+        this.contentMarkdown = contentMarkdown;
+        this.thumbnailUrlAddress = thumbnailUrlAddress;
+        this.form = form;
+        this.beginAt = beginAt;
+        this.endAt = endAt;
+        this.placeName = placeName;
+        this.participantLimitCount = participantLimitCount;
+    }
+
+    /*
+     * 게시 상태 전이 (ssccops#139 · POST /v1/events/{eventId}/status).
+     *
+     * 전이표는 EventStatusAction이 갖고, 여기서는 표를 어긴 요청을 무엇으로 거절할지만 맡는다
+     * (FormEntity.changeStatus 선례). 폼과 달리 여는 쪽 사전 검증이 없다 — 본문이 비어 있어도
+     * 게시는 운영자의 판단이고, 폼 연결·폼 상태와 게시가 독립이라는 것이 D11의 결정이다.
+     *
+     * 전이 이력은 남기지 않는다. 데이터사전에 행사 상태 이력 테이블이 없다 (폼과 같은 태도).
+     */
+    public void changeStatus(EventStatusAction action) {
+        if (!action.isAllowedFrom(this.status)) {
+            throw new GeneralException(EventErrorCode.INVALID_EVENT_STATUS_TRANSITION);
+        }
+        this.status = action.targetStatus();
     }
 
     /*

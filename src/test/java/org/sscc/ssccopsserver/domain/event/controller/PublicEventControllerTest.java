@@ -183,9 +183,34 @@ class PublicEventControllerTest {
                 // 상세에도 운영자용 필드는 없다 — 참가자 명단도 폼 문항도 싣지 않는다
                 .andExpect(jsonPath("$.data.eventSttsCd").doesNotExist())
                 .andExpect(jsonPath("$.data.creatrMbrId").doesNotExist())
-                .andExpect(jsonPath("$.data.formId").doesNotExist())
                 .andExpect(jsonPath("$.data.participants").doesNotExist())
                 .andExpect(jsonPath("$.data.qitemCpstCn").doesNotExist());
+    }
+
+    /*
+     * 신청 버튼을 누른 방문자를 연결 폼으로 보내려면 공개 앱이 어느 폼인지 알아야 한다 (#165).
+     * 식별자만 내리고 문항은 여전히 인증 경로(GET /v1/forms/{formId}/public)에서만 나온다 —
+     * 그래서 여기서 qitemCpstCn이 없다는 위 단언과 함께 봐야 의미가 산다.
+     */
+    @Test
+    void publicDetailCarriesLinkedFormIdSoThatApplyFlowCanContinue() throws Exception {
+        Long eventId = saveEventWithFormAndLimit("RECRUIT", "게시된 모집", 20);
+
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").isNumber())
+                .andExpect(jsonPath("$.data.qitemCpstCn").doesNotExist());
+    }
+
+    // 폼 없는 공지 성격 행사는 formId가 null이다 — 화면은 이때 신청 버튼을 내린다
+    @Test
+    void publicDetailHasNullFormIdWhenNoFormIsLinked() throws Exception {
+        Long eventId = saveEvent("EVENT", "폼 없는 공지", true);
+
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").doesNotExist())
+                .andExpect(jsonPath("$.data.receiptStatus").doesNotExist());
     }
 
     /*

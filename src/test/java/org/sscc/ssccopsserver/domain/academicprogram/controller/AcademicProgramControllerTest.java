@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -41,7 +42,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 import com.jayway.jsonpath.JsonPath;
 
 /*
- * 학술 활동(스터디/프로젝트) 조회 API (#131). 등록(POST) 경로는 없다 — 2026-08-23 설계 변경으로
+ * 학술 활동(스터디/프로젝트) 조회 API (#131) + 커리큘럼 계획 조회 (#134). 등록(POST) 경로는 없다 — 2026-08-23 설계 변경으로
  * 기획안 접수가 폼 도메인 이관(ssccops#148)으로 대체됐고, 이 이슈에는 조회만 남았다. 테스트
  * 데이터는 HTTP로 만들지 않고 AcademicProgramFixture로 직접 심는다.
  *
@@ -255,6 +256,114 @@ class AcademicProgramControllerTest {
     @Test
     void searchAcademicProgramsWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get(PROGRAMS)).andExpect(status().isUnauthorized());
+    }
+
+    // ------------------------------------------------------------------ 커리큘럼 계획 조회 (#134)
+
+    /*
+     * 실적(session) 행이 없어도 sessionSttsCd는 비지 않는다 — 서버가 NOT_SUBMITTED를 합성해
+     * 내리므로 클라이언트에 null 분기가 없다(설계 결정 #1). Session 엔티티가 아직 없어(#135)
+     * 지금은 모든 줄이 이 상태다.
+     */
+    @Test
+    void getCurriculumItemsReturnsPlanRowsWithNotSubmittedSession() throws Exception {
+        AcademicProgramEntity academicProgram =
+                createAcademicProgram("STUDY", "커리큘럼 조회용 스터디", "OT", "1주차", "2주차");
+
+        mockMvc.perform(
+                        authorized(
+                                get(PROGRAMS + "/{id}/curriculum-items", academicProgram.getId()),
+                                proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(3)))
+                .andExpect(jsonPath("$.data[0].curriculumItemId").isNumber())
+                .andExpect(jsonPath("$.data[0].seqno").value(1))
+                .andExpect(jsonPath("$.data[0].ttl").value("OT"))
+                .andExpect(jsonPath("$.data[0].planDt").value(LocalDate.now().toString()))
+                .andExpect(jsonPath("$.data[0].sessionId").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].sessionSttsCd").value("NOT_SUBMITTED"))
+                .andExpect(jsonPath("$.data[0].realDt").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].cn").value(Matchers.nullValue()))
+                // 회차 순서로 내려간다 — 화면이 회차 이력 표라 등록 순서가 아니라 seqno가 줄 순서다
+                .andExpect(jsonPath("$.data[1].seqno").value(2))
+                .andExpect(jsonPath("$.data[1].ttl").value("1주차"))
+                .andExpect(jsonPath("$.data[2].seqno").value(3))
+                .andExpect(jsonPath("$.data[2].ttl").value("2주차"));
+    }
+
+    // isEditable은 스터디장 본인 & 기록 가능한 상태(NOT_SUBMITTED/REVISION_REQUESTED) 둘 다 만족할 때만 true다
+    @Test
+    void getCurriculumItemsAsLeaderShowsIsEditableTrue() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "본인 조회", "1주차");
+
+        mockMvc.perform(
+                        authorized(
+                                get(PROGRAMS + "/{id}/curriculum-items", academicProgram.getId()),
+                                proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].isEditable").value(true));
+    }
+
+    /*
+     * 스터디장이 아닌 회원은 표를 보되 편집할 수 없다(인증만 요구하는 조회라 403이 아니다).
+     * 상태 조건은 만족하지만 본인이 아니므로 isEditable이 false — 두 조건의 곱이다.
+     */
+    @Test
+    void getCurriculumItemsAsOtherMemberShowsIsEditableFalse() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "타인 조회", "1주차");
+
+        mockMvc.perform(
+                        authorized(
+                                get(PROGRAMS + "/{id}/curriculum-items", academicProgram.getId()),
+                                otherToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].sessionSttsCd").value("NOT_SUBMITTED"))
+                .andExpect(jsonPath("$.data[0].isEditable").value(false));
+    }
+
+    // 다른 활동의 커리큘럼이 섞여 들어오지 않는다 — 질의가 academicProgramId로 애초에 좁혀 읽는다
+    @Test
+    void getCurriculumItemsExcludesOtherProgramsItems() throws Exception {
+        AcademicProgramEntity target = createAcademicProgram("STUDY", "내 스터디", "내 1주차", "내 2주차");
+        createAcademicProgram("STUDY", "남의 스터디", "남의 1주차");
+
+        mockMvc.perform(
+                        authorized(
+                                get(PROGRAMS + "/{id}/curriculum-items", target.getId()),
+                                proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
+                .andExpect(jsonPath("$.data[*].ttl", Matchers.contains("내 1주차", "내 2주차")));
+    }
+
+    // 커리큘럼이 0건인 활동은 404가 아니라 빈 배열이다
+    @Test
+    void getCurriculumItemsOfProgramWithoutItemsReturnsEmptyArray() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "커리큘럼 없는 스터디");
+
+        mockMvc.perform(
+                        authorized(
+                                get(PROGRAMS + "/{id}/curriculum-items", academicProgram.getId()),
+                                proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    // 활동 자체가 없으면 빈 배열이 아니라 404다 — 커리큘럼 0건과 구별돼야 한다
+    @Test
+    void getCurriculumItemsOfUnknownProgramReturns404() throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                get(PROGRAMS + "/{id}/curriculum-items", 999_999L), proposerToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ACADEMIC_PROGRAM_NOT_FOUND"));
+    }
+
+    @Test
+    void getCurriculumItemsWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get(PROGRAMS + "/{id}/curriculum-items", 1L))
+                .andExpect(status().isUnauthorized());
     }
 
     // ------------------------------------------------------------------ 헬퍼

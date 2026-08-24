@@ -22,6 +22,7 @@ import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -49,6 +50,12 @@ import lombok.NoArgsConstructor;
  * sbmsn_dt(제출 일시)는 nullable이다 (ssccops #64). 상태 어휘에 DRAFT가 들어오면서
  * "아직 제출하지 않은 응답"이 정상 상태가 됐고, 그 행은 제출 일시를 가질 수 없다.
  * 두 사실은 같이 움직인다 — 어느 한쪽만 되돌리면 데이터가 거짓말을 하게 된다.
+ *
+ * sbmsn_seq(제출 회차)는 #141에서 더했다. 수정요청을 받은 응답은 같은 행이 여러 번 제출되는데,
+ * 행이 하나뿐이라 "몇 번째 제출인가"를 담을 자리가 여기 말고 없다. 이 값이 있어야
+ * form_rspns_rvw_hstry의 이력 행이 어느 제출에 대한 처리였는지 가리킬 수 있다 — 없으면
+ * 타임라인은 "승인 → 수정요청 → 승인"처럼 처리만 나열될 뿐 그 사이에 응답 내용이 바뀌었다는
+ * 사실이 사라진다.
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
@@ -62,6 +69,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class FormResponseHistoryEntity {
+
+    /** 최초 제출 회차 (#141). 아직 내지 않은 DRAFT도 이 값에서 시작한다 */
+    private static final int FIRST_SUBMISSION = 1;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -116,6 +126,19 @@ public class FormResponseHistoryEntity {
     @Column(name = "qitem_ver", nullable = false)
     private Integer questionVersion;
 
+    /*
+     * 제출 회차 (#141). 최초 제출이 1이고 수정요청 뒤 재제출할 때마다 1씩 는다.
+     *
+     * 아직 내지 않은 DRAFT도 1이다 — 0으로 두면 "몇 번 냈는가"와 "지금 몇 회차를 쓰고 있는가"를
+     * 한 컬럼이 겸하게 되어, 제출 시점에 0 → 1로 올리는 분기가 하나 더 생긴다.
+     *
+     * columnDefinition에 default를 적는 것은 ddl-auto: update로 이 컬럼이 붙는 dev·prod 때문이다.
+     * 이미 행이 있는 테이블에 기본값 없는 NOT NULL 컬럼을 붙이면 ALTER 자체가 실패하고,
+     * Hibernate는 그 실패를 로그만 남기고 넘어가 컬럼 없는 채로 애플리케이션이 뜬다.
+     */
+    @Column(name = "sbmsn_seq", nullable = false, columnDefinition = "integer default 1")
+    private int submissionSequence;
+
     @CreatedDate
     @Column(name = "crt_dt", nullable = false, updatable = false)
     private Instant createdAt;
@@ -138,6 +161,7 @@ public class FormResponseHistoryEntity {
                 content == null ? ResponseContent.of(null) : content,
                 null,
                 form.getQuestionVersion(),
+                FIRST_SUBMISSION,
                 null,
                 null);
     }
@@ -156,6 +180,7 @@ public class FormResponseHistoryEntity {
                 content,
                 submittedAt,
                 form.getQuestionVersion(),
+                FIRST_SUBMISSION,
                 null,
                 null);
     }
@@ -169,8 +194,37 @@ public class FormResponseHistoryEntity {
         stampQuestionVersion();
     }
 
-    /** 제출 (#35). 상태와 제출 일시는 항상 함께 움직인다 */
+    /*
+     * 제출 (#35 · 재제출 #141). 상태와 제출 일시는 항상 함께 움직인다.
+     *
+     * **"지금 낼 수 있는 응답인가"의 판정이 여기 하나로 모였다.** 원래는 서비스가 먼저
+     * `status != DRAFT면 409`로 걸렀는데, #141에서 수정요청 응답의 재제출이 열리면서 그 판정이
+     * 상태별로 갈라졌다 — 서비스에 그대로 두면 상태 어휘가 늘 때마다 규칙이 호출부마다 복제된다
+     * (LY-02 · changeStatus를 여기 둔 것과 같은 이유).
+     *
+     *   DRAFT             → 최초 제출. 회차는 1 그대로다
+     *   CHANGES_REQUESTED → 재제출. SUBMITTED로 돌아가고 회차가 1 는다
+     *   REJECTED          → 409 RESPONSE_ALREADY_REJECTED. 반려는 응답자에게 종결이다
+     *   그 밖(SUBMITTED · ACCEPTED) → 409 RESPONSE_ALREADY_SUBMITTED
+     *
+     * 반려를 따로 끊는 것은 응답자가 할 수 있는 일이 다르기 때문이다 — "이미 제출했다"는
+     * 기다리라는 뜻이지만 반려는 그 응답에 대해 끝났다는 뜻이다. 검토자도 그 상태를 되돌릴 수
+     * 없으므로(changeStatus) 반려는 양쪽 모두에게 종결이며, 다시 낼 길은 새 응답뿐이다.
+     *
+     * 회차를 올리는 자리도 여기 하나뿐이다. 서비스가 올리면 이력에 적히는 회차와 응답 행의
+     * 회차가 갈릴 수 있고, 그 어긋남은 타임라인이 이미 굳은 뒤에야 드러난다.
+     */
     public void submit(ResponseContent content, Instant submittedAt) {
+        if (this.status == ResponseStatus.REJECTED) {
+            throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_REJECTED);
+        }
+        if (this.status != ResponseStatus.DRAFT
+                && this.status != ResponseStatus.CHANGES_REQUESTED) {
+            throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
+        }
+        if (this.status == ResponseStatus.CHANGES_REQUESTED) {
+            this.submissionSequence += 1;
+        }
         this.content = content;
         this.status = ResponseStatus.SUBMITTED;
         this.submittedAt = submittedAt;
@@ -193,27 +247,81 @@ public class FormResponseHistoryEntity {
     }
 
     /*
-     * 심사 결과 반영 (#37). 전이 규칙을 서비스가 아니라 여기에 두는 것은 FormEntity.changeStatus와
-     * 같은 이유다 — 상태를 바꾸는 경로가 늘어날 때 규칙이 호출부마다 복제되면 갈린다 (LY-02).
+     * 심사 결과 반영 (#37 · 전이표 개정 #141). 전이 규칙을 서비스가 아니라 여기에 두는 것은
+     * FormEntity.changeStatus와 같은 이유다 — 상태를 바꾸는 경로가 늘어날 때 규칙이 호출부마다
+     * 복제되면 갈린다 (LY-02).
      *
-     * 규칙은 "DRAFT가 얽히면 안 된다" 하나다. SUBMITTED·ACCEPTED·REJECTED 사이는 전부 열어 둔다
-     * (심사 번복이 실제 운영에서 일어난다). 같은 상태로의 재지정도 막지 않는다 — 웹의 상태 변경
-     * 시트는 현재 값을 고른 채로도 저장을 누를 수 있고, 그 요청은 아무것도 바꾸지 않을 뿐 잘못된
-     * 요청이 아니다. 폼 상태(OPEN → OPEN을 막는다)와 갈리는 것은 그쪽이 '접수를 연다'는 사건인
-     * 반면 이쪽은 '심사 결과'라는 값이기 때문이다.
+     *   현재 \ 대상        | SUBMITTED | CHANGES_REQUESTED | ACCEPTED | REJECTED
+     *   SUBMITTED         | ✕(같은 값) | →                 | →        | →
+     *   CHANGES_REQUESTED | ✕(재제출만) | ✕(같은 값)         | →        | →
+     *   ACCEPTED          | ✕         | ✕                 | ✕        | ✕
+     *   REJECTED          | ✕         | ✕                 | ✕        | ✕
+     *   DRAFT가 얽히는 모든 칸 ✕
      *
-     * DRAFT → SUBMITTED가 여기서도 막히는 것이 요점이다. 제출은 응답자만 할 수 있는 일이며
-     * 그 자리는 submit() 하나뿐이다 — 운영자가 상태만 SUBMITTED로 올려 두면 응답자가 낸 적 없는
-     * 응답에 sbmsn_dt가 NULL인 채로 심사가 시작된다.
+     * ── 심사 번복을 없앴다 (#141) ────────────────────────────
+     * #37에서는 SUBMITTED·ACCEPTED·REJECTED 사이가 전부 열려 있었다. 닫은 이유는 **승인 직후
+     * 후속 처리가 시작되기 때문**이다 — 기획안이 승인되면 활동이 개설되고 역할이 부여된다.
+     * 그 뒤에 승인을 반려로 되돌리면 이미 만들어진 것들을 되돌릴 방법이 없고, 회차가 하나라도
+     * 기록된 뒤에는 응답 자체도 되돌릴 수 없다. 종결을 '응답자가 다시 낼 수 없다'로만 좁혀 두면
+     * 검토자 쪽에 그 구멍이 그대로 남는다.
      *
-     * **누가 이 변경을 했는지는 남지 않는다.** 데이터사전에 응답 상태 이력 테이블이 없어
-     * mdfcn_dt만 갱신되며, 수행자 기록은 감사 로그(#8)가 확정되면 그쪽에 얹는다. 이 이슈에서
-     * 이력 테이블을 새로 만들지 않기로 한 결정이다 (폼 상태 전이 #33과 같다).
+     * 오조작의 탈출구는 번복이 아니라 **새 응답**이다 — 다중 응답을 허용하는 폼에서는 응답자가
+     * 다시 낼 수 있고, 그렇지 않은 폼에서는 운영자가 데이터를 직접 고쳐야 하는 예외 상황이다.
+     * 아직 끝나지 않은 심사(SUBMITTED · CHANGES_REQUESTED)에서는 결론을 자유롭게 고를 수
+     * 있으므로, 되돌릴 수 없게 되는 것은 결론을 낸 뒤부터다.
+     *
+     * ── 같은 상태로의 재지정도 막는다 ──────────────────────────
+     * #37에서는 "아무것도 바꾸지 않을 뿐 잘못된 요청은 아니다"라며 통과시켰고, 폼 상태(OPEN →
+     * OPEN을 막는다)와 갈리는 근거는 그쪽이 '사건'이고 이쪽은 '값'이라는 것이었다. 이력이 생긴
+     * 지금 그 대비는 성립하지 않는다 — 검토도 처리 이력 한 줄을 남기는 '사건'이 됐고, 통과시키면
+     * 아무것도 바꾸지 않은 처리가 타임라인에 쌓여 실제 심사 시점을 못 찾게 된다 (등급·상태 변경의
+     * NO_CHANGE #78과 같은 이유).
+     *
+     * ── SUBMITTED로 가는 길은 재제출뿐이다 ───────────────────
+     * DRAFT → SUBMITTED가 막히는 것과 같은 이유가 CHANGES_REQUESTED → SUBMITTED에도 걸린다.
+     * 제출은 응답자만 할 수 있는 일이며 그 자리는 submit() 하나다 — 검토자가 상태만 되돌려
+     * 놓으면 응답 내용은 그대로인데 회차만 오르지 않은 '새 제출'이 생긴다.
+     *
+     * **누가 이 변경을 했는지는 review()가 남긴다** (#141). 이 메서드는 여전히 전이만 판정하며
+     * 수행자를 모른다 — 상태만 바꾸는 경로(예: 테스트 표본 준비)가 남아 있고, 그 경로까지
+     * 이력을 강제하면 이력 없는 전이를 만들 수 없게 되는 대신 이력의 뜻이 흐려진다. 대신
+     * 운영 경로에서 상태를 바꾸는 유일한 입구는 review()이고, 그쪽이 이력 기록과 한 몸이다.
      */
     public void changeStatus(ResponseStatus next) {
         if (this.status == ResponseStatus.DRAFT || next == ResponseStatus.DRAFT) {
             throw new GeneralException(FormErrorCode.INVALID_RESPONSE_STATUS_TRANSITION);
         }
+        if (this.status == ResponseStatus.ACCEPTED || this.status == ResponseStatus.REJECTED) {
+            throw new GeneralException(FormErrorCode.INVALID_RESPONSE_STATUS_TRANSITION);
+        }
+        if (next == ResponseStatus.SUBMITTED || this.status == next) {
+            throw new GeneralException(FormErrorCode.INVALID_RESPONSE_STATUS_TRANSITION);
+        }
         this.status = next;
+    }
+
+    /*
+     * 검토 처리 (#141 · POST /v1/forms/{formId}/responses/{formRspnsId}/reviews).
+     *
+     * 목표 상태를 처리 구분으로 옮기고 전이를 적용한 뒤, 이력 행이 적을 처리 구분을 돌려준다.
+     * 서비스가 아니라 여기서 옮기는 것은 두 판정이 한 번에 성립해야 하기 때문이다 — "검토로
+     * 도달할 수 있는 상태인가"와 "그 전이가 허용되는가"를 나눠 두면 한쪽만 통과한 요청이
+     * 상태는 바꾸고 이력은 남기지 못하는 자리를 만든다.
+     *
+     * SUBMITTED로 되돌리는 요청은 두 겹으로 끊긴다 — 처리 구분에 검토자가 쓸 SUBMIT이 없고
+     * (ResponseReviewAction), 전이표에도 그 칸이 없다(changeStatus). 같은 결론을 두 곳이 갖는
+     * 것은 묻는 것이 다르기 때문이다: 앞은 "이력에 뭐라고 적을 것인가"이고 뒤는 "이 응답이
+     * 그리로 갈 수 있는가"다. 어느 한쪽만 있어도 막히지만, 둘 중 하나를 지우면 다른 하나가
+     * 왜 그 자리에 있는지 알 수 없어진다.
+     */
+    public ResponseReviewAction review(ResponseStatus targetStatus) {
+        ResponseReviewAction action =
+                ResponseReviewAction.reviewTargetOf(targetStatus)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                FormErrorCode.INVALID_RESPONSE_STATUS_TRANSITION));
+        changeStatus(action.resultStatus());
+        return action;
     }
 }

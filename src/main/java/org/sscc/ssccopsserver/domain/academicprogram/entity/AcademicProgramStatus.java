@@ -15,5 +15,17 @@ package org.sscc.ssccopsserver.domain.academicprogram.entity;
 public enum AcademicProgramStatus {
     APPROVED,
     ONGOING,
-    COMPLETED
+    COMPLETED;
+
+    /*
+     * 모집이 시작된 적이 있는가 (#138 · 신청자 조회·선발의 전제).
+     *
+     * "ONGOING 이후인가"이지 "지금 모집 중인가"가 아니다 — 끝난 활동(COMPLETED)의 신청 명부도
+     * 지나간 사실이라 조회를 막을 이유가 없고, 지금 응답을 받을 수 있는지는 폼의 접수 판정
+     * (FormReceiptPolicy)이 이미 답한다. 판단을 여기 두는 것은 SessionStatus.allowsRecording과
+     * 같은 자리다 — 어떤 상태가 무엇을 허용하는지는 어휘를 가진 쪽이 안다.
+     */
+    public boolean hasStartedRecruitment() {
+        return this != APPROVED;
+    }
 }

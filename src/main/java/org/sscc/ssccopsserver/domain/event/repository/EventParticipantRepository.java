@@ -2,13 +2,16 @@ package org.sscc.ssccopsserver.domain.event.repository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 public interface EventParticipantRepository extends JpaRepository<EventParticipantEntity, Long> {
 
@@ -34,4 +37,40 @@ public interface EventParticipantRepository extends JpaRepository<EventParticipa
     List<EventParticipantCount> countByEventIds(
             @Param("eventIds") Collection<Long> eventIds,
             @Param("status") EventParticipantStatus status);
+
+    /*
+     * 명단 조회 (ssccops#146 · GET /v1/events/{eventId}/participants). 상태 필터는 집합으로
+     * 받아 "전체"를 전체 상태로 표현한다 — 열거형 파라미터에 NULL을 넣고 :status is null로
+     * 분기하면 Hibernate가 타입을 추론하지 못한다 (EventRepository·FormRepository 선례).
+     *
+     * 회원 정보는 명단 행에 복사하지 않고 mbr에서 조인한다(ResponseMemberSummary와 같은 태도).
+     * 등급·상태까지 DTO가 쓰므로 @EntityGraph로 함께 끌어온다 — 없으면 명단 한 줄마다 조회가
+     * 세 번씩 더 나간다 (DB-13). 신청 근거(formResponse)는 식별자만 쓰지만 LAZY 프록시에서
+     * 꺼내도 조회가 나가므로 함께 페치한다.
+     *
+     * 정렬은 등록 순번(식별자 오름차순)이다. 대기 순번은 신청자에게 비공개지만(D5) 운영
+     * 화면에는 신청 순서가 참고용으로 보여야 하고, 그 순서가 요청마다 흔들리면 참고가 되지 않는다.
+     */
+    @EntityGraph(
+            attributePaths = {
+                "member",
+                "member.membershipGrade",
+                "member.membershipStatus",
+                "formResponse"
+            })
+    List<EventParticipantEntity> findAllByEventAndStatusInOrderByIdAsc(
+            EventEntity event, Collection<EventParticipantStatus> statuses);
+
+    /*
+     * 행사 범위 검사 (ssccops#146). 참가자 식별자만으로 찾으면
+     * /v1/events/1/participants/999가 다른 행사의 명단을 고친다 — 폼 응답의 findByIdAndForm과
+     * 같은 자리이며, 없는 참가자와 남의 행사 참가자는 같은 404다.
+     */
+    Optional<EventParticipantEntity> findByIdAndEvent(Long id, EventEntity event);
+
+    /** 중복 등록 선조회. UNIQUE(uk_event_ptcp_event_member)가 최종 방어선이다 */
+    boolean existsByEventAndMember(EventEntity event, MemberEntity member);
+
+    /** 정원 경고용 확정 인원. 목록 집계(countByEventIds)와 달리 행사 한 건만 본다 */
+    long countByEventAndStatus(EventEntity event, EventParticipantStatus status);
 }

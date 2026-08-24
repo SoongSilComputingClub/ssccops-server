@@ -71,6 +71,77 @@ public enum EventErrorCode implements ErrorCode {
             HttpStatus.CONFLICT, "EVENT_CLASSIFICATION_CODE_DUPLICATED", "이미 등록된 행사 분류 코드입니다."),
 
     /*
+     * 409 — 폼이 연결되지 않은 행사의 신청 목록을 열려 할 때 (ssccops#146 · D11).
+     *
+     * 빈 목록을 돌려주지 않는 이유는 두 상태가 운영자에게 전혀 다른 일을 시키기 때문이다 —
+     * 빈 배열은 "아직 아무도 신청하지 않았다"로 읽히지만 실제로는 신청을 받을 수단 자체가
+     * 없는 상태이고, 해야 할 일은 기다리는 것이 아니라 폼을 연결하는 것이다.
+     */
+    EVENT_HAS_NO_FORM(HttpStatus.CONFLICT, "EVENT_HAS_NO_FORM", "폼이 연결되지 않은 행사입니다."),
+
+    /*
+     * 404 — 없는 참가자와 **다른 행사의 참가자 식별자**. 코드를 나누지 않는 것은 폼 응답의
+     * 범위 검사(FORM_RESPONSE_NOT_FOUND)와 같은 판단이다 — 나누면 그 행사에 그 번호가 있는지가
+     * 새어 나간다.
+     */
+    EVENT_PARTICIPANT_NOT_FOUND(
+            HttpStatus.NOT_FOUND, "EVENT_PARTICIPANT_NOT_FOUND", "행사 참가자를 찾을 수 없습니다."),
+
+    /*
+     * 409 — 같은 회원을 같은 행사에 두 번 등록하려 할 때 (uk_event_ptcp_event_member).
+     *
+     * 선조회로 대부분 걸리지만 두 운영자가 같은 사람을 동시에 올리면 둘 다 통과하므로 UNIQUE
+     * 위반도 같은 코드로 옮긴다 (#21 학번 중복 · FORM_ALREADY_LINKED와 같은 방식).
+     */
+    EVENT_PARTICIPANT_DUPLICATED(
+            HttpStatus.CONFLICT, "EVENT_PARTICIPANT_DUPLICATED", "이미 이 행사에 등록된 회원입니다."),
+
+    /*
+     * 400 — 등록 요청의 근거가 둘 다 오거나 둘 다 없을 때 (formRspnsId · mbrId 상호 배타).
+     *
+     * 한쪽을 조용히 우선하지 않는 것은 그 선택이 form_rspns_id를 남길지 말지를 가르기 때문이다 —
+     * 신청 근거는 나중에 "이 사람이 왜 명단에 있는가"를 답하는 유일한 값이라 추측으로 정할 수 없다.
+     */
+    INVALID_PARTICIPANT_SOURCE(
+            HttpStatus.BAD_REQUEST,
+            "INVALID_PARTICIPANT_SOURCE",
+            "참가자 등록 근거는 응답 또는 회원 중 하나여야 합니다."),
+
+    /*
+     * 400 — 등록 상태로 CONFIRMED·WAITLISTED가 아닌 값이 왔을 때 (지금은 CANCELLED뿐이다).
+     *
+     * 취소는 등록의 결과가 아니라 확정된 참가자에게 일어나는 일이다 — 취소 상태로 시작하는
+     * 행을 허용하면 "참가자였던 적이 없는 취소자"가 명단에 쌓인다.
+     */
+    INVALID_PARTICIPANT_REGISTRATION_STATUS(
+            HttpStatus.BAD_REQUEST,
+            "INVALID_PARTICIPANT_REGISTRATION_STATUS",
+            "확정 또는 대기 상태로만 등록할 수 있습니다."),
+
+    /*
+     * 400 — 전이표(EventParticipantEntity.changeStatus)에 없는 참가 상태 전이 (D14).
+     *
+     * 허용하는 것은 WAITLISTED→CONFIRMED(승격)와 CONFIRMED→CANCELLED(취소) 둘뿐이다. 400인
+     * 것은 폼·행사 상태 전이와 같은 판단이다 — 웹은 현재 상태를 이미 들고 있어 보낼 수 있는
+     * 값이 정해진다.
+     */
+    INVALID_PARTICIPANT_STATUS_TRANSITION(
+            HttpStatus.BAD_REQUEST,
+            "INVALID_PARTICIPANT_STATUS_TRANSITION",
+            "허용되지 않는 참가 상태 전이입니다."),
+
+    /*
+     * 409 — 아직 수락되지 않은 응답을 근거로 참가자를 등록하려 할 때 (D5).
+     *
+     * 심사와 등록은 나뉜 두 사건이며 순서가 있다 — 수락되지 않은 응답으로 명단에 올리면 폼
+     * 응답의 심사 결과와 참가자 명단이 서로 다른 사실을 말하게 되고, 그 뒤에 반려가 나면
+     * 명단에는 반려된 사람이 남는다. 400이 아니라 409인 것은 요청 형식이 아니라 대상의
+     * 현재 상태가 문제라서다 (심사를 먼저 하면 같은 요청이 통과한다).
+     */
+    APPLICATION_NOT_ACCEPTED(
+            HttpStatus.CONFLICT, "APPLICATION_NOT_ACCEPTED", "수락된 신청만 참가자로 등록할 수 있습니다."),
+
+    /*
      * 413 — 본문(mtxt_cn)이 상한(10만 자)을 넘겼을 때.
      *
      * mtxt_cn은 TEXT라 DB가 제한하지 않는다. 상한이 없으면 붙여넣기 한 번으로 수 MB짜리 행이

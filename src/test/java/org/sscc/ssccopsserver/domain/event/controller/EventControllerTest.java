@@ -695,12 +695,27 @@ class EventControllerTest {
         saveParticipant(eventId, studentNumber, EventParticipantStatus.CONFIRMED);
     }
 
+    /*
+     * 등록 팩토리는 취소 상태를 받지 않으므로(ssccops#146 — 취소는 확정된 참가자에게 일어나는
+     * 일이다) 취소 표본은 확정으로 만든 뒤 전이시킨다. 테스트를 위해 규칙에 예외를 두지 않는다.
+     */
     private void saveParticipant(
             Long eventId, String studentNumber, EventParticipantStatus status) {
         EventEntity event = eventRepository.findById(eventId).orElseThrow();
-        MemberEntity participant = saveMember(UUID.randomUUID(), studentNumber, "참가자");
-        eventParticipantRepository.saveAndFlush(
-                EventParticipantEntity.register(event, participant, status, null, manager));
+        MemberEntity member = saveMember(UUID.randomUUID(), studentNumber, "참가자");
+        boolean cancel = status == EventParticipantStatus.CANCELLED;
+        EventParticipantEntity participant =
+                EventParticipantEntity.register(
+                        event,
+                        member,
+                        cancel ? EventParticipantStatus.CONFIRMED : status,
+                        null,
+                        manager);
+        eventParticipantRepository.saveAndFlush(participant);
+        if (cancel) {
+            participant.changeStatus(EventParticipantStatus.CANCELLED);
+            eventParticipantRepository.flush();
+        }
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

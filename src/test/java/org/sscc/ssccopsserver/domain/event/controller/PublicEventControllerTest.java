@@ -276,10 +276,25 @@ class PublicEventControllerTest {
                 FormEntity.create(creator, "신청 폼", composition, null, null, FormStatus.OPEN));
     }
 
+    /*
+     * 등록 팩토리는 취소 상태를 받지 않으므로(ssccops#146 — 취소는 확정된 참가자에게 일어나는
+     * 일이다) 취소 표본은 확정으로 만든 뒤 전이시킨다. 테스트를 위해 규칙에 예외를 두지 않는다.
+     */
     private void saveParticipant(Long eventId, EventParticipantStatus status) {
         EventEntity event = eventRepository.findById(eventId).orElseThrow();
-        eventParticipantRepository.saveAndFlush(
-                EventParticipantEntity.register(event, saveMember("참가자"), status, null, creator));
+        boolean cancel = status == EventParticipantStatus.CANCELLED;
+        EventParticipantEntity participant =
+                EventParticipantEntity.register(
+                        event,
+                        saveMember("참가자"),
+                        cancel ? EventParticipantStatus.CONFIRMED : status,
+                        null,
+                        creator);
+        eventParticipantRepository.saveAndFlush(participant);
+        if (cancel) {
+            participant.changeStatus(EventParticipantStatus.CANCELLED);
+            eventParticipantRepository.flush();
+        }
     }
 
     private MemberEntity saveMember(String name) {

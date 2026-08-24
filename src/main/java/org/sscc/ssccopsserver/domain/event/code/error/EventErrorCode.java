@@ -148,7 +148,24 @@ public enum EventErrorCode implements ErrorCode {
      * 생기고 목록·상세 조회가 읽을 때마다 따라온다 (폼 RESPONSE_CONTENT_TOO_LARGE와 같은 판단).
      */
     EVENT_CONTENT_TOO_LARGE(
-            HttpStatus.PAYLOAD_TOO_LARGE, "EVENT_CONTENT_TOO_LARGE", "행사 본문이 너무 큽니다.");
+            HttpStatus.PAYLOAD_TOO_LARGE, "EVENT_CONTENT_TOO_LARGE", "행사 본문이 너무 큽니다."),
+
+    /*
+     * 400 — 허용 목록에 없는 이미지 형식이거나 contentType과 확장자가 서로 어긋날 때 (#161 · D6).
+     *
+     * 두 경우를 한 코드로 묶는 것은 운영자가 할 일이 같기 때문이다("허용되는 형식의 파일을
+     * 고르라"). 허용 목록은 EventImageType이 갖는다.
+     */
+    UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다."),
+
+    /*
+     * 413 — 업로드하려는 이미지가 상한(10MB)을 넘겼을 때 (#161).
+     *
+     * 서버가 바이트를 보지 않으므로(D6) 이 판정의 근거는 **요청이 신고한 크기**다 — 실제 강제는
+     * 버킷/도메인 정책의 몫이고, 여기서 끊는 것은 화면이 업로드를 시작하기 전에 안내하기
+     * 위해서다. 본문 상한(EVENT_CONTENT_TOO_LARGE)과 같은 413이지만 대상이 다르다.
+     */
+    IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "IMAGE_TOO_LARGE", "이미지가 너무 큽니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

@@ -20,6 +20,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
@@ -69,7 +70,31 @@ public class FormResponseServiceImpl implements FormResponseService {
     @Override
     public PublicFormResponse getPublicForm(Long formId, MemberEntity respondent) {
         FormEntity form = findAcceptingForm(formId);
-        return PublicFormResponse.of(form, findSubmitted(form, respondent).orElse(null));
+        return PublicFormResponse.of(form, findSubmittedResponses(form, respondent));
+    }
+
+    /*
+     * 내 응답 목록 (#143 · GET /v1/forms/{formId}/responses/mine).
+     *
+     * **접수 가능 여부를 보지 않는다.** 자동 저장 조회(findMyDraft)와 갈리는 지점이며 근거는 이
+     * 조회가 쓰기와 짝을 이루지 않는다는 것이다 — 저쪽은 "복원은 되는데 제출은 안 되는 화면"을
+     * 막으려고 같은 판정을 태웠지만, 여기서 409를 내면 접수가 끝난 순간 응답자가 자기가 낸 것을
+     * 확인할 길이 사라진다. 아직 열지 않은(DRAFT) 폼이라도 새어 나갈 것이 없다 — 응답자 본인의
+     * 행만 돌려주는데 응답을 낼 수 없었던 폼에는 그 행이 존재하지 않아 언제나 빈 배열이다.
+     *
+     * 초안(DRAFT)도 함께 싣는다. 운영자용 목록이 DRAFT를 빼는 것과 기준이 갈리는데, 그쪽은 "남의
+     * 제출 전 답안이 심사 목록에 섞이지 않게" 하는 규칙이고 이쪽은 내 것이라 숨길 이유가 없다 —
+     * 오히려 빼면 쓰다 만 응답이 화면에서 사라져 이어 쓸 방법이 없어진다.
+     */
+    @Override
+    public List<MyFormResponseSummaryResponse> getMyResponses(
+            Long formId, MemberEntity respondent) {
+        FormEntity form = findForm(formId);
+        return formResponseHistoryRepository
+                .findAllByFormAndMemberOrderByResponseSequenceAsc(form, respondent)
+                .stream()
+                .map(MyFormResponseSummaryResponse::from)
+                .toList();
     }
 
     /*
@@ -94,32 +119,102 @@ public class FormResponseServiceImpl implements FormResponseService {
 
         Instant submittedAt = clock.instant();
 
+        List<FormResponseHistoryEntity> myResponses =
+                formResponseHistoryRepository.findAllByFormAndMemberOrderByResponseSequenceAsc(
+                        form, respondent);
+
         /*
-         * 이미 행이 있으면 그 행을 제출로 바꾼다. (form_id, mbr_id) UNIQUE 때문에 새 행을 만들
-         * 수도 없으므로, 이 분기가 없으면 자동 저장(#36)을 쓴 응답자는 영영 제출할 수 없다.
+         * 이어 쓸 응답이 있으면 새 행을 만들지 않고 그 행을 제출로 바꾼다.
          *
-         * **지금 낼 수 있는 상태인가는 여기서 따지지 않는다** (#141). 임시저장의 최초 제출과
-         * 수정요청 응답의 재제출은 되고 그 밖은 409인데, 그 판정을 서비스에 두면 상태 어휘가
-         * 늘 때마다 규칙이 복제된다 — 엔티티의 submit()이 상태를 보고 끊고 회차도 거기서 오른다
-         * (LY-02).
+         * 임시저장(#36)을 쓴 응답자에게 이 분기가 없으면 UNIQUE 때문에 새 행도 만들지 못해 영영
+         * 제출할 수 없고, 수정요청을 받은 응답(#141)은 애초에 그 행을 다시 내는 것이 재제출이다.
+         *
+         * **지금 낼 수 있는 상태인가는 여기서 따지지 않는다** (#141). 그 판정을 서비스에 두면 상태
+         * 어휘가 늘 때마다 규칙이 복제된다 — 엔티티의 submit()이 상태를 보고 끊고 제출 회차도
+         * 거기서 오른다 (LY-02).
          */
-        Optional<FormResponseHistoryEntity> existing =
-                formResponseHistoryRepository.findByFormAndMember(form, respondent);
-        if (existing.isPresent()) {
-            FormResponseHistoryEntity response = existing.get();
+        Optional<FormResponseHistoryEntity> continuing = findContinuableResponse(myResponses);
+        if (continuing.isPresent()) {
+            FormResponseHistoryEntity response = continuing.get();
             response.submit(content, submittedAt);
             recordSubmission(response, respondent, submittedAt);
             formResponseHistoryRepository.flush();
             return FormResponseSubmitResponse.from(response);
         }
 
+        /*
+         * 이어 쓸 응답이 없는데 낸 응답은 있다 — 단일 응답 폼이면 여기서 끝이다 (#143).
+         *
+         * 서비스가 409를 직접 던지지 않고 남아 있는 행의 submit()을 부르는 것은 **어느 코드로
+         * 끊을지가 상태마다 다르기 때문**이다: 심사 중·승인은 RESPONSE_ALREADY_SUBMITTED이고
+         * 반려는 RESPONSE_ALREADY_REJECTED다(#141). 그 표를 서비스에 옮겨 적으면 상태 어휘가
+         * 늘 때마다 두 벌이 되고, 실제로 #141이 코드를 나눈 이유(응답자가 할 수 있는 일이 다르다)가
+         * 한쪽에서만 지켜진다. 이 호출은 반드시 예외로 끝난다 — 남아 있는 상태가 SUBMITTED ·
+         * ACCEPTED · REJECTED뿐이기 때문이다.
+         *
+         * 다중 응답 폼은 이 분기를 지나가 새 응답이 된다. 반려된 응답만 남아 있어도 마찬가지이며,
+         * 그것이 #141이 말한 "오조작의 탈출구는 번복이 아니라 새 응답"의 실제 경로다.
+         */
+        if (!myResponses.isEmpty() && !form.isMultipleResponseAllowed()) {
+            myResponses.get(myResponses.size() - 1).submit(content, submittedAt);
+        }
+
         FormResponseHistoryEntity response =
                 saveOrTranslateConflict(
                         FormResponseHistoryEntity.createSubmitted(
-                                form, respondent, content, submittedAt),
+                                form,
+                                respondent,
+                                content,
+                                submittedAt,
+                                nextResponseSequence(form, respondent)),
                         FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
         recordSubmission(response, respondent, submittedAt);
         return FormResponseSubmitResponse.from(response);
+    }
+
+    /*
+     * 이 제출이 이어 쓸 응답 (#143). 없으면 새 응답을 만들 차례다.
+     *
+     * 고르는 순서가 규칙이다. 초안(DRAFT)이 있으면 언제나 그 행이며 — 초안은 폼 종류와 무관하게
+     * 최대 1건이라 고를 것도 없다 — 초안이 없고 수정요청을 받은 응답이 있으면 그것을 마무리하는
+     * 것이 새 응답을 시작하는 것보다 먼저다. 다중 응답 폼에서 두 뜻이 겹치는 순간이 실제로
+     * 생기는데(수정요청을 받아 두고 새 제안을 내려는 경우), 재제출을 우선하지 않으면 응답자는
+     * 수정요청받은 응답을 영영 마무리할 수 없다 — 제출 경로에 응답 식별자가 없어 지목할 방법이
+     * 없기 때문이다. 반대 선택(새 응답 우선)은 되돌릴 길이 없고, 이쪽은 그 응답을 낸 다음에 또
+     * 내면 된다.
+     *
+     * 수정요청이 여럿이면 순번이 가장 큰 것이다. 목록이 순번 오름차순이라 마지막 원소다.
+     *
+     * **응답 식별자를 받는 재제출 전용 경로(POST .../responses/{id}/resubmit)는 열지 않았다.**
+     * 응답자 화면이 아직 수정요청 사유를 읽는 길조차 갖고 있지 않아(#141) 그 경로가 무엇을 받고
+     * 무엇을 보여줄지가 화면 설계와 함께 정해져야 한다 — 지금 열면 쓰는 곳 없는 계약이 먼저 굳는다.
+     */
+    private static Optional<FormResponseHistoryEntity> findContinuableResponse(
+            List<FormResponseHistoryEntity> myResponses) {
+
+        Optional<FormResponseHistoryEntity> draft =
+                myResponses.stream()
+                        .filter(response -> response.getStatus() == ResponseStatus.DRAFT)
+                        .findFirst();
+        if (draft.isPresent()) {
+            return draft;
+        }
+        return myResponses.stream()
+                .filter(response -> response.getStatus() == ResponseStatus.CHANGES_REQUESTED)
+                .reduce((earlier, later) -> later);
+    }
+
+    /*
+     * 새 응답이 쓸 순번 (#143). **응답 순번(rspns_seq)이지 제출 회차(sbmsn_seq)가 아니다** —
+     * 여기서 오르는 것은 "이 회원의 몇 번째 응답인가"이고, 같은 행을 다시 내는 회차는 엔티티의
+     * submit()이 올린다.
+     *
+     * 지금 있는 행 수를 세지 않고 마지막 순번을 묻는 것은, 응답이 지워진 적이 있으면 이미 쓴
+     * 번호를 다시 배정하게 되기 때문이다. 버려진 초안이 번호를 먹어 구멍이 나는 것은 무방하다 —
+     * 표시용 번호가 아니라 UNIQUE를 성립시키는 식별자다.
+     */
+    private int nextResponseSequence(FormEntity form, MemberEntity respondent) {
+        return formResponseHistoryRepository.findLastResponseSequence(form, respondent) + 1;
     }
 
     /*
@@ -140,9 +235,21 @@ public class FormResponseServiceImpl implements FormResponseService {
 
         FormEntity form = findAcceptingForm(formId);
 
+        /*
+         * 초안은 폼 종류와 무관하게 언제나 최대 1건이다 (#143). 있으면 그 행을 갱신하고, 없을
+         * 때만 새로 만들 수 있는지 따진다 — 이 순서가 곧 애플리케이션 쪽 '초안 1건' 판정이다.
+         *
+         * DB의 부분 유니크 인덱스(uk_form_rspns_hstry_one_draft)와 두 겹인 것은 각자 막는 것이
+         * 다르기 때문이다. 인덱스는 동시 요청을 막고(선조회는 둘 다 "없다"를 본다), 이 판정은
+         * H2에서도 규칙이 지켜지게 한다 — H2는 부분 인덱스를 지원하지 않아 테스트가 인덱스로는
+         * 아무것도 확인할 수 없다.
+         */
         Optional<FormResponseHistoryEntity> existing =
-                formResponseHistoryRepository.findByFormAndMember(form, respondent);
-        existing.ifPresent(FormResponseServiceImpl::requireStillDraft);
+                formResponseHistoryRepository.findByFormAndMemberAndStatus(
+                        form, respondent, ResponseStatus.DRAFT);
+        if (existing.isEmpty()) {
+            requireNewDraftAllowed(form, respondent);
+        }
 
         /*
          * 자동 저장 전용 검증. 필수·정규식·최대 선택 수·선택지 실재 여부는 보지 않고, 폼에 없는
@@ -158,7 +265,10 @@ public class FormResponseServiceImpl implements FormResponseService {
                                 () ->
                                         saveOrTranslateConflict(
                                                 FormResponseHistoryEntity.createDraft(
-                                                        form, respondent, content),
+                                                        form,
+                                                        respondent,
+                                                        content,
+                                                        nextResponseSequence(form, respondent)),
                                                 FormErrorCode.RESPONSE_SAVE_CONFLICT));
 
         return FormResponseDraftResponse.from(draft);
@@ -179,8 +289,7 @@ public class FormResponseServiceImpl implements FormResponseService {
     public Optional<FormResponseDraftResponse> findMyDraft(Long formId, MemberEntity respondent) {
         FormEntity form = findAcceptingForm(formId);
         return formResponseHistoryRepository
-                .findByFormAndMember(form, respondent)
-                .filter(response -> response.getStatus() == ResponseStatus.DRAFT)
+                .findByFormAndMemberAndStatus(form, respondent, ResponseStatus.DRAFT)
                 .map(FormResponseDraftResponse::from);
     }
 
@@ -328,11 +437,21 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
-     * 이미 낸 응답은 자동 저장으로 덮어쓸 수 없다. 제출 뒤에도 저장이 통하면 운영진이 심사한
-     * 내용과 응답자가 들고 있는 화면이 소리 없이 갈라진다 — 수정 제출은 별도로 정할 규칙이다(#37).
+     * 새 초안을 시작할 수 있는가 (#143). 초안이 없는 상태에서만 부른다.
+     *
+     * 단일 응답 폼에서 이미 낸 응답이 있으면 거절한다 — 제출 뒤에도 저장이 통하면 운영진이 심사한
+     * 내용과 응답자가 들고 있는 화면이 소리 없이 갈라진다(#36의 판단이며 그대로 유지한다).
+     * 다중 응답 폼에서는 그 응답이 새 응답을 막을 이유가 없으므로 통과시킨다 — 초안 자리는
+     * 제출로 비워졌고, 새 초안은 다음 순번을 받는다.
+     *
+     * 남아 있는 행의 상태를 따지지 않고 존재만 보는 것은, 초안이 없다는 것이 이미 확인된 뒤라
+     * 남은 것은 정의상 제출 이상뿐이기 때문이다.
      */
-    private static void requireStillDraft(FormResponseHistoryEntity response) {
-        if (response.getStatus() != ResponseStatus.DRAFT) {
+    private void requireNewDraftAllowed(FormEntity form, MemberEntity respondent) {
+        if (form.isMultipleResponseAllowed()) {
+            return;
+        }
+        if (formResponseHistoryRepository.existsByFormAndMember(form, respondent)) {
             throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
         }
     }
@@ -367,20 +486,31 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
-     * 이 회원이 이 폼에 이미 제출했는가. 임시저장(DRAFT) 행은 아직 낸 것이 아니라 제외한다 —
-     * 포함하면 자동 저장(#36)이 한 번 돌기만 해도 웹이 작성 화면 대신 제출 내역 화면을 띄운다.
+     * 이 회원이 이 폼에 낸 응답들 (#143 · 순번 오름차순). 임시저장(DRAFT) 행은 아직 낸 것이
+     * 아니라 제외한다 — 포함하면 자동 저장(#36)이 한 번 돌기만 해도 웹이 작성 화면 대신 제출
+     * 내역 화면을 띄운다.
+     *
+     * 기준 집합을 여기서 다시 나열하지 않고 ResponseStatus.submittedOrLater를 쓰는 것은 응답
+     * 집계·운영자 목록과 같은 어휘를 써야 하기 때문이다 (#37) — 두 벌이 되면 "낸 것으로 세는 상태"가
+     * 화면마다 갈린다. EnumSet을 루프 밖에서 한 번만 만드는 것은 그 팩토리가 호출마다 새 집합을
+     * 만들기 때문이다.
      */
-    private Optional<FormResponseHistoryEntity> findSubmitted(
+    private List<FormResponseHistoryEntity> findSubmittedResponses(
             FormEntity form, MemberEntity respondent) {
+        EnumSet<ResponseStatus> submitted = ResponseStatus.submittedOrLater();
         return formResponseHistoryRepository
-                .findByFormAndMember(form, respondent)
-                .filter(response -> response.getStatus() != ResponseStatus.DRAFT);
+                .findAllByFormAndMemberOrderByResponseSequenceAsc(form, respondent)
+                .stream()
+                .filter(response -> submitted.contains(response.getStatus()))
+                .toList();
     }
 
     /*
      * 선조회만으로는 같은 사람이 두 탭에서 동시에 누르는 경우를 막지 못한다 — 둘 다 조회를
-     * 통과한 뒤 하나가 (form_id, mbr_id) UNIQUE에 걸린다. 그 실패도 같은 409로 옮겨, 응답자가
-     * 보는 결과가 타이밍에 따라 500과 409를 오가지 않게 한다 (#21 학번 중복과 같은 방식).
+     * 통과한 뒤 하나가 (form_id, mbr_id, rspns_seq) UNIQUE에 걸린다. 두 요청이 같은 마지막
+     * 순번을 읽고 같은 다음 번호를 계산하므로 다중 응답 폼에서도 이 방어선은 그대로 선다 (#143).
+     * 그 실패도 같은 409로 옮겨, 응답자가 보는 결과가 타이밍에 따라 500과 409를 오가지 않게
+     * 한다 (#21 학번 중복과 같은 방식).
      *
      * 제약 위반은 flush 시점에야 드러나므로 saveAndFlush로 이 메서드 안에서 잡는다.
      *

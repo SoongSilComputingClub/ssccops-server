@@ -21,10 +21,16 @@ import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
  * 맞추므로 본문을 읽지 않지만, 응답 없는 200을 돌려주면 ApiResponse 봉투만 남아 무엇이 바뀌었는지
  * 확인할 방법이 사라진다.
  *
+ * rspnsSeq(응답 순번)는 #143에서 더했다. 다중 응답을 허용하는 폼에서는 같은 회원의 응답이 여러
+ * 행으로 나오는데, 목록에 그 값이 없으면 운영자는 이름이 같은 두 줄을 구별할 방법이 제출 일시밖에
+ * 없다. **제출 회차(sbmsnSeq)와 다른 값이다** — 이쪽은 몇 번째 응답인가이고 그쪽은 그 응답을 몇 번
+ * 냈는가라, 목록에는 앞의 것만 싣는다(회차는 상세가 이력과 함께 보여준다).
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormResponseSummaryResponse(
         Long formRspnsId,
+        int rspnsSeq,
         ResponseStatus rspnsSttsCd,
         OffsetDateTime sbmsnDt,
         ResponseMemberSummary member) {
@@ -34,6 +40,7 @@ public record FormResponseSummaryResponse(
     public static FormResponseSummaryResponse from(FormResponseHistoryEntity response) {
         return new FormResponseSummaryResponse(
                 response.getId(),
+                response.getResponseSequence(),
                 response.getStatus(),
                 toOffsetDateTime(response.getSubmittedAt()),
                 ResponseMemberSummary.from(response.getMember()));

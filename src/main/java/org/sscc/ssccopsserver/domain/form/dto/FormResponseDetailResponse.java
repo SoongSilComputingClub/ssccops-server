@@ -35,10 +35,15 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
  * sbmsnSeq(제출 회차)를 함께 내리는 것은 이력의 각 줄이 몇 회차에 대한 처리였는지 읽으려면
  * "지금 몇 회차인가"라는 기준점이 필요하기 때문이다.
  *
+ * rspnsSeq(응답 순번)는 #143에서 더했고 sbmsnSeq와 **다른 값이다** — 앞은 이 응답자의 몇 번째
+ * 응답인가(다중 응답 폼에서 늘어난다)이고, 뒤는 그 응답을 몇 번 냈는가(수정요청 뒤 재제출에서
+ * 늘어난다)다. 둘을 같은 값으로 읽으면 "2회차"가 두 번째 제안인지 첫 제안의 재제출인지 갈린다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormResponseDetailResponse(
         Long formRspnsId,
+        int rspnsSeq,
         ResponseStatus rspnsSttsCd,
         OffsetDateTime sbmsnDt,
         int sbmsnSeq,
@@ -57,6 +62,7 @@ public record FormResponseDetailResponse(
             Long nextId) {
         return new FormResponseDetailResponse(
                 response.getId(),
+                response.getResponseSequence(),
                 response.getStatus(),
                 toOffsetDateTime(response.getSubmittedAt()),
                 response.getSubmissionSequence(),

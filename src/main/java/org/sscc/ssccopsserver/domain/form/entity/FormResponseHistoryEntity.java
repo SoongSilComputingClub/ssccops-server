@@ -36,12 +36,23 @@ import lombok.NoArgsConstructor;
 /*
  * form_rspns_hstry(폼_응답_이력) — 한 회원이 한 폼에 낸 응답.
  *
- * '이력' 테이블이지만 제출할 때마다 행이 쌓이지 않는다. (form_id, mbr_id) UNIQUE로 한 회원당
- * 한 행을 유지하고 그 행의 내용·상태만 바뀐다. 이 제약은 응답 자동 저장(#36)이 성립하기 위한
- * 전제다 — 자동 저장은 "지금 작성 중인 그 응답"을 매번 같은 자리에서 찾아야 하는데, 행이
- * 여러 개일 수 있으면 어느 것이 최신인지 판정하는 규칙이 하나 더 필요해진다.
- * 공개 폼 응답 제출(#35)의 중복 제출 방지도 같은 제약에 얹힌다. 선조회만으로는 동시 제출을
- * 막지 못하므로 DB에 둔다.
+ * '이력' 테이블이지만 제출할 때마다 행이 쌓이지 않는다. 한 응답은 한 행이고 그 행의 내용·상태만
+ * 바뀐다(재제출도 같은 행이다, #141). 여러 건을 내는 것은 응답을 여러 개 만드는 일이지 한 응답을
+ * 여러 번 쌓는 일이 아니다.
+ *
+ * ── UNIQUE는 없애지 않고 옮겼다 (#143) ────────────────────────
+ * (form_id, mbr_id) → **(form_id, mbr_id, rspns_seq)**. 다중 응답을 허용하는 폼에서 한 사람이
+ * 스터디를 두 개 제안하는 흐름이 옛 제약에 막혔지만, 제약을 통째로 떼면 **동시 제출 방어선이
+ * 사라진다** — 선조회는 같은 사람이 두 탭에서 동시에 누르는 것을 막지 못하고(둘 다 "없다"를 본다),
+ * 그 경합은 실제로 자동 저장(#36)에서 이미 겪은 일이다. 단일 응답 폼은 서버가 rspns_seq를 1로
+ * 고정하므로 두 번째 제출이 여전히 DB에서 걸린다.
+ *
+ * **초안이 1건이라는 규칙은 이 제약이 지키지 못한다** — 조건부(WHERE rspns_stts_cd = 'DRAFT')라
+ * 평범한 UNIQUE로 표현되지 않는다. PostgreSQL의 부분 유니크 인덱스
+ * (uk_form_rspns_hstry_one_draft)로 걸되 H2(테스트)는 부분 인덱스를 지원하지 않으므로
+ * **애플리케이션이 함께 판정한다**(FormResponseServiceImpl.saveDraft — 초안이 있으면 새로 만들지
+ * 않고 그 행을 갱신한다). 둘 중 하나만 두지 않는 것은, 인덱스만 두면 테스트가 규칙을 검증할 수
+ * 없고 판정만 두면 동시 요청이 그대로 통과하기 때문이다.
  *
  * mbr_id는 NOT NULL이다 (ssccops #61). 공개 폼 접속자도 Google OAuth 로그인과 회원가입을
  * 먼저 거치므로 비회원 응답이 존재하지 않는다. 웹 타입(entities/response)의 @db-pending
@@ -56,6 +67,13 @@ import lombok.NoArgsConstructor;
  * form_rspns_rvw_hstry의 이력 행이 어느 제출에 대한 처리였는지 가리킬 수 있다 — 없으면
  * 타임라인은 "승인 → 수정요청 → 승인"처럼 처리만 나열될 뿐 그 사이에 응답 내용이 바뀌었다는
  * 사실이 사라진다.
+ *
+ * ── rspns_seq(응답 순번)와 sbmsn_seq(제출 회차)는 다른 값이다 ──
+ * **rspns_seq는 새 행이 생길 때 오르고 sbmsn_seq는 같은 행을 다시 낼 때 오른다.** 한 회원이
+ * 스터디를 두 개 제안하면 rspns_seq 1·2인 두 행이 생기고, 그중 하나가 수정요청을 받아 다시
+ * 제출되면 그 행의 sbmsn_seq만 2가 된다(rspns_seq는 그대로다). 두 값을 하나로 합칠 수 없는 것은
+ * 세는 대상이 '응답'과 '제출'로 다르기 때문이며, 합치면 "2회차 응답"이 두 번째 제안인지 첫 제안의
+ * 재제출인지 알 수 없어진다.
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
@@ -63,8 +81,8 @@ import lombok.NoArgsConstructor;
         name = "form_rspns_hstry",
         uniqueConstraints =
                 @UniqueConstraint(
-                        name = "uk_form_rspns_hstry_form_member",
-                        columnNames = {"form_id", "mbr_id"}))
+                        name = "uk_form_rspns_hstry_form_member_seq",
+                        columnNames = {"form_id", "mbr_id", "rspns_seq"}))
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -72,6 +90,9 @@ public class FormResponseHistoryEntity {
 
     /** 최초 제출 회차 (#141). 아직 내지 않은 DRAFT도 이 값에서 시작한다 */
     private static final int FIRST_SUBMISSION = 1;
+
+    /** 첫 응답의 순번 (#143). 단일 응답 폼은 이 값에서 움직이지 않는다 */
+    public static final int FIRST_RESPONSE = 1;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -139,6 +160,25 @@ public class FormResponseHistoryEntity {
     @Column(name = "sbmsn_seq", nullable = false, columnDefinition = "integer default 1")
     private int submissionSequence;
 
+    /*
+     * 응답 순번 (#143). **제출 회차(sbmsn_seq)와 다른 값이다** — 이쪽은 이 회원의 몇 번째 응답인가
+     * 이고, 그쪽은 이 응답을 몇 번째로 냈는가다. 클래스 주석의 표를 함께 읽을 것.
+     *
+     * **표시용 번호가 아니라 UNIQUE를 성립시키는 식별자다.** 그래서 초안을 만드는 시점에 배정하고,
+     * 쓰다 버린 초안이 번호를 먹어 1·3처럼 구멍이 나도 고치지 않는다 — 메우려면 응답을 지울 때마다
+     * 뒤 번호를 당겨야 하는데, 그 순간 이미 화면·이력이 가리키던 번호가 다른 응답을 가리키게 된다.
+     * 화면이 "2번째 제안"을 보여줘야 한다면 그것은 목록의 순서로 그릴 값이지 이 컬럼이 아니다.
+     *
+     * 제출 시점이 아니라 초안 시점에 배정하는 이유도 같다 — 행이 만들어지는 순간 UNIQUE 열쇠가
+     * 정해져 있어야 하고, 나중에 채우면 그 사이의 동시 요청이 아무 제약에도 걸리지 않는다.
+     *
+     * columnDefinition에 default를 적는 것은 sbmsn_seq와 같은 이유다(ddl-auto: update로 이미 행이
+     * 있는 dev·prod에 붙는 컬럼이다). 기존 행이 전부 1이 되는 것은 옛 제약이 회원당 1건을
+     * 강제했으므로 실제로 맞는 값이다.
+     */
+    @Column(name = "rspns_seq", nullable = false, columnDefinition = "integer default 1")
+    private int responseSequence;
+
     @CreatedDate
     @Column(name = "crt_dt", nullable = false, updatable = false)
     private Instant createdAt;
@@ -153,6 +193,19 @@ public class FormResponseHistoryEntity {
      */
     public static FormResponseHistoryEntity createDraft(
             FormEntity form, MemberEntity member, ResponseContent content) {
+        return createDraft(form, member, content, FIRST_RESPONSE);
+    }
+
+    /*
+     * 응답 순번을 지정해 만드는 임시저장 (#143). 다중 응답 폼에서 두 번째 이후의 응답을 시작할 때
+     * 쓰며, 순번은 서비스가 이 회원의 마지막 순번 다음으로 계산해 넘긴다.
+     *
+     * 순번을 엔티티가 스스로 세지 않는 것은 세려면 리포지토리가 필요하기 때문이다 — 엔티티가
+     * 조회를 하게 두면 "저장되지 않은 엔티티가 DB를 읽는" 자리가 생기고, 그 값은 트랜잭션 밖에서
+     * 만들어진 엔티티에서 조용히 틀린다.
+     */
+    public static FormResponseHistoryEntity createDraft(
+            FormEntity form, MemberEntity member, ResponseContent content, int responseSequence) {
         return new FormResponseHistoryEntity(
                 null,
                 form,
@@ -162,6 +215,7 @@ public class FormResponseHistoryEntity {
                 null,
                 form.getQuestionVersion(),
                 FIRST_SUBMISSION,
+                responseSequence,
                 null,
                 null);
     }
@@ -172,6 +226,16 @@ public class FormResponseHistoryEntity {
      */
     public static FormResponseHistoryEntity createSubmitted(
             FormEntity form, MemberEntity member, ResponseContent content, Instant submittedAt) {
+        return createSubmitted(form, member, content, submittedAt, FIRST_RESPONSE);
+    }
+
+    /** 응답 순번을 지정해 바로 제출하는 응답 (#143 · 초안을 거치지 않은 두 번째 이후의 응답) */
+    public static FormResponseHistoryEntity createSubmitted(
+            FormEntity form,
+            MemberEntity member,
+            ResponseContent content,
+            Instant submittedAt,
+            int responseSequence) {
         return new FormResponseHistoryEntity(
                 null,
                 form,
@@ -181,6 +245,7 @@ public class FormResponseHistoryEntity {
                 submittedAt,
                 form.getQuestionVersion(),
                 FIRST_SUBMISSION,
+                responseSequence,
                 null,
                 null);
     }
@@ -213,6 +278,10 @@ public class FormResponseHistoryEntity {
      *
      * 회차를 올리는 자리도 여기 하나뿐이다. 서비스가 올리면 이력에 적히는 회차와 응답 행의
      * 회차가 갈릴 수 있고, 그 어긋남은 타임라인이 이미 굳은 뒤에야 드러난다.
+     *
+     * **여기서 오르는 것은 제출 회차(sbmsn_seq)뿐이고 응답 순번(rspns_seq)은 움직이지 않는다**
+     * (#143). 이 메서드는 언제나 '이 행'을 다시 내는 조작이며, 새 응답을 만드는 것은 행을 하나 더
+     * 만드는 다른 일이라 서비스가 맡는다 — 엔티티는 자기 폼에 형제 행이 몇 개 있는지 모른다.
      */
     public void submit(ResponseContent content, Instant submittedAt) {
         if (this.status == ResponseStatus.REJECTED) {

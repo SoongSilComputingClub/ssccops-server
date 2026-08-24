@@ -15,15 +15,19 @@ import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
  *
  * sbmsnDt는 요청이 준 값이 아니라 서버가 주입된 Clock에서 찍은 값이다 — 접수 마감 판정과 같은
  * 시계를 쓴다.
+ *
+ * rspnsSeq(응답 순번)를 싣는 것은 #143부터다. 다중 응답 폼에서는 이 요청이 새 응답을 만들었는지
+ * 이어 쓰던 응답을 낸 것인지가 응답자 화면에서 갈리는데, 식별자만으로는 그것을 알 수 없다.
  */
 public record FormResponseSubmitResponse(
-        Long formRspnsId, ResponseStatus rspnsSttsCd, OffsetDateTime sbmsnDt) {
+        Long formRspnsId, int rspnsSeq, ResponseStatus rspnsSttsCd, OffsetDateTime sbmsnDt) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static FormResponseSubmitResponse from(FormResponseHistoryEntity response) {
         return new FormResponseSubmitResponse(
                 response.getId(),
+                response.getResponseSequence(),
                 response.getStatus(),
                 toOffsetDateTime(response.getSubmittedAt()));
     }

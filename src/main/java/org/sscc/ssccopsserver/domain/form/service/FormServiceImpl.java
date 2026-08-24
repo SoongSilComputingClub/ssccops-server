@@ -158,7 +158,8 @@ public class FormServiceImpl implements FormService {
                                 composition,
                                 receiptBeginAt,
                                 receiptEndAt,
-                                status));
+                                status,
+                                request.multipleResponseAllowed()));
         recordQuestionComposition(form, creator);
 
         return FormSaveResponse.of(form, replaceLabels(form, request.labelIdsOrEmpty()));
@@ -209,7 +210,12 @@ public class FormServiceImpl implements FormService {
          * 여기서 구성을 한 번 더 비교하면 "구성이 바뀌었는가"라는 같은 규칙이 두 벌이 되고,
          * 그때부터 버전과 이력이 갈릴 수 있다.
          */
-        if (form.update(request.formTtlNm(), composition, receiptBeginAt, receiptEndAt)) {
+        if (form.update(
+                request.formTtlNm(),
+                composition,
+                receiptBeginAt,
+                receiptEndAt,
+                request.multipleResponseAllowed())) {
             recordQuestionComposition(form, actor);
         }
 
@@ -235,6 +241,12 @@ public class FormServiceImpl implements FormService {
      * 원본의 버전을 물려받으면 그 앞 버전의 이력이 없는 채로 번호만 큰 폼이 된다. 해제 코드를
      * 여기 적지 않고 FormEntity.create가 언제나 그 상태로 만들게 둔 것은, 새 폼을 만드는 경로가
      * 늘 때마다 해제를 다시 적어야 하는 것을 피하기 위해서다.
+     *
+     * **다중 응답 허용 여부(#143)는 반대로 승계한다.** 시스템 폼 코드와 갈리는 것은 그쪽이
+     * "환경에 하나뿐인 이름"이라 사본이 가지면 UNIQUE에 걸리는 값인 반면, 이쪽은 문항 구성·제목과
+     * 같은 폼의 설정이기 때문이다 — "이 폼과 똑같은 것 하나 더"라고 했는데 응답 접수 규칙만
+     * 조용히 달라지면 다음 회차 폼이 지난 회차와 다르게 동작한다. 접수 기간을 초기화하는 것과도
+     * 갈린다: 기간은 회차마다 반드시 새로 정하는 값이지만 이 설정은 그대로 두는 것이 기본이다.
      */
     @Override
     @Transactional
@@ -249,7 +261,8 @@ public class FormServiceImpl implements FormService {
                                 source.getQuestionComposition().deepCopy(),
                                 null,
                                 null,
-                                FormStatus.DRAFT));
+                                FormStatus.DRAFT,
+                                source.isMultipleResponseAllowed()));
         recordQuestionComposition(copy, creator);
 
         return FormDuplicateResponse.of(copy, source.getId());

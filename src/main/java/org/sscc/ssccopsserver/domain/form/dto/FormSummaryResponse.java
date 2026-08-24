@@ -31,6 +31,9 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * 애초에 잠금 배지를 보는 것은 다르다. 문항 구성(qitemCpstCn)을 빼는 것과 어긋나 보이지만,
  * 그쪽은 폼마다 수십 개로 늘어나는 값이고 이쪽은 세 개의 스칼라다.
  *
+ * mltplRspnsYn(#143)도 같은 이유로 목록에 싣는다 — 상세로 들어가기 전에 "여러 건 받는 폼"임을
+ * 배지로 그릴 수 있어야 하고, 스칼라 하나라 목록 응답을 키우지 않는다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormSummaryResponse(
@@ -43,6 +46,7 @@ public record FormSummaryResponse(
         String sysFormCd,
         boolean sysYn,
         int qitemVer,
+        boolean mltplRspnsYn,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
         OffsetDateTime mdfcnDt) {
@@ -64,6 +68,7 @@ public record FormSummaryResponse(
                 form.getSystemFormCode(),
                 form.isSystemForm(),
                 form.getQuestionVersion(),
+                form.isMultipleResponseAllowed(),
                 labels,
                 responseCount,
                 toOffsetDateTime(form.getUpdatedAt()));

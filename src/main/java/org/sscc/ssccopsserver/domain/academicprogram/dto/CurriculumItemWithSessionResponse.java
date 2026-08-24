@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.dto;
 import java.time.LocalDate;
 
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
 
 /*
@@ -18,8 +19,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
  * 회차 상태(SessionStatus.allowsRecording)를 곱한 값이라, 웹이 leadrMbrId === 내 mbrId를 다시
  * 계산하면 버튼과 실제 판정이 갈린다.
  *
- * Session 엔티티는 아직 없다(#135) — 그래서 지금 실제로 쓰이는 팩토리는 withoutSession 하나뿐이고
- * 모든 줄이 NOT_SUBMITTED로 나온다. 실적을 실어 내리는 팩토리는 엔티티가 생기는 그 이슈가 더한다.
+ * 팩토리가 둘인 것은 실적 유무가 이 줄의 모양을 가르기 때문이다 — 없으면 상태만 합성하고
+ * (withoutSession), 있으면 저장된 상태와 실제 진행일·내용을 그대로 싣는다(withSession, #135).
  */
 public record CurriculumItemWithSessionResponse(
         Long curriculumItemId,
@@ -48,5 +49,27 @@ public record CurriculumItemWithSessionResponse(
                 null,
                 null,
                 isLeader && SessionStatus.NOT_SUBMITTED.allowsRecording());
+    }
+
+    /*
+     * 실적이 붙은 계획 한 줄(#135). 상태는 합성하지 않고 저장된 값을 그대로 쓴다 — 여기서
+     * NOT_SUBMITTED가 나올 수 없는 것은 session 행이 있다는 사실 자체가 그 상태를 부정하기
+     * 때문이다.
+     *
+     * isEditable은 여전히 두 조건의 곱이다. 상태 쪽 판정을 SessionStatus.allowsRecording에
+     * 맡기므로 SUBMITTED·APPROVED인 회차의 버튼은 스터디장 본인에게도 꺼진다.
+     */
+    public static CurriculumItemWithSessionResponse withSession(
+            CurriculumItemEntity curriculumItem, SessionEntity session, boolean isLeader) {
+        return new CurriculumItemWithSessionResponse(
+                curriculumItem.getId(),
+                curriculumItem.getSeqno(),
+                curriculumItem.getTitle(),
+                curriculumItem.getPlanDate(),
+                session.getId(),
+                session.getStatus().name(),
+                session.getRealDate(),
+                session.getContent(),
+                isLeader && session.getStatus().allowsRecording());
     }
 }

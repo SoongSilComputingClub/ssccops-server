@@ -4,6 +4,9 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,9 +24,11 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramAppro
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
@@ -43,6 +48,7 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
 
     private final AcademicProgramRepository academicProgramRepository;
     private final CurriculumItemRepository curriculumItemRepository;
+    private final SessionRepository sessionRepository;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
     private final FormService formService;
@@ -71,9 +77,9 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
      * requireLeader가 아니라 isLeader인 것은 이 API가 인증만 요구하기 때문이다 — 팀원·일반
      * 회원도 표를 보되 편집 버튼만 꺼진다.
      *
-     * Session 엔티티가 아직 없어(#135) 지금은 모든 줄이 NOT_SUBMITTED로 나간다. 실적 LEFT JOIN은
-     * 그 이슈가 이 메서드 안에서 더한다 — 조인이 붙어도 계약(항상 값이 있는 sessionSttsCd,
-     * 서버가 판정하는 isEditable)은 바뀌지 않는다.
+     * 실적(#135)은 계획 줄마다 묻지 않고 활동 하나의 것을 한 번에 읽어 접는다 — 줄마다 물으면
+     * 그대로 N+1이다(DB-13). 계약(항상 값이 있는 sessionSttsCd, 서버가 판정하는 isEditable)은
+     * 실적이 붙어도 그대로다.
      */
     @Override
     public List<CurriculumItemWithSessionResponse> getCurriculumItems(
@@ -83,9 +89,23 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
 
         List<CurriculumItemEntity> curriculumItems =
                 curriculumItemRepository.findByAcademicProgramIdOrderBySeqnoAsc(academicProgramId);
+        Map<Long, SessionEntity> sessionsByCurriculumItemId =
+                sessionRepository.findByCurriculumItemAcademicProgramId(academicProgramId).stream()
+                        .collect(
+                                Collectors.toMap(
+                                        session -> session.getCurriculumItem().getId(),
+                                        Function.identity()));
 
         return curriculumItems.stream()
-                .map(item -> CurriculumItemWithSessionResponse.withoutSession(item, isLeader))
+                .map(
+                        item -> {
+                            SessionEntity session = sessionsByCurriculumItemId.get(item.getId());
+                            return session == null
+                                    ? CurriculumItemWithSessionResponse.withoutSession(
+                                            item, isLeader)
+                                    : CurriculumItemWithSessionResponse.withSession(
+                                            item, session, isLeader);
+                        })
                 .toList();
     }
 

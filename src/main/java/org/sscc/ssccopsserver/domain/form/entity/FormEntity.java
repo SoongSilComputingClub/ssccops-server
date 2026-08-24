@@ -55,6 +55,10 @@ import lombok.NoArgsConstructor;
  * 시스템 폼(sys_form_cd · sys_yn)과 문항 구성 버전(qitem_ver)은 #140에서 더했다. 셋 다 폼
  * 전체에 두며 시스템 폼에만 두지 않는다 — 시스템 폼 전용 컬럼으로 두면 폼 저장 경로가 두 갈래가
  * 되고, 그것은 이 프로젝트가 계속 피해온 "규칙이 두 벌이 되면 갈린다"에 그대로 해당한다.
+ *
+ * 다중 응답 허용 여부(mltpl_rspns_yn)는 #143에서 더했다. "한 회원이 이 폼에 몇 건까지 낼 수
+ * 있는가"는 응답 쪽 규칙처럼 보이지만 폼마다 다른 값이라 폼이 들고 있어야 한다 — 응답 행에 두면
+ * 같은 폼의 응답들이 서로 다른 답을 가질 수 있게 되고, 그때 무엇이 그 폼의 규칙인지 알 수 없다.
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
@@ -71,6 +75,9 @@ public class FormEntity {
 
     /** 새 폼의 문항 구성 버전. 복제본도 원본의 버전을 승계하지 않고 여기서 다시 시작한다 (#140) */
     private static final int INITIAL_QUESTION_VERSION = 1;
+
+    /** 다중 응답 허용 여부를 지정하지 않고 만드는 폼은 1건 폼이다 (#143) */
+    private static final boolean SINGLE_RESPONSE_BY_DEFAULT = false;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -155,6 +162,26 @@ public class FormEntity {
     @Column(name = "qitem_ver", nullable = false)
     private Integer questionVersion;
 
+    /*
+     * 다중 응답 허용 여부 (#143). 참이면 한 회원이 이 폼에 여러 건을 낼 수 있다.
+     *
+     * **판정을 폼의 성격(제목·라벨·시스템 폼 여부)에서 유추하지 않고 컬럼 하나로 둔다.** 스터디
+     * 제안처럼 한 사람이 두 개를 내는 것이 정상인 폼과 지원서처럼 1건이어야 하는 폼은 겉모습이
+     * 같다 — 유추하려면 "제목에 '제안'이 들어가면"이나 "시스템 폼이면" 같은 규칙을 만들어야 하고,
+     * 그런 규칙은 운영자가 제목을 고치는 순간 조용히 뜻이 바뀐다(#118의 역할'명' 판정과 같은
+     * 종류의 실수다).
+     *
+     * 기본값이 false인 것은 지금 있는 폼이 전부 1건 폼이기 때문이며, 이 값을 켜는 것은 폼
+     * 생성·수정에서 운영자가 직접 하는 선택이다.
+     *
+     * @ColumnDefault는 sys_yn·qitem_ver와 같은 이유다 — 이미 행이 있는 dev·prod에 DEFAULT 없는
+     * NOT NULL 컬럼을 붙이면 ALTER 자체가 실패하고, Hibernate는 그 실패를 경고로만 남긴 채
+     * 부팅해 첫 요청에서 "컬럼 없음"으로 터진다.
+     */
+    @ColumnDefault("false")
+    @Column(name = "mltpl_rspns_yn", nullable = false)
+    private Boolean multipleResponseAllowed;
+
     @CreatedDate
     @Column(name = "crt_dt", nullable = false, updatable = false)
     private Instant createdAt;
@@ -205,6 +232,35 @@ public class FormEntity {
             Instant receiptBeginAt,
             Instant receiptEndAt,
             FormStatus status) {
+        return create(
+                creator,
+                title,
+                questionComposition,
+                receiptBeginAt,
+                receiptEndAt,
+                status,
+                SINGLE_RESPONSE_BY_DEFAULT);
+    }
+
+    /*
+     * 다중 응답 허용 여부까지 지정하는 생성 팩토리 (#143).
+     *
+     * 인자를 더하는 대신 생성 뒤에 켜는 메서드를 두지 않은 것은, 그렇게 두면 "만들었지만 아직
+     * 값을 정하지 않은 폼"이 잠깐 존재하고 새 생성 경로가 생길 때마다 그 한 줄을 다시 적어야
+     * 하기 때문이다 (designateAsSystemForm과 갈리는 지점 — 그쪽은 코드가 세우는 예외적 조작이라
+     * 오히려 자리를 하나로 좁혀야 했다).
+     *
+     * 값을 넘기지 않는 기존 팩토리는 언제나 단일 응답 폼을 만든다. 템플릿에서 나온 폼(#142)·
+     * 문항 0개 DRAFT(#133)가 그 경로이며, 템플릿은 이 값을 들고 있지 않으므로 승계할 것도 없다.
+     */
+    public static FormEntity create(
+            MemberEntity creator,
+            String title,
+            QuestionCompositionContent questionComposition,
+            Instant receiptBeginAt,
+            Instant receiptEndAt,
+            FormStatus status,
+            boolean multipleResponseAllowed) {
         FormEntity form =
                 new FormEntity(
                         null,
@@ -217,6 +273,7 @@ public class FormEntity {
                         null,
                         false,
                         INITIAL_QUESTION_VERSION,
+                        multipleResponseAllowed,
                         null,
                         null);
         if (status == FormStatus.OPEN) {
@@ -250,18 +307,27 @@ public class FormEntity {
      * 올랐는지를 boolean으로 돌려주는 것은 이력(form_qitem_hstry)을 남길지 호출부가 알아야
      * 하는데, 그 판단을 서비스에서 한 번 더 하면 "구성이 바뀌었는가"라는 같은 규칙이 두 벌이
      * 되기 때문이다 (BR-M28). 버전과 이력은 함께 움직여야 한다.
+     *
+     * **다중 응답 허용 여부(#143)는 접수 중에도 바꿀 수 있다.** 잠글 근거가 없어서다 — 운영진이
+     * 폼을 열고 나서야 "한 사람이 두 개 내도 된다"를 깨닫는 것이 실제로 일어나는 일이고, 잠그면
+     * 폼을 새로 만들어 링크를 다시 뿌리는 수밖에 없다. 반대로 켰다 끄는 것도 **이미 들어온 응답을
+     * 지우지 않는다** — 끄는 것의 뜻은 "지금부터 새로 낼 수 없다"이지 "지난 응답을 무르라"가
+     * 아니다(비활성 라벨을 새로 달 수만 없는 것과 같은 축). 그래서 단일 응답 폼인데 한 회원의
+     * 응답이 여러 건 남아 있는 상태가 정상적으로 존재할 수 있고, 제출 판정도 그 전제로 쓰였다.
      */
     public boolean update(
             String title,
             QuestionCompositionContent questionComposition,
             Instant receiptBeginAt,
-            Instant receiptEndAt) {
+            Instant receiptEndAt,
+            boolean multipleResponseAllowed) {
         boolean compositionChanged = !Objects.equals(this.questionComposition, questionComposition);
 
         this.title = title;
         this.questionComposition = questionComposition;
         this.receiptBeginAt = receiptBeginAt;
         this.receiptEndAt = receiptEndAt;
+        this.multipleResponseAllowed = multipleResponseAllowed;
 
         if (compositionChanged) {
             this.questionVersion = this.questionVersion + 1;
@@ -287,6 +353,17 @@ public class FormEntity {
 
     public boolean isSystemForm() {
         return Boolean.TRUE.equals(systemDefined);
+    }
+
+    /*
+     * 이 폼이 한 회원의 응답을 여러 건 받는가 (#143).
+     *
+     * Boolean을 그대로 내보내지 않고 원시형으로 좁히는 것은 sys_yn과 같은 이유다 — 컬럼이
+     * ddl-auto로 붙는 환경에서 값이 아직 채워지지 않은 행을 만나면 null이 그대로 새어 나가고,
+     * 그 null은 판정하는 자리마다 NPE 아니면 조용한 오판이 된다.
+     */
+    public boolean isMultipleResponseAllowed() {
+        return Boolean.TRUE.equals(multipleResponseAllowed);
     }
 
     /*

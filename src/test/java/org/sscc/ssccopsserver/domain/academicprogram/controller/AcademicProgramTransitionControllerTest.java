@@ -346,7 +346,8 @@ class AcademicProgramTransitionControllerTest {
                                         null,
                                         null))),
                 form.getReceiptBeginAt(),
-                form.getReceiptEndAt());
+                form.getReceiptEndAt(),
+                form.isMultipleResponseAllowed());
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

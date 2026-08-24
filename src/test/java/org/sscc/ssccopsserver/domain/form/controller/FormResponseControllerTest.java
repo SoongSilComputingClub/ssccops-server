@@ -190,6 +190,31 @@ class FormResponseControllerTest {
     }
 
     /*
+     * 다중 응답 폼에서는 같은 회원의 응답이 **별도 행**으로 나오고 각 행이 응답 순번을 싣는다
+     * (#143). 순번이 없으면 운영자는 이름이 같은 두 줄을 제출 일시로만 구별해야 하고, 응답 하나를
+     * 승인하려다 다른 하나를 여는 일이 생긴다.
+     *
+     * 목록 정렬은 종전대로 제출 일시 내림차순이라 나중에 낸 2번이 먼저 온다 — 순번 오름차순으로
+     * 바꾸지 않은 것은 그 정렬이 상세의 이전/다음 이동과 한 벌이기 때문이다.
+     */
+    @Test
+    void getResponsesListsEachResponseOfTheSameMemberSeparately() throws Exception {
+        FormEntity multiple = saveMultipleResponseForm("스터디 제안서");
+        MemberEntity proposer =
+                saveMember(UUID.randomUUID(), "20260010", "박제안", "proposer@sscc.org");
+        saveSubmittedResponse(multiple, proposer, 1, NOW.minusSeconds(ONE_DAY));
+        saveSubmittedResponse(multiple, proposer, 2, NOW);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + multiple.getId() + "/responses"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].rspnsSeq").value(2))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data[0].member.mbrNm").value("박제안"))
+                .andExpect(jsonPath("$.data[1].member.mbrNm").value("박제안"));
+    }
+
+    /*
      * 응답자 정보는 응답 행에 복사돼 있지 않고 mbr에서 온다. 회원이 학과를 바꾸면 목록도 함께
      * 바뀌어야 하고, 그래서 웹이 회원 상세로 이동하는 링크를 걸 수 있다.
      */
@@ -690,6 +715,35 @@ class FormResponseControllerTest {
         entityManager.flush();
         entityManager.clear();
         return formResponseHistoryRepository.findById(formResponseId).orElseThrow();
+    }
+
+    /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */
+    private FormEntity saveMultipleResponseForm(String title) throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
+        return formRepository.saveAndFlush(
+                FormEntity.create(operator, title, content, null, null, FormStatus.OPEN, true));
+    }
+
+    /*
+     * 응답 순번을 지정한 제출 응답 (#143). saveResponse와 갈리는 것은 응답자를 새로 만들지
+     * 않는다는 점이다 — 다중 응답은 **같은 회원**의 응답이 여러 건인 상황이라 회원을 받아야 한다.
+     */
+    private Long saveSubmittedResponse(
+            FormEntity targetForm,
+            MemberEntity respondent,
+            int responseSequence,
+            Instant submittedAt) {
+
+        return formResponseHistoryRepository
+                .saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                targetForm,
+                                respondent,
+                                ResponseContent.of(Map.of("q1", "제안 " + responseSequence)),
+                                submittedAt,
+                                responseSequence))
+                .getId();
     }
 
     private FormEntity saveForm(String title) throws Exception {

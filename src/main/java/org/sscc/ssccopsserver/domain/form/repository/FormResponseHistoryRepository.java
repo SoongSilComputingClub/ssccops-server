@@ -20,12 +20,41 @@ public interface FormResponseHistoryRepository
         extends JpaRepository<FormResponseHistoryEntity, Long> {
 
     /*
-     * "내가 이 폼에 낸 응답". (form_id, mbr_id) UNIQUE 덕분에 반드시 0건 아니면 1건이라
-     * List가 아니라 Optional로 받는다 — 자동 저장(#36)이 매번 이 조회로 이어 쓸 행을 찾는다.
+     * "내가 이 폼에 낸 응답" 전부 (#143 · 응답 순번 오름차순).
+     *
+     * **원래 Optional을 돌려주는 findByFormAndMember였다.** 다중 응답이 열리면서 그 단건 전제가
+     * 깨졌고, 시그니처를 그대로 두면 두 번째 응답이 있는 회원의 조회가 조용히 예외
+     * (IncorrectResultSizeDataAccessException)로 떨어진다 — 이름을 바꾸는 편이 호출부를 전부
+     * 다시 보게 만든다(제출 중복 판정 · 공개 폼의 alreadySubmitted · 내 응답 목록).
+     *
+     * 정렬 기준이 순번인 것은 그것이 "몇 번째로 시작한 응답인가"이기 때문이다. 제출 일시로
+     * 정렬하면 아직 내지 않은 초안이 NULL로 끝이나 처음에 몰린다.
      */
-    Optional<FormResponseHistoryEntity> findByFormAndMember(FormEntity form, MemberEntity member);
+    List<FormResponseHistoryEntity> findAllByFormAndMemberOrderByResponseSequenceAsc(
+            FormEntity form, MemberEntity member);
+
+    /*
+     * 작성 중인 내 응답 (#36 · #143). 초안은 폼 종류와 무관하게 언제나 최대 1건이라 Optional이다 —
+     * 그 사실을 지키는 것은 부분 유니크 인덱스(PostgreSQL)와 saveDraft의 판정 두 겹이며,
+     * 자동 저장 API(GET·PUT .../responses/draft)의 단건 계약이 여기에 얹혀 있다.
+     */
+    Optional<FormResponseHistoryEntity> findByFormAndMemberAndStatus(
+            FormEntity form, MemberEntity member, ResponseStatus status);
 
     boolean existsByFormAndMember(FormEntity form, MemberEntity member);
+
+    /*
+     * 이 회원이 이 폼에서 마지막으로 쓴 응답 순번 (#143). 다음 응답은 이 값 + 1로 시작한다.
+     *
+     * count(*)로 세지 않는 것은 응답이 지워진 적이 있으면 이미 쓴 번호를 다시 배정하기 때문이다 —
+     * 그 순간 UNIQUE 위반이 나고, 사용자에게는 "왜인지 두 번째 제안이 안 된다"로 보인다.
+     * 행이 없으면 max가 NULL이므로 coalesce로 0을 돌려준다(첫 응답이 1이 된다).
+     */
+    @Query(
+            "select coalesce(max(r.responseSequence), 0) from FormResponseHistoryEntity r"
+                    + " where r.form = :form and r.member = :member")
+    int findLastResponseSequence(
+            @Param("form") FormEntity form, @Param("member") MemberEntity member);
 
     /*
      * 문항 식별자 보호(#32 수정)의 판단 근거. 상태를 가리지 않고 한 건이라도 있으면 참이다 —

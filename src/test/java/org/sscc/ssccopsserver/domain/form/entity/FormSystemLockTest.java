@@ -127,7 +127,7 @@ class FormSystemLockTest {
     void versionStaysWhenOnlyTitleAndPeriodChange() {
         FormEntity form = form(composition("q1", "q2"));
 
-        boolean bumped = form.update("바뀐 제목", composition("q1", "q2"), null, null);
+        boolean bumped = form.update("바뀐 제목", composition("q1", "q2"), null, null, false);
 
         assertThat(bumped).isFalse();
         assertThat(form.getQuestionVersion()).isEqualTo(1);
@@ -139,10 +139,10 @@ class FormSystemLockTest {
     void versionRisesWhenCompositionChanges() {
         FormEntity form = form(composition("q1", "q2"));
 
-        assertThat(form.update("제목", composition("q1", "q2", "q3"), null, null)).isTrue();
+        assertThat(form.update("제목", composition("q1", "q2", "q3"), null, null, false)).isTrue();
         assertThat(form.getQuestionVersion()).isEqualTo(2);
 
-        assertThat(form.update("제목", composition("q1", "q2", "q3"), null, null)).isFalse();
+        assertThat(form.update("제목", composition("q1", "q2", "q3"), null, null, false)).isFalse();
         assertThat(form.getQuestionVersion()).isEqualTo(2);
     }
 
@@ -170,7 +170,7 @@ class FormSystemLockTest {
                                         null,
                                         null)));
 
-        assertThat(form.update("제목", renamed, null, null)).isTrue();
+        assertThat(form.update("제목", renamed, null, null, false)).isTrue();
         assertThat(form.getQuestionVersion()).isEqualTo(2);
     }
 

@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
 import java.net.URI;
+import java.util.List;
 
 import jakarta.validation.Valid;
 
@@ -16,6 +17,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -68,8 +70,11 @@ public class PublicFormController {
                             + " '공개'는 누구나 링크를 열 수 있다는 뜻이지 익명으로 낼 수 있다는 뜻이 아니다."
                             + " 지금 응답을 받지 않는 폼(DRAFT·CLOSED·접수 기간 밖)은 문항을 내려주지 않고"
                             + " 409 FORM_NOT_ACCEPTING으로 응답한다. 없는 폼은 404 NOT_FOUND다."
-                            + " alreadySubmitted가 true면 웹은 작성 화면 대신 제출 내역 화면을 보여준다"
-                            + " (임시저장 응답은 제출로 치지 않는다).")
+                            + " **alreadySubmitted는 '냈는가'가 아니라 '더 낼 수 없는가'다** — 다중 응답을 허용하는"
+                            + " 폼(mltplRspnsYn = true)에서는 이미 냈어도 false이며, 그 화면은 작성 폼을 계속 보여줘야"
+                            + " 한다. true면 웹은 작성 화면 대신 제출 내역 화면을 보여준다(임시저장 응답은 제출로 치지"
+                            + " 않는다). myResponseCount는 내가 낸 건수(임시저장 제외)이고 submittedAt은 마지막 제출"
+                            + " 일시라, 다중 응답 폼에서는 alreadySubmitted가 false인데 값이 있을 수 있다.")
     @GetMapping("/{formId}/public")
     public ApiResponse<PublicFormResponse> getPublicForm(
             @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
@@ -88,9 +93,12 @@ public class PublicFormController {
                         + " 필수·형식·최대 선택 수를 다시 검사하며, 분기(branchMap)로 건너뛴 페이지의 필수 문항은 요구하지 않는다. 필수 누락은"
                         + " 400 REQUIRED_ANSWER_MISSING, 형식 불일치는 400 ANSWER_PATTERN_MISMATCH, 최대 선택"
                         + " 초과는 400 ANSWER_SELECTION_LIMIT_EXCEEDED, 폼에 없는 문항이 섞이면 400"
-                        + " UNKNOWN_QUESTION_ITEM이다. 한 회원은 한 폼에 1건만 낼 수 있어 재제출은 409"
-                        + " RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로"
-                        + " 응답한다. 빈 값(\"\"·[])인 문항은 저장하지 않는다.")
+                        + " UNKNOWN_QUESTION_ITEM이다. **몇 건까지 낼 수 있는지는 폼이 정한다(mltplRspnsYn)** — 허용하지"
+                        + " 않는 폼에 다시 내면 409 RESPONSE_ALREADY_SUBMITTED(반려된 응답은 409"
+                        + " RESPONSE_ALREADY_REJECTED)이고, 허용하는 폼이면 새 응답으로 접수되며 rspnsSeq(응답 순번)가 1"
+                        + " 는다. 임시저장이나 수정요청받은 응답이 있으면 새로 만들지 않고 그 응답을 낸 것이 된다 (그때는 rspnsSeq가 그대로이고"
+                        + " 제출 회차만 오른다). 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로 응답한다. 빈"
+                        + " 값(\"\"·[])인 문항은 저장하지 않는다.")
     @PostMapping("/{formId}/responses")
     public ResponseEntity<ApiResponse<FormResponseSubmitResponse>> submitFormResponse(
             @PathVariable Long formId,
@@ -101,6 +109,39 @@ public class PublicFormController {
                 formResponseService.submitResponse(formId, request, respondent);
         URI location = URI.create("/v1/forms/" + formId + "/responses/" + response.formRspnsId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 내 응답 목록 (#143). 다중 응답을 허용하는 폼에서 "내가 지금까지 낸 것들"을 보는 경로다.
+     *
+     * 경로에 mbrId를 두지 않는 것은 자동 저장(#36)이 세운 규칙 그대로다 — 대상은 언제나 인증
+     * 주체 본인이며, 받을 자리를 만들지 않는 것이 남의 응답에 닿는 경로를 막는 방법이다. 남의
+     * 응답을 읽는 길은 RESPONSE_REVIEW 권한이 걸린 운영자용 경로(FormResponseController) 하나여야
+     * 한다.
+     *
+     * **리터럴 mine 세그먼트가 운영자용 GET /{formRspnsId}를 가로채지 않는다.** 스프링이 경로 변수보다 리터럴
+     * 세그먼트를 먼저 고르므로 /responses/mine은 언제나 이쪽으로 온다 — /responses/draft(#36)가
+     * 같은 자리에서 같은 이유로 안전한 것과 같으며, 순서에 기대는 것이 아니라 명세로 정해진
+     * 동작이다. 두 컨트롤러가 경로 접두사를 공유하므로 헷갈리기 쉬운 자리라 적어 둔다.
+     *
+     * 접수가 끝난 폼에서도 조회된다 — 자동 저장 조회와 갈리는 지점이며 근거는 서비스 주석에 있다.
+     */
+    @Operation(
+            summary = "내 응답 목록 조회",
+            description =
+                    "응답자 본인이 이 폼에 낸 응답을 순번(rspnsSeq) 오름차순으로 내려준다. 대상은 언제나 인증 주체"
+                            + " 본인이라 경로에 회원 식별자를 두지 않는다. 한 건도 없으면 빈 배열이다."
+                            + " **작성 중(DRAFT) 응답도 포함한다** — 운영자용 목록이 DRAFT를 빼는 것과 기준이 다르며,"
+                            + " 내 것을 나에게 숨길 이유가 없기 때문이다(그 응답은 sbmsnDt가 null이다)."
+                            + " rspnsSeq(응답 순번)와 sbmsnSeq(제출 회차)는 **다른 값이다** — 앞은 몇 번째 응답인가이고"
+                            + " 뒤는 그 응답을 몇 번 냈는가다(수정요청 뒤 재제출하면 뒤만 오른다)."
+                            + " 응답 내용(rspnsCn)은 싣지 않는다. 접수가 끝났거나 아직 열지 않은 폼도 409가 아니라"
+                            + " 200으로 답한다 — 자기가 낸 것을 확인하는 조회라 접수 가능 여부와 무관하다."
+                            + " 없는 폼은 404 NOT_FOUND다.")
+    @GetMapping("/{formId}/responses/mine")
+    public ApiResponse<List<MyFormResponseSummaryResponse>> getMyFormResponses(
+            @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(formResponseService.getMyResponses(formId, respondent));
     }
 
     /*
@@ -145,13 +186,14 @@ public class PublicFormController {
             summary = "작성 중 응답 저장(자동 저장)",
             description =
                     "본문의 rspnsCn으로 작성 중인 응답을 통째로 대체한다(upsert) — 임시저장 행이 있으면 내용만 갱신하고, 없으면 DRAFT 상태로"
-                        + " 새로 만든다. 회원당 폼당 행은 하나라 몇 번을 불러도 늘지 않는다. **자동 저장은 필수·형식(정규식)·최대 선택 수를"
+                        + " 새로 만든다. **초안은 폼 종류와 무관하게 언제나 최대 1건이라** 몇 번을 불러도 행이 늘지 않는다 (다중 응답 폼에서도"
+                        + " 그렇다 — 초안을 제출해 자리가 빈 뒤에야 새 초안을 시작할 수 있다). **자동 저장은 필수·형식(정규식)·최대 선택 수를"
                         + " 검사하지 않는다** — 작성 중에는 비어 있거나 형식이 맞지 않는 것이 정상이고, 그 검사는 제출 시점의 몫이다. 다만 폼에"
                         + " 없는 문항이 섞이면 400 UNKNOWN_QUESTION_ITEM, 문항 유형과 맞지 않는 값은 400"
                         + " INVALID_ANSWER_VALUE, 응답 내용이 상한을 넘기면 413 RESPONSE_CONTENT_TOO_LARGE다."
-                        + " 이미 제출한 폼은 409 RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409"
-                        + " FORM_NOT_ACCEPTING이며, 첫 저장이 동시에 도착해 부딪히면 409 RESPONSE_SAVE_CONFLICT로"
-                        + " 재시도를 알린다.")
+                        + " 다시 낼 수 없는 폼(mltplRspnsYn = false)에 이미 제출했으면 409"
+                        + " RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING이며, 첫"
+                        + " 저장이 동시에 도착해 부딪히면 409 RESPONSE_SAVE_CONFLICT로 재시도를 알린다.")
     @PutMapping("/{formId}/responses/draft")
     public ApiResponse<FormResponseDraftResponse> saveMyDraft(
             @PathVariable Long formId,

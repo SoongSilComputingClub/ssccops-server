@@ -13,13 +13,10 @@ import org.springframework.stereotype.Component;
  * 조용히 빈 값이 읽힌다 — 터지지 않고 틀리는 종류다. 그래서 요구하는 쪽이 여기에 적고,
  * 폼 저장 경로가 그 선언을 근거로 거절한다(FormEntity.requireSystemContractKept).
  *
- * **지금 이 표는 비어 있다.** PROPOSAL 시스템 폼 시드가 이번 범위에서 빠졌기 때문이며
- * (기획안을 폼으로 만들지 학술관리 도메인으로 만들지가 ssccops#114와 겹쳐 아직 결정되지 않았다),
- * 이 이슈는 시스템 폼이라는 **장치**만 만든다. 비어 있어도 자리를 미리 두는 것은, 첫 시스템 폼을
- * 세우는 이슈가 "요구 문항을 어디에 적는가"를 새로 정하면 그 결정이 그 도메인 서비스 안에
- * 흩어지기 때문이다.
+ * **첫 항목은 PROPOSAL이다** (#173). 기획안을 폼으로 받고 승인 시점에 학술 활동으로 이관한다는
+ * 결정이 끝나(ssccops#131) 시드가 세워졌고, 그 폼의 qitemId가 여기 실린다.
  *
- * 상수 하나면 될 것을 빈으로 두는 것은 테스트가 계약을 갈아 끼울 수 있어야 해서다. 표가 빈 채로
+ * 상수 하나면 될 것을 빈으로 두는 것은 테스트가 계약을 갈아 끼울 수 있어야 해서다. 표를 비운 채로
  * 잠금 경로 전체(컨트롤러 → 서비스 → 엔티티)를 검증할 방법이 없는데, static으로 두면 그 검증이
  * 엔티티 단위 테스트까지만 닿고 배선이 끊겨도 초록으로 남는다.
  */
@@ -27,11 +24,22 @@ import org.springframework.stereotype.Component;
 public class SystemFormContract {
 
     /*
-     * 코드가 선언한 계약. 첫 항목은 첫 시스템 폼을 세우는 이슈가 넣는다.
+     * 코드가 선언한 계약 (#173 · PROPOSAL).
      *
-     * 예: Map.of("PROPOSAL", Set.of("proposalTitle", "proposalBody"))
+     * 값을 문자열 리터럴로 다시 적지 않고 ProposalFormSeed의 상수를 가리킨다 — 시드가 넣는
+     * qitemId와 계약이 요구하는 qitemId는 같은 문자열이어야 하는데, 두 곳에 따로 적으면 오타
+     * 하나가 "시드한 폼이 자기 계약을 어긴 상태"로 배포된다(저장을 시도해야 400으로 드러난다).
+     *
+     * **잠그는 것은 없으면 이관이 성립하지 않는 문항뿐이다.** 선택 문항(준비물·정기 일정·정원·
+     * 희망 장소)은 #150이 읽기는 하지만 비어 있어도 되는 값이라, 문항을 지운 것과 제출자가
+     * 비워 둔 것의 결과가 같다 — 잠글 이득 없이 운영진이 회차마다 폼을 다듬을 여지만 없앤다.
+     * 고르는 근거는 그 자리에 있고(ProposalFormSeed.MIGRATION_REQUIRED_QITEM_IDS 주석) 여기서
+     * 다시 판단하지 않는다.
      */
-    private static final Map<String, Set<String>> DECLARED = Map.of();
+    private static final Map<String, Set<String>> DECLARED =
+            Map.of(
+                    ProposalFormSeed.SYSTEM_FORM_CODE,
+                    ProposalFormSeed.MIGRATION_REQUIRED_QITEM_IDS);
 
     private final Map<String, Set<String>> requiredQitemIds;
 

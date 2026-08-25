@@ -521,6 +521,11 @@ WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'EVENT');
 -- 데이터라 초기값을 서버가 정할 근거가 없다 — 기준 코드(mbr_grd·mbr_stts)와 다른 성격이다.
 -- 폼 상태(form_stts_cd)는 FormStatus enum이 코드값을 갖고 명칭은 화면이 갖는 어휘라
 -- 별도 코드 테이블이 없어 여기 시드할 것도 없다.
+--
+-- 예외가 하나 있는데 이 파일이 아니라 자바에 있다: 기획안 시스템 폼(sys_form_cd = 'PROPOSAL', #173)이
+-- 라벨 '기획안'을 함께 세운다(ProposalFormSeeder). 그 라벨은 운영진이 고르는 초기값이 아니라
+-- 코드가 세운 폼을 목록에서 눈으로 찾는 단서라 폼과 함께 생겨야 한다 — 폼 쪽 시드가 여기 있지 않은
+-- 이유(qitem_cpst_cn JSONB 리터럴을 H2와 PostgreSQL이 다르게 읽는다)는 ProposalFormSeed 주석에 있다.
 
 -- 학술 활동 유형(academic_program_type, #130). enum이 아니라 코드테이블인 것은 세미나·특강·
 -- 대회 등 새 유형이 배포 없이 시드 추가만으로 열려야 하기 때문이다(학술관리_기능범위.md §2).

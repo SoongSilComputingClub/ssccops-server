@@ -123,6 +123,13 @@ class FormControllerTest {
      */
     private static final String SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM";
 
+    /*
+     * 계약 문항이 둘인 두 번째 시험용 코드 (#155). 하나만 두면 "응답의 목록이 계약 선언을 따라가는가"가
+     * 상수 하나와 구별되지 않는다 — 선언이 다른 코드를 다는 순간 응답도 달라져야 값이 계약에서 온다고 말할 수 있다.
+     * 정렬 순서도 여기서 확인한다(Set은 순회 순서를 보장하지 않는다).
+     */
+    private static final String TWO_QUESTION_SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM_TWO";
+
     /** 계약 문항(q1)을 지운 구성. 시스템 폼에서는 400, 평범한 폼에서는 통과해야 한다 */
     private static final String COMPOSITION_WITHOUT_CONTRACT_QUESTION =
             """
@@ -946,6 +953,106 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.data[0].qitemVer").value(1));
     }
 
+    /* ── 계약 문항 노출 (#155) ────────────────────── */
+
+    /*
+     * 상세가 코드가 요구하는 qitemId를 실어 준다. 이것이 없는 동안 웹(ssccops-web#132)은 저장이 400으로
+     * 터진 뒤 "보낸 구성에서 빠진 문항"을 역산해 잠금을 걸었고, 그러면 운영자는 문항을 지우고 저장을
+     * 누른 뒤에야 막혔다는 것을 알았다.
+     *
+     * 실제 선언(SystemFormContract.DECLARED)은 아직 비어 있으므로 이 값은 갈아 끼운 계약 빈에서만 나올 수 있다 —
+     * 목록이 q1이라는 것 자체가 응답이 계약 빈을 거쳐 왔다는 증거다.
+     */
+    @Test
+    void formDetailExposesSystemContractQuestionItems() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sysYn").value(true))
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds").isArray())
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds.length()").value(1))
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds[0]").value("q1"));
+    }
+
+    /*
+     * 시스템 폼이 아니면 빈 배열이며 null이 아니다. 둘을 섞으면 받는 쪽이 "없음"과 "비어 있음"을
+     * 구별해야 하는데 둘은 같은 뜻이다. isArray()로 보는 것이 요점으로, null이면 그 단언이 깨진다 —
+     * isEmpty()는 null과 빈 배열을 같은 것으로 보아 이 규칙을 지키지 못한다.
+     */
+    @Test
+    void ordinaryFormDetailExposesEmptyContractArrayInsteadOfNull() throws Exception {
+        Long formId = createForm("평범한 폼", null, "[]");
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sysYn").value(false))
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds").isArray())
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds.length()").value(0));
+    }
+
+    /*
+     * 목록은 계약 문항을 싣지 않는다. 문항 편집은 상세·편집 화면에서만 하므로 카드가 쓸 일이 없고,
+     * 목록이 qitemCpstCn을 빼는 규칙과 같은 줄기다. 시스템 폼임을 알리는 세 스칼라(sysFormCd·sysYn·
+     * qitemVer)는 그대로 실린다 — 잠금 배지는 목록에서도 그려야 한다.
+     */
+    @Test
+    void formListDoesNotCarryContractQuestionItems() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(authenticatedGet("/v1/forms"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].formId").value(formId))
+                .andExpect(jsonPath("$.data[0].sysFormCd").value(SYSTEM_FORM_CODE))
+                .andExpect(jsonPath("$.data[0].systemRequiredQitemIds").doesNotExist());
+    }
+
+    /*
+     * 계약이 바뀌면 응답도 따라 바뀐다. 폼의 구성은 앞 시험과 똑같고 달라진 것은 그 폼이 달고 있는
+     * sys_form_cd 하나뿐이다 — 답이 달라진다면 값이 폼이 아니라 계약 선언에서 온다는 뜻이다.
+     * 두 문항이 q1·q2 순으로 나오는지도 같이 본다 — Set을 그대로 실으면 순서가 호출마다 뒤집힌다.
+     */
+    @Test
+    void formDetailFollowsTheContractDeclaration() throws Exception {
+        Long formId = createForm("계약이 둘인 시스템 폼", null, "[]");
+        designateAsSystemForm(formId, TWO_QUESTION_SYSTEM_FORM_CODE);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds.length()").value(2))
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds[0]").value("q1"))
+                .andExpect(jsonPath("$.data.systemRequiredQitemIds[1]").value("q2"));
+    }
+
+    /*
+     * 화면이 미리 잠그는 목록과 서버가 거절하는 목록은 같아야 한다. 상세가 알려 준 문항을 실제로 지워
+     * 저장해 400이 나는 것까지를 한 시험에 묶는 것은, 둘이 갈라지면 화면은 잠기지 않았는데 서버는 거절하는
+     * — #155가 없애려는 바로 그 상황으로 돌아가기 때문이다. 미리 잠그는 것은 편의이고 서버의 400이
+     * 방어선이며, 이번 변경은 뒤에 손대지 않았다.
+     */
+    @Test
+    void exposedContractMatchesWhatTheSavePathRejects() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        String detail =
+                mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        List<String> requiredQitemIds =
+                JsonPath.parse(detail).read("$.data.systemRequiredQitemIds");
+        assertThat(requiredQitemIds).containsExactly("q1");
+
+        // 상세가 알려 준 바로 그 문항(q1)을 지운 구성이다
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_CONTRACT_VIOLATION"));
+    }
+
     /* ── 접수 상태 전이 (#33) ─────────────────────────────── */
 
     /*
@@ -1223,8 +1330,12 @@ class FormControllerTest {
      * 지키는 것이 없어진다 (FormEntity.designateAsSystemForm 주석).
      */
     private void designateAsSystemForm(Long formId) {
+        designateAsSystemForm(formId, SYSTEM_FORM_CODE);
+    }
+
+    private void designateAsSystemForm(Long formId, String systemFormCode) {
         FormEntity form = formRepository.findById(formId).orElseThrow();
-        form.designateAsSystemForm(SYSTEM_FORM_CODE);
+        form.designateAsSystemForm(systemFormCode);
         formRepository.saveAndFlush(form);
     }
 
@@ -1332,7 +1443,12 @@ class FormControllerTest {
         @Bean
         @Primary
         SystemFormContract systemFormContract() {
-            return new SystemFormContract(Map.of(SYSTEM_FORM_CODE, Set.of("q1")));
+            return new SystemFormContract(
+                    Map.of(
+                            SYSTEM_FORM_CODE,
+                            Set.of("q1"),
+                            TWO_QUESTION_SYSTEM_FORM_CODE,
+                            Set.of("q1", "q2")));
         }
 
         @Bean

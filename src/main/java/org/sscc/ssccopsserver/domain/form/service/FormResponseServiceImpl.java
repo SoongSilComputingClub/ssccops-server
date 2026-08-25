@@ -51,6 +51,12 @@ public class FormResponseServiceImpl implements FormResponseService {
     private final ResponseAnswerValidator responseAnswerValidator;
 
     /*
+     * 시스템 폼 승인 후속 처리 (#150). 폼 도메인은 sys_form_cd로 훅을 찾아 부를 뿐 누가
+     * 구현하는지 모른다 — 기획안(PROPOSAL)의 구현체는 학술 도메인에 있다.
+     */
+    private final SystemFormApprovalHooks systemFormApprovalHooks;
+
+    /*
      * "지금 이 폼이 응답을 받을 수 있는가"의 유일한 구현 (#33). 조회와 제출이 같은 판정을 써야
      * 화면에는 문항이 보이는데 제출은 거부되는(또는 그 반대의) 상태가 생기지 않는다.
      */
@@ -340,8 +346,16 @@ public class FormResponseServiceImpl implements FormResponseService {
                 formResponseReviewHistoryRepository.findAllByResponseOrderByProcessedAtAscIdAsc(
                         response);
 
+        /*
+         * 시스템 폼 승인 미리보기 (#150). 기획안 응답이면 승인 시 만들어질 학술 활동의 유형·
+         * 커리큘럼이 여기 실린다 — 검토자가 승인을 누르기 전에 파싱 결과를 봐야 하기 때문이다.
+         * 그 밖의 폼에서는 null이며, 훅이 무엇을 담는지 폼 도메인은 모른다.
+         */
+        Object approvalPreview = previewOf(response);
+
         if (response.getStatus() == ResponseStatus.DRAFT) {
-            return FormResponseDetailResponse.of(response, reviewHistories, null, null);
+            return FormResponseDetailResponse.of(
+                    response, reviewHistories, null, null, approvalPreview);
         }
 
         List<Long> orderedIds =
@@ -352,7 +366,21 @@ public class FormResponseServiceImpl implements FormResponseService {
         Long nextId =
                 index >= 0 && index < orderedIds.size() - 1 ? orderedIds.get(index + 1) : null;
 
-        return FormResponseDetailResponse.of(response, reviewHistories, previousId, nextId);
+        return FormResponseDetailResponse.of(
+                response, reviewHistories, previousId, nextId, approvalPreview);
+    }
+
+    /*
+     * 훅이 있으면 그 미리보기, 없으면 null. **여기서 예외가 나면 상세 조회 전체가 실패한다** —
+     * 그래서 훅 구현체는 파싱 실패를 던지지 않고 값으로 싣기로 되어 있다
+     * (SystemFormApprovalHook.preview 주석). 상태로 분기하지 않는 것은 미리보기가 승인 전에
+     * 쓸모 있는 값이기 때문이다 — 이미 승인된 응답에서는 실제로 만들어진 것과 같은 값이 나온다.
+     */
+    private Object previewOf(FormResponseHistoryEntity response) {
+        return systemFormApprovalHooks
+                .find(response.getForm().getSystemFormCode())
+                .map(hook -> hook.preview(response))
+                .orElse(null);
     }
 
     /*
@@ -391,10 +419,33 @@ public class FormResponseServiceImpl implements FormResponseService {
                 FormResponseReviewHistoryEntity.record(
                         response, action, reviewer, request.rvwOpnnCn(), clock.instant()));
 
+        applyApprovalHook(response);
+
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (updateDraft 주석과 같은 이유)
         formResponseHistoryRepository.flush();
 
         return FormResponseSummaryResponse.from(response);
+    }
+
+    /*
+     * 승인된 시스템 폼 응답의 후속 처리 (#150).
+     *
+     * **검토 처리와 같은 트랜잭션이다.** 훅이 던지면 방금의 ACCEPT도, 그 이력 행도 함께
+     * 되돌아간다 — "승인은 됐는데 활동이 없는" 상태를 만들지 않는다는 것이 ssccops#148의 BR이고,
+     * 승인은 종결 상태라(#141) 그런 응답이 생기면 되돌릴 방법이 없다.
+     *
+     * 훅을 부르는 조건은 결과 상태 하나다. 처리 구분(ResponseReviewAction)으로 보지 않는 것은
+     * "무엇을 눌렀는가"가 아니라 "응답이 어디에 도달했는가"가 후속 처리의 조건이기 때문이다.
+     *
+     * 평범한 폼(sys_form_cd = null)과 훅이 없는 시스템 폼에서는 아무 일도 일어나지 않는다.
+     */
+    private void applyApprovalHook(FormResponseHistoryEntity response) {
+        if (response.getStatus() != ResponseStatus.ACCEPTED) {
+            return;
+        }
+        systemFormApprovalHooks
+                .find(response.getForm().getSystemFormCode())
+                .ifPresent(hook -> hook.onAccepted(response));
     }
 
     /*

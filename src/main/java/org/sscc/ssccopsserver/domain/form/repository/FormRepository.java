@@ -43,9 +43,9 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * 환경마다 다르고, 제목·라벨은 화면에서 바뀌는 운영 데이터다. 승인자 판정이 역할'명'을 보던
      * 동안 '총무'를 '재무'로 개명하는 것만으로 승인자가 사라진 일이 있었다(#118 → #123).
      *
-     * sys_form_cd에 UNIQUE가 걸려 있어 결과는 최대 한 건이다. 아직 시스템 폼 시드가 없어
-     * 부르는 코드가 없지만, 첫 시스템 폼을 세우는 이슈가 조회 방법을 새로 정하지 않도록
-     * 여기서 이름을 먼저 고정해 둔다.
+     * sys_form_cd에 UNIQUE가 걸려 있어 결과는 최대 한 건이다. 첫 호출자는 기획안 시스템 폼
+     * 시드(#173 ProposalFormSeeder)이며 "이미 세웠는가"를 이 조회 하나로 판정한다 — 제목이나
+     * form_id로 물으면 제목을 고친 다음 기동에서 폼이 하나 더 생긴다.
      */
     Optional<FormEntity> findBySystemFormCode(String systemFormCode);
 

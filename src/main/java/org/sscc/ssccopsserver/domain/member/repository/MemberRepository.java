@@ -133,4 +133,17 @@ public interface MemberRepository
      */
     @EntityGraph(attributePaths = {"membershipGrade", "membershipStatus"})
     Optional<MemberEntity> findWithGradeAndStatusById(Long id);
+
+    /*
+     * 가장 먼저 등록된 회원 (#173 기획안 시스템 폼 시드).
+     *
+     * form.creatr_mbr_id가 NOT NULL이라 코드가 세우는 폼에도 생성자가 필요한데, 시드에는
+     * 지목할 사람이 없다. 최초 가입자는 부트스트랩(#71)으로 최고관리자가 되는 사람이라
+     * "시스템이 세운 폼의 명의"로 가장 덜 임의적이다.
+     *
+     * 이름이나 역할('최고관리자')로 찾지 않는 것은 의도된 것이다 — 역할명 판정은 개명 한 번으로
+     * 끊긴 전례가 있고(#118 → #123), 이관으로 명부를 먼저 채운 환경(#84)에는 그 역할을 가진
+     * 회원이 아예 없을 수 있다. 가입 순서는 어느 환경에서도 반드시 존재한다.
+     */
+    Optional<MemberEntity> findTopByOrderByIdAsc();
 }

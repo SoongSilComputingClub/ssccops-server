@@ -75,10 +75,18 @@ public class FormController {
         return ApiResponse.success(formService.getForms(statusCode, labelId));
     }
 
+    /*
+     * 상대로 시스템 폼이 요구하는 문항(systemRequiredQitemIds)을 싣는다 (#155). 목록에는 없고
+     * 상세에만 있는 것은 문항 편집이 이 화면에서만 일어나기 때문이다.
+     */
     @Operation(
             summary = "폼 단건 조회",
             description =
                     "폼 상세·편집 화면이 진입 시 호출한다. 문항 구성을 통째로 싣고 있어 편집기가 그대로 초안으로 받아 쓴다."
+                            + " systemRequiredQitemIds는 코드가 이 폼에서 반드시 읽는 qitemId 목록이다 — 편집 화면은 이"
+                            + " 문항들의 삭제를 미리 잠그면 된다. 시스템 폼이 아니거나 요구 문항이 없으면 빈 배열이며 null은"
+                            + " 내려가지 않는다. 미리 잠그는 것은 편의일 뿐이고 지우고 저장하면 서버가 여전히 400"
+                            + " SYSTEM_FORM_CONTRACT_VIOLATION으로 거절한다."
                             + " 없는 폼은 404 FORM_NOT_FOUND로 응답한다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping("/{formId}")

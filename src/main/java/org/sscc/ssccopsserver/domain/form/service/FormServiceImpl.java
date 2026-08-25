@@ -112,6 +112,16 @@ public class FormServiceImpl implements FormService {
      *
      * 상태별 집계를 위해 질의를 하나 더 두지 않는다. 두 벌이 되면 폼 목록이 폼마다 두 번씩
      * 집계하게 되고, 무엇보다 총합과 상태별 합이 어긋날 여지가 생긴다 (FormResponseCount 주석).
+     *
+     * 계약 문항 목록(systemRequiredQitemIds)을 함께 싣는다 (#155). 저장 경로가 거절 근거로 쓰는 것과
+     * 정확히 같은 호출(systemFormContract.requiredQitemIdsOf)이며, 그것이 요점이다 — 조회 쪽이 계약을
+     * 따로 읽거나 폼 구성에서 역산하면 화면이 잠그는 문항과 서버가 거절하는 문항이 갈라질 수 있다.
+     *
+     * 시스템 폼인지를 여기서 따로 묻지 않는다. 평범한 폼은 sys_form_cd가 NULL이라 계약이 이미 빈
+     * 집합을 돌려주며, 여기서 isSystemForm()을 한 번 더 보면 "언제 비는가"라는 판단이 두 벌이 된다.
+     *
+     * 목록(FormSummaryResponse)에는 싣지 않는다 — 문항 편집은 상세·편집 화면에서만 하므로 목록 카드는
+     * 쓸 일이 없고, qitemCpstCn을 목록에서 빼는 규칙과 같은 줄기다.
      */
     @Override
     public FormDetailResponse getForm(Long formId) {
@@ -120,7 +130,8 @@ public class FormServiceImpl implements FormService {
                 form,
                 formReceiptPolicy.receiptStatusOf(form),
                 labelsOf(form),
-                responseSummaryOf(form));
+                responseSummaryOf(form),
+                systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
     }
 
     /*

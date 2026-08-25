@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Set;
 
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
@@ -37,6 +38,27 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 있지만, 그것만으로는 사용자가 저장을 누르기 전까지 알 수 없다. qitemVer를 함께 내리는 것은
  * 편집기가 자기가 받아 온 구성이 아직 최신인지 판단할 근거로 쓰기 위해서다.
  *
+ * **systemRequiredQitemIds(#155)가 바로 그 "어느 문항을 요구하는가"다.** #140은 시스템 폼임을
+ * 알려 주는 데까지만 갔고 정작 계약 문항 목록은 서버 안에 남겨 둔 탓에, 웹(ssccops-web#132)은
+ * 저장이 400 SYSTEM_FORM_CONTRACT_VIOLATION으로 터진 뒤 "보낸 구성에서 빠진 문항"을 역산해
+ * 잠금을 걸고 있었다. 서버가 거절하므로 데이터가 깨지지는 않았지만, 잠금이 **사후에만** 걸려
+ * 운영자는 문항을 지우고 저장을 누른 뒤에야 막혔다는 것을 알았다. 같은 사실의 출처가 두 벌이 된
+ * 것도 문제다 — 계약은 서버가 선언하는데 화면은 오류에서 추론했다. 역할별 권한 응답이 직접
+ * 부여(grants)와 펼친 결과(effectiveAuthrtCds)를 함께 내리는 것과 같은 이유다(RoleAuthorityResponse).
+ *
+ * 값은 SystemFormContract.requiredQitemIdsOf 하나에서만 온다. 이 자리에서 다시 계산하지 않고
+ * 받아서 모양만 바꾸는 것은, 조립하는 자리가 계약을 다시 읽기 시작하면 저장 경로의 거절 기준과
+ * 화면이 잠그는 기준이 갈라질 수 있기 때문이다 — 갈리는 순간 화면은 잠기지 않았는데 서버는 거절하는,
+ * 정확히 #155가 없애려는 상황으로 돌아간다. 화면이 미리 잠그는 것은 편의이고 서버의 400이 방어선이다 —
+ * 둘 중 하나를 없애지 않는다.
+ *
+ * 시스템 폼이 아니거나 계약 선언이 없는 코드면 **빈 배열이며 null이 아니다**. 둘을 섞으면
+ * 받는 쪽이 "없음"과 "비어 있음"을 구별해야 하는데 둘은 같은 뜻이다(AP-15).
+ *
+ * Set을 그대로 실지 않고 정렬된 List로 바꾸는 것은 JSON 배열의 순서가 호출마다 뒤집히지
+ * 않게 하기 위해서다 — Set.of는 순회 순서를 보장하지 않아 같은 폼을 두 번 조회한 응답이 다를 수 있고,
+ * 그러면 응답을 비교해 변경을 판단하는 편집기와 테스트가 이유 없이 요동한다.
+ *
  * mltplRspnsYn(#143)을 싣는 것은 편집기가 이 응답을 그대로 초안으로 받아 PUT으로 돌려보내기
  * 때문이다 — 빼면 폼을 한 번 저장할 때마다 다중 응답 설정이 false로 되돌아간다(요청의 생략이
  * false이므로 조용히 꺼진다). 상세를 요청 DTO와 같은 이름으로 맞춰 두는 규칙이 여기서 값을
@@ -55,6 +77,7 @@ public record FormDetailResponse(
         String sysFormCd,
         boolean sysYn,
         int qitemVer,
+        List<String> systemRequiredQitemIds,
         boolean mltplRspnsYn,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
@@ -70,7 +93,8 @@ public record FormDetailResponse(
             FormEntity form,
             FormReceiptStatus receiptStatus,
             List<FormLabelSummaryResponse> labels,
-            FormResponseStatusSummary responseSummary) {
+            FormResponseStatusSummary responseSummary,
+            Set<String> systemRequiredQitemIds) {
         return new FormDetailResponse(
                 form.getId(),
                 form.getTitle(),
@@ -82,6 +106,7 @@ public record FormDetailResponse(
                 form.getSystemFormCode(),
                 form.isSystemForm(),
                 form.getQuestionVersion(),
+                systemRequiredQitemIds.stream().sorted().toList(),
                 form.isMultipleResponseAllowed(),
                 labels,
                 responseSummary.total(),

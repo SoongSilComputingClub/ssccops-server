@@ -50,6 +50,7 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.Page;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.QuestionItem;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
@@ -96,6 +97,7 @@ class AcademicProgramTransitionControllerTest {
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private AcademicProgramApprovalRepository academicProgramApprovalRepository;
     @Autowired private FormRepository formRepository;
 
@@ -314,6 +316,8 @@ class AcademicProgramTransitionControllerTest {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 typeCd,
                 title,
                 leaderAndProposer,

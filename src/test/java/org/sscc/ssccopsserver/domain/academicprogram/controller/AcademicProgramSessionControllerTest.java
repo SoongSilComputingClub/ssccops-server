@@ -43,6 +43,8 @@ import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -85,6 +87,8 @@ class AcademicProgramSessionControllerTest {
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormRepository formRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private AttendanceRepository attendanceRepository;
 
@@ -829,6 +833,8 @@ class AcademicProgramSessionControllerTest {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 "STUDY",
                 title,
                 leader,

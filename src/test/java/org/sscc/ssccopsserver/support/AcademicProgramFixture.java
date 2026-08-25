@@ -14,6 +14,12 @@ import org.sscc.ssccopsserver.domain.event.entity.EventClassificationEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
+import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
+import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
+import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
@@ -35,6 +41,8 @@ public final class AcademicProgramFixture {
             AcademicProgramRepository academicProgramRepository,
             AcademicProgramTypeRepository academicProgramTypeRepository,
             CurriculumItemRepository curriculumItemRepository,
+            FormRepository formRepository,
+            FormResponseHistoryRepository formResponseHistoryRepository,
             String typeCd,
             String title,
             MemberEntity proposer,
@@ -45,6 +53,8 @@ public final class AcademicProgramFixture {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 typeCd,
                 title,
                 proposer,
@@ -64,6 +74,8 @@ public final class AcademicProgramFixture {
             AcademicProgramRepository academicProgramRepository,
             AcademicProgramTypeRepository academicProgramTypeRepository,
             CurriculumItemRepository curriculumItemRepository,
+            FormRepository formRepository,
+            FormResponseHistoryRepository formResponseHistoryRepository,
             String typeCd,
             String title,
             MemberEntity proposer,
@@ -94,7 +106,19 @@ public final class AcademicProgramFixture {
         AcademicProgramEntity academicProgram =
                 academicProgramRepository.save(
                         AcademicProgramEntity.create(
-                                event, type, "목표", null, null, null, null, proposer));
+                                event,
+                                saveProposalResponse(
+                                        formRepository,
+                                        formResponseHistoryRepository,
+                                        proposer,
+                                        title),
+                                type,
+                                "목표",
+                                null,
+                                null,
+                                null,
+                                null,
+                                proposer));
 
         int seqno = 1;
         for (String curriculumTitle : curriculumTitles) {
@@ -104,5 +128,35 @@ public final class AcademicProgramFixture {
         }
 
         return academicProgram;
+    }
+
+    /*
+     * 이 활동이 태어난 기획안 응답 (#150 · academic_program.form_rspns_id는 NOT NULL이다).
+     *
+     * 실제 폼(sys_form_cd = 'PROPOSAL')의 응답을 흉내 내지 않고 문항 없는 폼에 빈 응답을
+     * 하나 만드는 것은, 이 픽스처를 쓰는 테스트들이 검증하는 것이 이관이 아니라 **이미
+     * 만들어진 활동의 조회·전이·출석**이기 때문이다 — 그쪽에 진짜 기획안 내용을 채우면
+     * 이관 규칙이 픽스처에 복제되어, #150의 파서가 바뀔 때 조회 테스트가 함께 빨개진다.
+     * 이관 자체를 검증하는 것은 AcademicProgramMigration* 테스트이며 그쪽은 폼 시드를 그대로 쓴다.
+     *
+     * 활동마다 폼을 새로 만드는 것은 (form_id, mbr_id, rspns_seq) UNIQUE 때문이다 — 한 회원이
+     * 여러 활동의 제출자인 테스트가 있어 폼을 공유하면 두 번째 응답이 제약에 걸린다.
+     */
+    private static FormResponseHistoryEntity saveProposalResponse(
+            FormRepository formRepository,
+            FormResponseHistoryRepository formResponseHistoryRepository,
+            MemberEntity proposer,
+            String title) {
+        FormEntity form =
+                formRepository.save(
+                        FormEntity.create(
+                                proposer,
+                                title + " 기획안",
+                                new QuestionCompositionContent(null, List.of()),
+                                null,
+                                null));
+        return formResponseHistoryRepository.save(
+                FormResponseHistoryEntity.createSubmitted(
+                        form, proposer, ResponseContent.of(null), Instant.now()));
     }
 }

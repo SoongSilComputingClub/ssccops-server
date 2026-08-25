@@ -128,6 +128,8 @@ class AcademicProgramRecruitmentRollbackTest {
                         academicProgramRepository,
                         academicProgramTypeRepository,
                         curriculumItemRepository,
+                        formRepository,
+                        formResponseHistoryRepository,
                         "STUDY",
                         "롤백 확인 스터디",
                         manager,

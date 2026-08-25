@@ -43,6 +43,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRe
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
@@ -98,6 +100,8 @@ class AcademicProgramReviewControllerTest {
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormRepository formRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private AcademicProgramApprovalRepository academicProgramApprovalRepository;
 
@@ -680,6 +684,8 @@ class AcademicProgramReviewControllerTest {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 typeCd,
                 title,
                 leader,

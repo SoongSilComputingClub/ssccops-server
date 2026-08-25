@@ -23,6 +23,7 @@ import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
@@ -63,6 +64,7 @@ class AcademicProgramApprovalEffectsServiceImplTest {
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormRepository formRepository;
 
     @Test
@@ -139,6 +141,8 @@ class AcademicProgramApprovalEffectsServiceImplTest {
                         academicProgramRepository,
                         academicProgramTypeRepository,
                         curriculumItemRepository,
+                        formRepository,
+                        formResponseHistoryRepository,
                         typeCd,
                         title,
                         leaderAndProposer,

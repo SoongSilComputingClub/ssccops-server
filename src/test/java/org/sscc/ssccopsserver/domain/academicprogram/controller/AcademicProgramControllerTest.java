@@ -32,6 +32,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramT
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -67,6 +69,8 @@ class AcademicProgramControllerTest {
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormRepository formRepository;
 
     private UUID proposerToken;
     private MemberEntity proposer;
@@ -376,6 +380,8 @@ class AcademicProgramControllerTest {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 typeCd,
                 title,
                 proposer,
@@ -390,6 +396,8 @@ class AcademicProgramControllerTest {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 typeCd,
                 title,
                 proposer,

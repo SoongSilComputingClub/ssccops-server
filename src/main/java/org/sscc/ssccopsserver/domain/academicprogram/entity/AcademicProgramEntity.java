@@ -23,6 +23,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -46,10 +47,14 @@ import lombok.NoArgsConstructor;
 @EntityListeners(AuditingEntityListener.class)
 @Table(
         name = "academic_program",
-        uniqueConstraints =
-                @UniqueConstraint(
-                        name = "uk_academic_program_event",
-                        columnNames = {"event_id"}),
+        uniqueConstraints = {
+            @UniqueConstraint(
+                    name = "uk_academic_program_event",
+                    columnNames = {"event_id"}),
+            @UniqueConstraint(
+                    name = "uk_academic_program_form_rspns",
+                    columnNames = {"form_rspns_id"})
+        },
         indexes = {
             @Index(name = "idx_academic_program_stts_cd", columnList = "academic_program_stts_cd"),
             @Index(name = "idx_academic_program_prpsr_mbr_id", columnList = "prpsr_mbr_id"),
@@ -68,6 +73,27 @@ public class AcademicProgramEntity {
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "event_id", nullable = false, updatable = false)
     private EventEntity event;
+
+    /*
+     * 이 활동이 태어난 기획안(form_rspns_hstry.form_rspns_id, #150).
+     *
+     * **출처를 남기는 값이지 연결이 아니다.** 이관은 복사이고 역방향 동기화는 없다
+     * (ssccops#148) — 이관 뒤에 폼 응답을 고쳐도 여기 만들어진 활동은 바뀌지 않는다. 승인이
+     * 종결(#141)이라 응답이 더 바뀔 일도 사실상 없지만, 규칙은 "복사한다"이지 "따라간다"가
+     * 아니다. 그래서 이 필드를 읽어 활동의 값을 채우는 코드를 만들지 말 것.
+     *
+     * UNIQUE(uk_academic_program_form_rspns)는 중복 이관 방어선이다. 같은 응답을 두 번 승인할
+     * 수 없으므로(ACCEPTED는 종결) 정상 흐름에서는 걸릴 일이 없고, 데이터 정합성이 깨진 경우에만
+     * 의미가 있다 — 선조회만으로는 동시 요청을 막지 못한다는 이 레포의 규칙 그대로다.
+     *
+     * NOT NULL로 붙일 수 있는 것은 **이 이슈 전까지 academic_program 행을 만드는 경로가 아예
+     * 없었기 때문이다**(등록 API는 2026-08-23 설계 변경으로 사라졌고 승인 이관이 그 자리를
+     * 대신한다). dev·prod의 ddl-auto: update는 이미 행이 있는 테이블에 기본값 없는 NOT NULL
+     * 컬럼을 붙이지 못하는데, 그 테이블은 어느 환경에서도 비어 있다.
+     */
+    @OneToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "form_rspns_id", nullable = false, updatable = false)
+    private FormResponseHistoryEntity formResponse;
 
     /** 스터디/프로젝트 구분(#130 코드테이블). 승인 이후에는 바꿀 수 없다(S2에서 거부) */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
@@ -128,6 +154,7 @@ public class AcademicProgramEntity {
      */
     public static AcademicProgramEntity create(
             EventEntity event,
+            FormResponseHistoryEntity formResponse,
             AcademicProgramTypeEntity type,
             String goalContent,
             String prepContent,
@@ -138,6 +165,7 @@ public class AcademicProgramEntity {
         return new AcademicProgramEntity(
                 null,
                 event,
+                formResponse,
                 type,
                 AcademicProgramStatus.APPROVED,
                 goalContent,

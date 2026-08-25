@@ -157,7 +157,41 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      * 때문이고, 그런데도 상수를 도메인마다 따로 두는 것은 이 레포의 규칙이다(AGENTS.md —
      * 같은 의미라도 도메인이 다르면 별개 상수다).
      */
-    UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다.");
+    UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다."),
+
+    /*
+     * 400 — 승인된 기획안을 학술 활동으로 옮기지 못했을 때 (#150). 커리큘럼 줄 형식이 안내와
+     * 다르거나, 필수 문항이 비었거나, 유형 문자열이 academic_program_type 기준정보의 어느
+     * type_nm과도 맞지 않는 경우가 전부 여기로 온다.
+     *
+     * **이관 실패가 곧 승인 실패다**(ssccops#148 BR). 조용히 건너뛰고 승인만 성공시키면
+     * "승인은 됐는데 활동이 없는" 응답이 남는데, 승인은 종결 상태라(#141) 그 응답은 다시
+     * 승인할 수도 반려할 수도 없다 — 되돌릴 길이 없는 상태를 만드는 대신 승인 자체를 롤백한다.
+     *
+     * 400인 것은 고칠 수 있는 쪽이 서버가 아니라 사람이기 때문이다. 검토자가 할 일은 재시도가
+     * 아니라 수정요청(#141)이며, 무엇을 고쳐 달라고 할지는 GeneralException의 detail로 함께
+     * 내려간 사유가 알려 준다(코드는 하나이고 사유만 값으로 바뀐다 — 사유마다 코드를 만들면
+     * 화면은 그 전부에 같은 안내를 반복해야 한다).
+     *
+     * 같은 실패는 승인 전에도 보인다 — 응답 상세의 academicProgramPreview가 같은 파서로
+     * 미리 파싱해 사유를 함께 내리므로, 검토자는 승인 버튼을 누르기 전에 이 400을 예측할 수 있다.
+     */
+    PROPOSAL_MIGRATION_FAILED(
+            HttpStatus.BAD_REQUEST, "PROPOSAL_MIGRATION_FAILED", "기획안을 학술 활동으로 옮기지 못했습니다."),
+
+    /*
+     * 409 — 이미 이관된 폼 응답을 다시 이관하려 할 때 (#150).
+     *
+     * **정상 흐름에서는 도달할 수 없다.** ACCEPTED는 종결 상태라 같은 응답을 두 번 승인하는
+     * 경로가 없기 때문이다(#141 · FormResponseHistoryEntity.changeStatus). 그럼에도 코드를
+     * 두는 것은 academic_program.form_rspns_id UNIQUE가 데이터 정합성이 깨진 경우를 위한
+     * 방어선이고, 그 위반이 원인 모를 500으로 나가면 운영자가 "무엇이 중복인지"를 알 수 없어서다.
+     *
+     * 선조회와 UNIQUE를 함께 두는 것은 회원가입(#20)·유형 등록(#130)과 같은 규칙이다 —
+     * 선조회만으로는 동시 요청을 막지 못하고, UNIQUE만으로는 사유를 말해 주지 못한다.
+     */
+    PROPOSAL_ALREADY_MIGRATED(
+            HttpStatus.CONFLICT, "PROPOSAL_ALREADY_MIGRATED", "이미 학술 활동으로 옮겨진 기획안입니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

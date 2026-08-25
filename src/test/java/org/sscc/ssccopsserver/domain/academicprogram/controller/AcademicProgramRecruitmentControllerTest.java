@@ -514,6 +514,8 @@ class AcademicProgramRecruitmentControllerTest {
                 academicProgramRepository,
                 academicProgramTypeRepository,
                 curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
                 "STUDY",
                 title,
                 leader,

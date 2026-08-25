@@ -26,10 +26,18 @@ import lombok.extern.slf4j.Slf4j;
 @RestControllerAdvice(annotations = {RestController.class})
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
+    /*
+     * detail이 실려 있으면 ErrorCode의 message 대신 그것을 내린다 (#150). 코드(code)는 그대로라
+     * 화면의 분기는 달라지지 않고 사람이 읽는 문장만 구체적이 된다 — 기획안 이관 실패처럼
+     * "왜 실패했는가"가 값에 담기는 거절이 실제 대상이다.
+     */
     @ExceptionHandler(GeneralException.class)
     public ResponseEntity<Object> handleGeneralException(GeneralException ex) {
         ErrorCode errorCode = ex.getErrorCode();
-        return handleExceptionInternal(errorCode);
+        if (ex.getDetail() == null) {
+            return handleExceptionInternal(errorCode);
+        }
+        return handleExceptionInternal(errorCode, ex.getDetail());
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

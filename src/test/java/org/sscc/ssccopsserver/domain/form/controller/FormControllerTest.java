@@ -116,10 +116,11 @@ class FormControllerTest {
             """;
 
     /*
-     * 시험용 시스템 폼 코드 (#140). 실제 선언(SystemFormContract.DECLARED)은 아직 비어 있다 —
-     * PROPOSAL 시드가 이번 범위에서 빠졌기 때문이다. 그래서 계약을 갈아 끼워(StubJwtDecoderConfig)
-     * 컨트롤러 → 서비스 → 엔티티 배선까지 실제 요청으로 확인한다. 판정 자체는
-     * FormSystemLockTest가 엔티티 단위로 본다.
+     * 시험용 시스템 폼 코드 (#140). 실제 선언(SystemFormContract.DECLARED)에는 PROPOSAL이 들어
+     * 있지만(#173) 그 계약으로 여기를 검증하지는 않는다 — 시드가 문항을 바꿀 때마다 잠금 배선
+     * 테스트가 함께 흔들리고, 그러면 이 테스트가 확인하는 것이 '배선'인지 '기획안 폼의 문항'인지
+     * 갈린다. 그래서 계약을 갈아 끼워(StubJwtDecoderConfig) 컨트롤러 → 서비스 → 엔티티 배선까지
+     * 실제 요청으로 확인한다. 판정 자체는 FormSystemLockTest가 엔티티 단위로 본다.
      */
     private static final String SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM";
 
@@ -960,8 +961,8 @@ class FormControllerTest {
      * 터진 뒤 "보낸 구성에서 빠진 문항"을 역산해 잠금을 걸었고, 그러면 운영자는 문항을 지우고 저장을
      * 누른 뒤에야 막혔다는 것을 알았다.
      *
-     * 실제 선언(SystemFormContract.DECLARED)은 아직 비어 있으므로 이 값은 갈아 끼운 계약 빈에서만 나올 수 있다 —
-     * 목록이 q1이라는 것 자체가 응답이 계약 빈을 거쳐 왔다는 증거다.
+     * q1은 실제 선언에는 없고 갈아 끼운 계약 빈에만 있는 값이다 — 목록이 q1이라는 것 자체가
+     * 응답이 계약 빈을 거쳐 왔다는 증거다.
      */
     @Test
     void formDetailExposesSystemContractQuestionItems() throws Exception {
@@ -1436,8 +1437,8 @@ class FormControllerTest {
         }
 
         /*
-         * 계약을 갈아 끼운다 (#140). 실제 선언은 아직 비어 있어(첫 시스템 폼 시드가 이번 범위
-         * 밖이다) 그대로 두면 잠금 배선 전체가 검증되지 못한 채 초록으로 남는다 —
+         * 계약을 갈아 끼운다 (#140). 실제 선언(#173의 PROPOSAL)을 그대로 쓰면 이 테스트가 기획안
+         * 폼의 문항 목록에 묶여, 시드가 문항을 하나 더할 때마다 잠금 배선 테스트가 함께 깨진다 —
          * SystemFormContract를 상수가 아니라 빈으로 둔 이유가 이것이다.
          */
         @Bean

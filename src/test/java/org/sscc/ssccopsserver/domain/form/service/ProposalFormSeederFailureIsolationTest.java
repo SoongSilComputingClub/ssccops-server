@@ -51,7 +51,8 @@ class ProposalFormSeederFailureIsolationTest {
                         mock(FormLabelRelationRepository.class),
                         mock(MemberRepository.class),
                         mock(QuestionCompositionValidator.class),
-                        transactionManager);
+                        transactionManager,
+                        true);
 
         assertThatCode(() -> seeder.onMemberCreated(new MemberCreatedEvent(1L)))
                 .as("리스너가 던지면 이미 커밋된 가입이 500으로 떨어진다")

@@ -40,9 +40,12 @@ import org.sscc.ssccopsserver.support.MemberFixture;
  * 클래스만의 DB를 띄우고, 매 테스트가 스스로 비우고 시작한다.
  */
 @SpringBootTest(
-        properties =
-                "spring.datasource.url="
-                    + "jdbc:h2:mem:proposal-seed-on-member-created;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
+        properties = {
+            "spring.datasource.url="
+                + "jdbc:h2:mem:proposal-seed-on-member-created;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+            // application-test.yaml이 꺼 둔 경로다. 그것을 확인하는 유일한 자리라 여기서 켠다
+            "ssccops.form.proposal-seed.on-member-created=true"
+        })
 @ActiveProfiles("test")
 class ProposalFormSeedOnMemberCreatedTest {
 

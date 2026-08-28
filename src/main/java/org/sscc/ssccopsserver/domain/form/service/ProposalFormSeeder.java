@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.form.service;
 
 import java.util.Optional;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
@@ -22,7 +23,6 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.event.MemberCreatedEvent;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /*
@@ -68,7 +68,6 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ProposalFormSeeder implements ApplicationRunner {
 
     private final FormRepository formRepository;
@@ -77,6 +76,40 @@ public class ProposalFormSeeder implements ApplicationRunner {
     private final MemberRepository memberRepository;
     private final QuestionCompositionValidator questionCompositionValidator;
     private final PlatformTransactionManager transactionManager;
+
+    /*
+     * 회원 생성에 반응할지 여부. 기본값은 켬이고, 끄는 곳은 `test` 프로필 하나다.
+     *
+     * 테스트에서 끄는 이유는 이 시드가 **세운 폼이 생성자 회원을 FK로 묶기 때문**이다. 공용
+     * H2(testdb)를 쓰면서 회원을 실제로 커밋했다가 지우는 테스트가 여럿 있는데(명부 이관·역할
+     * 자기잠금·계정 연결), 그 회원이 마침 시드의 명의로 뽑히면 정리 단계의 `DELETE FROM mbr`이
+     * 참조 무결성 위반으로 깨진다. 회원 도메인 테스트가 기획안 폼의 존재를 알아야 정리할 수
+     * 있게 되는 것은 방향이 거꾸로다 — 관측성 내보내기를 테스트에서 끄는 것과 같은 종류의
+     * 결정이다(application-test.yaml).
+     *
+     * 끄는 것이 무해한 이유는 **이 경로를 확인하는 테스트가 ProposalFormSeedOnMemberCreatedTest
+     * 하나이고, 그 클래스가 자기 DB와 함께 스스로 켜기 때문이다.** 운영(local·dev·prod)에는
+     * 이 값을 두는 곳이 없어 기본값 그대로 켜져 있다.
+     */
+    private final boolean seedOnMemberCreated;
+
+    public ProposalFormSeeder(
+            FormRepository formRepository,
+            FormLabelRepository formLabelRepository,
+            FormLabelRelationRepository formLabelRelationRepository,
+            MemberRepository memberRepository,
+            QuestionCompositionValidator questionCompositionValidator,
+            PlatformTransactionManager transactionManager,
+            @Value("${ssccops.form.proposal-seed.on-member-created:true}")
+                    boolean seedOnMemberCreated) {
+        this.formRepository = formRepository;
+        this.formLabelRepository = formLabelRepository;
+        this.formLabelRelationRepository = formLabelRelationRepository;
+        this.memberRepository = memberRepository;
+        this.questionCompositionValidator = questionCompositionValidator;
+        this.transactionManager = transactionManager;
+        this.seedOnMemberCreated = seedOnMemberCreated;
+    }
 
     /*
      * 트랜잭션 경계를 run()에 둔다. 폼·라벨·연결 세 행이 한 번에 들어가야 하며, 각 save()가
@@ -115,6 +148,10 @@ public class ProposalFormSeeder implements ApplicationRunner {
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onMemberCreated(MemberCreatedEvent event) {
+        if (!seedOnMemberCreated) {
+            return;
+        }
+
         TransactionTemplate transaction = new TransactionTemplate(transactionManager);
         transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         try {

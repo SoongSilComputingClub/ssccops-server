@@ -23,6 +23,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
@@ -78,6 +79,26 @@ public class FormResponseServiceImpl implements FormResponseService {
     public PublicFormResponse getPublicForm(Long formId, MemberEntity respondent) {
         FormEntity form = findAcceptingForm(formId);
         return PublicFormResponse.of(form, findSubmittedResponses(form, respondent));
+    }
+
+    /*
+     * 회원용 시스템 폼 조회 (#181).
+     *
+     * **접수 가능 여부로 끊지 않는다.** getPublicForm은 지금 답을 낼 수 없는 폼이면 409로 막아
+     * 문항이 링크만으로 새어 나가지 않게 하지만, 이 조회는 자기 기획안을 재제출하는 화면이 쓰므로
+     * 마감된 폼의 문항도 그려야 한다(#177). 대신 acceptingYn에 FormReceiptPolicy의 판정을 그대로
+     * 실어 웹이 "새 기획안을 지금 낼 수 있는가"를 상태·기간으로 다시 계산하지 않게 한다.
+     *
+     * 조회는 sys_form_cd 하나로만 한다(FormRepository.findBySystemFormCode) — 코드가 폼을 찾는
+     * 유일한 경로이며 UNIQUE가 환경당 한 건을 보장한다. 없으면 404 FORM_NOT_FOUND다.
+     */
+    @Override
+    public SystemFormResponse getSystemForm(String systemFormCode) {
+        FormEntity form =
+                formRepository
+                        .findBySystemFormCode(systemFormCode)
+                        .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+        return SystemFormResponse.of(form, formReceiptPolicy.isAcceptingResponses(form));
     }
 
     /*

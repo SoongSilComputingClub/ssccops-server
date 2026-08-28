@@ -20,6 +20,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -80,6 +81,37 @@ public class PublicFormController {
     public ApiResponse<PublicFormResponse> getPublicForm(
             @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(formResponseService.getPublicForm(formId, respondent));
+    }
+
+    /*
+     * 회원용 시스템 폼 조회 (#181). sys_form_cd로 폼의 form_id와 문항 구성을 얻는 경로다.
+     *
+     * sysFormCd를 싣는 다른 조회(GET /v1/forms · GET /v1/forms/{formId})는 전부
+     * @RequireAuthority(FORM_READ)라 기획안 제출자(일반 회원)가 부를 수 없다. 그 회원이 자기
+     * 기획안을 재제출하는 화면(apps/lms)이 폼 번호를 얻을 길이 없어 열어 둔다.
+     *
+     * 이 컨트롤러의 다른 핸들러와 같은 이유로 @RequireAuthority를 붙이지 않는다 — 권한은 운영자의
+     * 어휘이고, 하나라도 걸면 재제출이 필요한 회원이 화면을 열 수 없다. 경로에 mbrId를 두지 않는
+     * 것도 /draft·/mine이 세운 규칙 그대로다. @CurrentMember로 주체를 받는 것은 인증(및 미가입
+     * 차단)을 다른 핸들러와 같은 계단으로 태우기 위해서이며 등급 제한은 없다(임시회원도 조회된다).
+     *
+     * 운영자용 GET /v1/forms/{formId}(FormController)와는 경로 세그먼트 수가 달라 겹치지 않는다.
+     */
+    @Operation(
+            summary = "회원용 시스템 폼 조회",
+            description =
+                    "sys_form_cd로 시스템 폼 한 건을 받아 간다. **인증만 필요하다** — sysFormCd를 싣는 운영자용"
+                            + " 조회는 FORM_READ 권한이 걸려 일반 회원(기획안 제출자)이 부를 수 없어 이 경로를 연다."
+                            + " form_id는 IDENTITY라 환경마다 다르므로 화면은 코드로 폼을 찾아야 한다. **접수 가능"
+                            + " 여부를 보지 않고** 마감된 폼도 200으로 문항 구성(qitemCpstCn)을 함께 내려준다 —"
+                            + " CHANGES_REQUESTED 재제출은 접수 마감에 막히지 않으므로(#177) 재제출 화면은 마감된"
+                            + " 폼의 문항도 그려야 한다. acceptingYn은 FormReceiptPolicy 판정 그대로이며 \"지금 새"
+                            + " 기획안을 낼 수 있는가\"만 답한다(재제출 예외와는 무관하다). 없는 코드는 404 NOT_FOUND다"
+                            + " — 아직 시드되지 않았거나 지워진 경우이며, 한 코드가 가리키는 폼은 환경당 하나다.")
+    @GetMapping("/system/{sysFormCd}")
+    public ApiResponse<SystemFormResponse> getSystemForm(
+            @PathVariable String sysFormCd, @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(formResponseService.getSystemForm(sysFormCd));
     }
 
     /*

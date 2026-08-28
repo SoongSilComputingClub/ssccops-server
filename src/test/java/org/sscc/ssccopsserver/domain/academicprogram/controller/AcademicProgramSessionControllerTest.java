@@ -130,9 +130,9 @@ class AcademicProgramSessionControllerTest {
                 .andExpect(jsonPath("$.data.curriculumItemId").value(firstItem.getId()))
                 .andExpect(jsonPath("$.data.seqno").value(1))
                 .andExpect(jsonPath("$.data.curriculumTtl").value("OT"))
-                .andExpect(jsonPath("$.data.realDt").value("2026-09-05"))
-                .andExpect(jsonPath("$.data.cn").value("1회차 진행 내용"))
-                .andExpect(jsonPath("$.data.noticeCn").value("다음 주 준비물"))
+                .andExpect(jsonPath("$.data.actlYmd").value("2026-09-05"))
+                .andExpect(jsonPath("$.data.prgrsCn").value("1회차 진행 내용"))
+                .andExpect(jsonPath("$.data.ntcCn").value("다음 주 준비물"))
                 // 제출과 동시에 국장 검토 대기다 — NOT_SUBMITTED는 행이 없는 상태를 가리키는 파생 값이다
                 .andExpect(jsonPath("$.data.sttsCd").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data.rgtrMbrId").value(leader.getId()))
@@ -142,7 +142,7 @@ class AcademicProgramSessionControllerTest {
                         jsonPath("$.data.attendances[0].eventPtcpId")
                                 .value(confirmedMember.getId()))
                 .andExpect(jsonPath("$.data.attendances[0].mbrNm").value("팀원"))
-                .andExpect(jsonPath("$.data.attendances[0].presentYn").value(true))
+                .andExpect(jsonPath("$.data.attendances[0].atndYn").value(true))
                 .andExpect(jsonPath("$.data.presentCount").value(1))
                 .andExpect(jsonPath("$.data.totalCount").value(1))
                 // 인증사진(#137)·검토 의견(#136)은 아직 채우는 쪽이 없어 늘 비어 있다
@@ -157,7 +157,7 @@ class AcademicProgramSessionControllerTest {
                         authorized(sessions(academicProgram), leaderToken)
                                 .content(submitBody(firstItem, "2026-09-05", "결석자 있는 회차", false)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.attendances[0].presentYn").value(false))
+                .andExpect(jsonPath("$.data.attendances[0].atndYn").value(false))
                 .andExpect(jsonPath("$.data.presentCount").value(0))
                 .andExpect(jsonPath("$.data.totalCount").value(1));
     }
@@ -172,8 +172,8 @@ class AcademicProgramSessionControllerTest {
                         authorized(sessions(empty), leaderToken)
                                 .content(
                                         """
-                                        {"curriculumItemId": %d, "realDt": "2026-09-05",
-                                         "cn": "OT", "attendances": []}
+                                        {"curriculumItemId": %d, "actlYmd": "2026-09-05",
+                                         "prgrsCn": "OT", "attendances": []}
                                         """
                                                 .formatted(item.getId())))
                 .andExpect(status().isCreated())
@@ -181,7 +181,7 @@ class AcademicProgramSessionControllerTest {
                 .andExpect(jsonPath("$.data.totalCount").value(0));
     }
 
-    // 계획 1개당 실적은 최대 1개다 (uk_session_curriculum_item)
+    // 계획 1개당 실적은 최대 1개다 (uk_sesn_crclm_artcl)
     @Test
     void submitSessionTwiceOnSameCurriculumItemReturns409() throws Exception {
         String body = submitBody(firstItem, "2026-09-05", "1회차", true);
@@ -252,9 +252,9 @@ class AcademicProgramSessionControllerTest {
                         authorized(sessions(academicProgram), leaderToken)
                                 .content(
                                         """
-                                        {"curriculumItemId": %d, "realDt": "2026-09-05", "cn": "1회차",
-                                         "attendances": [{"eventPtcpId": %d, "presentYn": true},
-                                                         {"eventPtcpId": %d, "presentYn": false}]}
+                                        {"curriculumItemId": %d, "actlYmd": "2026-09-05", "prgrsCn": "1회차",
+                                         "attendances": [{"eventPtcpId": %d, "atndYn": true},
+                                                         {"eventPtcpId": %d, "atndYn": false}]}
                                         """
                                                 .formatted(
                                                         firstItem.getId(),
@@ -280,7 +280,7 @@ class AcademicProgramSessionControllerTest {
                         authorized(sessions(academicProgram), leaderToken)
                                 .content(
                                         """
-                                        {"curriculumItemId": %d, "cn": "", "attendances": []}
+                                        {"curriculumItemId": %d, "prgrsCn": "", "attendances": []}
                                         """
                                                 .formatted(firstItem.getId())))
                 .andExpect(status().isBadRequest());
@@ -310,16 +310,16 @@ class AcademicProgramSessionControllerTest {
                         authorized(put(sessionPath(academicProgram, sessionId)), leaderToken)
                                 .content(
                                         """
-                                        {"curriculumItemId": %d, "realDt": "2026-09-12",
-                                         "cn": "고쳐 낸 내용", "noticeCn": null,
-                                         "attendances": [{"eventPtcpId": %d, "presentYn": false}]}
+                                        {"curriculumItemId": %d, "actlYmd": "2026-09-12",
+                                         "prgrsCn": "고쳐 낸 내용", "ntcCn": null,
+                                         "attendances": [{"eventPtcpId": %d, "atndYn": false}]}
                                         """
                                                 .formatted(firstItem.getId(), replacement.getId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sessionId").value(sessionId))
-                .andExpect(jsonPath("$.data.realDt").value("2026-09-12"))
-                .andExpect(jsonPath("$.data.cn").value("고쳐 낸 내용"))
-                .andExpect(jsonPath("$.data.noticeCn").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.actlYmd").value("2026-09-12"))
+                .andExpect(jsonPath("$.data.prgrsCn").value("고쳐 낸 내용"))
+                .andExpect(jsonPath("$.data.ntcCn").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.sttsCd").value("SUBMITTED"))
                 // 이전 출석 줄은 남지 않는다 — 새 명단이 통째로 자리를 대신한다
                 .andExpect(jsonPath("$.data.attendances", Matchers.hasSize(1)))
@@ -327,7 +327,7 @@ class AcademicProgramSessionControllerTest {
                 .andExpect(jsonPath("$.data.presentCount").value(0))
                 .andExpect(jsonPath("$.data.totalCount").value(1));
 
-        // 이력을 남기지 않는다 — session도 attendance도 행이 늘지 않는다
+        // 이력을 남기지 않는다 — sesn도 atndc도 행이 늘지 않는다
         entityManager.flush();
         assertThat(sessionRepository.count()).isEqualTo(1);
         assertThat(attendanceRepository.count()).isEqualTo(1);
@@ -351,7 +351,7 @@ class AcademicProgramSessionControllerTest {
                                                 confirmedMember,
                                                 false)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.attendances[0].presentYn").value(false));
+                .andExpect(jsonPath("$.data.attendances[0].atndYn").value(false));
 
         entityManager.flush();
         assertThat(attendanceRepository.findAll())
@@ -491,7 +491,7 @@ class AcademicProgramSessionControllerTest {
         mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sessionId").value(sessionId))
-                .andExpect(jsonPath("$.data.cn").value("1회차 내용"))
+                .andExpect(jsonPath("$.data.prgrsCn").value("1회차 내용"))
                 .andExpect(jsonPath("$.data.sttsCd").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data.attendances", Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data.presentCount").value(1));
@@ -533,7 +533,7 @@ class AcademicProgramSessionControllerTest {
                 // 등록 순서가 아니라 회차 번호가 줄 순서다
                 .andExpect(jsonPath("$.data[0].seqno").value(1))
                 .andExpect(jsonPath("$.data[0].curriculumTtl").value("OT"))
-                .andExpect(jsonPath("$.data[0].realDt").value("2026-09-05"))
+                .andExpect(jsonPath("$.data[0].actlYmd").value("2026-09-05"))
                 .andExpect(jsonPath("$.data[0].sttsCd").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data[0].rgtrMbrNm").value("스터디장"))
                 .andExpect(jsonPath("$.data[0].presentCount").value(1))
@@ -580,7 +580,7 @@ class AcademicProgramSessionControllerTest {
     }
 
     /*
-     * NOT_SUBMITTED는 session 행이 없다는 사실을 가리키는 파생 값이라 이 목록에서는 언제나 빈
+     * NOT_SUBMITTED는 sesn 행이 없다는 사실을 가리키는 파생 값이라 이 목록에서는 언제나 빈
      * 결과다 — 400으로 거절하지는 않는다(어휘에 있는 값이고 답이 거짓이 아니다).
      */
     @Test
@@ -630,11 +630,11 @@ class AcademicProgramSessionControllerTest {
 
         mockMvc.perform(
                         authorized(get(sessionsPath(academicProgram)), leaderToken)
-                                .param("sort", "-realDt"))
+                                .param("sort", "-actlYmd"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].realDt").value("2026-09-12"))
-                .andExpect(jsonPath("$.data[1].realDt").value("2026-09-05"))
-                .andExpect(jsonPath("$.page.sort").value("-realDt"));
+                .andExpect(jsonPath("$.data[0].actlYmd").value("2026-09-12"))
+                .andExpect(jsonPath("$.data[1].actlYmd").value("2026-09-05"))
+                .andExpect(jsonPath("$.page.sort").value("-actlYmd"));
     }
 
     @Test
@@ -687,13 +687,13 @@ class AcademicProgramSessionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
                 .andExpect(jsonPath("$.data[0].sessionId").value(sessionId))
-                .andExpect(jsonPath("$.data[0].sessionSttsCd").value("SUBMITTED"))
-                .andExpect(jsonPath("$.data[0].realDt").value("2026-09-05"))
-                .andExpect(jsonPath("$.data[0].cn").value("1회차 진행 내용"))
+                .andExpect(jsonPath("$.data[0].sesnSttsCd").value("SUBMITTED"))
+                .andExpect(jsonPath("$.data[0].actlYmd").value("2026-09-05"))
+                .andExpect(jsonPath("$.data[0].prgrsCn").value("1회차 진행 내용"))
                 .andExpect(jsonPath("$.data[0].isEditable").value(false))
                 // 실적이 없는 줄은 그대로 NOT_SUBMITTED이고 스터디장에게는 편집 가능하다
                 .andExpect(jsonPath("$.data[1].sessionId").value(Matchers.nullValue()))
-                .andExpect(jsonPath("$.data[1].sessionSttsCd").value("NOT_SUBMITTED"))
+                .andExpect(jsonPath("$.data[1].sesnSttsCd").value("NOT_SUBMITTED"))
                 .andExpect(jsonPath("$.data[1].isEditable").value(true));
     }
 
@@ -708,7 +708,7 @@ class AcademicProgramSessionControllerTest {
                                 get(PROGRAMS + "/" + academicProgram.getId() + "/curriculum-items"),
                                 leaderToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].sessionSttsCd").value("REVISION_REQUESTED"))
+                .andExpect(jsonPath("$.data[0].sesnSttsCd").value("REVISION_REQUESTED"))
                 .andExpect(jsonPath("$.data[0].isEditable").value(true));
     }
 
@@ -789,12 +789,12 @@ class AcademicProgramSessionControllerTest {
                 participant == null
                         ? "[]"
                         : """
-                          [{"eventPtcpId": %d, "presentYn": %b}]
+                          [{"eventPtcpId": %d, "atndYn": %b}]
                           """
                                 .formatted(participant.getId(), present);
         return """
-               {"curriculumItemId": %d, "realDt": "%s", "cn": "%s",
-                "noticeCn": "다음 주 준비물", "attendances": %s}
+               {"curriculumItemId": %d, "actlYmd": "%s", "prgrsCn": "%s",
+                "ntcCn": "다음 주 준비물", "attendances": %s}
                """
                 .formatted(curriculumItem.getId(), realDate, content, attendances);
     }

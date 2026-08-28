@@ -4,7 +4,7 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /*
- * academic_program_stts_cd 전이 액션 (#133 · POST /v1/academic-programs/{id}/transitions).
+ * acdm_actv_stts_cd 전이 액션 (#133 · POST /v1/academic-programs/{id}/transitions).
  *
  * `APPROVE`/`REJECT`/`REQUEST_REVISION` 3종은 없다 — 승인은 #150(승인 이관)이 대체하고
  * 반려·수정요청은 #141의 폼 응답 상태로 대체됐다(2026-08-24 재설계, 이슈 코멘트). 학술국장이

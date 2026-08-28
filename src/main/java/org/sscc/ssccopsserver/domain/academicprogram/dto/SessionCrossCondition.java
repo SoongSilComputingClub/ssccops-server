@@ -50,7 +50,7 @@ public record SessionCrossCondition(
     }
 
     /*
-     * NOT_SUBMITTED를 넘기면 언제나 빈 목록이다 — 그 상태는 session 행이 없다는 사실을 가리키는
+     * NOT_SUBMITTED를 넘기면 언제나 빈 목록이다 — 그 상태는 sesn 행이 없다는 사실을 가리키는
      * 파생 값이라 이 테이블에서 셀 수 있는 것이 아니다(SessionCondition과 같은 판단).
      */
     private SessionStatus toStatus() {

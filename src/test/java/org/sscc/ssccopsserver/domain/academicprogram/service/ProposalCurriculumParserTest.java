@@ -39,18 +39,18 @@ class ProposalCurriculumParserTest {
                 .extracting(
                         CurriculumItemDraft::seqno,
                         CurriculumItemDraft::ttl,
-                        CurriculumItemDraft::planDt)
+                        CurriculumItemDraft::planYmd)
                 .containsExactly(
                         tuple(1, "오리엔테이션", LocalDate.of(2026, 3, 5)),
                         tuple(2, "React, 그리고 상태관리", LocalDate.of(2026, 3, 12)));
     }
 
-    // 날짜는 생략할 수 있다 — 안내 문구가 그렇게 적혀 있고 plan_dt도 NULL 허용이다
+    // 날짜는 생략할 수 있다 — 안내 문구가 그렇게 적혀 있고 plan_ymd도 NULL 허용이다
     @Test
     void acceptsLinesWithoutDate() {
         List<CurriculumItemDraft> items = parser.parse("1회차 | 오리엔테이션\n2회차 | 훅 |");
 
-        assertThat(items).extracting(CurriculumItemDraft::planDt).containsExactly(null, null);
+        assertThat(items).extracting(CurriculumItemDraft::planYmd).containsExactly(null, null);
     }
 
     // 빈 줄은 형식 위반이 아니다. 회차 사이에 줄바꿈을 하나 더 넣는 것은 흔한 일이다

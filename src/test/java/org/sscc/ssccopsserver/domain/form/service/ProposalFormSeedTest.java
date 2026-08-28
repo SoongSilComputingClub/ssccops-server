@@ -122,7 +122,7 @@ class ProposalFormSeedTest {
     }
 
     /*
-     * 유형 선택지는 academic_program_type의 type_nm과 **글자까지** 같아야 한다. 응답은 문자열로
+     * 유형 선택지는 acdm_actv_type의 type_nm과 **글자까지** 같아야 한다. 응답은 문자열로
      * 저장되고 이관(#150)이 그것을 코드로 되돌리므로, 기준정보에서 이름을 바꾸면 매핑이 끊긴다 —
      * 그 사실이 배포 전에 드러나는 자리가 여기다.
      */

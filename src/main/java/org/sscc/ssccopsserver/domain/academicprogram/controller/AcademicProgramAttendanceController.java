@@ -88,7 +88,7 @@ public class AcademicProgramAttendanceController {
     }
 
     /*
-     * 201인 것은 회차에 붙는 참조(file_reference)가 이 요청으로 생기기 때문이다. 재업로드도
+     * 201인 것은 회차에 붙는 참조(file_rfrnc)가 이 요청으로 생기기 때문이다. 재업로드도
      * 같은 201이다 — UPSERT라 행은 새로 생기지 않지만(fileReferenceId가 유지된다) 새 업로드
      * 허가가 발급된다는 점에서 클라이언트가 하는 일이 같고, 두 경우를 200/201로 가르면 화면이
      * 사진 유무를 먼저 알아야 요청을 보낼 수 있다.

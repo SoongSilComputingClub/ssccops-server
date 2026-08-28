@@ -131,7 +131,7 @@ public final class AcademicProgramFixture {
     }
 
     /*
-     * 이 활동이 태어난 기획안 응답 (#150 · academic_program.form_rspns_id는 NOT NULL이다).
+     * 이 활동이 태어난 기획안 응답 (#150 · acdm_actv.form_rspns_id는 NOT NULL이다).
      *
      * 실제 폼(sys_form_cd = 'PROPOSAL')의 응답을 흉내 내지 않고 문항 없는 폼에 빈 응답을
      * 하나 만드는 것은, 이 픽스처를 쓰는 테스트들이 검증하는 것이 이관이 아니라 **이미

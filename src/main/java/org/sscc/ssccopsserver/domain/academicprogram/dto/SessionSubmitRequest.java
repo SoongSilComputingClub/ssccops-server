@@ -23,9 +23,9 @@ import jakarta.validation.constraints.NotNull;
  */
 public record SessionSubmitRequest(
         @NotNull(message = "curriculumItemId는 필수입니다.") Long curriculumItemId,
-        @NotNull(message = "realDt는 필수입니다.") LocalDate realDt,
-        @NotBlank(message = "cn은 필수입니다.") String cn,
-        String noticeCn,
+        @NotNull(message = "actlYmd는 필수입니다.") LocalDate actlYmd,
+        @NotBlank(message = "prgrsCn은 필수입니다.") String prgrsCn,
+        String ntcCn,
         @NotNull(message = "attendances는 필수입니다.") @Valid
                 List<SessionAttendanceSubmitRequest> attendances) {
 

@@ -5,7 +5,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.dto;
  *
  * - fileReferenceId : 회차에 붙은 참조의 식별자. 재업로드해도 바뀌지 않는다(UPSERT).
  * - uploadUrl       : 웹이 **한 번** PUT 할 서명된 주소. 만료가 짧으므로 저장하지 않는다.
- * - publicUrl       : 저장된 file_url 그대로. 화면이 <img src>에 넣는 문자열이다.
+ * - publicUrl       : 저장된 file_url_addr 그대로. 화면이 <img src>에 넣는 문자열이다.
  * - contentType     : 그 PUT에 **반드시 실어야 하는** Content-Type 헤더 값.
  *
  * **contentType은 §3.5의 세 필드에 없지만 계약에 더했다.** 서명에 contentType을 넣지 않으면

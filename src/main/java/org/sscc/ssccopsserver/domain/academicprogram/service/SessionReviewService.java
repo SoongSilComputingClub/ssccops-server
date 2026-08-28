@@ -20,7 +20,7 @@ public interface SessionReviewService {
 
     /*
      * 승인·수정요청(POST .../sessions/{sessionId}/transitions). SUBMITTED에서만 성립하며
-     * (APPROVED는 되돌리지 않는다) 처리 결과를 academic_program_aprv에 한 건 남긴다.
+     * (APPROVED는 되돌리지 않는다) 처리 결과를 acdm_actv_aprv에 한 건 남긴다.
      */
     SessionTransitionResponse transitionSession(
             Long academicProgramId,

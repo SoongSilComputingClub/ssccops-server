@@ -155,8 +155,8 @@ class AcademicProgramReviewControllerTest {
     }
 
     /*
-     * 승인은 상태만 바꾸는 것이 아니라 academic_program_aprv에 처리 한 건을 남긴다 — 이 행이
-     * "누가 언제 승인했는가"의 유일한 기록이다(session 행에는 감사 컬럼이 없다).
+     * 승인은 상태만 바꾸는 것이 아니라 acdm_actv_aprv에 처리 한 건을 남긴다 — 이 행이
+     * "누가 언제 승인했는가"의 유일한 기록이다(sesn 행에는 감사 컬럼이 없다).
      */
     @Test
     void approveSessionRecordsApprovalRow() throws Exception {
@@ -191,7 +191,7 @@ class AcademicProgramReviewControllerTest {
     }
 
     /*
-     * 수정요청의 사유는 academic_program_aprv의 최신 행에만 남고, 회차 상세(#135)가 그것을
+     * 수정요청의 사유는 acdm_actv_aprv의 최신 행에만 남고, 회차 상세(#135)가 그것을
      * latestOpinion으로 읽는다 — 두 이슈가 이 한 컬럼으로 이어진다.
      */
     @Test
@@ -388,7 +388,7 @@ class AcademicProgramReviewControllerTest {
         mockMvc.perform(authorized(get(CROSS_SESSIONS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
-                .andExpect(jsonPath("$.data[0].realDt").value("2026-09-20"))
+                .andExpect(jsonPath("$.data[0].actlYmd").value("2026-09-20"))
                 .andExpect(jsonPath("$.data[0].academicProgramId").value(project.getId()))
                 .andExpect(jsonPath("$.data[0].academicProgramTitle").value("졸업 프로젝트"))
                 .andExpect(jsonPath("$.data[0].typeCd").value("PROJECT"))
@@ -401,7 +401,7 @@ class AcademicProgramReviewControllerTest {
                 .andExpect(jsonPath("$.data[0].hasFileReference").value(false))
                 .andExpect(jsonPath("$.data[1].academicProgramTitle").value("알고리즘 스터디"))
                 .andExpect(jsonPath("$.data[1].typeCd").value("STUDY"))
-                .andExpect(jsonPath("$.page.sort").value("-realDt"))
+                .andExpect(jsonPath("$.page.sort").value("-actlYmd"))
                 .andExpect(jsonPath("$.page.hasNext").value(false))
                 .andExpect(jsonPath("$.page.totalCount").value(2))
                 .andExpect(jsonPath("$.page.overallCount").value(2));
@@ -480,7 +480,7 @@ class AcademicProgramReviewControllerTest {
                 mockMvc.perform(authorized(get(CROSS_SESSIONS), managerToken).param("size", "1"))
                         .andExpect(status().isOk())
                         .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
-                        .andExpect(jsonPath("$.data[0].realDt").value("2026-09-20"))
+                        .andExpect(jsonPath("$.data[0].actlYmd").value("2026-09-20"))
                         .andExpect(jsonPath("$.page.hasNext").value(true))
                         .andReturn()
                         .getResponse()
@@ -493,7 +493,7 @@ class AcademicProgramReviewControllerTest {
                                 .param("cursor", cursor))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
-                .andExpect(jsonPath("$.data[0].realDt").value("2026-09-05"))
+                .andExpect(jsonPath("$.data[0].actlYmd").value("2026-09-05"))
                 .andExpect(jsonPath("$.page.hasNext").value(false));
     }
 
@@ -547,7 +547,7 @@ class AcademicProgramReviewControllerTest {
                 .andExpect(jsonPath("$.data[0].sttsCd").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data[1].sessionId").value(pendingProject))
                 .andExpect(jsonPath("$.data[1].academicProgramTitle").value("졸업 프로젝트"))
-                .andExpect(jsonPath("$.page.sort").value("realDt"))
+                .andExpect(jsonPath("$.page.sort").value("actlYmd"))
                 .andExpect(jsonPath("$.page.totalCount").value(2))
                 // 분모는 대기 건수가 아니라 회차 전체 건수다
                 .andExpect(jsonPath("$.page.overallCount").value(3));
@@ -662,7 +662,7 @@ class AcademicProgramReviewControllerTest {
             AcademicProgramEntity program, int curriculumIndex, String realDate, String content) {
         CurriculumItemEntity item = curriculumItems(program).get(curriculumIndex);
         return """
-               {"curriculumItemId": %d, "realDt": "%s", "cn": "%s", "attendances": []}
+               {"curriculumItemId": %d, "actlYmd": "%s", "prgrsCn": "%s", "attendances": []}
                """
                 .formatted(item.getId(), realDate, content);
     }

@@ -35,7 +35,7 @@ import lombok.RequiredArgsConstructor;
  *
  * 등록(POST)은 이 컨트롤러에 없다 — 2026-08-23 설계 변경(이슈 코멘트)으로 기획안 접수는
  * 폼 도메인(sys_form_cd='PROPOSAL')이 맡고, 폼 응답이 승인될 때 서버가
- * academic_program·event·curriculum_item을 만드는 이관(#150)으로 대체된다. AcademicProgram
+ * acdm_actv·event·crclm_artcl을 만드는 이관(#150)으로 대체된다. AcademicProgram
  * 엔티티 자체는 회차·출석·모집·팀원·진행률의 앵커라 그대로 필요하며, 여기 남는 것은 그렇게
  * 만들어진 행을 들여다보는 조회 셋(상세·목록·커리큘럼)과 이후 운영(모집 시작·종료 승인)을 미는
  * 전이 하나다.
@@ -78,7 +78,7 @@ public class AcademicProgramController {
     @Operation(
             summary = "커리큘럼(회차별 계획) 조회",
             description =
-                    "계획에 실적(session)을 붙여 회차 순으로 내린다. 실적이 없는 회차도 sessionSttsCd에"
+                    "계획에 실적(session)을 붙여 회차 순으로 내린다. 실적이 없는 회차도 sesnSttsCd에"
                             + " NOT_SUBMITTED가 채워지므로 클라이언트는 null 분기를 두지 않는다."
                             + " isEditable은 스터디장/팀장 본인이고 회차가 NOT_SUBMITTED·REVISION_REQUESTED일"
                             + " 때만 true다.")

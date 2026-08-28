@@ -13,7 +13,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * 식별자)를 Base64로 싣고, 정렬 표기를 함께 담아 해독할 때 대조한다.
  *
  * 정렬 값을 문자열로 싣고 비교 시점에 원래 타입으로 되돌리는 것은 두 정렬 키의 타입이 다르기
- * 때문이다(seqno=정수, realDt=날짜). 문자열 그대로 비교하면 날짜는 우연히 맞지만 정수는
+ * 때문이다(seqno=정수, actlYmd=날짜). 문자열 그대로 비교하면 날짜는 우연히 맞지만 정수는
  * 사전순이 되어 10회차가 2회차보다 앞에 온다.
  */
 public record SessionCursor(SessionSortOrder sort, String sortValue, Long sessionId) {

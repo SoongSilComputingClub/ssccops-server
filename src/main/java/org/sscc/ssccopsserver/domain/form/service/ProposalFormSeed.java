@@ -61,16 +61,16 @@ public final class ProposalFormSeed {
      * 이미 바꿀 수 없는 값이다. 반대로 화면 문구(qitemLblNm)를 키로 삼지 않는 것도 같은 이유다.
      */
 
-    /** 유형(스터디/프로젝트) → academic_program_type_cd */
+    /** 유형(스터디/프로젝트) → acdm_actv_type_cd */
     public static final String QITEM_PROGRAM_TYPE = "programType";
 
     /** 활동명 → event.event_ttl */
     public static final String QITEM_PROGRAM_TITLE = "programTitle";
 
-    /** 활동 소개·목표 → academic_program.goal_cn */
+    /** 활동 소개·목표 → acdm_actv.goal_cn */
     public static final String QITEM_GOAL_CONTENT = "goalContent";
 
-    /** 준비물·사전 요구사항 → academic_program.prep_cn */
+    /** 준비물·사전 요구사항 → acdm_actv.prep_cn */
     public static final String QITEM_PREP_CONTENT = "prepContent";
 
     /** 활동 기간 시작 → event.event_bgng_dt */
@@ -79,19 +79,19 @@ public final class ProposalFormSeed {
     /** 활동 기간 종료 → event.event_end_dt */
     public static final String QITEM_PERIOD_END_DATE = "periodEndDate";
 
-    /** 정기 일정 → academic_program.schedule_txt */
+    /** 정기 일정 → acdm_actv.schdl_cn */
     public static final String QITEM_SCHEDULE_TEXT = "scheduleText";
 
-    /** 모집 정원 하한 → academic_program.cpcty_min_cnt */
+    /** 모집 정원 하한 → acdm_actv.pscp_min_cnt */
     public static final String QITEM_CAPACITY_MIN_COUNT = "capacityMinCount";
 
-    /** 모집 정원 상한 → academic_program.cpcty_max_cnt */
+    /** 모집 정원 상한 → acdm_actv.pscp_max_cnt */
     public static final String QITEM_CAPACITY_MAX_COUNT = "capacityMaxCount";
 
     /** 희망 장소 → event.plc_nm */
     public static final String QITEM_PLACE_NAME = "placeName";
 
-    /** 회차별 커리큘럼 → curriculum_item[] (seqno · ttl · plan_dt) */
+    /** 회차별 커리큘럼 → crclm_artcl[] (seqno · ttl · plan_ymd) */
     public static final String QITEM_CURRICULUM = "curriculum";
 
     /*
@@ -103,7 +103,7 @@ public final class ProposalFormSeed {
      * 구분자가 '|'인 것은 활동 주제에 쉼표·하이픈·콜론이 흔히 들어가기 때문이다(예:
      * "React, 그리고 상태관리"). 탭은 눈에 보이지 않아 붙여넣기에서 공백으로 바뀐다.
      * 날짜는 맨 뒤에 두고 생략할 수 있게 뒀다 — 접수 시점에 회차별 날짜까지 정해 둔 기획안은
-     * 드물고, 없다고 반려할 값이 아니다(curriculum_item.plan_dt도 NULL 허용이다).
+     * 드물고, 없다고 반려할 값이 아니다(crclm_artcl.plan_ymd도 NULL 허용이다).
      *
      * 자유 텍스트를 그대로 받는 것은 확정된 결정이다(ssccops#131). 접수 단계에서 표로 강제하면
      * 아직 다듬어지지 않은 계획을 칸에 맞춰 적게 되고, 반려될 기획안에도 구조화 비용이 붙는다 —
@@ -117,7 +117,7 @@ public final class ProposalFormSeed {
 
     /*
      * ── 유형 선택지 ────────────────────────────────────────────
-     * academic_program_type 기준정보의 type_nm과 **글자 하나까지** 같아야 한다(현재 시드는
+     * acdm_actv_type 기준정보의 type_nm과 **글자 하나까지** 같아야 한다(현재 시드는
      * STUDY = '스터디', PROJECT = '프로젝트'). 응답은 문자열로 저장되는데 이관(#150)은 그것을
      * 코드로 되돌려야 하므로, 이름이 갈리면 매핑이 끊긴다.
      *

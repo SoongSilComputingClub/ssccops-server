@@ -120,7 +120,7 @@ public class AttendanceServiceImpl implements AttendanceService {
                         row.eventPtcpId());
                 throw new GeneralException(AcademicProgramErrorCode.INVALID_ATTENDANCE_TARGET);
             }
-            attendance.changePresent(Boolean.TRUE.equals(row.presentYn()));
+            attendance.changePresent(Boolean.TRUE.equals(row.atndYn()));
         }
     }
 }

@@ -13,7 +13,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 public interface AttendanceRepository extends JpaRepository<AttendanceEntity, Long> {
 
     /*
-     * 회차 상세(#135)의 출석부. 회원명을 attendance에 복사하지 않고 조인해 싣기 때문에
+     * 회차 상세(#135)의 출석부. 회원명을 atndc에 복사하지 않고 조인해 싣기 때문에
      * 참가자·회원을 함께 끌어온다 — LAZY 그대로 두면 출석 한 줄마다 조회가 두 번씩 더 나간다
      * (DB-13 · EventParticipantRepository.findAllByEventAndStatusInOrderByIdAsc와 같은 이유).
      *

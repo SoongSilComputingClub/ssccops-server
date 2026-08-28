@@ -15,7 +15,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 public interface SessionRepository
         extends JpaRepository<SessionEntity, Long>, SessionRepositoryCustom {
 
-    /** 중복 제출 선조회(#135). uk_session_curriculum_item 위반이 최종 방어선이다 */
+    /** 중복 제출 선조회(#135). uk_sesn_crclm_artcl 위반이 최종 방어선이다 */
     boolean existsByCurriculumItemId(Long curriculumItemId);
 
     /*
@@ -42,10 +42,10 @@ public interface SessionRepository
     List<SessionEntity> findByCurriculumItemAcademicProgramId(Long academicProgramId);
 
     /*
-     * 인증사진 업로드(#137)가 회차 행을 잠근다. 잠그는 대상이 file_reference가 아니라 session인
+     * 인증사진 업로드(#137)가 회차 행을 잠근다. 잠그는 대상이 file_rfrnc가 아니라 sesn인
      * 것은, 막아야 하는 경합이 "이미 있는 참조를 둘이 고치는 것"이 아니라 **"참조가 아직 없는
      * 회차에 둘이 동시에 만드는 것"**이기 때문이다 — 없는 행은 잠글 수 없고, 그대로 두면 늦은
-     * 쪽이 uk_file_reference_session에 걸려 도메인 오류 코드 없는 500이 나간다.
+     * 쪽이 uk_file_rfrnc_sesn에 걸려 도메인 오류 코드 없는 500이 나간다.
      *
      * 재업로드를 UPSERT로 열어 둔 이상(설계 결정 #1) 그 경합의 정답은 거절이 아니라 순서를
      * 세우는 것이다 — 뒤에 들어온 요청은 앞의 커밋을 보고 그 참조를 갈아 끼운다. 이 회차의

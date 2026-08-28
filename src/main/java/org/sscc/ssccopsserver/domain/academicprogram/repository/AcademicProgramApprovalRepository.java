@@ -7,7 +7,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramAppro
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalPoint;
 
 /*
- * academic_program_aprv 저장소 (#133·#136·#139). 쓰기 경로는 APPROVE_COMPLETION(#133)과 회차
+ * acdm_actv_aprv 저장소 (#133·#136·#139). 쓰기 경로는 APPROVE_COMPLETION(#133)과 회차
  * 승인·수정요청(#136) 둘이고, 읽기 경로는 회차 상세의 latestOpinion(#135)과 승인 이력 조회
  * (#139)다.
  */

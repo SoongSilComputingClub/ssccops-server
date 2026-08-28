@@ -30,7 +30,7 @@ public class SessionRepositoryImpl implements SessionRepositoryCustom {
     /*
      * 목록은 계획(회차 번호·주제·예정일)과 작성자를 함께 내리므로 fetch join으로 한 번에
      * 끌어온다. 건수 질의는 같은 별칭의 일반 join이면 충분하다(AcademicProgramRepositoryImpl과
-     * 같은 이유) — 정렬 키가 curriculum_item에 있어 조인 자체는 양쪽 다 필요하다.
+     * 같은 이유) — 정렬 키가 crclm_artcl에 있어 조인 자체는 양쪽 다 필요하다.
      */
     private static final String SELECT_ROWS =
             "select s from SessionEntity s"

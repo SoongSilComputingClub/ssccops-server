@@ -33,7 +33,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /*
- * academic_program(학술 활동) — event(행사)의 1:1 확장 (#131, 학술관리_데이터모델.md §1·§2).
+ * acdm_actv(학술 활동) — event(행사)의 1:1 확장 (#131, 학술관리_데이터모델.md §1·§2).
  * 제목·기간 같은 공통 속성은 event가 갖고, 여기에는 커리큘럼·진행률 같은 학술 활동 전용
  * 필드만 둔다 — work가 oper를 확장하는 것과 같은 패턴이다.
  *
@@ -46,19 +46,19 @@ import lombok.NoArgsConstructor;
 @Entity
 @EntityListeners(AuditingEntityListener.class)
 @Table(
-        name = "academic_program",
+        name = "acdm_actv",
         uniqueConstraints = {
             @UniqueConstraint(
-                    name = "uk_academic_program_event",
+                    name = "uk_acdm_actv_event",
                     columnNames = {"event_id"}),
             @UniqueConstraint(
-                    name = "uk_academic_program_form_rspns",
+                    name = "uk_acdm_actv_form_rspns",
                     columnNames = {"form_rspns_id"})
         },
         indexes = {
-            @Index(name = "idx_academic_program_stts_cd", columnList = "academic_program_stts_cd"),
-            @Index(name = "idx_academic_program_prpsr_mbr_id", columnList = "prpsr_mbr_id"),
-            @Index(name = "idx_academic_program_leadr_mbr_id", columnList = "leadr_mbr_id")
+            @Index(name = "idx_acdm_actv_stts_cd", columnList = "acdm_actv_stts_cd"),
+            @Index(name = "idx_acdm_actv_prpsr_mbr_id", columnList = "prpsr_mbr_id"),
+            @Index(name = "idx_acdm_actv_leadr_mbr_id", columnList = "leadr_mbr_id")
         })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -67,7 +67,7 @@ public class AcademicProgramEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "academic_program_id")
+    @Column(name = "acdm_actv_id")
     private Long id;
 
     @OneToOne(fetch = FetchType.LAZY, optional = false)
@@ -82,11 +82,11 @@ public class AcademicProgramEntity {
      * 종결(#141)이라 응답이 더 바뀔 일도 사실상 없지만, 규칙은 "복사한다"이지 "따라간다"가
      * 아니다. 그래서 이 필드를 읽어 활동의 값을 채우는 코드를 만들지 말 것.
      *
-     * UNIQUE(uk_academic_program_form_rspns)는 중복 이관 방어선이다. 같은 응답을 두 번 승인할
+     * UNIQUE(uk_acdm_actv_form_rspns)는 중복 이관 방어선이다. 같은 응답을 두 번 승인할
      * 수 없으므로(ACCEPTED는 종결) 정상 흐름에서는 걸릴 일이 없고, 데이터 정합성이 깨진 경우에만
      * 의미가 있다 — 선조회만으로는 동시 요청을 막지 못한다는 이 레포의 규칙 그대로다.
      *
-     * NOT NULL로 붙일 수 있는 것은 **이 이슈 전까지 academic_program 행을 만드는 경로가 아예
+     * NOT NULL로 붙일 수 있는 것은 **이 이슈 전까지 acdm_actv 행을 만드는 경로가 아예
      * 없었기 때문이다**(등록 API는 2026-08-23 설계 변경으로 사라졌고 승인 이관이 그 자리를
      * 대신한다). dev·prod의 ddl-auto: update는 이미 행이 있는 테이블에 기본값 없는 NOT NULL
      * 컬럼을 붙이지 못하는데, 그 테이블은 어느 환경에서도 비어 있다.
@@ -97,11 +97,11 @@ public class AcademicProgramEntity {
 
     /** 스터디/프로젝트 구분(#130 코드테이블). 승인 이후에는 바꿀 수 없다(S2에서 거부) */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "academic_program_type_cd", nullable = false)
+    @JoinColumn(name = "acdm_actv_type_cd", nullable = false)
     private AcademicProgramTypeEntity type;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "academic_program_stts_cd", nullable = false, length = 30)
+    @Column(name = "acdm_actv_stts_cd", nullable = false, length = 20)
     private AcademicProgramStatus status;
 
     @Column(name = "goal_cn", nullable = false, columnDefinition = "TEXT")
@@ -110,13 +110,13 @@ public class AcademicProgramEntity {
     @Column(name = "prep_cn", columnDefinition = "TEXT")
     private String prepContent;
 
-    @Column(name = "schedule_txt", length = 100)
+    @Column(name = "schdl_cn", length = 500)
     private String scheduleText;
 
-    @Column(name = "cpcty_min_cnt")
+    @Column(name = "pscp_min_cnt")
     private Integer capacityMinCount;
 
-    @Column(name = "cpcty_max_cnt")
+    @Column(name = "pscp_max_cnt")
     private Integer capacityMaxCount;
 
     /** 기획안 제출자. 사후 변경 불가라 updatable = false로 잠근다 */
@@ -184,7 +184,7 @@ public class AcademicProgramEntity {
      * AcademicProgramTransition이 갖고, 여기서는 그 표를 어겼을 때 무엇으로 거절할지만 맡는다 —
      * FormEntity.changeStatus와 같은 역할 분담이다.
      *
-     * 전이 이력은 이 메서드가 남기지 않는다 — APPROVE_COMPLETION의 academic_program_aprv 기록은
+     * 전이 이력은 이 메서드가 남기지 않는다 — APPROVE_COMPLETION의 acdm_actv_aprv 기록은
      * 호출부(AcademicProgramServiceImpl.transition)가 별도로 남긴다. START_RECRUITMENT는 폼
      * 전이·모집 기간 반영과 한 트랜잭션으로 오케스트레이션되므로 그 부수 효과도 호출부가 맡는다.
      */

@@ -35,8 +35,8 @@ import lombok.RequiredArgsConstructor;
  * (ssccops#148 BR).
  *
  * ── 유형 문자열 → 코드 ────────────────────────────────────────
- * 응답에는 선택지 문자열("스터디")이 저장되고 academic_program은 코드("STUDY")를 참조한다.
- * 그 다리를 코드 안의 Map으로 굳히지 않고 **academic_program_type.type_nm 조회**로 놓았다 —
+ * 응답에는 선택지 문자열("스터디")이 저장되고 acdm_actv은 코드("STUDY")를 참조한다.
+ * 그 다리를 코드 안의 Map으로 굳히지 않고 **acdm_actv_type.type_nm 조회**로 놓았다 —
  * 유형은 배포 없이 시드 추가로 늘어나야 하는 기준정보이고(#130), 상수 맵을 두면 세미나 유형을
  * 하나 추가할 때 서버 배포가 함께 필요해진다. 이름이 같은지는 ProposalFormSeedTest가
  * 이미 못 박고 있으므로(선택지 문자열 == type_nm), 조회가 빈손이라는 것은 곧 운영진이 어느
@@ -54,8 +54,8 @@ public class ProposalResponseParser {
     /** event.plc_nm의 길이 상한 */
     private static final int MAX_PLACE_NAME_LENGTH = 100;
 
-    /** academic_program.schedule_txt의 길이 상한 */
-    private static final int MAX_SCHEDULE_TEXT_LENGTH = 100;
+    /** acdm_actv.schdl_cn의 길이 상한 */
+    private static final int MAX_SCHEDULE_TEXT_LENGTH = 500;
 
     /** event.event_ttl의 길이 상한 */
     private static final int MAX_TITLE_LENGTH = 256;

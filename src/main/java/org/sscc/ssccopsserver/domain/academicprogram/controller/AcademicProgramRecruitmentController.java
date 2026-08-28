@@ -95,7 +95,7 @@ public class AcademicProgramRecruitmentController {
                             + " 명단에 있는 회원이면 409 EVENT_PARTICIPANT_DUPLICATED다."
                             + " 모집 시작 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED."
                             + " **정원 초과는 차단하지 않는다**(참고치) — 화면이 활동 상세의"
-                            + " cpctyMaxCnt와 응답 명단의 확정 인원을 비교해 경고한다.")
+                            + " pscpMaxCnt와 응답 명단의 확정 인원을 비교해 경고한다.")
     @PostMapping("/select")
     @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
     public ApiResponse<List<AcademicProgramMemberResponse>> selectMembers(

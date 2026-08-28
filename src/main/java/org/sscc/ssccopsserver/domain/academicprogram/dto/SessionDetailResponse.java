@@ -14,7 +14,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 같은 모양이다 — 쓰기 직후 화면이 재조회 없이 같은 화면을 그릴 수 있어야 한다(회원가입 응답이
  * 세션 조회와 같은 DTO를 쓰는 것과 같은 판단).
  *
- * 계획 쪽 값(seqno·curriculumTtl·planDt)을 함께 싣는 것은 이 화면이 "계획 대비 실제"를 나란히
+ * 계획 쪽 값(seqno·curriculumTtl·planYmd)을 함께 싣는 것은 이 화면이 "계획 대비 실제"를 나란히
  * 보여주기 때문이다 — 클라이언트가 커리큘럼을 따로 한 번 더 부르지 않는다.
  *
  * presentCount·totalCount는 저장하지 않는 파생값이다. attendances를 세면 나오는 값을 굳이
@@ -26,10 +26,10 @@ public record SessionDetailResponse(
         Long curriculumItemId,
         Integer seqno,
         String curriculumTtl,
-        LocalDate planDt,
-        LocalDate realDt,
-        String cn,
-        String noticeCn,
+        LocalDate planYmd,
+        LocalDate actlYmd,
+        String prgrsCn,
+        String ntcCn,
         String sttsCd,
         Long rgtrMbrId,
         String rgtrMbrNm,
@@ -42,7 +42,7 @@ public record SessionDetailResponse(
     /*
      * fileReference는 출석 인증사진(#137)이 있으면 그 참조이고 없으면 null이다 — 사진을 아직
      * 올리지 않은 회차가 흔한 상태라 빈 껍데기를 만들어 내리지 않는다. latestOpinion은 회차
-     * 승인·수정요청(#136)이 남긴 최신 academic_program_aprv(SESSION) 행의 사유이며, 아직
+     * 승인·수정요청(#136)이 남긴 최신 acdm_actv_aprv(SESSION) 행의 사유이며, 아직
      * 검토되지 않은 회차는 null이다 — 둘 다 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
      */
     public static SessionDetailResponse of(
@@ -55,7 +55,7 @@ public record SessionDetailResponse(
 
         List<SessionAttendanceResponse> rows =
                 attendances.stream().map(SessionAttendanceResponse::from).toList();
-        int presentCount = (int) rows.stream().filter(SessionAttendanceResponse::presentYn).count();
+        int presentCount = (int) rows.stream().filter(SessionAttendanceResponse::atndYn).count();
 
         return new SessionDetailResponse(
                 session.getId(),
@@ -78,7 +78,7 @@ public record SessionDetailResponse(
 
     /*
      * 참조가 없으면 블록 자체를 내리지 않는다(null) — 화면은 이 값의 유무 하나로 "사진 있음/
-     * 없음"을 가른다. 필드가 null인 껍데기를 내리면 그 판단이 fileUrl 검사로 한 겹 더 들어간다.
+     * 없음"을 가른다. 필드가 null인 껍데기를 내리면 그 판단이 fileUrlAddr 검사로 한 겹 더 들어간다.
      */
     private static SessionFileReferenceResponse fileReferenceOf(FileReferenceEntity fileReference) {
         return fileReference == null

@@ -78,7 +78,7 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
      * 회원도 표를 보되 편집 버튼만 꺼진다.
      *
      * 실적(#135)은 계획 줄마다 묻지 않고 활동 하나의 것을 한 번에 읽어 접는다 — 줄마다 물으면
-     * 그대로 N+1이다(DB-13). 계약(항상 값이 있는 sessionSttsCd, 서버가 판정하는 isEditable)은
+     * 그대로 N+1이다(DB-13). 계약(항상 값이 있는 sesnSttsCd, 서버가 판정하는 isEditable)은
      * 실적이 붙어도 그대로다.
      */
     @Override
@@ -205,7 +205,7 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
 
     /*
      * 종료/수료 승인. 진행률 미달이어도 자동 차단하지 않는다(학술국장 재량, 설계 결정 #4) —
-     * 여기서는 그 재량이 실제로 내려졌다는 사실만 academic_program_aprv에 기록한다.
+     * 여기서는 그 재량이 실제로 내려졌다는 사실만 acdm_actv_aprv에 기록한다.
      */
     private FormReceiptStatus approveCompletion(
             AcademicProgramEntity academicProgram, MemberEntity performer) {

@@ -527,17 +527,21 @@ WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'EVENT');
 -- 코드가 세운 폼을 목록에서 눈으로 찾는 단서라 폼과 함께 생겨야 한다 — 폼 쪽 시드가 여기 있지 않은
 -- 이유(qitem_cpst_cn JSONB 리터럴을 H2와 PostgreSQL이 다르게 읽는다)는 ProposalFormSeed 주석에 있다.
 
--- 학술 활동 유형(academic_program_type, #130). enum이 아니라 코드테이블인 것은 세미나·특강·
+-- 학술 활동 유형(acdm_actv_type, #130). enum이 아니라 코드테이블인 것은 세미나·특강·
 -- 대회 등 새 유형이 배포 없이 시드 추가만으로 열려야 하기 때문이다(학술관리_기능범위.md §2).
 -- event_clsf(wave2 D13)와 같은 멱등 시드 패턴을 따른다.
 --
--- academic_program_type_cd는 지정한다(sub_work_type과 달리 IDENTITY가 아니라 코드 문자열
+-- acdm_actv_type_cd는 지정한다(sub_work_type과 달리 IDENTITY가 아니라 코드 문자열
 -- PK다 — authrt와 같은 이유). 감사 컬럼(crt_dt·mdfcn_dt)·use_yn은 이 파일이 JPA를 거치지
 -- 않는 순수 SQL이라 직접 넣는다 — 빠뜨리면 NOT NULL 위반으로 기동이 깨진다.
-INSERT INTO academic_program_type (academic_program_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
+--
+-- 테이블·컬럼 이름은 엔티티를 따라가야 한다(#178 데이터사전 등재로 academic_program_type에서
+-- 바뀌었다). 이 파일은 순수 SQL이라 @Table·@Column을 고쳐도 따라오지 않으므로, 한쪽만 고치면
+-- 로컬·테스트 부팅이 이 INSERT에서 곧바로 깨진다.
+INSERT INTO acdm_actv_type (acdm_actv_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
 SELECT 'STUDY', '스터디', 1, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-WHERE NOT EXISTS (SELECT 1 FROM academic_program_type WHERE academic_program_type_cd = 'STUDY');
+WHERE NOT EXISTS (SELECT 1 FROM acdm_actv_type WHERE acdm_actv_type_cd = 'STUDY');
 
-INSERT INTO academic_program_type (academic_program_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
+INSERT INTO acdm_actv_type (acdm_actv_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
 SELECT 'PROJECT', '프로젝트', 2, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-WHERE NOT EXISTS (SELECT 1 FROM academic_program_type WHERE academic_program_type_cd = 'PROJECT');
+WHERE NOT EXISTS (SELECT 1 FROM acdm_actv_type WHERE acdm_actv_type_cd = 'PROJECT');

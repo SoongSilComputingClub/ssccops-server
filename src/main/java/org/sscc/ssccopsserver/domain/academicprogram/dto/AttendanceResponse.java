@@ -13,11 +13,11 @@ import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
  * 두 화면이 한 DTO를 공유하게 만들면, 다음에 한쪽만 필요한 값이 생길 때마다 다른 쪽 계약이
  * 함께 넓어진다(PublicFormResponse를 FormResponse와 나눈 것과 같은 판단).
  *
- * 회원명은 attendance에 복사하지 않고 event_ptcp → mbr로 조인해 싣는다 — 복사해 두면 개명한
+ * 회원명은 atndc에 복사하지 않고 event_ptcp → mbr로 조인해 싣는다 — 복사해 두면 개명한
  * 회원의 이름이 회차마다 다르게 남는다.
  */
 public record AttendanceResponse(
-        Long attendanceId, Long eventPtcpId, String mbrNm, boolean presentYn) {
+        Long attendanceId, Long eventPtcpId, String mbrNm, boolean atndYn) {
 
     public static AttendanceResponse from(AttendanceEntity attendance) {
         EventParticipantEntity participant = attendance.getParticipant();

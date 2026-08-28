@@ -13,7 +13,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 기획안·활동 상세 응답(#131). 생성(POST) 응답과 단건 조회(GET) 응답이 같은 모양이다 —
  * 등록 직후 화면이 재조회 없이 같은 화면을 그릴 수 있어야 한다(work 도메인과 같은 판단).
  *
- * title·eventBgngDt·eventEndDt·plcNm은 academic_program이 아니라 event 컬럼이지만, 클라이언트가
+ * title·eventBgngDt·eventEndDt·plcNm은 acdm_actv이 아니라 event 컬럼이지만, 클라이언트가
  * 두 번 호출하지 않도록 여기서 합성해 내려준다(학술관리_API설계.md 베이스 경로 절).
  *
  * formId·formReceiptStatus는 이 이슈 범위에서 언제나 null이다 — 승인(#133) 전에는 폼 자체가
@@ -31,9 +31,9 @@ public record AcademicProgramDetailResponse(
         AcademicProgramStatus sttsCd,
         String goalCn,
         String prepCn,
-        String scheduleTxt,
-        Integer cpctyMinCnt,
-        Integer cpctyMaxCnt,
+        String schdlCn,
+        Integer pscpMinCnt,
+        Integer pscpMaxCnt,
         Long prpsrMbrId,
         String prpsrMbrNm,
         Long leadrMbrId,

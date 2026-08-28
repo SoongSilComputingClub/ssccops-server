@@ -70,7 +70,7 @@ import com.jayway.jsonpath.JsonPath;
  * 이 이슈의 핵심은 **열람 범위**라 토큰을 넷 둔다 — 학술국장(관리권한), 스터디장(소유권),
  * 팀원(그 활동의 확정 참가자이지만 리더가 아닌 회원), 그리고 다른 권한만 가진 국원. 팀원이
  * 403이라는 것이 특히 중요한데, 이 응답에만 수정요청 사유(opnnCn)가 실리기 때문이다 —
- * 상태값만 보는 화면(#134의 sessionSttsCd)은 여전히 전원에게 열려 있다.
+ * 상태값만 보는 화면(#134의 sesnSttsCd)은 여전히 전원에게 열려 있다.
  *
  * 이력 행은 리포지토리로 심지 않고 #136(회차 승인·수정요청)·#133(종료 승인) API를 그대로 태워
  * 만든다. 심으면 이 조회가 실제 쓰기 경로가 남기지 않는 모양의 행까지 읽게 되어, 조회가
@@ -166,7 +166,7 @@ class AcademicProgramApprovalControllerTest {
         mockMvc.perform(authorized(get(approvalsPath(study)), leaderToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
-                .andExpect(jsonPath("$.data[0].aprvPntCd").value("SESSION"))
+                .andExpect(jsonPath("$.data[0].aprvSeCd").value("SESSION"))
                 .andExpect(jsonPath("$.data[0].aprvSttsCd").value("APPROVED"))
                 .andExpect(jsonPath("$.data[0].sessionId").value(sessionId))
                 // 승인자는 요청 본문이 아니라 인증 주체에서 왔다(#136)
@@ -235,10 +235,10 @@ class AcademicProgramApprovalControllerTest {
 
         mockMvc.perform(
                         authorized(get(approvalsPath(study)), managerToken)
-                                .param("aprvPntCd", "COMPLETION"))
+                                .param("aprvSeCd", "COMPLETION"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
-                .andExpect(jsonPath("$.data[0].aprvPntCd").value("COMPLETION"))
+                .andExpect(jsonPath("$.data[0].aprvSeCd").value("COMPLETION"))
                 .andExpect(jsonPath("$.data[0].aprvSttsCd").value("APPROVED"))
                 .andExpect(jsonPath("$.data[0].sessionId").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.page.totalCount").value(1))
@@ -246,10 +246,10 @@ class AcademicProgramApprovalControllerTest {
 
         mockMvc.perform(
                         authorized(get(approvalsPath(study)), managerToken)
-                                .param("aprvPntCd", "SESSION"))
+                                .param("aprvSeCd", "SESSION"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
-                .andExpect(jsonPath("$.data[0].aprvPntCd").value("SESSION"))
+                .andExpect(jsonPath("$.data[0].aprvSeCd").value("SESSION"))
                 .andExpect(jsonPath("$.data[0].sessionId").value(sessionId));
     }
 
@@ -272,7 +272,7 @@ class AcademicProgramApprovalControllerTest {
     }
 
     /*
-     * **aprvPntCd는 SESSION·COMPLETION만 받는다.** 2026-08-24 재설계로 기획안 승인 이력은 폼
+     * **aprvSeCd는 SESSION·COMPLETION만 받는다.** 2026-08-24 재설계로 기획안 승인 이력은 폼
      * 응답 검토(#141)로 옮겨 갔고, 그 어휘는 AcademicProgramApprovalPoint에 아예 없다 — 옛
      * 이름으로 부르면 조용히 전건이 나오지 않고 400이다.
      */
@@ -280,16 +280,14 @@ class AcademicProgramApprovalControllerTest {
     void rejectsProposalApprovalPoint() throws Exception {
         mockMvc.perform(
                         authorized(get(approvalsPath(study)), managerToken)
-                                .param("aprvPntCd", "PROPOSAL"))
+                                .param("aprvSeCd", "PROPOSAL"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
     }
 
     @Test
     void rejectsUnknownApprovalPoint() throws Exception {
-        mockMvc.perform(
-                        authorized(get(approvalsPath(study)), managerToken)
-                                .param("aprvPntCd", "무효"))
+        mockMvc.perform(authorized(get(approvalsPath(study)), managerToken).param("aprvSeCd", "무효"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
     }
@@ -342,7 +340,7 @@ class AcademicProgramApprovalControllerTest {
     /*
      * **일반 팀원은 볼 수 없다.** 이 활동의 확정 참가자여도 마찬가지다 — 수정요청 사유는 활동
      * 운영진 개인에게 민감할 수 있으므로 열람을 스터디장 본인과 학술국장으로 좁혔다
-     * (2026-08-22 2차 검증 확정). 상태값만 필요한 화면은 #134의 sessionSttsCd를 쓴다.
+     * (2026-08-22 2차 검증 확정). 상태값만 필요한 화면은 #134의 sesnSttsCd를 쓴다.
      */
     @Test
     void getApprovalsAsTeamMemberReturns403() throws Exception {
@@ -541,7 +539,7 @@ class AcademicProgramApprovalControllerTest {
                         .findByAcademicProgramIdOrderBySeqnoAsc(program.getId())
                         .get(curriculumIndex);
         return """
-               {"curriculumItemId": %d, "realDt": "%s", "cn": "%s", "attendances": []}
+               {"curriculumItemId": %d, "actlYmd": "%s", "prgrsCn": "%s", "attendances": []}
                """
                 .formatted(item.getId(), realDate, content);
     }

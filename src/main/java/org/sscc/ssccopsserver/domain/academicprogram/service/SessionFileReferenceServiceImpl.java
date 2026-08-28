@@ -29,7 +29,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * 간다 — wave2 행사 이미지(#161 · EventImageServiceImpl)가 세운 구조를 그대로 따른다. 멀티파트
  * 업로드를 만들지 않는 것은 취향이 아니라 배포 환경의 제약이다(512MB 컨테이너, #107).
  *
- * **#161과 갈리는 곳은 하나다 — 여기는 DB에 행을 남긴다.** 데이터모델(§2)이 file_reference를
+ * **#161과 갈리는 곳은 하나다 — 여기는 DB에 행을 남긴다.** 데이터모델(§2)이 file_rfrnc를
  * 요구하기 때문이고(회차 상세가 사진 유무를 그 행으로 답한다), 그래서 이 서비스는 readOnly가
  * 아니다. 행이 실제 업로드보다 먼저 태어난다는 사실이 만드는 성질은 FileReferenceEntity 주석에
  * 적어 두었다.
@@ -57,7 +57,7 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
 
     /*
      * publicBaseUrl에 기본값을 두지 않는다 — 값이 없으면 **부팅이 실패한다**. 조용히 빈 값으로
-     * 넘어가면 잘못된 publicUrl이 file_reference.file_url에 굳어 버리고, 그때는 저장된 행을
+     * 넘어가면 잘못된 publicUrl이 file_rfrnc.file_url_addr에 굳어 버리고, 그때는 저장된 행을
      * 전부 치환하는 것 말고 고칠 방법이 없다(EventImageServiceImpl과 같은 판단).
      */
     public SessionFileReferenceServiceImpl(

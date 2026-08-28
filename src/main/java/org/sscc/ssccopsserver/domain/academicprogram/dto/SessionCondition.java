@@ -10,7 +10,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 /*
  * 회차 목록(#135 · GET .../sessions)의 쿼리 파라미터. AcademicProgramCondition을 미러링한다.
  *
- * sttsCd로 NOT_SUBMITTED를 넘기면 언제나 빈 목록이다 — 그 상태는 session 행이 없다는 사실을
+ * sttsCd로 NOT_SUBMITTED를 넘기면 언제나 빈 목록이다 — 그 상태는 sesn 행이 없다는 사실을
  * 가리키는 파생 값이라 이 테이블에서 셀 수 있는 것이 아니다(데이터모델 §3). 미제출 회차를 보는
  * 화면은 이 목록이 아니라 계획 조회(#134 · GET .../curriculum-items)다. 그렇다고 400으로
  * 거절하지는 않는다 — 어휘에 있는 값이고, "그 조건에 맞는 실적이 없다"는 답이 거짓이 아니다.

@@ -7,7 +7,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionSubmitRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
- * 회차 실적(session) 기록·조회 (#135 · 학술관리_API설계.md §3.4).
+ * 회차 실적(sesn) 기록·조회 (#135 · 학술관리_API설계.md §3.4).
  *
  * 최초 제출(POST)과 재제출(PUT)을 한 메서드로 합치지 않는다 — 성립 조건이 서로 배타적이고
  * (실적이 없어야 한다 / 실적이 REVISION_REQUESTED여야 한다) 실패 코드도 다르다. 하나로 묶으면

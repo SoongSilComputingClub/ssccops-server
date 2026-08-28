@@ -864,6 +864,266 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
+    /* ── 내 응답 상세 (#177) ───────────────────────────────── */
+
+    /*
+     * 이 이슈의 핵심 한 줄이다 — 제출자가 **자기 답(rspnsCn)과 검토 사유(reviewHistories)**를
+     * 함께 읽는다. 그전까지 답은 내 응답 목록이 싣지 않았고 사유를 실은 상세는 RESPONSE_REVIEW에
+     * 막혀 본인도 열 수 없었다.
+     *
+     * 이력은 제출 → 수정요청 → 재제출 순으로 실려야 한다. 제출(SUBMIT) 행이 빠지면 회차가 언제
+     * 올라갔는지가 사라져 사유가 어느 제출본에 대한 것인지 알 수 없다.
+     */
+    @Test
+    void getMyResponseReturnsMyAnswersAndReviewHistoriesInOrder() throws Exception {
+        Long formId = saveForm("수정요청 확인 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("SUBMITTED"))
+                .andExpect(jsonPath("$.data.rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data.sbmsnSeq").value(2))
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("김철수"))
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(3))
+                .andExpect(jsonPath("$.data.reviewHistories[0].prcsSeCd").value("SUBMIT"))
+                .andExpect(jsonPath("$.data.reviewHistories[0].sbmsnSeq").value(1))
+                .andExpect(jsonPath("$.data.reviewHistories[1].prcsSeCd").value("REQUEST_CHANGES"))
+                .andExpect(
+                        jsonPath("$.data.reviewHistories[1].rvwOpnnCn")
+                                .value("지원 동기를 더 구체적으로 적어주세요."))
+                // 처리자_명은 제출자에게도 보인다 (#177 결정 1 — 동아리 내부 결재다)
+                .andExpect(jsonPath("$.data.reviewHistories[1].prcsMbrNm").value("김운영"))
+                .andExpect(jsonPath("$.data.reviewHistories[2].prcsSeCd").value("SUBMIT"))
+                .andExpect(jsonPath("$.data.reviewHistories[2].sbmsnSeq").value(2));
+    }
+
+    /*
+     * 인접 응답 식별자는 심사 목록의 이웃이라 **정의상 남의 응답**이다. 내려주면 폼 하나에 누가
+     * 응답했는지가 이동 버튼으로 드러난다 — 운영자용 상세와 스키마를 나눈 이유가 이 두 필드다.
+     * 응답자 정보(회원 블록)도 함께 확인한다(요청 주체 본인이라 실을 이유가 없다).
+     */
+    @Test
+    void getMyResponseDoesNotExposeNeighbourIdsOrMemberBlock() throws Exception {
+        Long formId = saveForm("이웃 노출 확인 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.prevFormRspnsId").doesNotExist())
+                .andExpect(jsonPath("$.data.nextFormRspnsId").doesNotExist())
+                .andExpect(jsonPath("$.data.member").doesNotExist());
+    }
+
+    /*
+     * 남의 응답은 없는 응답과 **같은 404**다. 코드를 나누면 식별자를 훑는 것만으로 그 번호의
+     * 응답이 존재하는지 알 수 있고, 응답 식별자는 연속된 정수라 훑는 데 비용이 들지 않는다.
+     */
+    @Test
+    void getMyResponseOfAnotherMemberReturns404() throws Exception {
+        Long formId = saveForm("남의 응답 확인 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260002", "박민수", "other@sscc.org");
+        FormResponseHistoryEntity others =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                form, other, ResponseContent.of(Map.of("q1", "박민수")), NOW));
+
+        String body =
+                mockMvc.perform(myResponse(formId, others.getId()))
+                        .andExpect(status().isNotFound())
+                        .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+        assertThat(body).doesNotContain("박민수");
+    }
+
+    @Test
+    void getMyResponseOnUnknownResponseReturns404() throws Exception {
+        Long formId = saveForm("없는 응답 확인 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+
+        mockMvc.perform(myResponse(formId, 999999L))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
+    }
+
+    /*
+     * 작성 중(DRAFT) 응답도 열린다. 아직 아무 처리도 없으므로 이력은 **빈 배열이지 null이 아니다**
+     * — 상태로 분기해 조회하지 않으면 "이력이 없다"와 "이력을 안 봤다"가 같은 응답이 된다.
+     */
+    @Test
+    void getMyResponseOnDraftReturnsEmptyReviewHistories() throws Exception {
+        Long formId = saveForm("작성 중 확인 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        FormResponseHistoryEntity draft =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createDraft(
+                                form, respondent, ResponseContent.of(Map.of("q1", "쓰는 중"))));
+
+        mockMvc.perform(myResponse(formId, draft.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("DRAFT"))
+                .andExpect(jsonPath("$.data.sbmsnDt").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("쓰는 중"))
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(0));
+    }
+
+    /*
+     * **접수가 끝난 폼에서도 열린다** — 내 응답 목록과 같은 기준이다. 오히려 이 조회의 실제 쓰임이
+     * 마감 뒤에 있다: 기획안은 접수를 마감한 뒤 검토하므로 수정요청 사유를 읽는 시점은 언제나
+     * 접수가 끝난 뒤다.
+     */
+    @Test
+    void getMyResponseWorksAfterTheFormIsClosed() throws Exception {
+        Long formId = saveForm("마감 후 조회 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+        close(formId);
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("CHANGES_REQUESTED"))
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2));
+    }
+
+    /* ── 마감된 폼의 재제출 (#177) ─────────────────────────── */
+
+    /*
+     * **이 이슈의 나머지 절반이다.** 기획안은 접수를 마감한 뒤 검토하는 것이 정상 순서라, 마감 후
+     * 수정요청을 받은 응답자는 이 예외가 없으면 다시 낼 방법이 아예 없다 — 사유를 읽을 수 있게
+     * 열어 두고 재제출이 409로 막히면 화면이 완성되지 않는다.
+     *
+     * 회차가 오르고 SUBMIT 이력이 남는 것까지 함께 본다 (#141 규칙 회귀). 마감을 건너뛴 경로가
+     * 제출의 다른 규칙까지 건너뛰면 그 응답은 이력 없이 상태만 바뀐 행이 된다.
+     */
+    @Test
+    void resubmitAfterChangesRequestedPassesEvenWhenTheFormIsClosed() throws Exception {
+        Long formId = saveForm("마감 후 재제출 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+        close(formId);
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("SUBMITTED"));
+
+        FormResponseHistoryEntity resubmitted = onlyResponse();
+        assertThat(resubmitted.getSubmissionSequence()).isEqualTo(2);
+        assertThat(resubmitted.getContent().answers()).containsEntry("q1", "김철수");
+        assertThat(
+                        formResponseReviewHistoryRepository
+                                .findAllByResponseOrderByProcessedAtAscIdAsc(resubmitted))
+                .extracting(
+                        FormResponseReviewHistoryEntity::getAction,
+                        FormResponseReviewHistoryEntity::getSubmissionSequence)
+                .containsExactly(
+                        tuple(ResponseReviewAction.SUBMIT, 1),
+                        tuple(ResponseReviewAction.REQUEST_CHANGES, 1),
+                        tuple(ResponseReviewAction.SUBMIT, 2));
+    }
+
+    /*
+     * 접수 기간이 지나 마감된 폼(상태는 OPEN이지만 기간 밖)에서도 같다. 마감 판정은
+     * FormReceiptPolicy가 상태와 시간을 함께 보므로 두 경로를 다 확인한다.
+     */
+    @Test
+    void resubmitAfterChangesRequestedPassesAfterTheReceiptPeriodEnds() throws Exception {
+        Long formId =
+                saveForm(
+                        "기간이 끝난 재제출 폼",
+                        FormStatus.OPEN,
+                        NOW.minusSeconds(864000),
+                        NOW.plusSeconds(86400),
+                        SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+
+        // 접수 종료를 과거로 당긴다 — 상태는 OPEN인 채로 기간만 지난 폼이 된다
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        form.update(
+                form.getTitle(),
+                form.getQuestionComposition(),
+                NOW.minusSeconds(864000),
+                NOW.minusSeconds(86400),
+                false);
+        formRepository.saveAndFlush(form);
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated());
+
+        assertThat(onlyResponse().getSubmissionSequence()).isEqualTo(2);
+    }
+
+    /*
+     * **새 응답은 종전대로 마감에 막힌다.** 열리는 것은 검토자가 부른 응답을 마무리하는 길
+     * 하나뿐이며, 다중 응답 폼에 한 건 더 내는 것은 그 길이 아니다 — 여기까지 열면 마감이
+     * 아무것도 막지 못하게 된다.
+     */
+    @Test
+    void submittingANewResponseToAClosedFormStillReturns409() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        close(formId);
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FORM_NOT_ACCEPTING"));
+
+        assertThat(myResponses()).hasSize(1);
+    }
+
+    /*
+     * 초안을 내는 것도 **새 제출**이라 마감 판정을 탄다. 예외의 근거가 "검토자의 수정요청에
+     * 답하는 것"이라, 응답자가 스스로 쓰던 것을 마감 뒤에 내는 것은 그 근거에 해당하지 않는다.
+     */
+    @Test
+    void submittingADraftToAClosedFormStillReturns409() throws Exception {
+        Long formId = saveForm("마감 후 초안 제출 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(form, respondent, null));
+        close(formId);
+
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FORM_NOT_ACCEPTING"));
+
+        assertThat(onlyResponse().getStatus()).isEqualTo(ResponseStatus.DRAFT);
+    }
+
     /* ── 인증 ─────────────────────────────────────────────── */
 
     /*
@@ -893,6 +1153,17 @@ class PublicFormControllerTest {
                         .getContentAsString();
 
         assertThat(body).doesNotContain("qitemCpstCn").doesNotContain("q1").doesNotContain("이름");
+    }
+
+    private MockHttpServletRequestBuilder myResponse(Long formId, Long formResponseId) {
+        return authenticatedGet("/v1/forms/" + formId + "/responses/mine/" + formResponseId);
+    }
+
+    /** 접수를 마감한다 (#177 표본). 상태만 CLOSED로 바꾸며 접수 기간은 건드리지 않는다 */
+    private void close(Long formId) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        form.changeStatus(FormStatusAction.CLOSE);
+        formRepository.saveAndFlush(form);
     }
 
     private ResultActions submit(Long formId, String answers) throws Exception {

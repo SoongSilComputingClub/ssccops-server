@@ -11,6 +11,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -48,6 +49,22 @@ public interface FormResponseService {
      * 이루지 않아 접수 판정을 걸 이유가 없고, 걸면 마감 직후부터 자기가 낸 것을 볼 수 없다.
      */
     List<MyFormResponseSummaryResponse> getMyResponses(Long formId, MemberEntity respondent);
+
+    /*
+     * 제출자용 본인 응답 상세 (#177). 내 답 전체(rspnsCn)와 검토 처리 이력을 함께 돌려준다 —
+     * 수정요청 사유를 읽고 이전 답을 불러오는 것이 이 조회의 목적이며, 그 둘이 없으면 재제출은
+     * 전체 본문을 처음부터 다시 치는 것으로만 된다.
+     *
+     * 회원 식별자를 받지 않는 것은 자동 저장·내 응답 목록이 세운 규칙 그대로이고, 여기에 더해
+     * **응답 식별자가 본인 행을 가리키지 않으면 404다** — 폼 범위 검사가 폼 경계를 지키듯 회원
+     * 경계를 지키는 조건이며, 없는 응답과 남의 응답이 같은 코드로 끊긴다.
+     *
+     * 접수 가능 여부를 보지 않는다. 내 응답 목록과 같은 기준이다 — 자기가 낸 것을 확인하는
+     * 조회라 접수가 끝난 뒤에도 열려야 하고, 오히려 마감 뒤에 수정요청 사유를 읽는 것이 이
+     * 경로의 실제 쓰임이다.
+     */
+    MyFormResponseDetailResponse getMyResponse(
+            Long formId, Long formResponseId, MemberEntity respondent);
 
     /** 응답 제출. 응답자·상태·제출 일시는 요청이 아니라 서버가 정한다 */
     FormResponseSubmitResponse submitResponse(

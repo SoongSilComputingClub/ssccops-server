@@ -170,4 +170,19 @@ public interface FormResponseHistoryRepository
      */
     @EntityGraph(attributePaths = {"member", "member.membershipGrade", "member.membershipStatus"})
     Optional<FormResponseHistoryEntity> findByIdAndForm(Long id, FormEntity form);
+
+    /*
+     * 제출자용 본인 응답 단건 조회 (#177 · GET .../responses/mine/{formRspnsId}).
+     *
+     * 운영자용(findByIdAndForm)에 **응답자 조건을 하나 더 건다.** 폼 범위만으로 찾으면 제출자가
+     * 남의 응답 식별자를 대입하는 것으로 그 답과 검토 사유를 통째로 읽는다 — 폼 범위 검사가 폼
+     * 경계를 넘는 것을 막듯, 여기서는 회원 경계를 넘는 것을 막는 조건이다. 세 값을 함께 걸어
+     * 없는 응답과 남의 응답이 같은 빈 결과가 되게 한다(코드를 나누면 그 응답이 존재하는지가
+     * 새어 나간다).
+     *
+     * 엔티티 그래프를 걸지 않는 것은 이 조회가 회원 정보를 응답에 싣지 않기 때문이다
+     * (MyFormResponseDetailResponse) — 조건에 쓰는 회원은 이미 인증 주체로 손에 있다.
+     */
+    Optional<FormResponseHistoryEntity> findByIdAndFormAndMember(
+            Long id, FormEntity form, MemberEntity member);
 }

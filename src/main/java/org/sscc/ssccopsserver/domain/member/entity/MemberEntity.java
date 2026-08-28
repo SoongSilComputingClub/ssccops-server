@@ -2,6 +2,8 @@ package org.sscc.ssccopsserver.domain.member.entity;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 import jakarta.persistence.Column;
@@ -14,11 +16,15 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
 import jakarta.persistence.UniqueConstraint;
 
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.domain.AfterDomainEventPublication;
+import org.springframework.data.domain.DomainEvents;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import org.sscc.ssccopsserver.domain.member.event.MemberCreatedEvent;
 
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -95,6 +101,43 @@ public class MemberEntity {
     @Column(name = "mdfcn_dt")
     private Instant updatedAt;
 
+    /*
+     * 이번 저장이 '새로 만든 회원'인지 표시하는 표식이다 (#184). 컬럼이 아니라 @Transient이며,
+     * 저장 직후 Spring Data가 읽어 가는 domainEvents()가 이 값으로 이벤트를 낼지 정한다.
+     *
+     * 필드로 두고 create()가 생성자 인자로 넘기는 이유는 두 가지다. 첫째, 이벤트 객체를 여기
+     * 담아 두지 않는다 — mbr_id는 IDENTITY라 create() 시점에는 아직 정해지지 않아, 그때 만든
+     * 이벤트에는 null이 실린다. 표식만 세워 두고 **id가 정해진 뒤에** 이벤트를 만든다.
+     * 둘째, @Getter(NONE)으로 접근자를 막는다 — 이 값은 저장 경로의 내부 사정이지 회원의
+     * 속성이 아니고, 노출되면 DTO 매핑이 이것까지 실어 나른다.
+     */
+    @Transient
+    @Getter(AccessLevel.NONE)
+    private boolean newlyCreated;
+
+    /*
+     * 저장 직후 Spring Data JPA가 읽어 가는 자리 (#184). save·saveAll·saveAndFlush 어느 쪽으로
+     * 저장해도 불린다 — 발행 여부를 가리는 판정이 메서드 이름이 "save"로 시작하는가이기 때문에,
+     * 명부 이관이 쓰는 saveAndFlush도 함께 잡힌다.
+     *
+     * 갱신 저장에는 아무것도 내지 않는다. Hibernate가 조회로 되살린 엔티티는 기본 생성자를
+     * 지나므로 newlyCreated가 false이고, 그래서 updateBasicInfo 뒤의 저장은 조용하다.
+     */
+    @DomainEvents
+    Collection<Object> domainEvents() {
+        return newlyCreated ? List.of(new MemberCreatedEvent(id)) : List.of();
+    }
+
+    /*
+     * 발행이 끝나면 표식을 내린다. 같은 엔티티로 저장이 한 번 더 일어나도 이벤트가 두 번
+     * 나가지 않아야 한다 — 듣는 쪽(시드)이 멱등하긴 하지만, 멱등성을 발행 횟수의 변명으로
+     * 쓰기 시작하면 나중에 멱등하지 않은 리스너가 붙는 순간 조용히 깨진다.
+     */
+    @AfterDomainEventPublication
+    void clearDomainEvents() {
+        this.newlyCreated = false;
+    }
+
     public static MemberEntity create(
             String studentNumber,
             Integer generationNumber,
@@ -120,7 +163,9 @@ public class MemberEntity {
                 joinDate,
                 null,
                 null,
-                null);
+                null,
+                // 저장되면 MemberCreatedEvent를 낸다 (#184). 여기가 회원이 생기는 유일한 자리다
+                true);
     }
 
     public void updateBasicInfo(

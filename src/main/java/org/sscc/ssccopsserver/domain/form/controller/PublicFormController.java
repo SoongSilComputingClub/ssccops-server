@@ -17,6 +17,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
@@ -97,7 +98,9 @@ public class PublicFormController {
                         + " 않는 폼에 다시 내면 409 RESPONSE_ALREADY_SUBMITTED(반려된 응답은 409"
                         + " RESPONSE_ALREADY_REJECTED)이고, 허용하는 폼이면 새 응답으로 접수되며 rspnsSeq(응답 순번)가 1"
                         + " 는다. 임시저장이나 수정요청받은 응답이 있으면 새로 만들지 않고 그 응답을 낸 것이 된다 (그때는 rspnsSeq가 그대로이고"
-                        + " 제출 회차만 오른다). 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로 응답한다. 빈"
+                        + " 제출 회차만 오른다). 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로 응답한다. **다만 수정요청받은"
+                        + " 응답의 재제출은 접수 마감에 막히지 않는다** — 검토가 접수 뒤에 이뤄지는 폼(기획안)에서는 마감 후에 수정요청이 나가고,"
+                        + " 그때 재제출까지 막으면 응답자에게 다시 낼 길이 없다. 새 응답 제출은 초안을 내는 것을 포함해 종전대로 마감 판정을 탄다. 빈"
                         + " 값(\"\"·[])인 문항은 저장하지 않는다.")
     @PostMapping("/{formId}/responses")
     public ResponseEntity<ApiResponse<FormResponseSubmitResponse>> submitFormResponse(
@@ -142,6 +145,46 @@ public class PublicFormController {
     public ApiResponse<List<MyFormResponseSummaryResponse>> getMyFormResponses(
             @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(formResponseService.getMyResponses(formId, respondent));
+    }
+
+    /*
+     * 내 응답 상세 (#177). 수정요청 사유를 읽고 이전 답을 불러오는 경로다.
+     *
+     * #141이 검토 처리 이력과 재제출 흐름을 만들었지만 제출자 쪽 화면 경로는 열지 않았다 —
+     * 응답 내용은 내 응답 목록(#143)이 싣지 않고, 검토 이력을 실은 상세는 운영자용이라 클래스
+     * 레벨 RESPONSE_REVIEW에 막혀 본인도 읽지 못했다. 그 사이가 이 핸들러다.
+     *
+     * **운영자용 GET .../responses/{formRspnsId}와 경로가 갈리는 자리다.** mine 세그먼트가 하나
+     * 더 있어 애초에 다른 경로이며, /responses/mine(목록)과도 세그먼트 수로 갈린다 — 리터럴이
+     * 경로 변수를 이긴다는 규칙(/draft · /mine)에 기대는 것이 아니라 서로 다른 패턴이다.
+     *
+     * 권한(@RequireAuthority)을 요구하지 않는 것은 이 컨트롤러의 다른 핸들러와 같다. 대신
+     * **응답자 본인의 행만 조회된다**(서비스가 회원까지 걸어 찾는다) — "본인 또는 관리 권한"은
+     * 애노테이션으로 표현되지 않으므로 서비스에서 끊는다(#139 승인 이력 조회의 선례).
+     */
+    @Operation(
+            summary = "내 응답 상세 조회",
+            description =
+                    "응답자 본인이 낸 응답 한 건의 **내용(rspnsCn)과 검토 처리 이력(reviewHistories)**을 함께"
+                            + " 받아 간다. 수정요청을 받은 응답을 다시 낼 때 웹이 이 응답으로 사유를 보여주고 이전 답을"
+                            + " 프리필한다 — 재제출(POST /v1/forms/{formId}/responses)은 전체 본문을 다시 보내는"
+                            + " 방식이라 그 프리필이 없으면 응답자가 처음부터 다시 쳐야 한다. 이력은 처리 일시 오름차순이고"
+                            + " 처리가 없으면 빈 배열이며, **제출(SUBMIT) 행도 함께 실려** 타임라인이 \"제출 → 수정요청 →"
+                            + " 재제출 → 승인\"으로 읽힌다(각 줄의 sbmsnSeq가 몇 회차에 대한 처리였는지 가리킨다)."
+                            + " 대상은 언제나 인증 주체 본인이라 경로에 회원 식별자를 두지 않으며, **본인 응답이 아니면"
+                            + " 없는 응답과 같은 404 FORM_RESPONSE_NOT_FOUND다** — 코드를 나누면 그 번호의 응답이"
+                            + " 존재하는지가 새어 나간다. 운영자용 상세와 달리 인접 응답 식별자(prev·next)와 응답자"
+                            + " 정보는 싣지 않는다(남의 응답 식별자이거나 요청 주체 본인의 값이다)."
+                            + " 작성 중(DRAFT) 응답도 조회되고, 접수가 끝났거나 아직 열지 않은 폼도 409가 아니라 200이다"
+                            + " — 자기가 낸 것을 확인하는 조회라 접수 가능 여부와 무관하며, 수정요청 사유를 읽는 시점은"
+                            + " 대개 접수가 끝난 뒤다. 없는 폼은 404 NOT_FOUND다.")
+    @GetMapping("/{formId}/responses/mine/{formRspnsId}")
+    public ApiResponse<MyFormResponseDetailResponse> getMyFormResponse(
+            @PathVariable Long formId,
+            @PathVariable Long formRspnsId,
+            @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(
+                formResponseService.getMyResponse(formId, formRspnsId, respondent));
     }
 
     /*

@@ -20,6 +20,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
@@ -104,26 +105,64 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
+     * 제출자용 본인 응답 상세 (#177 · GET /v1/forms/{formId}/responses/mine/{formRspnsId}).
+     *
+     * **본인 행이 아니면 404다.** 조회에 응답자를 함께 거는 것이 이 메서드의 첫 번째 책임이며,
+     * 운영자용 상세(getResponse)가 폼을 함께 거는 것과 같은 자리다 — 그쪽은 폼 경계를, 이쪽은
+     * 회원 경계를 지킨다. 남의 응답과 없는 응답을 같은 코드(FORM_RESPONSE_NOT_FOUND)로 끊는
+     * 것도 같은 이유다: 코드를 나누면 그 번호의 응답이 존재하는지가 새어 나가고, 응답 식별자는
+     * 연속된 정수라 훑는 데 비용이 들지 않는다.
+     *
+     * **인접 응답(prev·next)을 계산하지 않는다.** 그 값은 심사 목록의 이웃이라 정의상 남의
+     * 응답이며, 여기서 내려주면 폼 하나에 누가 응답했는지가 이동 버튼으로 드러난다. 제출자가
+     * 자기 응답 사이를 오가는 것은 내 응답 목록(#143)이 이미 하는 일이다.
+     *
+     * **접수 가능 여부를 보지 않는다** — 내 응답 목록과 같은 기준이다. 오히려 이 조회의 실제
+     * 쓰임이 마감 뒤에 있다: 기획안은 접수를 마감한 뒤 검토하므로 수정요청 사유를 읽는 시점은
+     * 언제나 접수가 끝난 뒤다.
+     *
+     * 쿼리는 폼 1 + 응답 1 + 이력 1로 세 번이며 이력이 몇 줄이든 그대로다(처리자는
+     * 리포지토리의 엔티티 그래프가 함께 끌어온다).
+     */
+    @Override
+    public MyFormResponseDetailResponse getMyResponse(
+            Long formId, Long formResponseId, MemberEntity respondent) {
+
+        FormEntity form = findForm(formId);
+        FormResponseHistoryEntity response =
+                formResponseHistoryRepository
+                        .findByIdAndFormAndMember(formResponseId, form, respondent)
+                        .orElseThrow(
+                                () -> new GeneralException(FormErrorCode.FORM_RESPONSE_NOT_FOUND));
+
+        /*
+         * 상태와 무관하게 이력을 싣는다 (운영자용 상세와 같은 규칙). 작성 중(DRAFT) 응답에는
+         * 아직 아무 처리도 없어 빈 배열이지만, 상태로 분기해 아예 조회하지 않으면 "이력이 없다"와
+         * "이력을 안 봤다"가 같은 응답이 된다.
+         */
+        return MyFormResponseDetailResponse.of(
+                response,
+                formResponseReviewHistoryRepository.findAllByResponseOrderByProcessedAtAscIdAsc(
+                        response));
+    }
+
+    /*
      * 응답 제출.
      *
-     * 검사 순서는 폼 → 답 → 중복이다. 접수도 하지 않는 폼에 낸 답의 형식을 따져 400을 돌려주면
-     * 응답자는 답을 고치면 될 것처럼 안내받지만 실제로는 무엇을 고쳐도 낼 수 없다.
+     * 검사 순서는 폼 → 이어 쓸 응답 → 접수 판정 → 답 → 중복이다. 접수 판정이 답 검증보다 앞인 것은
+     * #35가 세운 순서 그대로다 — 접수도 하지 않는 폼에 낸 답의 형식을 따져 400을 돌려주면 응답자는
+     * 답을 고치면 될 것처럼 안내받지만 실제로는 무엇을 고쳐도 낼 수 없다.
+     *
+     * **접수 판정보다 내 응답 조회가 앞선 것이 #177에서 바뀐 자리다.** 재제출인지를 알아야 그
+     * 판정을 태울지 정할 수 있고, 재제출인지는 이어 쓸 응답의 상태에 달려 있다. 조회가 한 번
+     * 앞당겨졌을 뿐 판정 순서(FORM_NOT_ACCEPTING이 400보다 먼저다)는 그대로다.
      */
     @Override
     @Transactional
     public FormResponseSubmitResponse submitResponse(
             Long formId, FormResponseSubmitRequest request, MemberEntity respondent) {
 
-        FormEntity form = findAcceptingForm(formId);
-
-        /*
-         * 저장된 문항 구성을 다시 읽어 검증한다. 웹도 같은 검사를 하지만(validatePage) 공개 링크라
-         * 요청을 직접 만들 수 있으므로 그 검사는 신뢰 대상이 아니다.
-         */
-        ResponseContent content =
-                responseAnswerValidator.validate(form.getQuestionComposition(), request.rspnsCn());
-
-        Instant submittedAt = clock.instant();
+        FormEntity form = findForm(formId);
 
         List<FormResponseHistoryEntity> myResponses =
                 formResponseHistoryRepository.findAllByFormAndMemberOrderByResponseSequenceAsc(
@@ -140,6 +179,41 @@ public class FormResponseServiceImpl implements FormResponseService {
          * 거기서 오른다 (LY-02).
          */
         Optional<FormResponseHistoryEntity> continuing = findContinuableResponse(myResponses);
+
+        /*
+         * **재제출만 접수 마감 판정에서 뺀다** (#177 · 결정 (a)).
+         *
+         * 기획안(PROPOSAL)은 접수를 마감한 뒤 검토하는 것이 정상 순서라, 마감 후 수정요청을 받은
+         * 응답자는 이 예외가 없으면 다시 낼 방법이 아예 없다 — 사유를 읽을 수 있게 열어 두고
+         * 재제출이 409로 막히면 화면이 완성되지 않는다.
+         *
+         * **FormReceiptPolicy 자체는 손대지 않는다.** '이 응답만 접수 기간이 연장된 것으로 본다'는
+         * 방식도 있었지만, 그 판정을 부르는 다른 경로(/public 조회 · 초안 저장)까지 뜻이 흔들린다 —
+         * "지금 이 폼이 응답을 받는가"는 폼에 대한 질문이지 응답에 대한 질문이 아니다. 예외는
+         * 그 판정을 태우는 이 경로 한 곳에만 둔다.
+         *
+         * **새 응답은 종전대로 판정을 탄다.** 마감된 폼에 처음 내는 것도, 다중 응답 폼에 한 건 더
+         * 내는 것도 여전히 409 FORM_NOT_ACCEPTING이다 — 열리는 것은 검토자가 부른 응답을 마무리하는
+         * 길 하나뿐이며, 초안을 제출하는 것도 새 제출이라 여기 들지 않는다.
+         *
+         * 재제출인지의 판정은 엔티티가 갖는다(isResubmission) — 제출 회차를 올릴지와 같은 사실을
+         * 묻는 것이라 두 곳이 각자 상태를 비교하면 상태 어휘가 늘 때 한쪽만 고쳐진다.
+         */
+        boolean resubmission =
+                continuing.map(FormResponseHistoryEntity::isResubmission).orElse(false);
+        if (!resubmission) {
+            requireAcceptingResponses(form);
+        }
+
+        /*
+         * 저장된 문항 구성을 다시 읽어 검증한다. 웹도 같은 검사를 하지만(validatePage) 공개 링크라
+         * 요청을 직접 만들 수 있으므로 그 검사는 신뢰 대상이 아니다.
+         */
+        ResponseContent content =
+                responseAnswerValidator.validate(form.getQuestionComposition(), request.rspnsCn());
+
+        Instant submittedAt = clock.instant();
+
         if (continuing.isPresent()) {
             FormResponseHistoryEntity response = continuing.get();
             response.submit(content, submittedAt);
@@ -528,12 +602,20 @@ public class FormResponseServiceImpl implements FormResponseService {
      */
     private FormEntity findAcceptingForm(Long formId) {
         FormEntity form = findForm(formId);
+        requireAcceptingResponses(form);
+        return form;
+    }
 
+    /*
+     * 접수 판정만 따로 부를 수 있게 꺼낸 자리 (#177). 제출은 폼을 먼저 조회한 뒤 재제출인지를
+     * 보고 이 판정을 태울지 정하므로, 조회와 판정이 한 메서드로 묶여 있으면 그 순서를 표현할 수
+     * 없다. 판정 자체는 여전히 FormReceiptPolicy 하나이고 여기서 다시 계산하지 않는다.
+     */
+    private void requireAcceptingResponses(FormEntity form) {
         // DRAFT·CLOSED와 접수 기간 밖이 전부 여기서 한 코드로 끊긴다 (FormErrorCode 주석)
         if (!formReceiptPolicy.isAcceptingResponses(form)) {
             throw new GeneralException(FormErrorCode.FORM_NOT_ACCEPTING);
         }
-        return form;
     }
 
     /*

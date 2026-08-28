@@ -287,17 +287,34 @@ public class FormResponseHistoryEntity {
         if (this.status == ResponseStatus.REJECTED) {
             throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_REJECTED);
         }
-        if (this.status != ResponseStatus.DRAFT
-                && this.status != ResponseStatus.CHANGES_REQUESTED) {
+        if (this.status != ResponseStatus.DRAFT && !isResubmission()) {
             throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
         }
-        if (this.status == ResponseStatus.CHANGES_REQUESTED) {
+        if (isResubmission()) {
             this.submissionSequence += 1;
         }
         this.content = content;
         this.status = ResponseStatus.SUBMITTED;
         this.submittedAt = submittedAt;
         stampQuestionVersion();
+    }
+
+    /*
+     * 이 제출이 재제출인가 (#141의 어휘 · #177에서 꺼냈다). 수정요청을 받은 응답을 다시 내는 것,
+     * 즉 **새 제출이 아니라 이미 낸 응답을 고쳐 내는 것**이다.
+     *
+     * 판정을 이름 붙여 꺼낸 것은 두 곳이 같은 사실을 물어야 하기 때문이다 — 제출 회차를 올릴지
+     * (submit)와 접수 마감 판정을 태울지(FormResponseServiceImpl.submitResponse, #177)가 그것이다.
+     * 각자 `status == CHANGES_REQUESTED`를 적으면 상태 어휘가 늘 때 한쪽만 고쳐지고, 그 어긋남은
+     * "회차는 올랐는데 마감된 폼이라 거절됐다"처럼 응답자에게만 보이는 모양으로 드러난다.
+     *
+     * 접수 마감을 건너뛰는 근거가 이 한 줄에 얹혀 있다는 것을 적어 둔다: 재제출은 응답자가 스스로
+     * 시작한 것이 아니라 **검토자의 수정요청에 답하는 것**이라, 접수 기간은 이미 그 요청이 나간
+     * 시점에 소용을 다했다. 기획안(PROPOSAL)은 접수를 마감한 뒤 검토하는 것이 정상 순서라, 이
+     * 예외가 없으면 마감 후 수정요청을 받은 응답자는 다시 낼 방법이 아예 없다.
+     */
+    public boolean isResubmission() {
+        return this.status == ResponseStatus.CHANGES_REQUESTED;
     }
 
     /*

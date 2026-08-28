@@ -20,7 +20,7 @@ public record AttendancePatchResponse(
 
     public static AttendancePatchResponse of(List<AttendanceEntity> attendances) {
         List<AttendanceResponse> rows = attendances.stream().map(AttendanceResponse::from).toList();
-        int presentCount = (int) rows.stream().filter(AttendanceResponse::presentYn).count();
+        int presentCount = (int) rows.stream().filter(AttendanceResponse::atndYn).count();
         return new AttendancePatchResponse(rows, presentCount, rows.size());
     }
 }

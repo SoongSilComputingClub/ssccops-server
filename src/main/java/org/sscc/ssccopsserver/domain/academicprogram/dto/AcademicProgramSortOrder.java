@@ -17,7 +17,7 @@ import lombok.Getter;
  *
  * 두 정렬 키 모두 이 API에서는 NULL일 수 없다 — createdAt은 감사 컬럼이고, eventBgngDt는
  * AcademicProgramCreateRequest가 @NotNull로 요구하므로 이 도메인이 만드는 Event는 beginAt이
- * 항상 채워진다(다른 Event 소비자에는 이 제약이 없지만 이 목록은 academic_program을 경유하므로
+ * 항상 채워진다(다른 Event 소비자에는 이 제약이 없지만 이 목록은 acdm_actv을 경유하므로
  * 영향받지 않는다). WorkSortOrder와 달리 isNullableKey가 늘 false인 이유다.
  */
 @Getter

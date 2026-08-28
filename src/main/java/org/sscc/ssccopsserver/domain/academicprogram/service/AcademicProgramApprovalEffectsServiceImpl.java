@@ -44,7 +44,7 @@ public class AcademicProgramApprovalEffectsServiceImpl
      * "스터디장"/"프로젝트장"과 각각 대응한다(#130 유형 코드테이블, #71~ role 시드).
      *
      * type.getName() + "장" 같은 자동 유도를 쓰지 않는 것은 의도된 것이다 —
-     * academic_program_type.type_nm은 관리 화면에서 바꿀 수 있는 값이라(AcademicProgramType
+     * acdm_actv_type.type_nm은 관리 화면에서 바꿀 수 있는 값이라(AcademicProgramType
      * ServiceImpl.update), 코드 상수인 typeCd를 키로 둬야 이름이 바뀌어도 매핑이 흔들리지
      * 않는다. 새 유형(세미나 등)이 늘면 이 맵과 role 시드를 함께 늘려야 한다 — 매핑이 없는
      * typeCd는 missingSeed로 막는다.

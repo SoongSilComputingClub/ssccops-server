@@ -25,7 +25,7 @@ public enum AcademicProgramErrorCode implements ErrorCode {
 
     /*
      * 409 — 이미 있는 typeCd로 등록할 때. 선조회만으로는 동시 요청을 막지 못하므로
-     * academic_program_type_cd UNIQUE(PK) 위반(DataIntegrityViolationException)도 같은
+     * acdm_actv_type_cd UNIQUE(PK) 위반(DataIntegrityViolationException)도 같은
      * 코드로 옮긴다 (AuthorityAdminServiceImpl.createAuthority와 같은 판단).
      */
     ACADEMIC_PROGRAM_TYPE_CODE_DUPLICATED(
@@ -77,7 +77,7 @@ public enum AcademicProgramErrorCode implements ErrorCode {
 
     /*
      * 409 — 이미 실적이 있는 커리큘럼 항목에 신규 제출(POST)을 시도했을 때 (#135). 계획 1개당
-     * 실적은 최대 1개다(curriculum_item_id UNIQUE). 선조회만으로는 동시 요청을 막지 못하므로
+     * 실적은 최대 1개다(crclm_artcl_id UNIQUE). 선조회만으로는 동시 요청을 막지 못하므로
      * UNIQUE 위반(DataIntegrityViolationException)도 같은 코드로 옮긴다.
      */
     SESSION_ALREADY_EXISTS(HttpStatus.CONFLICT, "SESSION_ALREADY_EXISTS", "이미 기록된 회차입니다."),
@@ -122,7 +122,7 @@ public enum AcademicProgramErrorCode implements ErrorCode {
 
     /*
      * 400 — 사유 없이 수정요청을 하려 할 때 (#136). 수정요청은 스터디장에게 "무엇을 고쳐야
-     * 하는가"를 알리는 통보이고, 그 사유가 남는 자리는 academic_program_aprv의 최신 행 하나뿐이라
+     * 하는가"를 알리는 통보이고, 그 사유가 남는 자리는 acdm_actv_aprv의 최신 행 하나뿐이라
      * (재제출은 이력을 남기지 않는다, 데이터모델 §7) 비워 두면 통보 자체가 성립하지 않는다.
      * 공백만 있는 문자열도 여기 걸린다 — DB의 NOT NULL이 막지 못하는 자리다.
      *
@@ -161,7 +161,7 @@ public enum AcademicProgramErrorCode implements ErrorCode {
 
     /*
      * 400 — 승인된 기획안을 학술 활동으로 옮기지 못했을 때 (#150). 커리큘럼 줄 형식이 안내와
-     * 다르거나, 필수 문항이 비었거나, 유형 문자열이 academic_program_type 기준정보의 어느
+     * 다르거나, 필수 문항이 비었거나, 유형 문자열이 acdm_actv_type 기준정보의 어느
      * type_nm과도 맞지 않는 경우가 전부 여기로 온다.
      *
      * **이관 실패가 곧 승인 실패다**(ssccops#148 BR). 조용히 건너뛰고 승인만 성공시키면
@@ -184,7 +184,7 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      *
      * **정상 흐름에서는 도달할 수 없다.** ACCEPTED는 종결 상태라 같은 응답을 두 번 승인하는
      * 경로가 없기 때문이다(#141 · FormResponseHistoryEntity.changeStatus). 그럼에도 코드를
-     * 두는 것은 academic_program.form_rspns_id UNIQUE가 데이터 정합성이 깨진 경우를 위한
+     * 두는 것은 acdm_actv.form_rspns_id UNIQUE가 데이터 정합성이 깨진 경우를 위한
      * 방어선이고, 그 위반이 원인 모를 500으로 나가면 운영자가 "무엇이 중복인지"를 알 수 없어서다.
      *
      * 선조회와 UNIQUE를 함께 두는 것은 회원가입(#20)·유형 등록(#130)과 같은 규칙이다 —

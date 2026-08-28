@@ -170,12 +170,12 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     }
 
     /*
-     * 정원 초과는 **막지 않는다**(설계 결정 #2). 정원(cpcty_max_cnt)은 기획 단계의 참고치이고,
+     * 정원 초과는 **막지 않는다**(설계 결정 #2). 정원(pscp_max_cnt)은 기획 단계의 참고치이고,
      * 실제로 몇 명을 받을지는 지원자를 보고 사람이 정한다 — 서버가 끊으면 한 명을 더 받으려고
      * 활동 정보를 먼저 고쳐야 하는 절차가 생긴다.
      *
      * 그래도 조용히 넘기지는 않는다. 응답 스키마가 갱신된 명단 하나라(학술관리_API설계.md §3.7)
-     * 경고를 실을 자리가 없으므로 서버 로그로 남기며, 화면은 활동 상세의 cpctyMaxCnt와 이
+     * 경고를 실을 자리가 없으므로 서버 로그로 남기며, 화면은 활동 상세의 pscpMaxCnt와 이
      * 명단의 확정 인원을 비교해 사람에게 알린다.
      */
     private void warnIfCapacityExceeded(

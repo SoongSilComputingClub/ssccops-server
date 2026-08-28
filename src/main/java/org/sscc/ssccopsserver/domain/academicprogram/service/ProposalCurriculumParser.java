@@ -24,7 +24,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * ── 관대함의 경계 ─────────────────────────────────────────────
  * 공백·빈 줄·회차 번호의 '회차' 접미사처럼 **뜻이 하나로 읽히는 흔들림**은 받아 준다. 반대로
  * 회차 번호가 없거나 주제가 비었거나 날짜가 날짜가 아닌 것처럼 **무엇을 뜻하는지 정할 수 없는
- * 줄**은 추측하지 않고 거절한다 — 추측한 값은 승인과 함께 그대로 확정되고(curriculum_item은
+ * 줄**은 추측하지 않고 거절한다 — 추측한 값은 승인과 함께 그대로 확정되고(crclm_artcl은
  * 불변이다) 나중에 고칠 방법이 없다.
  *
  * 회차 번호를 줄 순서로 대신 매기는 쪽(1번째 줄 = 1회차)도 후보였지만 쓰지 않았다. 제출자가
@@ -48,8 +48,8 @@ public class ProposalCurriculumParser {
 
     private static final int FIELD_COUNT_WITH_DATE = 3;
 
-    /** curriculum_item.ttl의 길이 상한. DB가 자르기 전에 사유를 붙여 거절한다 */
-    private static final int MAX_TITLE_LENGTH = 200;
+    /** crclm_artcl.ttl의 길이 상한. DB가 자르기 전에 사유를 붙여 거절한다 */
+    private static final int MAX_TITLE_LENGTH = 256;
 
     /*
      * 파싱. 실패는 전부 PROPOSAL_MIGRATION_FAILED이며 사유에 **몇 번째 줄인지**를 함께 담는다 —

@@ -61,7 +61,7 @@ public class AcademicProgramMigrationServiceImpl implements AcademicProgramMigra
 
     /*
      * 이관이 만드는 Event의 분류. 학술 활동 전용 분류(스터디·프로젝트)를 새로 시드하지 않는 것은
-     * 그 어휘가 이미 academic_program_type에 있기 때문이다 — 같은 구분을 두 코드테이블이 나눠
+     * 그 어휘가 이미 acdm_actv_type에 있기 때문이다 — 같은 구분을 두 코드테이블이 나눠
      * 가지면 운영진이 한쪽만 늘렸을 때 어느 쪽이 참인지 알 수 없다. event_clsf는 화면에서
      * 추가·수정하는 운영 데이터이므로(ssccops#134) 여기서 고정하는 것은 **초기값**이며,
      * 운영진이 만들어진 행사의 분류를 바꾸는 것은 정상이다(행사 수정 API).
@@ -110,7 +110,7 @@ public class AcademicProgramMigrationServiceImpl implements AcademicProgramMigra
      * 행사 본문(mtxt_cn)은 NOT NULL이라 무엇이든 들어가야 한다. 활동 소개·목표를 복사하는 것은
      * 빈 문자열로 두면 승인 직후의 행사가 제목만 있는 껍데기가 되기 때문이다 — 게시 전 상태
      * (DRAFT)라 아무에게도 보이지 않지만, 리더가 모집 공고를 쓸 때 백지가 아니라 자기가 낸
-     * 기획안에서 시작하게 된다. 같은 문장이 academic_program.goal_cn에도 있는 것은 중복이 아니라
+     * 기획안에서 시작하게 된다. 같은 문장이 acdm_actv.goal_cn에도 있는 것은 중복이 아니라
      * 복사다 — 이관 이후 둘은 각자 편집되는 다른 값이며, 어느 쪽도 다른 쪽을 따라가지 않는다.
      */
     private EventEntity createEvent(ProposalDraft draft, MemberEntity proposer) {
@@ -147,7 +147,7 @@ public class AcademicProgramMigrationServiceImpl implements AcademicProgramMigra
         for (CurriculumItemDraft item : draft.curriculumItems()) {
             items.add(
                     CurriculumItemEntity.create(
-                            academicProgram, item.seqno(), item.ttl(), item.planDt()));
+                            academicProgram, item.seqno(), item.ttl(), item.planYmd()));
         }
         return items;
     }
@@ -156,7 +156,7 @@ public class AcademicProgramMigrationServiceImpl implements AcademicProgramMigra
      * 중복 이관 방어 (설계 결정 #5). 정상 흐름에서는 도달할 수 없다 — ACCEPTED는 종결 상태라
      * 같은 응답을 두 번 승인하는 경로가 없다(#141). 그럼에도 선조회를 두는 것은 UNIQUE 위반이
      * 원인 모를 500으로 나가지 않게 하기 위해서이며, 동시 요청은 선조회가 막지 못하므로
-     * UNIQUE(uk_academic_program_form_rspns)가 그 뒤에 남는다.
+     * UNIQUE(uk_acdm_actv_form_rspns)가 그 뒤에 남는다.
      */
     private void requireNotMigrated(FormResponseHistoryEntity response) {
         if (academicProgramRepository.existsByFormResponse(response)) {

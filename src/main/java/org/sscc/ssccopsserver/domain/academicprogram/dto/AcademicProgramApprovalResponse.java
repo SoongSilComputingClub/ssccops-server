@@ -11,7 +11,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
  *
  * **이 응답에만 사유(opnnCn)가 실린다.** 그래서 열람 범위가 "인증만"이 아니라 스터디장 본인
  * 또는 학술국장이다 — 수정요청 사유는 활동 운영진 개인에게 민감할 수 있다(2026-08-22 2차 검증
- * 확정). 상태값만 필요한 화면은 커리큘럼 조회(#134)의 sessionSttsCd로 이미 전원에게 열려
+ * 확정). 상태값만 필요한 화면은 커리큘럼 조회(#134)의 sesnSttsCd로 이미 전원에게 열려
  * 있으므로 이 제한이 그쪽을 막지는 않는다.
  *
  * sessionId는 SESSION 지점에만 있다 — COMPLETION은 활동 단위 승인이라 언제나 null이다
@@ -24,7 +24,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
  */
 public record AcademicProgramApprovalResponse(
         Long approvalId,
-        String aprvPntCd,
+        String aprvSeCd,
         String aprvSttsCd,
         Long sessionId,
         String aprvrMbrNm,

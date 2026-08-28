@@ -203,7 +203,7 @@ class AcademicProgramMigrationServiceImplTest {
     }
 
     /*
-     * 유형 문자열이 기준정보(academic_program_type.type_nm)의 어느 이름과도 맞지 않으면 이관이
+     * 유형 문자열이 기준정보(acdm_actv_type.type_nm)의 어느 이름과도 맞지 않으면 이관이
      * 성립하지 않는다. 조용히 아무 유형이나 고르지 않는 것이 이 이슈의 규칙이며, 사유는 운영진이
      * 폼 선택지와 기준정보 중 어느 쪽을 고쳐야 하는지 알 수 있게 적는다.
      */
@@ -257,10 +257,10 @@ class AcademicProgramMigrationServiceImplTest {
                         jsonPath("$.data.academicProgramPreview.curriculumItems[0].ttl")
                                 .value("오리엔테이션"))
                 .andExpect(
-                        jsonPath("$.data.academicProgramPreview.curriculumItems[0].planDt")
+                        jsonPath("$.data.academicProgramPreview.curriculumItems[0].planYmd")
                                 .value("2026-03-05"))
                 .andExpect(
-                        jsonPath("$.data.academicProgramPreview.curriculumItems[1].planDt")
+                        jsonPath("$.data.academicProgramPreview.curriculumItems[1].planYmd")
                                 .value(nullValue()));
 
         accept(response).andExpect(status().isOk());

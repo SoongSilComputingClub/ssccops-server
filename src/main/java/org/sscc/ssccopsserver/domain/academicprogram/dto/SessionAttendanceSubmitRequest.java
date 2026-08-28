@@ -14,9 +14,9 @@ import jakarta.validation.constraints.NotNull;
  * (AttendancePatchRequest) — "출석 한 줄"의 어휘를 두 벌로 두지 않기 위해서다. 다만 그쪽은
  * 명단을 바꾸지 않으므로 받아 주는 대상이 한 겹 좁다(그 회차 출석부에 이미 줄이 있는 참가자).
  *
- * presentYn이 Boolean(원시형이 아니라)인 것은 "빠뜨린 것"과 "결석"을 구별하기 위해서다 —
+ * atndYn이 Boolean(원시형이 아니라)인 것은 "빠뜨린 것"과 "결석"을 구별하기 위해서다 —
  * boolean이면 필드를 빠뜨린 요청이 조용히 결석으로 저장된다.
  */
 public record SessionAttendanceSubmitRequest(
         @NotNull(message = "eventPtcpId는 필수입니다.") Long eventPtcpId,
-        @NotNull(message = "presentYn은 필수입니다.") Boolean presentYn) {}
+        @NotNull(message = "atndYn은 필수입니다.") Boolean atndYn) {}

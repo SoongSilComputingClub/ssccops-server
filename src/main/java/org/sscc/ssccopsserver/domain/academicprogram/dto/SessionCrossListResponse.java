@@ -18,7 +18,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionAttendanc
  * 대신 작성자(rgtrMbrNm)·계획일은 싣지 않는다. 이 화면에서 고르는 기준은 "누가 썼는가"가
  * 아니라 "어느 활동의 몇 회차인가"다.
  *
- * 진행 내용(cn)·전달사항·출석부 명단은 여기서도 싣지 않는다 — 회차 수만큼 TEXT가 따라 나온다
+ * 진행 내용(prgrsCn)·전달사항·출석부 명단은 여기서도 싣지 않는다 — 회차 수만큼 TEXT가 따라 나온다
  * (SessionSummaryResponse와 같은 판단).
  */
 public record SessionCrossListResponse(
@@ -28,14 +28,14 @@ public record SessionCrossListResponse(
         String typeCd,
         Integer seqno,
         String curriculumTtl,
-        LocalDate realDt,
+        LocalDate actlYmd,
         String sttsCd,
         long presentCount,
         long totalCount,
         boolean hasFileReference) {
 
     /*
-     * hasFileReference는 아직 언제나 false다 — file_reference 테이블·엔티티를 #137이 만든다
+     * hasFileReference는 아직 언제나 false다 — file_rfrnc 테이블·엔티티를 #137이 만든다
      * (SessionFileReferenceResponse 주석과 같은 자리). 계약에 자리를 비워 두는 것은 승인 화면이
      * "인증사진이 붙었는가"를 목록에서 한눈에 봐야 하기 때문이고, 값을 만들어 내지 않고 없는
      * 대로 내린다.

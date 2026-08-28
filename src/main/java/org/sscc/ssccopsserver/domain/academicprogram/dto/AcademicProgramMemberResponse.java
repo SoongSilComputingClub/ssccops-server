@@ -18,7 +18,7 @@ import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
  * 누구나 본다). 같은 DTO를 쓰면 권한이 다른 두 문이 같은 개인정보를 내보내게 되고, 행사 쪽에
  * 컬럼이 하나 늘 때마다 이 공개 경로로 함께 새어 나간다. 그래서 회원 정보는 이름 하나뿐이다.
  *
- * isLeader는 명단 행이 아니라 academic_program.leadr_mbr_id와의 비교에서 온다 — event_ptcp에는
+ * isLeader는 명단 행이 아니라 acdm_actv.leadr_mbr_id와의 비교에서 온다 — event_ptcp에는
  * 리더 표시가 없고, 있어서도 안 된다(리더는 활동의 속성이지 참가 상태가 아니다). 스터디장이
  * 아직 자기 활동의 참가자로 등록되지 않았다면 이 목록에는 아예 나오지 않는다.
  *

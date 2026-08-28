@@ -13,7 +13,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * WorkSearchCondition을 그대로 미러링한다(설계 결정 #3).
  *
  * sttsCd는 이 코드베이스의 고정 enum(AcademicProgramStatus)이라 Work의 workStatus와 같이
- * Enum.valueOf 실패를 INVALID_CODE_VALUE로 옮긴다. typeCd는 반대로 academic_program_type이라는
+ * Enum.valueOf 실패를 INVALID_CODE_VALUE로 옮긴다. typeCd는 반대로 acdm_actv_type이라는
  * 런타임 코드테이블의 PK라 여기서는 검증하지 않는다 — 존재 여부는 DB 조회가 필요한 참조
  * 무결성 문제이지 형식 문제가 아니다(생성 시의 typeCd 검증과 다른 층위). 존재하지 않는
  * typeCd로 필터링하면 그냥 빈 목록이 된다.

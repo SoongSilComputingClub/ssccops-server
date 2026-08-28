@@ -51,8 +51,8 @@ import lombok.extern.slf4j.Slf4j;
  * 한 화면·단일 제출 버튼으로 받기 때문이고, 나눠 두면 "내용은 저장됐는데 출석은 안 된" 회차가
  * 만들어진다.
  *
- * 승인 이력(academic_program_aprv)에 행을 남기지 않는다. 제출은 검토를 기다리는 상태
- * (session_stts_cd = SUBMITTED)일 뿐이고, 그 테이블에 남는 것은 국장의 **처리**다(#136,
+ * 승인 이력(acdm_actv_aprv)에 행을 남기지 않는다. 제출은 검토를 기다리는 상태
+ * (sesn_stts_cd = SUBMITTED)일 뿐이고, 그 테이블에 남는 것은 국장의 **처리**다(#136,
  * SessionReviewServiceImpl) — 이 서비스는 그 최신 행의 사유를 읽기만 한다(latestOpinion).
  */
 @Slf4j
@@ -103,9 +103,9 @@ public class SessionServiceImpl implements SessionService {
                 saveSession(
                         SessionEntity.submit(
                                 curriculumItem,
-                                request.realDt(),
-                                request.cn(),
-                                request.noticeCn(),
+                                request.actlYmd(),
+                                request.prgrsCn(),
+                                request.ntcCn(),
                                 requester));
         attendanceRepository.saveAll(
                 rows.stream()
@@ -143,7 +143,7 @@ public class SessionServiceImpl implements SessionService {
         List<AttendanceRow> rows = resolveAttendances(academicProgram, request);
 
         session.resubmit(
-                curriculumItem, request.realDt(), request.cn(), request.noticeCn(), requester);
+                curriculumItem, request.actlYmd(), request.prgrsCn(), request.ntcCn(), requester);
         replaceAttendances(session, rows);
 
         return detailOf(session);
@@ -250,15 +250,15 @@ public class SessionServiceImpl implements SessionService {
                         attendance.eventPtcpId());
                 throw new GeneralException(AcademicProgramErrorCode.INVALID_ATTENDANCE_TARGET);
             }
-            rows.add(new AttendanceRow(participant, Boolean.TRUE.equals(attendance.presentYn())));
+            rows.add(new AttendanceRow(participant, Boolean.TRUE.equals(attendance.atndYn())));
         }
         return rows;
     }
 
     /*
      * 출석 교체는 통째로 지웠다 넣지 않고 차집합만 움직인다(FormLabelServiceImpl.
-     * replaceFormLabels와 같은 이유) — 같은 (session, event_ptcp) 쌍을 한 트랜잭션에서 지웠다
-     * 넣으면 Hibernate가 INSERT를 DELETE보다 먼저 흘려보내 uk_attendance_session_participant에
+     * replaceFormLabels와 같은 이유) — 같은 (sesn, event_ptcp) 쌍을 한 트랜잭션에서 지웠다
+     * 넣으면 Hibernate가 INSERT를 DELETE보다 먼저 흘려보내 uk_atndc_sesn_ptcp에
      * 걸린다. 남는 줄은 체크 값만 갈아 끼운다.
      */
     private void replaceAttendances(SessionEntity session, List<AttendanceRow> rows) {

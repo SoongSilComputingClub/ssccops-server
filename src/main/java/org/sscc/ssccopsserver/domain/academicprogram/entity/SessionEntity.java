@@ -27,11 +27,11 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /*
- * session(회차 실적) — 계획(curriculum_item) 한 건에 대응하는 실제 진행 기록 (#135,
+ * sesn(회차 실적) — 계획(crclm_artcl) 한 건에 대응하는 실제 진행 기록 (#135,
  * 학술관리_데이터모델.md §2·§3). 스터디장/팀장이 회차 종료 후 진행 내용과 출석을 적는다.
  *
- * curriculum_item_id UNIQUE가 "계획 1개당 실적 최대 1개"를 DB에서 강제한다. 그래서 이 행이
- * 없다는 사실 자체가 NOT_SUBMITTED라는 파생 상태이고(§3), session_stts_cd에 NOT_SUBMITTED가
+ * crclm_artcl_id UNIQUE가 "계획 1개당 실적 최대 1개"를 DB에서 강제한다. 그래서 이 행이
+ * 없다는 사실 자체가 NOT_SUBMITTED라는 파생 상태이고(§3), sesn_stts_cd에 NOT_SUBMITTED가
  * 저장되는 일은 없다 — 행이 태어나는 순간 이미 SUBMITTED다. 빈 행을 미리 깔아 두지 않는 것은
  * "아직 아무도 손대지 않은 계획"이 훨씬 흔한 상태이기 때문이다.
  *
@@ -41,22 +41,22 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @Table(
-        name = "session",
+        name = "sesn",
         uniqueConstraints =
                 @UniqueConstraint(
-                        name = "uk_session_curriculum_item",
-                        columnNames = {"curriculum_item_id"}),
+                        name = "uk_sesn_crclm_artcl",
+                        columnNames = {"crclm_artcl_id"}),
         /*
          * 활동 횡단 조회(#136)가 쓰는 두 컬럼이다. 승인 대기 목록은 활동 경계 없이
-         * session_stts_cd = SUBMITTED만 골라 real_dt 순으로 읽으므로, 이 인덱스가 없으면
+         * sesn_stts_cd = SUBMITTED만 골라 actl_ymd 순으로 읽으므로, 이 인덱스가 없으면
          * 회차가 쌓일수록 전체 스캔 뒤 정렬이 된다.
          *
-         * 계획일(curriculum_item.plan_dt)이 아니라 진행일을 정렬 키로 두는 이유는
+         * 계획일(crclm_artcl.plan_ymd)이 아니라 진행일을 정렬 키로 두는 이유는
          * SessionSortOrder 주석에 있다(그쪽은 NULL을 허용해 커서 비교가 성립하지 않는다).
          */
         indexes = {
-            @Index(name = "idx_session_stts_cd", columnList = "session_stts_cd"),
-            @Index(name = "idx_session_real_dt", columnList = "real_dt")
+            @Index(name = "idx_sesn_stts_cd", columnList = "sesn_stts_cd"),
+            @Index(name = "idx_sesn_actl_ymd", columnList = "actl_ymd")
         })
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -65,7 +65,7 @@ public class SessionEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "session_id")
+    @Column(name = "sesn_id")
     private Long id;
 
     /*
@@ -73,20 +73,20 @@ public class SessionEntity {
      * 회차를 잘못 골라 기록한 것을 재제출에서 바로잡을 수 있어야 한다(SessionServiceImpl.resubmit).
      */
     @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "curriculum_item_id", nullable = false)
+    @JoinColumn(name = "crclm_artcl_id", nullable = false)
     private CurriculumItemEntity curriculumItem;
 
-    @Column(name = "real_dt", nullable = false)
+    @Column(name = "actl_ymd", nullable = false)
     private LocalDate realDate;
 
-    @Column(name = "cn", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "prgrs_cn", nullable = false, columnDefinition = "TEXT")
     private String content;
 
-    @Column(name = "notice_cn", columnDefinition = "TEXT")
+    @Column(name = "ntc_cn", columnDefinition = "TEXT")
     private String noticeContent;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "session_stts_cd", nullable = false, length = 30)
+    @Column(name = "sesn_stts_cd", nullable = false, length = 20)
     private SessionStatus status;
 
     /*
@@ -150,7 +150,7 @@ public class SessionEntity {
 
     /*
      * 재제출(#135 · PUT). 이전 내용을 덮어쓰고 이력을 남기지 않는다(데이터모델 §7 확정 원칙) —
-     * 마지막 수정요청 사유만 academic_program_aprv의 최신 행에 남는다.
+     * 마지막 수정요청 사유만 acdm_actv_aprv의 최신 행에 남는다.
      */
     public void resubmit(
             CurriculumItemEntity curriculumItem,
@@ -175,7 +175,7 @@ public class SessionEntity {
      * 전이 가능 여부를 사유보다 먼저 본다. 이미 승인된 회차에 사유 없는 수정요청이 오면
      * 답해야 할 것은 "사유를 적어라"가 아니라 "이미 처리된 회차다"이기 때문이다.
      *
-     * 승인 이력(academic_program_aprv)은 이 메서드가 남기지 않는다 — 호출부
+     * 승인 이력(acdm_actv_aprv)은 이 메서드가 남기지 않는다 — 호출부
      * (SessionReviewServiceImpl)가 같은 트랜잭션에서 남긴다(활동 전이와 같은 경계).
      */
     public void changeStatus(SessionTransition transition, String reason) {

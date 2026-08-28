@@ -12,19 +12,19 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 용도라 활동 이름을 다시 싣지 않는다 — 활동을 가로지르는 국장용 목록(학술관리_API설계.md
  * §3.4의 루트 레벨 /v1/academic-programs/sessions)은 별도 DTO를 쓰는 다른 화면이다.
  *
- * 진행 내용(cn)·전달사항·출석부 명단은 싣지 않는다. 목록에서 필요한 것은 "몇 회차가 언제
+ * 진행 내용(prgrsCn)·전달사항·출석부 명단은 싣지 않는다. 목록에서 필요한 것은 "몇 회차가 언제
  * 열렸고 몇 명이 왔는가"이고, 본문까지 실으면 회차 수만큼 TEXT가 따라 나온다(폼 응답 목록이
  * rspnsCn을 싣지 않는 것과 같은 판단).
  *
- * fileReference 유무를 싣지 않는 것은 file_reference 테이블이 아직 없어서다(#137).
+ * fileReference 유무를 싣지 않는 것은 file_rfrnc 테이블이 아직 없어서다(#137).
  */
 public record SessionSummaryResponse(
         Long sessionId,
         Long curriculumItemId,
         Integer seqno,
         String curriculumTtl,
-        LocalDate planDt,
-        LocalDate realDt,
+        LocalDate planYmd,
+        LocalDate actlYmd,
         String sttsCd,
         Long rgtrMbrId,
         String rgtrMbrNm,

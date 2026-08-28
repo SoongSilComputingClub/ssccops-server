@@ -78,7 +78,7 @@ public class AcademicProgramReviewController {
                             + " INVALID_SESSION_TRANSITION이다 — 승인된 회차는 출석부·진행률의 기준선이라"
                             + " 되돌리지 않는다. REQUEST_REVISION은 reason이 필수이며(400"
                             + " REVISION_REASON_REQUIRED) 그 사유는 회차 상세의 latestOpinion으로 읽힌다."
-                            + " 처리 결과는 academic_program_aprv에 한 건 남는다.")
+                            + " 처리 결과는 acdm_actv_aprv에 한 건 남는다.")
     @PostMapping("/{academicProgramId}/sessions/{sessionId}/transitions")
     @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
     public ApiResponse<SessionTransitionResponse> transitionSession(
@@ -133,7 +133,7 @@ public class AcademicProgramReviewController {
     @Operation(
             summary = "승인 이력 조회",
             description =
-                    "회차·종료 두 지점의 처리 이력을 처리 최신순으로 내린다. aprvPntCd는 SESSION·"
+                    "회차·종료 두 지점의 처리 이력을 처리 최신순으로 내린다. aprvSeCd는 SESSION·"
                             + "COMPLETION만 받으며(기획안 승인 이력은 폼 응답 상세의 검토 이력에서 본다)"
                             + " 그 밖의 값은 400 INVALID_CODE_VALUE다. sessionId로 회차 하나의 이력만"
                             + " 좁힐 수 있고, 커서 페이징이다. 자격은 이 활동의 스터디장/팀장 본인 **또는**"

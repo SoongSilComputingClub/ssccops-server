@@ -265,7 +265,7 @@ class AcademicProgramControllerTest {
     // ------------------------------------------------------------------ 커리큘럼 계획 조회 (#134)
 
     /*
-     * 실적(session) 행이 없어도 sessionSttsCd는 비지 않는다 — 서버가 NOT_SUBMITTED를 합성해
+     * 실적(sesn) 행이 없어도 sesnSttsCd는 비지 않는다 — 서버가 NOT_SUBMITTED를 합성해
      * 내리므로 클라이언트에 null 분기가 없다(설계 결정 #1). Session 엔티티가 아직 없어(#135)
      * 지금은 모든 줄이 이 상태다.
      */
@@ -283,11 +283,11 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data[0].curriculumItemId").isNumber())
                 .andExpect(jsonPath("$.data[0].seqno").value(1))
                 .andExpect(jsonPath("$.data[0].ttl").value("OT"))
-                .andExpect(jsonPath("$.data[0].planDt").value(LocalDate.now().toString()))
+                .andExpect(jsonPath("$.data[0].planYmd").value(LocalDate.now().toString()))
                 .andExpect(jsonPath("$.data[0].sessionId").value(Matchers.nullValue()))
-                .andExpect(jsonPath("$.data[0].sessionSttsCd").value("NOT_SUBMITTED"))
-                .andExpect(jsonPath("$.data[0].realDt").value(Matchers.nullValue()))
-                .andExpect(jsonPath("$.data[0].cn").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].sesnSttsCd").value("NOT_SUBMITTED"))
+                .andExpect(jsonPath("$.data[0].actlYmd").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].prgrsCn").value(Matchers.nullValue()))
                 // 회차 순서로 내려간다 — 화면이 회차 이력 표라 등록 순서가 아니라 seqno가 줄 순서다
                 .andExpect(jsonPath("$.data[1].seqno").value(2))
                 .andExpect(jsonPath("$.data[1].ttl").value("1주차"))
@@ -321,7 +321,7 @@ class AcademicProgramControllerTest {
                                 get(PROGRAMS + "/{id}/curriculum-items", academicProgram.getId()),
                                 otherToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].sessionSttsCd").value("NOT_SUBMITTED"))
+                .andExpect(jsonPath("$.data[0].sesnSttsCd").value("NOT_SUBMITTED"))
                 .andExpect(jsonPath("$.data[0].isEditable").value(false));
     }
 

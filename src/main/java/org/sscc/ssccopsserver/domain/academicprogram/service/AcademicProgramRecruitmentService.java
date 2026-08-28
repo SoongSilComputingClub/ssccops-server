@@ -59,7 +59,7 @@ public interface AcademicProgramRecruitmentService {
      * 끊긴다(폼 응답이 이미 ACCEPTED라 종결이다).
      *
      * **정원은 검사하지 않는다**(설계 결정 #2 · wave2 D5와 같은 참고치 원칙). 초과해도 막지
-     * 않고 서버 로그로만 남긴다 — 화면은 활동 상세의 cpctyMaxCnt와 이 응답의 확정 인원을
+     * 않고 서버 로그로만 남긴다 — 화면은 활동 상세의 pscpMaxCnt와 이 응답의 확정 인원을
      * 비교해 경고한다.
      *
      * 응답은 갱신된 팀원 명단 전체다(고른 줄만이 아니다) — 선발 화면이 다음에 그리는 것이

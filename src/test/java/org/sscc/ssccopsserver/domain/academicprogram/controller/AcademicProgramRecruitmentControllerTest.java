@@ -170,7 +170,7 @@ class AcademicProgramRecruitmentControllerTest {
                 .andExpect(jsonPath("$.data[0].mbrId").value(leader.getId()))
                 .andExpect(jsonPath("$.data[0].mbrNm").value("스터디장"))
                 .andExpect(jsonPath("$.data[0].ptcpSttsCd").value("CONFIRMED"))
-                // isLeader는 명단이 아니라 academic_program.leadr_mbr_id와의 비교에서 온다
+                // isLeader는 명단이 아니라 acdm_actv.leadr_mbr_id와의 비교에서 온다
                 .andExpect(jsonPath("$.data[0].isLeader").value(true))
                 .andExpect(jsonPath("$.data[0].joinedAt").isNotEmpty())
                 .andExpect(jsonPath("$.data[1].eventPtcpId").value(waiting.getId()))

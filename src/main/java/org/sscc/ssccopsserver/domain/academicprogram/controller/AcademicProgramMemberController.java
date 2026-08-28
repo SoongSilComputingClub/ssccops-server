@@ -42,7 +42,7 @@ public class AcademicProgramMemberController {
                     "ptcpSttsCd를 생략하면 **취소(CANCELLED)를 포함한 전부**다 — 명단은 활동 이력으로"
                             + " 영구 보존하므로 취소된 행도 남는다(행사 참가자 명단과 같은 규칙)."
                             + " 정렬은 등록 순번(식별자 오름차순)이며, isLeader는 명단이 아니라"
-                            + " academic_program.leadr_mbr_id와의 비교에서 온다."
+                            + " acdm_actv.leadr_mbr_id와의 비교에서 온다."
                             + " 모집 시작 전이어도 409가 아니라 빈 목록이다 — 아직 아무도 뽑지 않은"
                             + " 활동의 빈 명단은 정상적인 답이다(신청자 조회·선발과 갈리는 지점).")
     @GetMapping

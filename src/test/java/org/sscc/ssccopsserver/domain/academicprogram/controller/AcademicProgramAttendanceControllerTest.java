@@ -162,10 +162,10 @@ class AcademicProgramAttendanceControllerTest {
                 .andExpect(jsonPath("$.data[0].attendanceId").isNumber())
                 .andExpect(jsonPath("$.data[0].eventPtcpId").value(present.getId()))
                 .andExpect(jsonPath("$.data[0].mbrNm").value("참석자"))
-                .andExpect(jsonPath("$.data[0].presentYn").value(true))
+                .andExpect(jsonPath("$.data[0].atndYn").value(true))
                 .andExpect(jsonPath("$.data[1].eventPtcpId").value(absent.getId()))
                 .andExpect(jsonPath("$.data[1].mbrNm").value("결석자"))
-                .andExpect(jsonPath("$.data[1].presentYn").value(false));
+                .andExpect(jsonPath("$.data[1].atndYn").value(false));
     }
 
     // 조회는 인증만 요구한다 — 팀원도 일반 회원도 자기 활동의 출석부를 본다
@@ -231,9 +231,9 @@ class AcademicProgramAttendanceControllerTest {
                 .andExpect(jsonPath("$.data.attendances", Matchers.hasSize(2)))
                 // 요청에 없던 줄은 그대로다
                 .andExpect(jsonPath("$.data.attendances[0].eventPtcpId").value(present.getId()))
-                .andExpect(jsonPath("$.data.attendances[0].presentYn").value(true))
+                .andExpect(jsonPath("$.data.attendances[0].atndYn").value(true))
                 .andExpect(jsonPath("$.data.attendances[1].eventPtcpId").value(absent.getId()))
-                .andExpect(jsonPath("$.data.attendances[1].presentYn").value(true))
+                .andExpect(jsonPath("$.data.attendances[1].atndYn").value(true))
                 .andExpect(jsonPath("$.data.presentCount").value(2))
                 .andExpect(jsonPath("$.data.totalCount").value(2));
     }
@@ -336,8 +336,8 @@ class AcademicProgramAttendanceControllerTest {
                         authorized(patch(attendancesPath(academicProgram, sessionId)), leaderToken)
                                 .content(
                                         """
-                                        {"attendances": [{"eventPtcpId": %d, "presentYn": true},
-                                                         {"eventPtcpId": %d, "presentYn": false}]}
+                                        {"attendances": [{"eventPtcpId": %d, "atndYn": true},
+                                                         {"eventPtcpId": %d, "atndYn": false}]}
                                         """
                                                 .formatted(absent.getId(), absent.getId())))
                 .andExpect(status().isBadRequest())
@@ -358,7 +358,7 @@ class AcademicProgramAttendanceControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
-    // presentYn 누락은 조용한 결석이 아니라 400이다 (Boolean인 이유)
+    // atndYn 누락은 조용한 결석이 아니라 400이다 (Boolean인 이유)
     @Test
     void correctAttendancesWithoutPresentYnReturns400() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05");
@@ -492,7 +492,7 @@ class AcademicProgramAttendanceControllerTest {
         mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.fileReference.fileReferenceId").value(fileReferenceId))
-                .andExpect(jsonPath("$.data.fileReference.fileUrl").value(publicUrl));
+                .andExpect(jsonPath("$.data.fileReference.fileUrlAddr").value(publicUrl));
     }
 
     // jpg·jpeg는 둘 다 받되 키에 쓰는 확장자는 하나로 굳힌다. 앞의 점·대문자도 같은 형식이다
@@ -595,9 +595,9 @@ class AcademicProgramAttendanceControllerTest {
                                     authorized(post(sessionsPath(academicProgram)), leaderToken)
                                             .content(
                                                     """
-                                                    {"curriculumItemId": %d, "realDt": "%s", "cn": "회차 내용",
-                                                     "attendances": [{"eventPtcpId": %d, "presentYn": true},
-                                                                     {"eventPtcpId": %d, "presentYn": false}]}
+                                                    {"curriculumItemId": %d, "actlYmd": "%s", "prgrsCn": "회차 내용",
+                                                     "attendances": [{"eventPtcpId": %d, "atndYn": true},
+                                                                     {"eventPtcpId": %d, "atndYn": false}]}
                                                     """
                                                             .formatted(
                                                                     curriculumItem.getId(),
@@ -631,7 +631,7 @@ class AcademicProgramAttendanceControllerTest {
 
     private static String patchBody(EventParticipantEntity participant, boolean present) {
         return """
-               {"attendances": [{"eventPtcpId": %d, "presentYn": %b}]}
+               {"attendances": [{"eventPtcpId": %d, "atndYn": %b}]}
                """
                 .formatted(participant.getId(), present);
     }

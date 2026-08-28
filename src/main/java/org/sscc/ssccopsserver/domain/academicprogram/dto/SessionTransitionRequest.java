@@ -10,7 +10,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionTransition;
  * 다음 상태(sttsCd)가 아니라 전이 액션을 받는다 — AcademicProgramTransitionRequest·
  * SubWorkTransitionRequest와 같은 선례다. 승인자는 요청 본문이 아니라 인증 주체
  * (@CurrentMember)에서 온다 — 받아 주면 "누가 승인했는가"를 스스로 적어 넣을 수 있어
- * academic_program_aprv 행이 증거가 되지 못한다(등급·상태 변경 #78이 세운 규칙).
+ * acdm_actv_aprv 행이 증거가 되지 못한다(등급·상태 변경 #78이 세운 규칙).
  *
  * reason에 @NotBlank을 달지 않은 것은 필수 여부가 함께 온 transition에 달려 있기 때문이다 —
  * 승인은 사유가 선택이고 수정요청은 필수라 필드 하나만 보고는 판정할 수 없다. 조건부 검증을

@@ -117,6 +117,13 @@ class SubWorkControllerTest {
                 email);
     }
 
+    /*
+     * dueAt은 이 파일의 다른 곳과 같이 먼 미래(2099)를 쓴다 — isDelayed = false를 기대하는
+     * 검증이 있어 마감이 실제 '오늘'보다 앞서면 그날부터 테스트가 깨지기 때문이다. 원래
+     * 2026-08-25가 박혀 있었고 2026-08-26에 실제로 터졌다(주입된 Clock을 고정하지 않는
+     * 컨트롤러 테스트라 판정이 벽시계를 탄다). startAt·endAt은 endAt >= startAt 말고 검증이
+     * 없고 응답에서 확인하지도 않아 과거가 돼도 무해하다.
+     */
     @Test
     void createSubWorkReturns201WithLocation() throws Exception {
         String body =
@@ -128,7 +135,7 @@ class SubWorkControllerTest {
                   "ownerId": %d,
                   "startAt": "2026-09-01T18:00:00+09:00",
                   "endAt": "2026-09-01T20:00:00+09:00",
-                  "dueAt": "2026-08-25T23:59:00+09:00",
+                  "dueAt": "2099-01-01T23:59:00+09:00",
                   "priority": "HIGH",
                   "content": "박람회 부스 위치와 동선을 확정한다",
                   "externalLink": "https://docs.example.com/booth"

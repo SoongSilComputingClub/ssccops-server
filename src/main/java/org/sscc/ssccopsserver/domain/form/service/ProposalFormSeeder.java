@@ -2,10 +2,16 @@ package org.sscc.ssccopsserver.domain.form.service;
 
 import java.util.Optional;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormLabelEntity;
@@ -14,9 +20,9 @@ import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.event.MemberCreatedEvent;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /*
@@ -41,10 +47,19 @@ import lombok.extern.slf4j.Slf4j;
  *
  * ── 회원이 없으면 세우지 않는다 ─────────────────────────────
  * form.creatr_mbr_id는 NOT NULL이고 mbr을 가리킨다. 회원이 한 명도 없는 갓 만들어진 환경에는
- * 생성자로 세울 사람이 없어 시드를 건너뛰고, 최초 가입자(#71 부트스트랩)가 생긴 뒤 다음
- * 기동에서 세워진다. 컬럼을 NULL 허용으로 바꾸는 쪽은 택하지 않았다 — 관리자 폼 목록 질의가
- * `join fetch f.creator`(내부 조인)라 생성자가 없는 폼은 **목록에서 통째로 사라진다.** 세우자마자
- * 운영진 눈에 보이지 않는 폼이 되는 셈이라, 컬럼을 여는 대가가 시드가 한 기동 늦는 것보다 크다.
+ * 생성자로 세울 사람이 없어 시드를 건너뛴다. 컬럼을 NULL 허용으로 바꾸는 쪽은 택하지 않았다 —
+ * 관리자 폼 목록 질의가 `join fetch f.creator`(내부 조인)라 생성자가 없는 폼은 **목록에서 통째로
+ * 사라지고**, 제약 변경은 ddl-auto: update가 반영하지 않아 dev·prod 수동 DDL이 따라붙는다.
+ *
+ * ── 그래서 도는 자리가 둘이다 (#184) ────────────────────────
+ * 기동만으로는 부족하다. 최초 가입자(#71 부트스트랩)가 생겨도 시더는 이미 지나간 뒤라 다음
+ * 기동까지 폼이 없는데, **로컬은 ddl-auto가 create-drop이라 그 '다음 기동'이 방금 만든 회원을
+ * 함께 지운다.** 유일한 복구 수단인 재기동이 복구의 전제 조건을 지우는 셈이라, 로컬에서는 어떤
+ * 순서로도 폼이 서지 못했다. dev·prod에서도 최초 구축 직후 재기동 전까지는 같은 구멍이 있다.
+ *
+ * 그래서 회원이 생기는 순간에도 시드를 태운다(onMemberCreated). 두 자리가 같은 seed()를 부르고,
+ * 멱등성이 겹침을 흡수한다. 기동 경로를 남겨 두는 것은 **회원은 있는데 폼이 없는 기존 환경**
+ * 때문이다 — 그런 DB에는 가입 이벤트가 오지 않아 기동이 유일한 기회다.
  *
  * ── 동시 기동 ──────────────────────────────────────────────
  * 인스턴스가 둘 이상이면 두 번 세우려 할 수 있고, 그때는 uk_form_sys_form_cd가 최종 방어선이 되어
@@ -53,7 +68,6 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class ProposalFormSeeder implements ApplicationRunner {
 
     private final FormRepository formRepository;
@@ -61,6 +75,41 @@ public class ProposalFormSeeder implements ApplicationRunner {
     private final FormLabelRelationRepository formLabelRelationRepository;
     private final MemberRepository memberRepository;
     private final QuestionCompositionValidator questionCompositionValidator;
+    private final PlatformTransactionManager transactionManager;
+
+    /*
+     * 회원 생성에 반응할지 여부. 기본값은 켬이고, 끄는 곳은 `test` 프로필 하나다.
+     *
+     * 테스트에서 끄는 이유는 이 시드가 **세운 폼이 생성자 회원을 FK로 묶기 때문**이다. 공용
+     * H2(testdb)를 쓰면서 회원을 실제로 커밋했다가 지우는 테스트가 여럿 있는데(명부 이관·역할
+     * 자기잠금·계정 연결), 그 회원이 마침 시드의 명의로 뽑히면 정리 단계의 `DELETE FROM mbr`이
+     * 참조 무결성 위반으로 깨진다. 회원 도메인 테스트가 기획안 폼의 존재를 알아야 정리할 수
+     * 있게 되는 것은 방향이 거꾸로다 — 관측성 내보내기를 테스트에서 끄는 것과 같은 종류의
+     * 결정이다(application-test.yaml).
+     *
+     * 끄는 것이 무해한 이유는 **이 경로를 확인하는 테스트가 ProposalFormSeedOnMemberCreatedTest
+     * 하나이고, 그 클래스가 자기 DB와 함께 스스로 켜기 때문이다.** 운영(local·dev·prod)에는
+     * 이 값을 두는 곳이 없어 기본값 그대로 켜져 있다.
+     */
+    private final boolean seedOnMemberCreated;
+
+    public ProposalFormSeeder(
+            FormRepository formRepository,
+            FormLabelRepository formLabelRepository,
+            FormLabelRelationRepository formLabelRelationRepository,
+            MemberRepository memberRepository,
+            QuestionCompositionValidator questionCompositionValidator,
+            PlatformTransactionManager transactionManager,
+            @Value("${ssccops.form.proposal-seed.on-member-created:true}")
+                    boolean seedOnMemberCreated) {
+        this.formRepository = formRepository;
+        this.formLabelRepository = formLabelRepository;
+        this.formLabelRelationRepository = formLabelRelationRepository;
+        this.memberRepository = memberRepository;
+        this.questionCompositionValidator = questionCompositionValidator;
+        this.transactionManager = transactionManager;
+        this.seedOnMemberCreated = seedOnMemberCreated;
+    }
 
     /*
      * 트랜잭션 경계를 run()에 둔다. 폼·라벨·연결 세 행이 한 번에 들어가야 하며, 각 save()가
@@ -73,6 +122,51 @@ public class ProposalFormSeeder implements ApplicationRunner {
     }
 
     /*
+     * 회원이 생긴 직후의 두 번째 기회 (#184). 이 자리가 로컬의 데드락을 푼다 — 가입하는 순간
+     * 폼이 서고, 재기동으로 스키마가 날아가면 다음 가입 때 다시 선다.
+     *
+     * ── AFTER_COMMIT이어야 하는 이유 ───────────────────────────
+     * 가입 트랜잭션이 롤백되면 생성자로 삼은 회원이 사라지는데 폼만 남는다. 커밋을 보고 움직인다.
+     *
+     * ── 왜 @Transactional이 아니라 TransactionTemplate인가 ─────
+     * 두 가지를 동시에 지켜야 해서다.
+     *
+     * 하나, **새 트랜잭션이어야 한다.** AFTER_COMMIT 시점에는 방금 커밋된 트랜잭션의 자원이 아직
+     * 묶여 있어, 그냥 참여하면(PROPAGATION_REQUIRED) 이미 끝난 트랜잭션에 쓰기를 얹는 꼴이 되어
+     * 시드가 반영되지 않는다. REQUIRES_NEW로 자기 트랜잭션을 연다.
+     *
+     * 둘, **예외가 가입을 깨뜨리면 안 된다.** AFTER_COMMIT 리스너의 예외는 삼켜지지 않고
+     * commit()을 부른 쪽으로 올라간다 — 데이터는 이미 커밋됐는데 가입 API만 500으로 떨어지는,
+     * 가장 나쁜 모양이다. 그래서 예외를 잡되 **트랜잭션 경계 바깥에서** 잡아야 한다. 커밋 자체가
+     * 실패하는 경우까지 덮으려면 try가 커밋을 감싸야 하는데, 메서드에 @Transactional을 걸면
+     * 커밋은 프록시가 이 메서드를 빠져나간 뒤에 일어나 안쪽 try로는 잡히지 않는다. 같은 빈의
+     * 메서드를 불러 프록시를 태울 수도 없다(자기 호출은 프록시를 지나지 않는다). 경계를 코드로
+     * 들고 있는 TransactionTemplate이 이 두 요구를 한 자리에서 만족시킨다.
+     *
+     * 시드에 실패해도 폼이 없을 뿐이고 기동 경로와 다음 가입이 다시 시도한다. 가입은 이 폼과
+     * 무관하게 성공해야 하는 별개의 일이다.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onMemberCreated(MemberCreatedEvent event) {
+        if (!seedOnMemberCreated) {
+            return;
+        }
+
+        TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+        transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        try {
+            transaction.executeWithoutResult(status -> seed());
+        } catch (RuntimeException e) {
+            log.error(
+                    "회원 생성(mbrId={}) 뒤 기획안 시스템 폼({}) 시드에 실패했다. 가입은 정상 처리됐으며,"
+                            + " 다음 가입이나 다음 기동에서 다시 시도한다.",
+                    event.memberId(),
+                    ProposalFormSeed.SYSTEM_FORM_CODE,
+                    e);
+        }
+    }
+
+    /*
      * 시드 본체. run()과 나눠 둔 것은 테스트가 기동 없이 이 자리를 직접 부르기 위해서다
      * (ApplicationRunner는 @DataJpaTest 컨텍스트에서 실행되지 않는다).
      */
@@ -81,10 +175,15 @@ public class ProposalFormSeeder implements ApplicationRunner {
             return;
         }
 
+        /*
+         * 건너뛴 것은 정상 상태가 아니라 '아직 못 세운' 상태라 warn으로 올린다 (#184). info로
+         * 두었더니 로컬 기동 로그에 묻혀, 폼이 없는 것을 시드가 아니라 data.sql의 누락으로
+         * 오진하게 만들었다 — 이 이슈가 그 제보에서 시작했다.
+         */
         Optional<MemberEntity> creator = memberRepository.findTopByOrderByIdAsc();
         if (creator.isEmpty()) {
-            log.info(
-                    "회원이 없어 기획안 시스템 폼({}) 시드를 건너뛴다. 최초 가입자가 생긴 뒤 다음 기동에서 세워진다.",
+            log.warn(
+                    "회원이 없어 기획안 시스템 폼({}) 시드를 건너뛴다. 최초 가입자가 생기는 즉시 세워진다.",
                     ProposalFormSeed.SYSTEM_FORM_CODE);
             return;
         }

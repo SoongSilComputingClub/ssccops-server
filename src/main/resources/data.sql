@@ -2,6 +2,15 @@
 -- H2/Postgres 양쪽에서 동일하게 동작하도록 ON CONFLICT 대신 WHERE NOT EXISTS로 멱등성을 보장한다.
 -- spring.sql.init.mode=always라 매 기동마다 실행되므로, 이미 시드된 DB에서 두 번째 실행이
 -- 아무것도 바꾸지 않아야 한다. 값을 고칠 때도 UPDATE로 덮어쓰지 말 것 — 화면에서 손댄 값을 되돌린다.
+--
+-- ⚠ 이 파일에 **없는** 시드가 하나 있다: 기획안 시스템 폼(sys_form_cd = 'PROPOSAL', #173).
+-- 자바(ProposalFormSeeder)가 세운다. 문항 구성이 JSONB 컬럼이라 H2와 PostgreSQL이 같은 SQL
+-- 리터럴을 다르게 읽어 한 벌의 SQL로 양쪽을 만족시킬 수 없고, qitemId가 SystemFormContract·이관과
+-- 공유하는 계약이라 SQL 문자열로 두면 선언과 시드가 두 벌이 되기 때문이다(사연은 ProposalFormSeed
+-- 클래스 주석에 있다). 폼이 안 보인다고 이 파일에서 찾지 말 것 — 여기 없는 것이 정상이다.
+--
+-- 이 파일은 **회원을 시드하지 않는다.** 최초 가입자 부트스트랩(#71)이 mbr 건수가 0인지로
+-- 판정하므로, 유령 회원을 하나라도 넣으면 그 창구가 닫힌 채 뜨고 아무도 최고관리자가 되지 못한다.
 
 -- 회원 등급(mbr_grd). 코드값·명칭은 웹이 이미 화면에 쓰고 있는 어휘(shared/config/codes.ts MBR_GRD_NM)와
 -- 글자 하나까지 맞춘다. 어긋나면 예외가 아니라 빈 라벨로 떨어져 조용히 깨진다.

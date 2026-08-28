@@ -47,6 +47,7 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
+import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -256,6 +257,127 @@ class PublicFormControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.alreadySubmitted").value(true))
                 .andExpect(jsonPath("$.data.submittedAt").value(NOW_IN_SERVICE_ZONE));
+    }
+
+    /* ── 회원용 시스템 폼 조회 (#181) ───────────────────────── */
+
+    /*
+     * 이 이슈의 핵심 한 줄이다 — 일반 회원이 인증만으로 sys_form_cd로 폼의 form_id와 문항 구성을
+     * 얻는다. sysFormCd를 싣는 운영자용 조회는 FORM_READ 권한에 막혀 기획안 제출자가 부를 수 없다.
+     */
+    @Test
+    void getSystemFormReturnsFormIdAndComposition() throws Exception {
+        Long formId = saveSystemForm("기획안", "PROPOSAL", FormStatus.OPEN, null, null, true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").value(formId))
+                .andExpect(jsonPath("$.data.formTtlNm").value("기획안"))
+                .andExpect(jsonPath("$.data.sysFormCd").value("PROPOSAL"))
+                .andExpect(jsonPath("$.data.mltplRspnsYn").value(true))
+                .andExpect(jsonPath("$.data.acceptingYn").value(true))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemId").value("q1"));
+    }
+
+    /*
+     * 운영자용 DTO를 재사용하지 않는다 (#181 지킬 것). 생성자·응답 집계·폼 상태 내부값은
+     * 회원용 경로로 나갈 이유가 없다.
+     */
+    @Test
+    void getSystemFormDoesNotExposeOperatorOnlyFields() throws Exception {
+        saveSystemForm("기획안", "PROPOSAL", FormStatus.OPEN, null, null, true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.creatrMbrId").doesNotExist())
+                .andExpect(jsonPath("$.data.creatrMbrNm").doesNotExist())
+                .andExpect(jsonPath("$.data.responseSummary").doesNotExist())
+                .andExpect(jsonPath("$.data.responseCount").doesNotExist())
+                .andExpect(jsonPath("$.data.formSttsCd").doesNotExist());
+    }
+
+    /*
+     * 아직 시드되지 않았거나(회원이 한 명도 없으면 기획안 폼 시드를 미룬다) 지워진 코드는 404다 —
+     * 웹은 이것을 "폼이 아직 준비되지 않았다"로 갈라 안내한다.
+     */
+    @Test
+    void getSystemFormOnUnknownCodeReturns404() throws Exception {
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * **마감된 폼도 200이고 문항 구성이 실린다.** 재제출 화면은 마감된 폼의 문항도 그려야 한다 —
+     * CHANGES_REQUESTED 재제출은 접수 마감에 막히지 않는데(#177) GET .../public은 마감 시 409라
+     * 문항을 받을 수 없다. 이 조회는 접수 가능 여부를 보지 않는다.
+     */
+    @Test
+    void getSystemFormOnClosedFormStillReturnsComposition() throws Exception {
+        saveSystemForm("기획안", "PROPOSAL", FormStatus.CLOSED, null, null, true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.acceptingYn").value(false))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3));
+    }
+
+    /*
+     * acceptingYn의 출처는 FormReceiptPolicy 하나여야 한다 (#181 지킬 것) — 웹이 상태·기간으로
+     * 다시 계산하지 않게. 상태는 OPEN이지만 접수 기간이 지난 폼은 FormReceiptPolicy가 EXPIRED로
+     * 보므로 acceptingYn도 false여야 한다.
+     */
+    @Test
+    void getSystemFormAcceptingYnMatchesReceiptPolicyAfterPeriodEnds() throws Exception {
+        saveSystemForm(
+                "기획안",
+                "PROPOSAL",
+                FormStatus.OPEN,
+                NOW.minusSeconds(864000),
+                NOW.minusSeconds(86400),
+                true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.acceptingYn").value(false))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3));
+    }
+
+    // 접수 시작 전(SCHEDULED)도 같다 — 상태만 OPEN이고 아직 열리지 않은 폼이다
+    @Test
+    void getSystemFormAcceptingYnMatchesReceiptPolicyBeforePeriodStarts() throws Exception {
+        saveSystemForm(
+                "기획안",
+                "PROPOSAL",
+                FormStatus.OPEN,
+                NOW.plusSeconds(86400),
+                NOW.plusSeconds(864000),
+                true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.acceptingYn").value(false));
+    }
+
+    /*
+     * 등급 제한이 없다 — 가입 직후의 임시회원(TEMP)도 자기 기획안을 재제출해야 하므로 조회된다.
+     * 이 클래스의 인증 주체(respondent)는 MemberFixture가 만든 TEMP 회원이다.
+     */
+    @Test
+    void getSystemFormIsReadableByTempMember() throws Exception {
+        assertThat(respondent.getMembershipGrade().getCode())
+                .isEqualTo(MemberGradeCode.TEMP.code());
+        saveSystemForm("기획안", "PROPOSAL", FormStatus.OPEN, null, null, true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/system/PROPOSAL"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sysFormCd").value("PROPOSAL"));
+    }
+
+    @Test
+    void getSystemFormWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get("/v1/forms/system/PROPOSAL")).andExpect(status().isUnauthorized());
     }
 
     /* ── 응답 제출 ─────────────────────────────────────────── */
@@ -1239,6 +1361,34 @@ class PublicFormControllerTest {
                         FormEntity.create(
                                 respondent, title, content, receiptBeginAt, receiptEndAt, status))
                 .getId();
+    }
+
+    /*
+     * 시스템 폼 표본 (#181). FormEntity.create로 만든 뒤 designateAsSystemForm으로 코드를 붙인다 —
+     * 요청 본문으로 지정하는 길이 없어(코드가 세우는 유일한 자리다) 시드처럼 엔티티를 직접 세운다.
+     */
+    private Long saveSystemForm(
+            String title,
+            String sysFormCd,
+            FormStatus status,
+            Instant receiptBeginAt,
+            Instant receiptEndAt,
+            boolean multipleResponseAllowed)
+            throws Exception {
+
+        QuestionCompositionContent content =
+                objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
+        FormEntity form =
+                FormEntity.create(
+                        respondent,
+                        title,
+                        content,
+                        receiptBeginAt,
+                        receiptEndAt,
+                        status,
+                        multipleResponseAllowed);
+        form.designateAsSystemForm(sysFormCd);
+        return formRepository.saveAndFlush(form).getId();
     }
 
     private MemberEntity saveMember(

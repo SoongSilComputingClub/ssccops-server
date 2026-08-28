@@ -14,6 +14,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
@@ -40,6 +41,23 @@ public interface FormResponseService {
 
     /** 응답자용 폼 조회. 지금 응답을 받지 않는 폼이면 문항을 내려주지 않고 끊는다 */
     PublicFormResponse getPublicForm(Long formId, MemberEntity respondent);
+
+    /*
+     * 회원용 시스템 폼 조회 (#181 · GET /v1/forms/system/{sysFormCd}).
+     *
+     * sysFormCd로 폼의 form_id·제목·다중 응답 여부·문항 구성과 지금 새 응답을 받는지를 돌려준다.
+     * sysFormCd를 싣는 다른 조회는 전부 FORM_READ 권한이 걸려 일반 회원(기획안 제출자)이 부를 수
+     * 없어, 재제출 화면이 폼 번호를 얻을 길이 없었다.
+     *
+     * **접수 가능 여부를 보지 않는다** — 재제출 화면은 마감된 폼의 문항도 그려야 하고(#177),
+     * 자기가 낸 것을 확인·재제출하는 흐름의 재료라 GET .../responses/mine과 같은 기준이다.
+     * acceptingYn은 "지금 새 응답을 받는가"만 전하며 판정은 FormReceiptPolicy 하나가 한다.
+     *
+     * 없는 코드는 404 FORM_NOT_FOUND다 — 아직 시드되지 않았거나(회원이 한 명도 없으면 기획안
+     * 폼 시드를 미룬다) 지워진 경우다. sys_form_cd UNIQUE가 환경당 한 건을 보장하므로 여러 건을
+     * 가정하지 않는다.
+     */
+    SystemFormResponse getSystemForm(String systemFormCode);
 
     /*
      * 내 응답 목록 (#143). 대상은 언제나 인증 주체 본인이라 자동 저장과 같은 이유로 회원

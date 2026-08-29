@@ -409,6 +409,27 @@ class FormControllerTest {
     }
 
     /*
+     * 문항 0개 DRAFT 폼(승인 이관이 붙이는 빈 모집 폼)도 qitemCpstCn.pages를 항상 싣는다 (#186).
+     * pages를 NULL로 두면 @JsonInclude(NON_NULL)이 키를 통째로 빼, 편집기가 pages.map(...)에서
+     * TypeError로 죽는다.
+     */
+    @Test
+    void getFormDetailForEmptyDraftAlwaysIncludesPagesKey() throws Exception {
+        Long formId =
+                formService
+                        .createEmptyDraft(
+                                "빈 모집 폼", memberRepository.findById(actorId).orElseThrow())
+                        .getId();
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.qitemCpstCn.pages").isArray())
+                .andExpect(jsonPath("$.data.qitemCpstCn.pages.length()").value(1))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems").isArray())
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems").isEmpty());
+    }
+
+    /*
      * 작성 중(DRAFT) 응답은 아직 응답자가 낸 것이 아니다. 세면 운영진이 보는 접수 건수가
      * 부풀어 마감 판단이 어긋난다.
      */

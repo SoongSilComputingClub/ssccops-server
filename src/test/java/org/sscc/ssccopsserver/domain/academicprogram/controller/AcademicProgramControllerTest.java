@@ -30,8 +30,12 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntit
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
+import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -87,6 +91,8 @@ class AcademicProgramControllerTest {
 
     // ------------------------------------------------------------------ 단건 조회
 
+    // 픽스처는 모집 폼을 event에 연결하지 않는다(승인 이관 #148을 거치지 않은 활동) — 그 경우
+    // formId·formReceiptStatus는 null로 안전하게 내려간다(#186)
     @Test
     void getAcademicProgramReturns200WithDetail() throws Exception {
         AcademicProgramEntity academicProgram =
@@ -110,6 +116,22 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data.curriculumItemCount").value(2))
                 .andExpect(jsonPath("$.data.isProposer").value(true))
                 .andExpect(jsonPath("$.data.isLeader").value(true));
+    }
+
+    /*
+     * 승인 이관(#148)이 만든 활동은 event에 모집 폼이 연결돼 있다 — 상세 응답이 그 폼의 id와
+     * 파생 접수 상태를 실어야 웹이 신청서 편집 링크(/forms/{formId}/edit)를 그릴 수 있다(#186).
+     * DRAFT 폼이므로 formReceiptStatus는 "DRAFT"이고, 문자열 형식은 전이 응답의 것과 같다.
+     */
+    @Test
+    void getAcademicProgramExposesLinkedFormIdAndReceiptStatus() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "폼 연결 스터디", "1주차");
+        FormEntity recruitmentForm = linkRecruitmentForm(academicProgram);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", academicProgram.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").value(recruitmentForm.getId()))
+                .andExpect(jsonPath("$.data.formReceiptStatus").value("DRAFT"));
     }
 
     // 제출자가 아닌 회원이 조회하면 isProposer가 false다 — 서버가 본인 여부를 판정한다(설계 결정 #4)
@@ -404,6 +426,27 @@ class AcademicProgramControllerTest {
                 List.of("1주차"),
                 eventBgngDt,
                 eventBgngDt.plusSeconds(60 * 60 * 24 * 30));
+    }
+
+    /*
+     * 승인 후속 처리(AcademicProgramApprovalEffectsServiceImpl.linkRecruitmentForm)가 하는 일을
+     * 흉내 낸다 — 문항 0개 DRAFT 폼을 만들어 활동의 Event에 연결한다. 여는 것은 모집 시작
+     * 전이의 몫이므로 상태는 DRAFT로 둔다.
+     */
+    private FormEntity linkRecruitmentForm(AcademicProgramEntity academicProgram) {
+        FormEntity form =
+                formRepository.saveAndFlush(
+                        FormEntity.create(
+                                proposer,
+                                academicProgram.getEvent().getTitle() + " 모집",
+                                new QuestionCompositionContent(null, List.of()),
+                                null,
+                                null,
+                                FormStatus.DRAFT));
+        EventEntity event = academicProgram.getEvent();
+        event.linkForm(form);
+        eventRepository.saveAndFlush(event);
+        return form;
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

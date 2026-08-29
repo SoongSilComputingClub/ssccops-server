@@ -34,6 +34,8 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.service.FormReceiptPolicy;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
@@ -52,6 +54,7 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
     private final FormService formService;
+    private final FormReceiptPolicy formReceiptPolicy;
     private final Clock clock;
 
     /*
@@ -64,7 +67,18 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
         long curriculumItemCount =
                 curriculumItemRepository.countByAcademicProgramId(academicProgramId);
-        return AcademicProgramDetailResponse.of(academicProgram, (int) curriculumItemCount, viewer);
+
+        // 연결된 모집 폼에서 formId·파생 접수 상태를 채운다(#186). 이관(#148) 전 활동이나
+        // 데이터 정합성이 깨져 폼이 없는 활동은 둘 다 null이다. 접수 상태는 상태 코드만 읽지
+        // 않고 now까지 보는 FormReceiptPolicy가 유일한 판정 지점이며, 문자열 형식은
+        // AcademicProgramTransitionResponse.formReceiptStatus(FormReceiptStatus)와 같다.
+        FormEntity form = academicProgram.getEvent().getForm();
+        Long formId = form == null ? null : form.getId();
+        String formReceiptStatus =
+                form == null ? null : formReceiptPolicy.receiptStatusOf(form).name();
+
+        return AcademicProgramDetailResponse.of(
+                academicProgram, (int) curriculumItemCount, viewer, formId, formReceiptStatus);
     }
 
     /*

@@ -86,6 +86,8 @@ class AcademicProgramApprovalEffectsServiceImplTest {
         FormEntity form = formRepository.findById(event.getForm().getId()).orElseThrow();
         assertThat(form.getStatus()).isEqualTo(FormStatus.DRAFT);
         assertThat(form.getQuestionComposition().qitems()).isEmpty();
+        // 빈 폼이라도 pages는 비우지 않는다 (#186) — NULL이면 상세 응답에서 키가 빠져 편집기가 죽는다
+        assertThat(form.getQuestionComposition().pages()).isNotEmpty();
         assertThat(form.getTitle()).isEqualTo("알고리즘 스터디 모집");
     }
 

@@ -8,11 +8,13 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
@@ -62,6 +64,14 @@ public class FormServiceImpl implements FormService {
     private final FormQuestionHistoryRepository formQuestionHistoryRepository;
     private final QuestionCompositionValidator questionCompositionValidator;
     private final FormLabelService formLabelService;
+
+    /*
+     * "이 폼이 학술 활동에 연결됐는가"를 묻는 유일한 진입점 (#190). form 도메인이 학술 도메인의
+     * Repository만 보고 Service는 보지 않는다 — AcademicProgramServiceImpl이 FormService를
+     * 주입받으므로 서비스끼리 물면 생성자 주입이 고리가 된다(회원 도메인이 SubWorkService만
+     * 아는 것과 같은 규칙). 조인 판별의 근거는 findIdByFormId 주석에 있다.
+     */
+    private final AcademicProgramRepository academicProgramRepository;
 
     /*
      * 코드가 시스템 폼에 요구하는 qitemId 선언 (#140). 여기서 요구 목록을 들고 있지 않는 것은,
@@ -139,7 +149,8 @@ public class FormServiceImpl implements FormService {
                 formReceiptPolicy.receiptStatusOf(form),
                 labelsOf(form),
                 responseSummaryOf(form),
-                systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
+                systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()),
+                academicProgramRepository.findIdByFormId(formId).orElse(null));
     }
 
     /*
@@ -203,6 +214,7 @@ public class FormServiceImpl implements FormService {
         Instant receiptBeginAt = toInstant(request.rcptBgngDt());
         Instant receiptEndAt = toInstant(request.rcptEndDt());
         FormEntity.requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
+        ensureAcademicReceiptPeriodUnchanged(form, receiptBeginAt, receiptEndAt);
         // 교체 전 구성과 비교해야 하므로 update() 호출보다 먼저 검사한다
         ensureExistingQuestionItemsKept(form, composition);
 
@@ -340,6 +352,29 @@ public class FormServiceImpl implements FormService {
         return formRepository
                 .findById(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+    }
+
+    /*
+     * 학술 활동에 연결된 폼의 접수 기간 잠금 (#190 · 400 ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED).
+     *
+     * 저장소는 form.rcpt_bgng_dt/rcpt_end_dt 하나인데 입력 화면이 "모집 관리"와 "폼 편집" 둘이라,
+     * 모집 시작 뒤 폼 편집(PUT)에서 그 값을 덮어쓰면 두 화면이 같은 값을 두고 경쟁한다. 학술 연결
+     * 폼의 접수 기간을 쓰는 유일한 경로는 START_RECRUITMENT 오케스트레이션(changeReceiptPeriod)
+     * 이며, 이 경로에서는 거부한다.
+     *
+     * 막는 것은 접수 기간 두 필드뿐이다 — 제목·문항 구성·라벨·다중 응답 등 나머지 편집은 그대로
+     * 통과한다(ssccops-web#193 — 학술국장이 편집 화면에서 문항을 채우는 것은 정상 동선이다).
+     * 값이 현재와 같으면(편집 자동 저장이 상세 응답을 그대로 되돌려 보내는 경우) 통과한다 —
+     * 바뀐 값일 때만 학술 연결 여부를 조회한다.
+     */
+    private void ensureAcademicReceiptPeriodUnchanged(
+            FormEntity form, Instant receiptBeginAt, Instant receiptEndAt) {
+        boolean periodChanged =
+                !Objects.equals(form.getReceiptBeginAt(), receiptBeginAt)
+                        || !Objects.equals(form.getReceiptEndAt(), receiptEndAt);
+        if (periodChanged && academicProgramRepository.findIdByFormId(form.getId()).isPresent()) {
+            throw new GeneralException(FormErrorCode.ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED);
+        }
     }
 
     /*

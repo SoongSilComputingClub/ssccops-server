@@ -38,6 +38,13 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
+import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
+import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
+import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
@@ -58,6 +65,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepos
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
@@ -177,6 +185,11 @@ class FormControllerTest {
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormQuestionHistoryRepository formQuestionHistoryRepository;
     @Autowired private FormService formService;
+    @Autowired private EventRepository eventRepository;
+    @Autowired private EventClassificationRepository eventClassificationRepository;
+    @Autowired private AcademicProgramRepository academicProgramRepository;
+    @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
+    @Autowired private CurriculumItemRepository curriculumItemRepository;
 
     private Long actorId;
 
@@ -551,6 +564,37 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
+    /*
+     * 학술 활동에서 이관된 모집 폼은 상세에 academicProgramId를 실어, 편집 화면이 접수 기간
+     * 입력란을 숨길 근거를 얻는다 (#190). 이관 폼의 분류는 "EVENT"라 분류 코드로는 일반 폼과
+     * 구별되지 않고, form → event → acdm_actv 역참조가 유일한 판별이다.
+     */
+    @Test
+    void getFormExposesAcademicProgramIdWhenLinked() throws Exception {
+        Long formId =
+                createFormWithPeriod(
+                        "학술 모집 폼",
+                        "OPEN",
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-31T00:00:00+09:00",
+                        "[]");
+        AcademicProgramEntity program = linkFormToAcademicProgram(formId);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.academicProgramId").value(program.getId()));
+    }
+
+    // 학술에 연결되지 않은 일반 폼은 academicProgramId가 null이다 (#190) — 기존 소비자에 영향 없음
+    @Test
+    void getFormAcademicProgramIdIsNullForOrdinaryForm() throws Exception {
+        Long formId = createForm("일반 지원서", "DRAFT", "[]");
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.academicProgramId").value(Matchers.nullValue()));
+    }
+
     /* ── 수정 ─────────────────────────────────────────────── */
 
     /*
@@ -566,6 +610,89 @@ class FormControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.formTtlNm").value("제목만 바꾼 폼"))
                 .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"));
+    }
+
+    /*
+     * 학술 활동에 연결된 폼의 접수 기간은 "모집 관리"에서만 바꾼다 (#190). 폼 편집(PUT)에서
+     * 접수 기간 두 필드를 현재 값과 다르게 보내면 400 ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED다 —
+     * 저장소가 하나(form.rcpt_bgng_dt/rcpt_end_dt)라 두 화면이 같은 값을 두고 경쟁하는 것을 막는다.
+     */
+    @Test
+    void updateFormRejectsReceiptPeriodChangeOnAcademicLinkedForm() throws Exception {
+        Long formId =
+                createFormWithPeriod(
+                        "학술 모집 폼",
+                        "OPEN",
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-31T00:00:00+09:00",
+                        "[]");
+        linkFormToAcademicProgram(formId);
+
+        String body =
+                saveBody(
+                        "학술 모집 폼",
+                        null,
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-04-30T00:00:00+09:00",
+                        "[]");
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED"));
+    }
+
+    /*
+     * 잠그는 것은 접수 기간 두 필드뿐이다 (#190). 접수 기간은 현재 값 그대로 두고 제목만 바꾼
+     * 저장(학술국장이 편집 화면에서 문항·문구를 채우는 정상 동선)은 200으로 통과해야 한다 —
+     * 편집 자동 저장이 상세 응답을 그대로 되돌려 보내는 구조라 "안 바뀐 값"은 막지 않는다.
+     */
+    @Test
+    void updateFormAllowsOtherEditsWhenReceiptPeriodUnchangedOnAcademicLinkedForm()
+            throws Exception {
+        Long formId =
+                createFormWithPeriod(
+                        "학술 모집 폼",
+                        "OPEN",
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-31T00:00:00+09:00",
+                        "[]");
+        linkFormToAcademicProgram(formId);
+
+        String body =
+                saveBody(
+                        "문구를 다듬은 학술 모집 폼",
+                        null,
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-31T00:00:00+09:00",
+                        "[]");
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formTtlNm").value("문구를 다듬은 학술 모집 폼"));
+    }
+
+    // 일반 폼은 PUT으로 접수 기간을 여전히 바꿀 수 있다 (#190 회귀 방지)
+    @Test
+    void updateFormStillAllowsReceiptPeriodChangeOnOrdinaryForm() throws Exception {
+        Long formId =
+                createFormWithPeriod(
+                        "일반 지원서",
+                        "OPEN",
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-03-31T00:00:00+09:00",
+                        "[]");
+
+        String body =
+                saveBody(
+                        "일반 지원서",
+                        null,
+                        "2026-03-01T00:00:00+09:00",
+                        "2026-04-30T00:00:00+09:00",
+                        "[]");
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rcptEndDt").value("2026-04-30T00:00:00+09:00"));
     }
 
     // PUT은 전체 교체이므로 labelIds를 빈 배열로 보내면 라벨이 전부 떨어져야 한다
@@ -1409,6 +1536,33 @@ class FormControllerTest {
                     .setParameter("id", response.getId())
                     .executeUpdate();
         }
+    }
+
+    /*
+     * 승인 이관(ssccops#148)의 결과 모양을 흉내 낸다 — event를 만들어 이 폼에 연결하고, 그
+     * event를 확장하는 acdm_actv 행을 심는다(제출자·기획안 응답까지 AcademicProgramFixture가
+     * 함께 만든다). form → event → acdm_actv 역참조가 성립하면 폼 상세의 academicProgramId와
+     * 접수 기간 잠금이 걸린다 (#190).
+     */
+    private AcademicProgramEntity linkFormToAcademicProgram(Long formId) {
+        MemberEntity actor = memberRepository.findById(actorId).orElseThrow();
+        AcademicProgramEntity program =
+                AcademicProgramFixture.save(
+                        eventRepository,
+                        eventClassificationRepository,
+                        academicProgramRepository,
+                        academicProgramTypeRepository,
+                        curriculumItemRepository,
+                        formRepository,
+                        formResponseHistoryRepository,
+                        "STUDY",
+                        "학술 모집",
+                        actor,
+                        List.of());
+        EventEntity event = program.getEvent();
+        event.linkForm(formRepository.findById(formId).orElseThrow());
+        eventRepository.saveAndFlush(event);
+        return program;
     }
 
     private MemberEntity saveMember(

@@ -16,8 +16,12 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * title·eventBgngDt·eventEndDt·plcNm은 acdm_actv이 아니라 event 컬럼이지만, 클라이언트가
  * 두 번 호출하지 않도록 여기서 합성해 내려준다(학술관리_API설계.md 베이스 경로 절).
  *
- * formId·formReceiptStatus는 이 이슈 범위에서 언제나 null이다 — 승인(#133) 전에는 폼 자체가
- * 없다. progress도 언제나 0이다 — Session 엔티티가 아직 없다(#135).
+ * formId·formReceiptStatus는 연결된 폼에서 파생한다(#186) — 승인 이관(#148) 전 활동은 폼이
+ * 없어 둘 다 null, APPROVED 이상은 event에 연결된 모집 폼의 id와 파생 접수 상태
+ * (FormReceiptPolicy.receiptStatusOf, AcademicProgramTransitionResponse.formReceiptStatus와
+ * 같은 문자열)다. 데이터 정합성이 깨져 폼이 연결 안 된 활동도 null로 안전하게 내려간다.
+ * 판정은 Clock을 주입받는 FormReceiptPolicy가 하므로 정적 팩토리가 직접 부를 수 없어
+ * 서비스가 계산해 인자로 넘긴다(#186). progress도 언제나 0이다 — Session 엔티티가 아직 없다(#135).
  */
 public record AcademicProgramDetailResponse(
         Long academicProgramId,
@@ -50,7 +54,11 @@ public record AcademicProgramDetailResponse(
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static AcademicProgramDetailResponse of(
-            AcademicProgramEntity academicProgram, int curriculumItemCount, MemberEntity viewer) {
+            AcademicProgramEntity academicProgram,
+            int curriculumItemCount,
+            MemberEntity viewer,
+            Long formId,
+            String formReceiptStatus) {
         EventEntity event = academicProgram.getEvent();
         MemberEntity proposer = academicProgram.getProposer();
         MemberEntity leader = academicProgram.getLeader();
@@ -76,8 +84,8 @@ public record AcademicProgramDetailResponse(
                 leader == null ? null : leader.getName(),
                 leader != null && leader.getId().equals(viewer.getId()),
                 proposer.getId().equals(viewer.getId()),
-                null,
-                null,
+                formId,
+                formReceiptStatus,
                 AcademicProgramProgressResponse.zero(),
                 curriculumItemCount,
                 toOffsetDateTime(academicProgram.getCreatedAt()),

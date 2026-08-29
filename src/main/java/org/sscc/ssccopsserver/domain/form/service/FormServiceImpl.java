@@ -47,6 +47,14 @@ public class FormServiceImpl implements FormService {
     /** 복제본 제목 접미. 웹 목 스토어(duplicateForm)가 이미 쓰던 표기를 그대로 굳힌다 */
     private static final String COPY_SUFFIX = " (복사본)";
 
+    /*
+     * 빈 DRAFT 폼(createEmptyDraft)이 갖는 기본 페이지 제목. 페이지를 아예 두지 않으면
+     * qitemCpstCn.pages가 NULL이 되고, @JsonInclude(NON_NULL)이 응답에서 키를 통째로 빼
+     * 편집기가 pages.map(...)에서 죽는다. QuestionCompositionValidator도 "빈 폼이라도 페이지
+     * 한 장은 있어야 한다"고 못 박으므로, 그 규칙과 같은 모양(페이지 1장 · 문항 0개)으로 만든다.
+     */
+    private static final String DEFAULT_PAGE_TITLE = "페이지 1";
+
     private final FormRepository formRepository;
     private final FormLabelRepository formLabelRepository;
     private final FormLabelRelationRepository formLabelRelationRepository;
@@ -302,17 +310,19 @@ public class FormServiceImpl implements FormService {
     /*
      * 문항 0개인 DRAFT 폼 생성 (#133). requireOpenable()은 DRAFT를 만들 때는 돌지 않으므로
      * 빈 qitems가 그대로 통과한다 — 문항 0개 금지는 여는(OPEN) 쪽에만 걸린다(FormEntity 주석).
+     *
+     * pages는 비우지 않고 기본 페이지 한 장을 넣는다 (#186). NULL로 두면 응답의 qitemCpstCn에
+     * pages 키가 통째로 빠져(@JsonInclude(NON_NULL)) 편집기가 pages.map(...)에서 죽고,
+     * 무엇보다 QuestionCompositionValidator가 요구하는 최소 구조(페이지 1장)와도 어긋난다.
      */
     @Override
     @Transactional
     public FormEntity createEmptyDraft(String title, MemberEntity creator) {
-        return formRepository.save(
-                FormEntity.create(
-                        creator,
-                        title,
-                        new QuestionCompositionContent(null, List.of()),
-                        null,
-                        null));
+        QuestionCompositionContent composition =
+                new QuestionCompositionContent(
+                        List.of(new QuestionCompositionContent.Page(DEFAULT_PAGE_TITLE, null)),
+                        List.of());
+        return formRepository.save(FormEntity.create(creator, title, composition, null, null));
     }
 
     /*

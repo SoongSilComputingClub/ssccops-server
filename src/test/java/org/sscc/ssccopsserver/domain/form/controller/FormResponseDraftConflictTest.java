@@ -119,7 +119,8 @@ class FormResponseDraftConflictTest {
          */
         given(formResponseHistoryRepository.findByFormAndMemberAndStatus(any(), any(), any()))
                 .willReturn(Optional.empty());
-        given(formResponseHistoryRepository.existsByFormAndMember(any(), any())).willReturn(false);
+        given(formResponseHistoryRepository.existsByFormAndMemberAndStatusIn(any(), any(), any()))
+                .willReturn(false);
         given(formResponseHistoryRepository.findLastResponseSequence(any(), any())).willReturn(0);
         given(formResponseHistoryRepository.saveAndFlush(any()))
                 .willThrow(

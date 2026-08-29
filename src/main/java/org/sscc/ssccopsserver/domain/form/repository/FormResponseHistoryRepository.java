@@ -41,7 +41,19 @@ public interface FormResponseHistoryRepository
     Optional<FormResponseHistoryEntity> findByFormAndMemberAndStatus(
             FormEntity form, MemberEntity member, ResponseStatus status);
 
-    boolean existsByFormAndMember(FormEntity form, MemberEntity member);
+    /*
+     * 새 초안을 시작할 수 있는가의 판단 근거 (#143 · #192).
+     *
+     * **원래 상태를 보지 않는 existsByFormAndMember였다.** 초안이 없음을 이미 확인한 뒤라 남은
+     * 것은 정의상 제출 이상이라는 논리였는데, 그 "제출 이상"에 반려가 들어 있어 반려된 응답자가
+     * 새 초안조차 만들지 못했다 — 반려는 그 응답에 대한 종결이지 그 폼에 대한 종결이 아니다.
+     * 그래서 막는 상태를 호출부가 명시해 넘긴다(ResponseStatus.blockingNewResponse).
+     *
+     * 상태 집합을 여기 적어 굳히지 않는 것은 이 리포지토리의 다른 질의와 같다 — 기준이 두 벌이
+     * 되면 갈린다.
+     */
+    boolean existsByFormAndMemberAndStatusIn(
+            FormEntity form, MemberEntity member, Collection<ResponseStatus> statuses);
 
     /*
      * 이 회원이 이 폼에서 마지막으로 쓴 응답 순번 (#143). 다음 응답은 이 값 + 1로 시작한다.

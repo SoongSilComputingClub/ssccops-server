@@ -276,6 +276,12 @@ public class FormResponseHistoryEntity {
      * 기다리라는 뜻이지만 반려는 그 응답에 대해 끝났다는 뜻이다. 검토자도 그 상태를 되돌릴 수
      * 없으므로(changeStatus) 반려는 양쪽 모두에게 종결이며, 다시 낼 길은 새 응답뿐이다.
      *
+     * **#192 이후 제출 경로가 반려된 행을 이리로 보내지 않는다.** 그 "새 응답"의 길이 이제 폼의
+     * 종류와 무관하게 열려 있어(blocksNewResponse), 서비스는 반려된 행을 지나 다음 순번의 새 행을
+     * 만든다 — RESPONSE_ALREADY_REJECTED는 정상 흐름에서 더는 나가지 않는다. 그래도 이 줄을 지우지
+     * 않는 것은 이 표가 "이 행을 다시 낼 수 있는가"의 답이기 때문이다: 응답 식별자를 받는 재제출
+     * 경로가 열리면 그 요청은 반려된 행을 곧장 지목할 수 있고, 그때 막는 자리는 여전히 여기다.
+     *
      * 회차를 올리는 자리도 여기 하나뿐이다. 서비스가 올리면 이력에 적히는 회차와 응답 행의
      * 회차가 갈릴 수 있고, 그 어긋남은 타임라인이 이미 굳은 뒤에야 드러난다.
      *
@@ -315,6 +321,22 @@ public class FormResponseHistoryEntity {
      */
     public boolean isResubmission() {
         return this.status == ResponseStatus.CHANGES_REQUESTED;
+    }
+
+    /*
+     * 이 응답이 남아 있는 한 (단일 응답 폼에서) 새 응답을 낼 수 없는가 (#192).
+     *
+     * isResubmission과 같은 자리다 — 상태 비교를 이름 붙여 꺼내 두는 것은 여러 곳이 같은 사실을
+     * 물어야 하기 때문이다. 여기서는 공개 폼 조회의 alreadySubmitted(PublicFormResponse)와 제출
+     * 경로의 '이미 낸 응답이 있는가' 분기(FormResponseServiceImpl.submitResponse) 둘이며, 각자
+     * 상태를 나열하면 상태 어휘가 늘 때 한쪽만 고쳐진다.
+     *
+     * 판정 자체는 이 클래스가 아니라 ResponseStatus가 갖는다 — 새 초안 판정은 손에 든 행이 아니라
+     * 질의로 물으므로(existsByFormAndMemberAndStatusIn) 같은 규칙을 상태 집합으로도 꺼낼 수 있어야
+     * 한다.
+     */
+    public boolean blocksNewResponse() {
+        return this.status.blocksNewResponse();
     }
 
     /*

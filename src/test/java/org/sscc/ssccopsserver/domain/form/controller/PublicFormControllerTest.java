@@ -259,6 +259,29 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.data.submittedAt").value(NOW_IN_SERVICE_ZONE));
     }
 
+    /*
+     * 반려된 응답은 alreadySubmitted를 세우지 않는다 (#192). 그 뜻이 "냈는가"가 아니라 "더 낼 수
+     * 없는가"인 이상(#143) 다시 낼 수 있는 응답자에게 참을 내려주면 웹은 작성 화면 대신 제출 내역
+     * 화면을 띄우고, 신청 자체가 화면에서 막힌다.
+     *
+     * myResponseCount·submittedAt은 그대로 반려된 응답을 센다 — 그 둘이 묻는 것은 "냈는가"다.
+     */
+    @Test
+    void getPublicFormAfterRejectionDoesNotReportAlreadySubmitted() throws Exception {
+        Long formId = saveForm("반려 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        reject();
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/public"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.alreadySubmitted").value(false))
+                .andExpect(jsonPath("$.data.myResponseCount").value(1))
+                .andExpect(jsonPath("$.data.submittedAt").value(NOW_IN_SERVICE_ZONE));
+    }
+
     /* ── 회원용 시스템 폼 조회 (#181) ───────────────────────── */
 
     /*
@@ -670,28 +693,59 @@ class PublicFormControllerTest {
     }
 
     /*
-     * **반려는 종결이다 (#141).** 수정요청과 갈리는 유일한 지점이며, 코드도 나눈다 —
-     * "이미 제출했다"는 기다리라는 뜻이지만 반려는 그 응답에 대해 끝났다는 뜻이라, 같은 문구를
-     * 돌려주면 응답자는 오지 않을 결과를 기다린다.
+     * **반려는 그 응답에 대한 종결이지 그 폼에 대한 종결이 아니다 (#192).**
+     *
+     * #141이 정한 "오조작의 탈출구는 번복이 아니라 새 응답"이 그동안 다중 응답 폼에서만 열려
+     * 있었다 — 단일 응답 폼(모집 폼은 전부 여기 든다)에서 반려된 응답자는 재제출도 새 제출도
+     * 막혀 재신청 경로가 아예 없었다. 이제 폼의 종류와 무관하게 다음 순번의 새 응답이 된다.
+     *
+     * **반려된 행은 그대로 남는다.** 되살리는 것이 아니라 새로 내는 것이므로 그 행의 내용도
+     * 제출 회차도 움직이지 않는다 — 움직이면 번복이 되어 #141이 막은 자리로 되돌아간다.
      */
     @Test
-    void resubmitAfterRejectionReturns409() throws Exception {
+    void submitAfterRejectionIsAllowedOnSingleResponseForm() throws Exception {
         Long formId = saveForm("반려 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
         submit(formId, """
                {"q1": "홍길동"}
                """)
                 .andExpect(status().isCreated());
-        onlyResponse().review(ResponseStatus.REJECTED);
-        formResponseHistoryRepository.flush();
+        reject();
+
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.rspnsSeq").value(2));
+
+        assertThat(myResponses())
+                .extracting(
+                        FormResponseHistoryEntity::getStatus,
+                        FormResponseHistoryEntity::getSubmissionSequence,
+                        response -> response.getContent().answers().get("q1"))
+                .containsExactly(
+                        tuple(ResponseStatus.REJECTED, 1, "홍길동"),
+                        tuple(ResponseStatus.SUBMITTED, 1, "김철수"));
+    }
+
+    /*
+     * 심사 중·승인된 응답은 종전대로 막는다 (#143). #192가 연 것은 반려 하나뿐이며, 여기까지
+     * 넓히면 심사 중인 응답을 두고 또 내는 것이 되어 단일 응답 폼의 뜻 자체가 사라진다.
+     */
+    @Test
+    void submitAgainWhileUnderReviewStillReturns409() throws Exception {
+        Long formId = saveForm("단일 응답 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
 
         submit(formId, """
                {"q1": "김철수"}
                """)
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("RESPONSE_ALREADY_REJECTED"));
+                .andExpect(jsonPath("$.code").value("RESPONSE_ALREADY_SUBMITTED"));
 
         assertThat(onlyResponse().getContent().answers()).containsEntry("q1", "홍길동");
-        assertThat(onlyResponse().getSubmissionSequence()).isEqualTo(1);
     }
 
     @Test

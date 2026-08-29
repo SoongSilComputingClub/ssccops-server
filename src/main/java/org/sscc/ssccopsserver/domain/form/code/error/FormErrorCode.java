@@ -144,6 +144,12 @@ public enum FormErrorCode implements ErrorCode {
      *
      * 검토자에게도 종결이다 (#141 전이표) — 반려를 승인·수정요청으로 되돌리는 길이 없으므로
      * 이 응답으로 돌아올 방법은 없고, 남은 길은 새 응답뿐이다.
+     *
+     * **#192 이후 제출 경로에서는 나가지 않는다.** 그 "새 응답"의 길이 폼의 종류와 무관하게
+     * 열리면서(ResponseStatus.blockingNewResponse) 반려된 응답만 남은 회원의 제출은 거절이 아니라
+     * 다음 순번의 새 응답이 된다 — 이 코드가 실제로 돌려주던 뜻은 "이 응답은 끝났다"였는데 결과는
+     * "이 폼에 다시는 못 낸다"였다. 코드를 지우지 않는 것은 판정 자리(엔티티의 submit)가 그대로
+     * 남아 있기 때문이다: 응답 식별자를 지목하는 재제출 경로가 열리면 그 요청이 여기로 온다.
      */
     RESPONSE_ALREADY_REJECTED(
             HttpStatus.CONFLICT, "RESPONSE_ALREADY_REJECTED", "반려된 응답은 다시 제출할 수 없습니다."),

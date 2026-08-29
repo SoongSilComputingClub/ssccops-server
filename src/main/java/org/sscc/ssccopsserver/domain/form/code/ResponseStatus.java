@@ -67,6 +67,45 @@ public enum ResponseStatus {
         return EnumSet.of(SUBMITTED, CHANGES_REQUESTED, ACCEPTED, REJECTED);
     }
 
+    /*
+     * 낸 응답 중 **새로 내는 것을 막는** 상태들 (#192). 제출 이상에서 반려(REJECTED)만 빠진다.
+     *
+     * 단일 응답 폼(mltpl_rspns_yn = false)에서만 뜻이 있는 집합이다 — 다중 응답 폼은 어떤 응답이
+     * 남아 있든 새로 낼 수 있으므로 이 판정을 부르지 않는다.
+     *
+     * **반려를 빼는 근거는 #141이 정한 반려의 뜻 그 자체다**: 반려는 그 응답에 대한 종결이지 그
+     * 폼에 대한 종결이 아니고, 되돌릴 길은 번복이 아니라 새 응답이다. 그 탈출구가 그동안
+     * 다중 응답 폼에서만 열려 있어(제출 경로가 "다중 응답 폼은 이 분기를 지나 새 응답이 된다"로만
+     * 적혀 있었다) 단일 응답 폼에서 반려된 응답자는 새 초안도, 새 제출도, 재제출도 못 하는 상태로
+     * 영구히 잠겼다 — 모집 폼은 전부 createEmptyDraft로 만들어져 단일 응답 폼이므로 반려된
+     * 신청자에게 재신청 경로가 아예 없었다.
+     *
+     * submittedOrLater를 좁히지 않고 집합을 하나 더 두는 것은 두 집합이 묻는 것이 다르기
+     * 때문이다 — 저쪽은 "응답자가 실제로 냈는가"(목록·집계·내 신청)이고 반려된 응답도 낸 것이
+     * 맞다. 이쪽은 "지금 또 낼 수 있는가"다. 저쪽에서 반려를 빼면 반려된 신청이 운영자 목록과
+     * 내 신청 목록에서 통째로 사라진다.
+     *
+     * 임시저장(DRAFT)이 없는 것은 이 판정을 부르는 자리들이 초안을 먼저 처리하기 때문이다 —
+     * 초안은 막는 것이 아니라 이어 쓰는 것이라 "새로 낼 수 있는가"의 답이 아니다(새 초안 판정은
+     * 초안이 없음을 확인한 뒤에 부르고, 제출은 초안이 있으면 그 행을 낸다).
+     *
+     * submittedOrLater와 같은 이유로 호출마다 새 EnumSet을 만든다.
+     */
+    public static EnumSet<ResponseStatus> blockingNewResponse() {
+        return EnumSet.of(SUBMITTED, CHANGES_REQUESTED, ACCEPTED);
+    }
+
+    /*
+     * 이 상태의 응답이 남아 있으면 (단일 응답 폼에서) 새 응답을 낼 수 없는가 (#192).
+     *
+     * 집합과 술어를 함께 두는 것은 쓰임이 둘이라서다 — 질의는 상태 집합을 넘겨야 하고
+     * (existsByFormAndMemberAndStatusIn), 손에 든 응답을 거르는 쪽은 행마다 물어야 한다.
+     * 판정 자체는 위 집합 하나이며 여기서 다시 나열하지 않는다.
+     */
+    public boolean blocksNewResponse() {
+        return blockingNewResponse().contains(this);
+    }
+
     public String code() {
         return name();
     }

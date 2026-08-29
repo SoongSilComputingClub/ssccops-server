@@ -244,20 +244,29 @@ public class FormResponseServiceImpl implements FormResponseService {
         }
 
         /*
-         * 이어 쓸 응답이 없는데 낸 응답은 있다 — 단일 응답 폼이면 여기서 끝이다 (#143).
+         * 이어 쓸 응답이 없는데 **새로 내는 것을 막는** 응답은 있다 — 단일 응답 폼이면 여기서
+         * 끝이다 (#143 · #192).
          *
          * 서비스가 409를 직접 던지지 않고 남아 있는 행의 submit()을 부르는 것은 **어느 코드로
-         * 끊을지가 상태마다 다르기 때문**이다: 심사 중·승인은 RESPONSE_ALREADY_SUBMITTED이고
-         * 반려는 RESPONSE_ALREADY_REJECTED다(#141). 그 표를 서비스에 옮겨 적으면 상태 어휘가
-         * 늘 때마다 두 벌이 되고, 실제로 #141이 코드를 나눈 이유(응답자가 할 수 있는 일이 다르다)가
-         * 한쪽에서만 지켜진다. 이 호출은 반드시 예외로 끝난다 — 남아 있는 상태가 SUBMITTED ·
-         * ACCEPTED · REJECTED뿐이기 때문이다.
+         * 끊을지가 상태마다 다르기 때문**이다: 심사 중·승인은 RESPONSE_ALREADY_SUBMITTED다(#141).
+         * 그 표를 서비스에 옮겨 적으면 상태 어휘가 늘 때마다 두 벌이 되고, 실제로 #141이 코드를
+         * 나눈 이유(응답자가 할 수 있는 일이 다르다)가 한쪽에서만 지켜진다. 이 호출은 반드시
+         * 예외로 끝난다 — 여기까지 남은 막는 상태는 SUBMITTED · ACCEPTED뿐이다(CHANGES_REQUESTED는
+         * 위의 이어 쓸 응답이 먼저 집어 간다).
          *
-         * 다중 응답 폼은 이 분기를 지나가 새 응답이 된다. 반려된 응답만 남아 있어도 마찬가지이며,
-         * 그것이 #141이 말한 "오조작의 탈출구는 번복이 아니라 새 응답"의 실제 경로다.
+         * **반려된 응답은 막지 않는다** (#192). 그전에는 상태를 가리지 않고 마지막 행의 submit()을
+         * 불러 반려된 행이 RESPONSE_ALREADY_REJECTED로 끊었는데, 그 코드의 뜻("이 응답은 끝났다")과
+         * 실제 결과("이 폼에 다시는 못 낸다")가 어긋났다 — 반려의 탈출구는 새 응답이고, 그 길이
+         * 다중 응답 폼에서만 열려 있으면 #141의 결정이 폼의 종류에 따라 반만 지켜진다. 이제 단일
+         * 응답 폼에서도 이 분기를 지나 다음 순번의 새 행이 되며, 반려된 행은 그대로 남는다.
+         *
+         * 다중 응답 폼은 종전대로 이 분기 자체를 지나간다.
          */
-        if (!myResponses.isEmpty() && !form.isMultipleResponseAllowed()) {
-            myResponses.get(myResponses.size() - 1).submit(content, submittedAt);
+        if (!form.isMultipleResponseAllowed()) {
+            myResponses.stream()
+                    .filter(FormResponseHistoryEntity::blocksNewResponse)
+                    .reduce((earlier, later) -> later)
+                    .ifPresent(blocking -> blocking.submit(content, submittedAt));
         }
 
         FormResponseHistoryEntity response =
@@ -583,21 +592,24 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
-     * 새 초안을 시작할 수 있는가 (#143). 초안이 없는 상태에서만 부른다.
+     * 새 초안을 시작할 수 있는가 (#143 · #192). 초안이 없는 상태에서만 부른다.
      *
      * 단일 응답 폼에서 이미 낸 응답이 있으면 거절한다 — 제출 뒤에도 저장이 통하면 운영진이 심사한
      * 내용과 응답자가 들고 있는 화면이 소리 없이 갈라진다(#36의 판단이며 그대로 유지한다).
      * 다중 응답 폼에서는 그 응답이 새 응답을 막을 이유가 없으므로 통과시킨다 — 초안 자리는
      * 제출로 비워졌고, 새 초안은 다음 순번을 받는다.
      *
-     * 남아 있는 행의 상태를 따지지 않고 존재만 보는 것은, 초안이 없다는 것이 이미 확인된 뒤라
-     * 남은 것은 정의상 제출 이상뿐이기 때문이다.
+     * **상태를 가리지 않고 존재만 보던 것을 #192에서 좁혔다.** "초안이 없으니 남은 것은 정의상
+     * 제출 이상"이라는 논리는 맞았지만, 그 제출 이상에 반려가 들어 있어 반려된 응답자는 새 초안을
+     * 시작하지도 못했다 — 심사가 갈라진 내용이 없는 상태이므로 위의 근거가 닿지 않는다. 어떤
+     * 상태가 막는지는 ResponseStatus.blockingNewResponse 하나가 정하며 제출 경로도 같은 것을 쓴다.
      */
     private void requireNewDraftAllowed(FormEntity form, MemberEntity respondent) {
         if (form.isMultipleResponseAllowed()) {
             return;
         }
-        if (formResponseHistoryRepository.existsByFormAndMember(form, respondent)) {
+        if (formResponseHistoryRepository.existsByFormAndMemberAndStatusIn(
+                form, respondent, ResponseStatus.blockingNewResponse())) {
             throw new GeneralException(FormErrorCode.RESPONSE_ALREADY_SUBMITTED);
         }
     }

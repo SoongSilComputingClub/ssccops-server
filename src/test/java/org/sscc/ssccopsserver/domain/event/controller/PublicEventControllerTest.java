@@ -24,6 +24,10 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.EventStatusAction;
 import org.sscc.ssccopsserver.domain.event.entity.EventClassificationEntity;
@@ -39,10 +43,12 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.Page;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.QuestionItem;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
 /*
@@ -68,6 +74,11 @@ class PublicEventControllerTest {
     /** 고정 기준 시각 (2026-03-15 00:00 KST) */
     private static final Instant NOW = Instant.parse("2026-03-14T15:00:00Z");
 
+    /** NOW 기준 과거·미래 — 폼 접수 종료 일시로 써 receiptStatus를 EXPIRED/ACCEPTING으로 만든다 */
+    private static final Instant PAST = Instant.parse("2026-03-01T00:00:00Z");
+
+    private static final Instant FUTURE = Instant.parse("2026-04-01T00:00:00Z");
+
     private static final String PUBLIC_EVENTS = "/public/v1/events";
 
     @Autowired private MockMvc mockMvc;
@@ -78,6 +89,10 @@ class PublicEventControllerTest {
     @Autowired private EventClassificationRepository eventClassificationRepository;
     @Autowired private EventParticipantRepository eventParticipantRepository;
     @Autowired private FormRepository formRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private AcademicProgramRepository academicProgramRepository;
+    @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
+    @Autowired private CurriculumItemRepository curriculumItemRepository;
 
     private MemberEntity creator;
     private int studentNumberSeq = 1;
@@ -234,6 +249,67 @@ class PublicEventControllerTest {
                 .andExpect(jsonPath("$.code").value("EVENT_NOT_FOUND"));
     }
 
+    /* ── 학술 event 접수 종료 시 공개에서 내려간다 (#187) ──── */
+
+    /*
+     * 학술 활동에서 이관된 event는 모집 시작(START_RECRUITMENT)으로 PUBLISHED가 되지만,
+     * 접수 중일 때만 공개된다. 접수 중인 폼이 붙어 있으면 목록·상세에 그대로 나온다.
+     */
+    @Test
+    void academicEventIsVisibleWhileLinkedFormIsAccepting() throws Exception {
+        Long eventId = saveAcademicEvent("접수 중 스터디", saveOpenForm(null));
+
+        mockMvc.perform(get(PUBLIC_EVENTS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].eventId").value(eventId));
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.eventId").value(eventId));
+    }
+
+    /*
+     * 접수 종료 일시가 지난 학술 event는 목록에서 빠지고 상세는 404다 — 모집이 끝난 스터디를
+     * 방문자에게 계속 노출하지 않는다. 배치가 아니라 조회 시점 판정이다(상태는 PUBLISHED 그대로).
+     */
+    @Test
+    void academicEventDisappearsFromPublicWhenReceiptPeriodPassed() throws Exception {
+        Long eventId = saveAcademicEvent("마감된 스터디", saveOpenForm(PAST));
+
+        mockMvc.perform(get(PUBLIC_EVENTS)).andExpect(jsonPath("$.data.length()").value(0));
+        assertHidden(eventId);
+    }
+
+    /*
+     * 같은 조건(접수 종료 일시 경과 + 연결 폼)의 **일반 공지형 행사**는 그대로 공개에 남는다 —
+     * 이 이슈의 규칙은 학술 활동 event에만 걸린다(기존 동작 회귀 없음).
+     */
+    @Test
+    void nonAcademicEventStaysVisibleAfterReceiptPeriodPassed() throws Exception {
+        Long eventId = saveEvent("RECRUIT", "마감된 일반 모집", true, saveOpenForm(PAST), null);
+
+        mockMvc.perform(get(PUBLIC_EVENTS))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].eventId").value(eventId));
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId)).andExpect(status().isOk());
+    }
+
+    // 접수 종료 일시를 미래로 늘리면 조회 시점 판정이라 다음 조회부터 다시 공개된다
+    @Test
+    void academicEventReappearsWhenReceiptPeriodExtended() throws Exception {
+        FormEntity form = saveOpenForm(PAST);
+        Long eventId = saveAcademicEvent("다시 여는 스터디", form);
+        assertHidden(eventId);
+
+        form.changeReceiptPeriod(null, FUTURE);
+        formRepository.saveAndFlush(form);
+
+        mockMvc.perform(get(PUBLIC_EVENTS))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].eventId").value(eventId));
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId)).andExpect(status().isOk());
+    }
+
     /* ── 픽스처 ───────────────────────────────────────────── */
 
     private Long saveEvent(String classificationCode, String title, boolean published) {
@@ -243,7 +319,32 @@ class PublicEventControllerTest {
     /** 접수 중인 폼과 정원을 붙인 게시 행사 — 상세의 receiptStatus·정원 표본이다 */
     private Long saveEventWithFormAndLimit(
             String classificationCode, String title, Integer participantLimitCount) {
-        return saveEvent(classificationCode, title, true, saveOpenForm(), participantLimitCount);
+        return saveEvent(
+                classificationCode, title, true, saveOpenForm(null), participantLimitCount);
+    }
+
+    /*
+     * 학술 활동에서 이관된 event를 흉내 낸다 (#187) — 분류 "EVENT" + acdm_actv 1:1 연결 + 게시.
+     * 모집용 폼은 인자로 받아 접수 상태(ACCEPTING / EXPIRED)를 테스트가 정한다.
+     */
+    private Long saveAcademicEvent(String title, FormEntity recruitmentForm) {
+        AcademicProgramEntity program =
+                AcademicProgramFixture.save(
+                        eventRepository,
+                        eventClassificationRepository,
+                        academicProgramRepository,
+                        academicProgramTypeRepository,
+                        curriculumItemRepository,
+                        formRepository,
+                        formResponseHistoryRepository,
+                        "STUDY",
+                        title,
+                        creator,
+                        List.of("1주차"));
+        EventEntity event = eventRepository.findById(program.getEvent().getId()).orElseThrow();
+        event.linkForm(recruitmentForm);
+        event.changeStatus(EventStatusAction.PUBLISH);
+        return eventRepository.saveAndFlush(event).getId();
     }
 
     private Long saveEvent(
@@ -279,8 +380,11 @@ class PublicEventControllerTest {
         eventRepository.flush();
     }
 
-    /** 접수 기간이 없는 OPEN 폼 — FormReceiptPolicy가 ACCEPTING으로 판정한다 */
-    private FormEntity saveOpenForm() {
+    /*
+     * OPEN 폼. receiptEndAt이 null이면 FormReceiptPolicy가 ACCEPTING으로, 과거 시각이면
+     * EXPIRED로 판정한다 (상태는 OPEN 그대로 — 자동 마감 배치가 없다).
+     */
+    private FormEntity saveOpenForm(Instant receiptEndAt) {
         QuestionCompositionContent composition =
                 new QuestionCompositionContent(
                         List.of(new Page("기본 정보", null)),
@@ -298,7 +402,8 @@ class PublicEventControllerTest {
                                         null,
                                         null)));
         return formRepository.saveAndFlush(
-                FormEntity.create(creator, "신청 폼", composition, null, null, FormStatus.OPEN));
+                FormEntity.create(
+                        creator, "신청 폼", composition, null, receiptEndAt, FormStatus.OPEN));
     }
 
     /*

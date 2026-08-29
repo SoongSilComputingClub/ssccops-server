@@ -1,9 +1,13 @@
 package org.sscc.ssccopsserver.domain.academicprogram.repository;
 
+import java.util.Collection;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 
@@ -24,4 +28,13 @@ public interface AcademicProgramRepository
      * 선조회만 두면 동시 요청이 그대로 통과한다(#20 회원가입이 세운 규칙 그대로).
      */
     boolean existsByFormResponse(FormResponseHistoryEntity formResponse);
+
+    /*
+     * 공개 행사 조회(#187)가 "이 event가 학술 활동에서 이관된 것인가"를 묻는 자리다. event ↔
+     * acdm_actv은 1:1(uk_acdm_actv_event)이라 event_id 존재만 보면 되고, 공개 목록이 이미
+     * 읽어 온 event 집합에 대해서만 물으므로 IN 하나로 끝난다 — event 도메인이 이 판별을
+     * 직접 구현하지 않고 학술 도메인에 물어보는 유일한 진입점이다.
+     */
+    @Query("select ap.event.id from AcademicProgramEntity ap where ap.event.id in :eventIds")
+    Set<Long> findEventIdsByEventIdIn(@Param("eventIds") Collection<Long> eventIds);
 }

@@ -41,6 +41,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramT
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramApprovalEffectsService;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramService;
+import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
@@ -126,6 +127,10 @@ class AcademicProgramTransitionControllerTest {
     @Test
     void startRecruitmentAdvancesToOngoingAndOpensLinkedForm() throws Exception {
         AcademicProgramEntity program = createApprovedProgramReadyToOpen("모집 시작 스터디");
+        Long eventId = program.getEvent().getId();
+        // 이관이 만든 event는 DRAFT다 — 모집 시작 전에는 공개 앱에 뜨지 않는다
+        assertThat(eventRepository.findById(eventId).orElseThrow().getStatus())
+                .isEqualTo(EventStatus.DRAFT);
 
         mockMvc.perform(
                         authorized(
@@ -144,6 +149,33 @@ class AcademicProgramTransitionControllerTest {
         flushAndClear();
         assertThat(academicProgramRepository.findById(program.getId()).orElseThrow().getStatus())
                 .isEqualTo(AcademicProgramStatus.ONGOING);
+        // 모집 시작이 연결된 event를 같은 트랜잭션에서 게시한다 (#187)
+        assertThat(eventRepository.findById(eventId).orElseThrow().getStatus())
+                .isEqualTo(EventStatus.PUBLISHED);
+    }
+
+    // 이미 ONGOING인 활동에서 START_RECRUITMENT을 다시 부르면 409 — event가 이중 게시되지 않는다
+    @Test
+    void repeatedStartRecruitmentIsRejectedAndDoesNotRepublishEvent() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("재시도 스터디");
+        Long eventId = program.getEvent().getId();
+        assertThat(eventRepository.findById(eventId).orElseThrow().getStatus())
+                .isEqualTo(EventStatus.PUBLISHED);
+
+        mockMvc.perform(
+                        authorized(
+                                        post(PROGRAMS + "/{id}/transitions", program.getId()),
+                                        managerToken)
+                                .content(
+                                        """
+                                        {"transition": "START_RECRUITMENT"}
+                                        """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_ACADEMIC_PROGRAM_TRANSITION"));
+
+        flushAndClear();
+        assertThat(eventRepository.findById(eventId).orElseThrow().getStatus())
+                .isEqualTo(EventStatus.PUBLISHED);
     }
 
     // 승인 후속 처리가 항상 문항 0개 폼을 만들어 두므로, 채우지 않은 채 모집을 시작하면

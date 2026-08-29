@@ -35,6 +35,16 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 묻는 것이 다르기 때문이다(하나는 지금 낼 수 있는가, 다른 하나는 마지막으로 언제 냈는가).
  * 건별 상태는 이 응답이 아니라 GET /v1/forms/{formId}/responses/mine이 준다.
  *
+ * ── 반려된 응답은 alreadySubmitted를 세우지 않는다 (#192) ──────
+ * 그 뜻을 "더 낼 수 없는가"로 좁힌 이상 반려는 여기 들 수 없다 — 반려는 그 응답에 대한 종결이지
+ * 그 폼에 대한 종결이 아니고(#141), 되돌리는 길이 새 응답이라 단일 응답 폼에서도 다시 낼 수
+ * 있어야 한다. 그전에는 낸 응답이 하나라도 있으면 상태를 보지 않고 참이라, 반려된 신청자에게
+ * 작성 화면 대신 제출 내역 화면이 영구히 떴다(막는 쪽인 제출·새 초안 판정도 같이 잠겨 있어
+ * 화면과 API가 어긋나지는 않았지만, 둘 다 틀린 답을 하고 있었다).
+ *
+ * myResponseCount·submittedAt은 그대로 반려된 응답을 포함한다 — 그 둘이 묻는 것은 "냈는가"이고
+ * 반려된 응답도 낸 것이 맞다. 셋 중 alreadySubmitted만 기준이 다르다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record PublicFormResponse(
@@ -55,6 +65,10 @@ public record PublicFormResponse(
      * 있으며, 거르는 자리는 서비스다 — 목록·집계와 같은 기준을 써야 한다).
      *
      * 마지막 원소를 쓰는 것은 순번 오름차순으로 오기 때문이다.
+     *
+     * "더 낼 수 없는가"는 건수가 아니라 상태로 판정한다 (#192). 상태별 판정은 엔티티에 물으며
+     * (blocksNewResponse) 여기서 어떤 상태가 막는지 나열하지 않는다 — 제출 경로가 같은 사실을
+     * 물어야 하고, 두 곳이 각자 상태를 비교하면 화면과 API가 갈린다.
      */
     public static PublicFormResponse of(
             FormEntity form, List<FormResponseHistoryEntity> submittedResponses) {
@@ -64,6 +78,11 @@ public record PublicFormResponse(
                         ? null
                         : submittedResponses.get(submittedResponses.size() - 1);
 
+        boolean alreadySubmitted =
+                !form.isMultipleResponseAllowed()
+                        && submittedResponses.stream()
+                                .anyMatch(FormResponseHistoryEntity::blocksNewResponse);
+
         return new PublicFormResponse(
                 form.getId(),
                 form.getTitle(),
@@ -71,7 +90,7 @@ public record PublicFormResponse(
                 toOffsetDateTime(form.getReceiptEndAt()),
                 form.getQuestionComposition(),
                 form.isMultipleResponseAllowed(),
-                latest != null && !form.isMultipleResponseAllowed(),
+                alreadySubmitted,
                 submittedResponses.size(),
                 latest == null ? null : toOffsetDateTime(latest.getSubmittedAt()));
     }

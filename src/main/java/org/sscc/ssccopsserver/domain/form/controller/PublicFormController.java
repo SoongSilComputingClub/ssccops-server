@@ -75,8 +75,10 @@ public class PublicFormController {
                             + " **alreadySubmitted는 '냈는가'가 아니라 '더 낼 수 없는가'다** — 다중 응답을 허용하는"
                             + " 폼(mltplRspnsYn = true)에서는 이미 냈어도 false이며, 그 화면은 작성 폼을 계속 보여줘야"
                             + " 한다. true면 웹은 작성 화면 대신 제출 내역 화면을 보여준다(임시저장 응답은 제출로 치지"
-                            + " 않는다). myResponseCount는 내가 낸 건수(임시저장 제외)이고 submittedAt은 마지막 제출"
-                            + " 일시라, 다중 응답 폼에서는 alreadySubmitted가 false인데 값이 있을 수 있다.")
+                            + " 않는다). **반려된(REJECTED) 응답도 세우지 않는다** — 반려는 그 응답에 대한 종결이지"
+                            + " 그 폼에 대한 종결이 아니라, 단일 응답 폼이라도 다시 낼 수 있다(#192)."
+                            + " myResponseCount는 내가 낸 건수(임시저장 제외, 반려 포함)이고 submittedAt은 마지막 제출"
+                            + " 일시라, alreadySubmitted가 false인데 값이 있을 수 있다.")
     @GetMapping("/{formId}/public")
     public ApiResponse<PublicFormResponse> getPublicForm(
             @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
@@ -127,9 +129,10 @@ public class PublicFormController {
                         + " 400 REQUIRED_ANSWER_MISSING, 형식 불일치는 400 ANSWER_PATTERN_MISMATCH, 최대 선택"
                         + " 초과는 400 ANSWER_SELECTION_LIMIT_EXCEEDED, 폼에 없는 문항이 섞이면 400"
                         + " UNKNOWN_QUESTION_ITEM이다. **몇 건까지 낼 수 있는지는 폼이 정한다(mltplRspnsYn)** — 허용하지"
-                        + " 않는 폼에 다시 내면 409 RESPONSE_ALREADY_SUBMITTED(반려된 응답은 409"
-                        + " RESPONSE_ALREADY_REJECTED)이고, 허용하는 폼이면 새 응답으로 접수되며 rspnsSeq(응답 순번)가 1"
-                        + " 는다. 임시저장이나 수정요청받은 응답이 있으면 새로 만들지 않고 그 응답을 낸 것이 된다 (그때는 rspnsSeq가 그대로이고"
+                        + " 않는 폼에 심사 중·승인된 응답이 있는데 또 내면 409 RESPONSE_ALREADY_SUBMITTED이고, 허용하는 폼이면"
+                        + " 새 응답으로 접수되며 rspnsSeq(응답 순번)가 1 는다. **반려된 응답만 남아 있으면 폼의 종류와 무관하게 새 응답으로"
+                        + " 접수된다**(#192) — 반려는 그 응답에 대한 종결이라 되돌리는 길이 번복이 아니라 새 응답이고, 반려된 행은 그대로"
+                        + " 남는다. 임시저장이나 수정요청받은 응답이 있으면 새로 만들지 않고 그 응답을 낸 것이 된다 (그때는 rspnsSeq가 그대로이고"
                         + " 제출 회차만 오른다). 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로 응답한다. **다만 수정요청받은"
                         + " 응답의 재제출은 접수 마감에 막히지 않는다** — 검토가 접수 뒤에 이뤄지는 폼(기획안)에서는 마감 후에 수정요청이 나가고,"
                         + " 그때 재제출까지 막으면 응답자에게 다시 낼 길이 없다. 새 응답 제출은 초안을 내는 것을 포함해 종전대로 마감 판정을 탄다. 빈"

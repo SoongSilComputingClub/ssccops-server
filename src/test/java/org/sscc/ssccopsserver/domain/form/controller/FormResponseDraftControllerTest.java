@@ -604,6 +604,36 @@ class FormResponseDraftControllerTest {
         assertThat(myResponses()).hasSize(1);
     }
 
+    /*
+     * 반려된 뒤에는 단일 응답 폼에서도 새 초안을 시작할 수 있다 (#192).
+     *
+     * 위 규칙("제출 뒤에는 초안을 만들지 않는다")이 지키는 것은 **운영진이 심사한 내용과 응답자가
+     * 들고 있는 화면이 갈리지 않는 것**인데, 반려된 응답에는 갈릴 내용이 없다 — 그 응답에 대한
+     * 심사는 끝났고 되돌아올 길도 없다. 그런데도 막고 있어 반려된 신청자는 새 신청서를 쓰기
+     * 시작할 수조차 없었다. 반려된 행은 그대로 두고 다음 순번의 초안이 생긴다.
+     */
+    @Test
+    void singleResponseFormAllowsANewDraftAfterRejection() throws Exception {
+        Long formId = saveForm("단일 응답 폼", FormStatus.OPEN, null, null);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        reject();
+
+        saveDraft(formId, """
+                  {"q1": "김철수"}
+                  """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("DRAFT"));
+
+        assertThat(myResponses())
+                .extracting(
+                        FormResponseHistoryEntity::getResponseSequence,
+                        FormResponseHistoryEntity::getStatus)
+                .containsExactly(tuple(1, ResponseStatus.REJECTED), tuple(2, ResponseStatus.DRAFT));
+    }
+
     /* ── 인증 ─────────────────────────────────────────────── */
 
     // 자동 저장은 응답자 본인의 개인정보를 다루는 경로다. permitAll에 걸리면 안 된다
@@ -661,6 +691,17 @@ class FormResponseDraftControllerTest {
                 .path("data")
                 .path("formRspnsId")
                 .asLong();
+    }
+
+    /*
+     * 검토자의 반려를 흉내 낸다 (#192). 검토 API는 RESPONSE_REVIEW 권한을 가진 검토자의 토큰을
+     * 요구하는데 이 클래스의 인증 주체는 고정된 응답자라, 자동 저장 경로만 보는 여기서는 엔티티로
+     * 직접 옮긴다 — 검토 API 자체는 FormResponseControllerTest가 본다.
+     */
+    private void reject() {
+        FormResponseHistoryEntity response = onlyResponse();
+        response.review(ResponseStatus.REJECTED);
+        formResponseHistoryRepository.saveAndFlush(response);
     }
 
     /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */

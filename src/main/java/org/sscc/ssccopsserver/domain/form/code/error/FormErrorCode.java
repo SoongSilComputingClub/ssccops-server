@@ -35,6 +35,23 @@ public enum FormErrorCode implements ErrorCode {
             HttpStatus.BAD_REQUEST, "INVALID_RECEIPT_PERIOD", "접수 종료 일시는 시작 일시보다 빠를 수 없습니다."),
 
     /*
+     * 400 — 학술 활동에 연결된 폼의 접수 기간을 폼 편집(PUT /v1/forms/{id})에서 바꾸려 할 때 (#190).
+     *
+     * 저장소는 form.rcpt_bgng_dt/rcpt_end_dt 하나인데 입력 화면이 "모집 관리"와 "폼 편집" 둘이라,
+     * 모집 시작 뒤 폼 편집에서 그 값을 덮어쓰면 두 화면이 같은 값을 두고 경쟁한다. 그래서 학술
+     * 연결 폼의 접수 기간을 쓰는 경로는 START_RECRUITMENT 오케스트레이션(changeReceiptPeriod)
+     * 하나로 좁히고, 폼 편집은 이 방어선으로 막는다.
+     *
+     * 제목·문항 구성·라벨·다중 응답 등 나머지 편집은 막지 않는다 — 학술국장이 편집 화면에서
+     * 문항을 채우는 것은 정상 동선이다(ssccops-web#193). 값이 현재와 같으면(편집 자동 저장이
+     * 상세 응답을 그대로 되돌려 보내는 경우) 통과한다.
+     */
+    ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED(
+            HttpStatus.BAD_REQUEST,
+            "ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED",
+            "학술 활동에 연결된 폼의 접수 기간은 모집 관리에서만 변경할 수 있습니다."),
+
+    /*
      * 400 — 전이표에 없는 상태 전이 (#33). 이미 열린 폼을 또 열거나(OPEN → OPEN), 작성 중인
      * 폼을 마감하려는(DRAFT → CLOSE) 요청이 여기에 걸린다.
      *

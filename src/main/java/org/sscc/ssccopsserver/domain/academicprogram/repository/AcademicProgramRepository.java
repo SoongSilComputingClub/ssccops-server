@@ -37,4 +37,14 @@ public interface AcademicProgramRepository
      */
     @Query("select ap.event.id from AcademicProgramEntity ap where ap.event.id in :eventIds")
     Set<Long> findEventIdsByEventIdIn(@Param("eventIds") Collection<Long> eventIds);
+
+    /*
+     * 폼 상세(#190)와 폼 수정 방어선이 "이 폼이 학술 활동에 연결됐는가"를 묻는 자리다. form ↔
+     * event는 event.form_id(uk_event_form), event ↔ acdm_actv은 acdm_actv.event_id(1:1)라
+     * form → event → acdm_actv을 한 번에 거슬러 오르면 나온다. 학술 이관 폼의 event 분류는
+     * 그냥 "EVENT"라 분류 코드로는 일반 폼과 구별되지 않으므로(#187) 이 조인이 유일한 판별이며,
+     * form 도메인이 학술 도메인에 묻는 진입점이다(findEventIdsByEventIdIn과 같은 갈래).
+     */
+    @Query("select ap.id from AcademicProgramEntity ap where ap.event.form.id = :formId")
+    Optional<Long> findIdByFormId(@Param("formId") Long formId);
 }

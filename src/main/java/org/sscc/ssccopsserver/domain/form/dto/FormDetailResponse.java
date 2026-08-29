@@ -64,6 +64,12 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * false이므로 조용히 꺼진다). 상세를 요청 DTO와 같은 이름으로 맞춰 두는 규칙이 여기서 값을
  * 지킨다.
  *
+ * academicProgramId(#190)는 이 폼이 학술 활동(acdm_actv)에 연결돼 있으면 그 활동 id, 아니면
+ * null이다. form → event → acdm_actv 역참조로 채운다(AcademicProgramRepository.findIdByFormId).
+ * 편집 화면은 이 값이 있으면 접수 기간 입력란을 숨긴다 — 학술 연결 폼의 접수 기간은 "모집
+ * 관리"에서만 바꾸고, 폼 편집으로 바꾸면 400 ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED다. 이관 폼의
+ * 분류는 "EVENT"라 분류 코드로는 일반 폼과 구별되지 않으므로(#187) 이 조인이 유일한 판별이다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormDetailResponse(
@@ -79,6 +85,7 @@ public record FormDetailResponse(
         int qitemVer,
         List<String> systemRequiredQitemIds,
         boolean mltplRspnsYn,
+        Long academicProgramId,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
         FormResponseStatusSummary responseSummary,
@@ -94,7 +101,8 @@ public record FormDetailResponse(
             FormReceiptStatus receiptStatus,
             List<FormLabelSummaryResponse> labels,
             FormResponseStatusSummary responseSummary,
-            Set<String> systemRequiredQitemIds) {
+            Set<String> systemRequiredQitemIds,
+            Long academicProgramId) {
         return new FormDetailResponse(
                 form.getId(),
                 form.getTitle(),
@@ -108,6 +116,7 @@ public record FormDetailResponse(
                 form.getQuestionVersion(),
                 systemRequiredQitemIds.stream().sorted().toList(),
                 form.isMultipleResponseAllowed(),
+                academicProgramId,
                 labels,
                 responseSummary.total(),
                 responseSummary,

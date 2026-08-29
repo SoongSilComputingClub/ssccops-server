@@ -29,6 +29,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramA
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
+import org.sscc.ssccopsserver.domain.event.code.EventStatus;
+import org.sscc.ssccopsserver.domain.event.code.EventStatusAction;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
@@ -197,14 +199,16 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     }
 
     /*
-     * 모집 시작. 연결된 Form에 모집 기간을 반영한 뒤 OPEN 전이한다 — 두 호출을 한 트랜잭션으로
-     * 묶어 클라이언트가 두 번 부르지 않게 한다(설계 결정 #2). FORM_HAS_NO_QUESTION 등 폼 도메인
-     * 예외는 감싸지 않고 그대로 전파한다(설계 결정 #5) — 승인 후속 처리가 항상 폼을 만들어
-     * 두므로 START_RECRUITMENT 실패의 실질 원인은 FORM_NOT_LINKED가 아니라 이쪽이다.
+     * 모집 시작. 연결된 Form에 모집 기간을 반영한 뒤 OPEN 전이하고, 같은 트랜잭션에서 이관된
+     * Event를 게시한다(#187) — 세 조작을 묶어 클라이언트가 여러 번 부르지 않게 한다(설계 결정 #2).
+     * FORM_HAS_NO_QUESTION 등 폼 도메인 예외는 감싸지 않고 그대로 전파한다(설계 결정 #5) —
+     * 승인 후속 처리가 항상 폼을 만들어 두므로 START_RECRUITMENT 실패의 실질 원인은
+     * FORM_NOT_LINKED가 아니라 이쪽이다.
      */
     private FormReceiptStatus startRecruitment(
             AcademicProgramEntity academicProgram, AcademicProgramTransitionRequest request) {
-        Long formId = requireFormId(academicProgram.getEvent());
+        EventEntity event = academicProgram.getEvent();
+        Long formId = requireFormId(event);
 
         formService.changeReceiptPeriod(
                 formId,
@@ -214,7 +218,25 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 formService.changeStatus(
                         formId, new FormStatusChangeRequest(FormStatusAction.OPEN));
 
+        publishEventForRecruitment(event);
+
         return formResponse.receiptStatus();
+    }
+
+    /*
+     * 모집이 시작되면 이관된 Event를 공개한다(#187). 이관(#148)이 만드는 Event는 항상 DRAFT라
+     * 공개 앱 목록에 뜨지 않았고, 학술국장 동선에는 어드민에서 수동 게시하는 단계가 없었다.
+     *
+     * DRAFT일 때만 게시한다. 이미 PUBLISHED면(재시도·경합) 그대로 두고, ARCHIVED처럼 PUBLISH가
+     * 전이표상 불가한 상태면 건드리지 않는다 — 운영자가 보관한 Event를 모집 시작이 되살리면
+     * 그 결정을 덮어쓰게 되고, 학술 흐름에서 Event가 DRAFT가 아닌 채로 여기 오는 일은 거의 없다.
+     * 접수 기간이 지나 공개에서 내려가는 것은 상태 전이가 아니라 PublicEventServiceImpl의
+     * 조회 시점 판정이 맡는다.
+     */
+    private void publishEventForRecruitment(EventEntity event) {
+        if (event.getStatus() == EventStatus.DRAFT) {
+            event.changeStatus(EventStatusAction.PUBLISH);
+        }
     }
 
     /*

@@ -105,8 +105,8 @@ dependencies {
 // 환경변수를 직접 넘겨줘야 하므로 여기서 파싱해 bootRun 태스크에 주입한다)
 // ============================================================================
 def envFile = rootProject.file('.env')
+def envVars = [:]
 if (envFile.exists()) {
-    def envVars = [:]
     envFile.readLines().each { line ->
         def trimmed = line.trim()
         if (trimmed && !trimmed.startsWith('#')) {
@@ -120,6 +120,30 @@ if (envFile.exists()) {
     }
     tasks.named('bootRun') {
         environment(envVars)
+    }
+}
+
+// ============================================================================
+// R2 업로드 경로 진단 (#137). 브라우저가 지나는 길(자격증명 → CORS → 서명 PUT → 프리플라이트)을
+// 서버에서 그대로 한 번 밟아 본다 — 업로드 실패는 PUT이 서버를 거치지 않아 로그에 남지 않는다.
+//
+//   ./gradlew r2Check
+//   ./gradlew r2Check -Pargs="--apply-cors"
+//   ./gradlew r2Check -Pargs="--apply-cors --origin=http://localhost:3000"
+//
+// 값은 환경변수에서 읽으며 .env가 있으면 그것을 주입한다(없으면 셸 환경을 그대로 물려받는다).
+// 배포 아티팩트에 들어가지 않도록 도구 자체는 테스트 소스에 둔다.
+// ============================================================================
+tasks.register('r2Check', JavaExec) {
+    group = 'verification'
+    description = 'R2 업로드 경로 진단 (자격증명·버킷 CORS·서명 PUT·프리플라이트)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.sscc.ssccopsserver.tools.R2Check'
+    if (!envVars.isEmpty()) {
+        environment(envVars)
+    }
+    if (project.hasProperty('args')) {
+        args project.property('args').toString().split(' ').findAll { it }
     }
 }
 

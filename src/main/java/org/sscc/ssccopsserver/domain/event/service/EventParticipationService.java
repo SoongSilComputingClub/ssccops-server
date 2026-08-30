@@ -49,8 +49,22 @@ public interface EventParticipationService {
             Long eventId, EventParticipantRegisterRequest request, MemberEntity registrant);
 
     /*
-     * 참가 상태 전이 (D14). 허용은 승격(WAITLISTED→CONFIRMED)과 취소(CONFIRMED→CANCELLED)
-     * 둘뿐이며 전이표는 EventParticipantEntity.changeStatus가 갖는다.
+     * 참가자 등록이거나, 이미 명단에 있으면 그 사람의 상태를 요청한 값으로 맞춘다 (#198).
+     *
+     * 등록과 같은 근거·같은 전이표를 쓰되 **중복을 오류로 읽지 않는다** — 선발 화면이 지금
+     * 상태를 통째로 다시 저장하는 조작(학술 모집 선발)의 재료이며, 그 요청에서 이미 명단에 있는
+     * 회원은 잘못 누른 것이 아니라 값을 고치려는 것이다. 같은 값이면 아무 일도 하지 않는다.
+     *
+     * 행사 참가자 등록 API(POST .../participants)는 이 경로를 쓰지 않는다 — 그쪽에서 중복은
+     * 여전히 409이며, 명단을 통째로 덮어쓰는 화면이 없으므로 멱등할 이유도 없다.
+     */
+    EventParticipantMutationResponse registerOrUpdateParticipant(
+            Long eventId, EventParticipantRegisterRequest request, MemberEntity registrant);
+
+    /*
+     * 참가 상태 전이 (D14). 허용은 승격(WAITLISTED→CONFIRMED)·강등(CONFIRMED→WAITLISTED,
+     * #198)·취소(CONFIRMED→CANCELLED) 셋이며 전이표는 EventParticipantEntity.changeStatus가
+     * 갖는다.
      *
      * **행을 지우는 경로는 두지 않는다** — 명단은 활동 이력으로 영구 보존한다(D16).
      */

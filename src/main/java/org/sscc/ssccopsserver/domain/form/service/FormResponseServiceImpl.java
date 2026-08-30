@@ -500,6 +500,15 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
+     * 응답의 현재 심사 상태 (#198). 다른 조회와 같은 범위 검사(findResponse)를 지난다 — 폼이
+     * 범위를 정하고, 남의 폼 응답 식별자는 없는 응답과 같은 404다.
+     */
+    @Override
+    public ResponseStatus getResponseStatus(Long formId, Long formResponseId) {
+        return findResponse(findForm(formId), formResponseId).getStatus();
+    }
+
+    /*
      * 목록이 한 건을 알아보는 값 (#196).
      *
      * **어느 문항의 답인가는 서비스가 정하지 않는다** — SystemFormContract의 선언을 그대로 따르고,

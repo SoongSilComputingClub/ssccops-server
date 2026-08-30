@@ -126,7 +126,8 @@ public class EventParticipationController {
     @Operation(
             summary = "행사 참가 상태 변경",
             description =
-                    "허용되는 전이는 WAITLISTED→CONFIRMED(승격)와 CONFIRMED→CANCELLED(취소) 둘뿐이며"
+                    "허용되는 전이는 WAITLISTED→CONFIRMED(승격)·CONFIRMED→WAITLISTED(강등)·"
+                            + "CONFIRMED→CANCELLED(취소) 셋이며"
                             + " 그 밖은 400 INVALID_PARTICIPANT_STATUS_TRANSITION이다(같은 상태로의"
                             + " 재지정·취소 되돌리기·대기자 취소도 같은 400)."
                             + " 승격도 정원을 넘길 수 있으므로 등록과 같은"

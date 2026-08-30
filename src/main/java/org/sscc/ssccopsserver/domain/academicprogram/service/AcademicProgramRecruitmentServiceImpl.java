@@ -3,11 +3,15 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
@@ -15,6 +19,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramR
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantRegisterRequest;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
+import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.service.EventParticipationService;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -34,9 +39,9 @@ import lombok.extern.slf4j.Slf4j;
  * (RECRUITMENT_NOT_STARTED)와 "심사와 등록은 한 건이다"(selectMembers의 트랜잭션). 나머지는
  * 전부 위임이다:
  *
- *   심사     → FormResponseService.reviewResponse           (#141 · 전이표·검토 이력·처리자)
- *   등록     → EventParticipationService.registerParticipant (ssccops#146 · 근거·중복·상태 검사)
- *   명단 조회 → EventParticipantRepository                    (ssccops#146의 질의 그대로)
+ *   심사     → FormResponseService.reviewResponse                       (#141 · 전이표·검토 이력·처리자)
+ *   명단 반영 → EventParticipationService.registerOrUpdateParticipant   (#198 · 근거·전이표·상태 검사)
+ *   명단 조회 → EventParticipantRepository                              (ssccops#146의 질의 그대로)
  *
  * 명단 조회만 리포지토리를 직접 부르는 것은 응답 모양이 달라서다. 행사 쪽
  * EventParticipationService.getParticipants는 학번·학과·등급까지 실은
@@ -72,27 +77,48 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * 활동이 모집을 시작했는지 알아낼 수 없게 하기 위해서다(SessionServiceImpl과 같은 태도).
      */
     @Override
-    public List<FormResponseSummaryResponse> getApplications(
+    public List<RecruitmentApplicationResponse> getApplications(
             Long academicProgramId, ResponseStatus responseStatus, MemberEntity requester) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
         academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
         requireRecruitmentStarted(academicProgram);
 
-        return formResponseService.getResponses(recruitmentFormId(academicProgram), responseStatus);
+        List<FormResponseSummaryResponse> applications =
+                formResponseService.getResponses(
+                        recruitmentFormId(academicProgram), responseStatus);
+        Map<Long, EventParticipantEntity> roster = rosterByMemberId(academicProgram);
+
+        return applications.stream()
+                .map(
+                        application ->
+                                RecruitmentApplicationResponse.of(
+                                        application, roster.get(application.member().mbrId())))
+                .toList();
     }
 
     /*
-     * 선발 확정.
+     * 선발 저장.
      *
-     * 줄마다 심사한 뒤 곧바로 등록한다. 두 단계를 줄 단위로 붙여 두는 것은 등록이 그 응답의
-     * ACCEPTED를 전제하기 때문이고(EventParticipationServiceImpl.findAcceptedApplication),
+     * 줄마다 심사한 뒤 곧바로 명단에 반영한다. 두 단계를 줄 단위로 붙여 두는 것은 등록이 그
+     * 응답의 ACCEPTED를 전제하기 때문이고(EventParticipationServiceImpl.findAcceptedApplication),
      * 같은 트랜잭션의 영속성 컨텍스트라 방금 바꾼 상태를 그대로 본다.
      *
-     * 실패는 전부 되돌린다 — 이미 확정된 신청자를 다시 고르면 폼 응답이 ACCEPTED(종결)라
-     * 400 INVALID_RESPONSE_STATUS_TRANSITION이고, 이미 명단에 있는 회원이면 409
-     * EVENT_PARTICIPANT_DUPLICATED다. 한 줄만 걸러내고 나머지를 반영하지 않는 것은, 어느 줄이
-     * 반영됐는지를 화면이 되짚어야 하는 상태를 만들지 않기 위해서다. 같은 formRspnsId가 두 번
-     * 실려 온 요청도 같은 이유로 여기서 끊긴다(두 번째 줄이 이미 ACCEPTED인 응답을 만난다).
+     * **다시 저장할 수 있다**(#198). 그전까지 이 메서드는 한 방향으로만 움직였다 — 이미 확정된
+     * 신청자를 다시 고르면 폼 응답이 종결이라 400, 명단 행이 이미 있으면 409였고, 확정을 대기로
+     * 내리는 전이 자체가 없어 한 번의 오조작이 복구되지 않았다. 세 자리가 함께 열렸다:
+     *
+     *   심사 → 이미 ACCEPTED면 부르지 않는다 (재선발은 재심사가 아니다)
+     *   명단 → registerOrUpdateParticipant가 등록이거나 상태 맞추기다 (같은 값이면 아무 일도 없다)
+     *   전이 → EventParticipantEntity.changeStatus가 CONFIRMED→WAITLISTED를 허용한다
+     *
+     * **판정을 여기 적지 않는 것이 요점이다.** 이 메서드가 아는 것은 "재선발은 재심사가 아니다"
+     * 하나뿐이고, 어떤 전이가 성립하는지도 같은 값을 어떻게 다룰지도 전부 위임한 쪽의 규칙이다 —
+     * 여기에 한 벌 더 적으면 행사 명단을 고치는 두 경로가 다른 표를 보게 된다.
+     *
+     * 실패는 여전히 전부 되돌린다. 한 줄만 걸러내고 나머지를 반영하지 않는 것은, 어느 줄이
+     * 반영됐는지를 화면이 되짚어야 하는 상태를 만들지 않기 위해서다. 취소(CANCELLED)된
+     * 참가자를 다시 고르는 요청은 400 INVALID_PARTICIPANT_STATUS_TRANSITION이다 — 취소를
+     * 되돌리는 것은 이 이슈의 범위 밖이고, 그 판정도 전이표가 그대로 갖는다.
      */
     @Override
     @Transactional
@@ -106,9 +132,8 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
         Long eventId = academicProgram.getEvent().getId();
 
         for (RecruitmentSelectionRequest selection : request.selections()) {
-            formResponseService.reviewResponse(
-                    formId, selection.formRspnsId(), ACCEPT_REVIEW, performer);
-            eventParticipationService.registerParticipant(
+            acceptIfPending(formId, selection.formRspnsId(), performer);
+            eventParticipationService.registerOrUpdateParticipant(
                     eventId,
                     new EventParticipantRegisterRequest(
                             selection.formRspnsId(), null, selection.ptcpSttsCd()),
@@ -147,6 +172,47 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
                 .stream()
                 .map(participant -> AcademicProgramMemberResponse.of(participant, academicProgram))
                 .toList();
+    }
+
+    /*
+     * 아직 승인되지 않은 응답만 승인한다 (#198).
+     *
+     * 이미 ACCEPTED인 응답에 검토를 다시 걸면 종결 상태라 400이고(FormResponseHistoryEntity의
+     * 전이표), 통과시킨다 해도 아무것도 바꾸지 않은 승인이 처리 이력에 한 줄 더 쌓인다(#141).
+     * 재선발이 바꾸는 것은 참가 상태뿐이며, 그 사람이 신청을 냈고 승인됐다는 사실은 그대로다.
+     *
+     * 승인 자체가 성립하지 않는 상태(작성 중·수정요청 대기·반려)는 여기서 가려내지 않는다 —
+     * 어느 상태에서 승인으로 갈 수 있는지는 폼 도메인의 전이표가 답하며, 그 요청은 종전처럼
+     * 400 INVALID_RESPONSE_STATUS_TRANSITION으로 끊긴다.
+     */
+    private void acceptIfPending(Long formId, Long formResponseId, MemberEntity performer) {
+        if (formResponseService.getResponseStatus(formId, formResponseId)
+                == ResponseStatus.ACCEPTED) {
+            return;
+        }
+        formResponseService.reviewResponse(formId, formResponseId, ACCEPT_REVIEW, performer);
+    }
+
+    /*
+     * 이 활동의 명단을 회원 식별자로 접은 것 (#198 · 신청자 목록의 참가 상태).
+     *
+     * 신청 한 줄마다 "명단에 있나"를 묻지 않고 한 번에 모아 오며(DB-13), 응답이 몇 건이든
+     * 질의는 하나다. 상태를 가리지 않는 것은 취소된 참가자도 신청자 표에 그대로 보여야 하기
+     * 때문이다(D16 · 명단은 활동 이력으로 영구 보존한다).
+     *
+     * 회원으로 접을 수 있는 근거는 UNIQUE(uk_event_ptcp_event_member)다 — (행사, 회원)당 한
+     * 줄이라 키가 겹치지 않는다.
+     */
+    private Map<Long, EventParticipantEntity> rosterByMemberId(
+            AcademicProgramEntity academicProgram) {
+        return eventParticipantRepository
+                .findAllByEventAndStatusInOrderByIdAsc(
+                        academicProgram.getEvent(), EnumSet.allOf(EventParticipantStatus.class))
+                .stream()
+                .collect(
+                        Collectors.toMap(
+                                participant -> participant.getMember().getId(),
+                                Function.identity()));
     }
 
     private void requireRecruitmentStarted(AcademicProgramEntity academicProgram) {

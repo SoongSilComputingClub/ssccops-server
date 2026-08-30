@@ -372,11 +372,14 @@ class EventParticipationControllerTest {
     }
 
     /*
-     * 허용 전이는 승격과 취소 둘뿐이다. 승격이 정원을 넘겨도 막지 않고 숫자로 알린다.
-     * 마지막의 재취소는 400 — CANCELLED에서 나가는 길은 없다.
+     * 허용 전이는 승격·강등·취소 셋이다. 승격이 정원을 넘겨도 막지 않고 숫자로 알리며, 강등은
+     * 그 숫자를 다시 내린다. 마지막의 재취소는 400 — CANCELLED에서 나가는 길은 없다.
+     *
+     * 강등(CONFIRMED→WAITLISTED)은 #198에서 열었다. 그전까지 확정은 취소 말고는 나갈 곳이 없어
+     * 잘못 확정한 사람을 대기로 되돌릴 방법이 없었다.
      */
     @Test
-    void promotionAndCancellationFollowTheTransitionTable() throws Exception {
+    void promotionDemotionAndCancellationFollowTheTransitionTable() throws Exception {
         Long eventId = saveEvent("EVENT", "정원 1명 행사", null, 1);
         Long waiting = saveParticipant(eventId, EventParticipantStatus.WAITLISTED);
         saveParticipant(eventId, EventParticipantStatus.CONFIRMED);
@@ -386,6 +389,14 @@ class EventParticipationControllerTest {
                 .andExpect(jsonPath("$.data.participant.ptcpSttsCd").value("CONFIRMED"))
                 .andExpect(jsonPath("$.data.confirmedCount").value(2))
                 .andExpect(jsonPath("$.data.capacityExceeded").value(true));
+
+        changeStatus(eventId, waiting, "WAITLISTED")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.participant.ptcpSttsCd").value("WAITLISTED"))
+                .andExpect(jsonPath("$.data.confirmedCount").value(1))
+                .andExpect(jsonPath("$.data.capacityExceeded").value(false));
+
+        changeStatus(eventId, waiting, "CONFIRMED").andExpect(status().isOk());
 
         changeStatus(eventId, waiting, "CANCELLED")
                 .andExpect(status().isOk())
@@ -405,7 +416,6 @@ class EventParticipationControllerTest {
         Long waiting = saveParticipant(eventId, EventParticipantStatus.WAITLISTED);
 
         assertTransitionRejected(eventId, confirmed, "CONFIRMED"); // 같은 상태로의 재지정
-        assertTransitionRejected(eventId, confirmed, "WAITLISTED"); // 확정을 대기로 되돌리지 않는다
         assertTransitionRejected(eventId, waiting, "WAITLISTED"); // 같은 상태로의 재지정
         assertTransitionRejected(eventId, waiting, "CANCELLED"); // 대기자는 참가자였던 적이 없다
     }

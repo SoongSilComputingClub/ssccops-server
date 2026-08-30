@@ -3,10 +3,10 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
@@ -45,18 +45,30 @@ public interface AcademicProgramRecruitmentService {
      * 위임한다 — 기본값(DRAFT 제외)·정렬·회원 조인이 폼 화면과 갈리면 같은 신청이 두 화면에서
      * 다른 순서·다른 범위로 보인다.
      *
+     * **참가 상태를 함께 싣는다**(#198). 선발이 심사와 등록을 함께 하므로 확정이든 대기든 응답은
+     * 똑같이 ACCEPTED가 되고, 응답 상태만으로는 그 둘이 구별되지 않는다. 아직 선발되지 않은
+     * 신청자는 null이며 서버가 "미선발" 같은 대체값을 만들지 않는다.
+     *
      * 모집 전(APPROVED)이면 빈 목록이 아니라 409 RECRUITMENT_NOT_STARTED다.
      */
-    List<FormResponseSummaryResponse> getApplications(
+    List<RecruitmentApplicationResponse> getApplications(
             Long academicProgramId, ResponseStatus responseStatus, MemberEntity requester);
 
     /*
-     * 선발 확정 — 폼 응답 심사(ACCEPTED)와 event_ptcp 등록을 **한 트랜잭션**으로 묶는다.
+     * 선발 저장 — 폼 응답 심사(ACCEPTED)와 event_ptcp 등록·상태 조정을 **한 트랜잭션**으로 묶는다.
      *
      * 나눌 수 없는 한 건인 것이 요점이다. 심사만 성공하면 "수락됐는데 팀원이 아닌" 신청자가
      * 남고, 등록만 성공하는 경우는 애초에 없다(등록은 ACCEPTED를 전제한다). 한 줄이라도
-     * 실패하면 전부 되돌아가며, 그래서 이미 확정된 신청자를 다시 고르는 요청은 그 자리에서
-     * 끊긴다(폼 응답이 이미 ACCEPTED라 종결이다).
+     * 실패하면 전부 되돌아간다.
+     *
+     * **멱등이다**(#198). 이미 뽑은 신청자를 다시 고르면 같은 값이면 아무 일도 하지 않고 다른
+     * 값이면 참가 상태를 그리로 옮긴다(확정↔대기 양방향) — 웹은 "지금 화면의 상태를 그대로
+     * 보낸다"는 한 가지 모델만 쓰면 된다. 그전까지 선발은 사실상 되돌릴 수 없는 조작이라
+     * (재선발이 400, 이미 명단에 있으면 409) 한 번의 실수가 복구되지 않았다.
+     *
+     * **이미 승인된 응답을 다시 심사하지는 않는다.** 재선발은 참가 상태를 고치는 일이고,
+     * 그 사람이 신청을 냈고 승인됐다는 사실은 그대로다 — 검토를 한 번 더 걸면 종결 상태라
+     * 400이고, 통과시킨다 해도 아무것도 바꾸지 않은 승인이 처리 이력에 쌓인다(#141).
      *
      * **정원은 검사하지 않는다**(설계 결정 #2 · wave2 D5와 같은 참고치 원칙). 초과해도 막지
      * 않고 서버 로그로만 남긴다 — 화면은 활동 상세의 pscpMaxCnt와 이 응답의 확정 인원을

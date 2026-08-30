@@ -47,6 +47,7 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.service.ProposalFormSeed;
 import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
@@ -137,6 +138,25 @@ class PublicFormControllerTest {
                 {
                   "qitemId": "qLast", "qitemLblNm": "하고 싶은 말", "qitemTypeCd": "SHORT_TEXT",
                   "reqYn": true, "pageSeq": 2, "optionList": []
+                }
+              ]
+            }
+            """;
+
+    /*
+     * 기획안 시스템 폼의 축소 표본 (#196). 대표 문항(programTitle)만 두는 것은 이 테스트가 보는 것이
+     * "선언된 문항의 답이 목록에 실리는가" 하나이기 때문이다 — 시드의 문항 열한 개를 그대로 옮기면
+     * 시드가 문항을 하나 더할 때마다 이 표본도 함께 고쳐야 하고, 그러면 무엇을 검증하는 테스트인지
+     * 흐려진다. qitemId는 리터럴이 아니라 ProposalFormSeed의 상수를 쓴다.
+     */
+    private static final String PROPOSAL_COMPOSITION =
+            """
+            {
+              "pages": [{"pageTtl": "기획안", "pageDescCn": null}],
+              "qitems": [
+                {
+                  "qitemId": "programTitle", "qitemLblNm": "활동명", "qitemTypeCd": "SHORT_TEXT",
+                  "reqYn": false, "pageSeq": 0, "optionList": []
                 }
               ]
             }
@@ -1040,6 +1060,85 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
+    /* ── 대표 문항 (#196) ─────────────────────────────────── */
+
+    /*
+     * 이 이슈의 한 줄이다 — 제출 현황 화면이 "1번째 기획안 · 2번째 기획안"으로만 떠 제출자가 자기가
+     * 낸 것을 구별할 수 없었다(ssccops-web#204). 목록이 응답 내용을 싣지 않는다는 규칙은 그대로이고,
+     * 늘어난 것은 대표 문항의 답 한 줄뿐이다.
+     *
+     * 어느 문항이 대표값인지는 SystemFormContract의 실제 선언(PROPOSAL → programTitle)을 그대로
+     * 쓴다. 잠금 계약(#155)을 시험용 코드로 갈아 끼우는 FormControllerTest와 갈리는데, 저쪽은
+     * 시드가 문항을 더할 때마다 흔들리는 '집합'이고 이쪽은 값 하나라 그 값이 바뀌면 목록의 제목이
+     * 실제로 달라진다 — 그 사실이 테스트에 잡히는 편이 맞다.
+     */
+    @Test
+    void getMyResponsesCarriesTheTitleAnswerOfEachResponse() throws Exception {
+        Long formId = saveProposalForm();
+        submit(formId, """
+               {"programTitle": "React 스터디"}
+               """)
+                .andExpect(status().isCreated());
+        submit(formId, """
+               {"programTitle": "알고리즘 스터디"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data[0].responseTitle").value("React 스터디"))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(2))
+                .andExpect(jsonPath("$.data[1].responseTitle").value("알고리즘 스터디"))
+                // 제목이 순번을 대체하지 않는다 — 같은 이름으로 두 번 낼 수 있어 순번이 여전히 필요하다
+                .andExpect(jsonPath("$.data[0].rspnsCn").doesNotExist());
+    }
+
+    /*
+     * 작성 중(DRAFT)인 응답도 제목을 싣는다. 자동 저장은 검증하지 않으므로(#36) 초안의 답은 언제든
+     * 비어 있을 수 있지만, 활동명을 이미 적어 둔 초안이라면 목록에서도 그것으로 알아볼 수 있어야
+     * 한다 — 초안을 목록에 싣기로 한 이유(이어 쓸 응답을 찾는다)와 같은 근거다.
+     */
+    @Test
+    void getMyResponsesCarriesTheTitleOfADraft() throws Exception {
+        Long formId = saveProposalForm();
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(
+                        form, respondent, ResponseContent.of(Map.of("programTitle", "쓰는 중인 기획안"))));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].rspnsSttsCd").value("DRAFT"))
+                .andExpect(jsonPath("$.data[0].responseTitle").value("쓰는 중인 기획안"));
+    }
+
+    /*
+     * **값이 없으면 null이다.** 대표 문항을 선언하지 않은 평범한 폼도, 그 문항을 비워 둔 응답도
+     * 마찬가지이며 서버가 "제목 없음" 같은 대체값을 만들지 않는다 — 웹은 값이 없을 때 종전 문구
+     * ("{rspnsSeq}번째 기획안")로 떨어지므로, 서버가 지어낸 문자열은 그 분기를 무력화한다.
+     */
+    @Test
+    void getMyResponsesLeavesResponseTitleNullWhenThereIsNoDeclaredAnswer() throws Exception {
+        Long ordinaryFormId = saveMultipleResponseForm("2026 신규모집 지원서");
+        submit(ordinaryFormId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + ordinaryFormId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].responseTitle").value(Matchers.nullValue()));
+
+        Long proposalFormId = saveProposalForm();
+        submit(proposalFormId, "{}").andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + proposalFormId + "/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].responseTitle").value(Matchers.nullValue()));
+    }
+
     /* ── 내 응답 상세 (#177) ───────────────────────────────── */
 
     /*
@@ -1442,6 +1541,21 @@ class PublicFormControllerTest {
                         status,
                         multipleResponseAllowed);
         form.designateAsSystemForm(sysFormCd);
+        return formRepository.saveAndFlush(form).getId();
+    }
+
+    /*
+     * 대표 문항(programTitle)을 가진 기획안 폼 표본 (#196). 시스템 폼 코드는 리터럴이 아니라
+     * ProposalFormSeed의 상수를 쓴다 — 계약이 그 상수를 열쇠로 삼으므로, 문자열을 다시 적으면
+     * 선언과 표본이 갈려도 테스트가 초록으로 남는다.
+     */
+    private Long saveProposalForm() throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(PROPOSAL_COMPOSITION, QuestionCompositionContent.class);
+        FormEntity form =
+                FormEntity.create(
+                        respondent, "스터디·프로젝트 기획안", content, null, null, FormStatus.OPEN, true);
+        form.designateAsSystemForm(ProposalFormSeed.SYSTEM_FORM_CODE);
         return formRepository.saveAndFlush(form).getId();
     }
 

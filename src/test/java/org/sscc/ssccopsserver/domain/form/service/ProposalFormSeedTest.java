@@ -114,6 +114,26 @@ class ProposalFormSeedTest {
                         "curriculum");
     }
 
+    /*
+     * 목록이 기획안을 알아보는 값은 활동명이다 (#196). 선언이 다른 문항으로 바뀌면 검토·제출 현황
+     * 목록의 제목이 통째로 달라지므로, 그 값을 여기서 못 박는다.
+     *
+     * **대표 문항은 잠긴 문항이어야 한다** — 그렇지 않으면 운영진이 편집 화면에서 그것을 지우는
+     * 순간 제목이 조용히 사라진다(SystemFormContract 생성자가 기동에서 세우는 규칙이며, 여기서는
+     * PROPOSAL의 선언이 실제로 그 조건을 지키는지 본다).
+     */
+    @Test
+    void declaresTheProgramTitleAsTheProposalListTitle() {
+        SystemFormContract contract = new SystemFormContract();
+
+        assertThat(contract.titleQitemIdOf("PROPOSAL"))
+                .contains(ProposalFormSeed.QITEM_PROGRAM_TITLE);
+        assertThat(contract.requiredQitemIdsOf("PROPOSAL"))
+                .contains(ProposalFormSeed.QITEM_PROGRAM_TITLE);
+        assertThat(QuestionCompositionContent.qitemIdsOf(ProposalFormSeed.composition()))
+                .contains(ProposalFormSeed.QITEM_PROGRAM_TITLE);
+    }
+
     /** 계약이 요구하는 문항이 시드에 없으면 세우자마자 자기 계약을 어긴 폼이 된다 */
     @Test
     void seedCompositionContainsEveryContractedQitemId() {

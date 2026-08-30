@@ -49,6 +49,7 @@ import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
+import org.sscc.ssccopsserver.domain.form.service.ProposalFormSeed;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
@@ -97,6 +98,24 @@ class FormResponseControllerTest {
                 {
                   "qitemId": "q1", "qitemLblNm": "지원 동기", "qitemTypeCd": "LONG_TEXT",
                   "reqYn": true, "pageSeq": 0, "optionList": []
+                }
+              ]
+            }
+            """;
+
+    /*
+     * 기획안 시스템 폼의 축소 표본 (#196). 대표 문항(programTitle) 하나만 두는 것은 이 테스트가
+     * 보는 것이 "선언된 문항의 답이 목록에 실리는가"이기 때문이다 — 시드의 문항 열한 개를 옮기면
+     * 시드가 바뀔 때마다 이 표본도 함께 고쳐야 한다.
+     */
+    private static final String PROPOSAL_COMPOSITION =
+            """
+            {
+              "pages": [{"pageTtl": "기획안", "pageDescCn": null}],
+              "qitems": [
+                {
+                  "qitemId": "programTitle", "qitemLblNm": "활동명", "qitemTypeCd": "SHORT_TEXT",
+                  "reqYn": false, "pageSeq": 0, "optionList": []
                 }
               ]
             }
@@ -301,6 +320,84 @@ class FormResponseControllerTest {
         // 회원 정보가 실제로 채워졌는지까지 함께 본다 — 비어 있으면 조인 없이도 쿼리 2회다
         assertThat(responses).allSatisfy(item -> assertThat(item.member().mbrNm()).isNotBlank());
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
+    }
+
+    /* ── 대표 문항 (#196) ─────────────────────────────────── */
+
+    /*
+     * 이 이슈의 한 줄이다 — 검토 목록이 회원명 옆에 "1번째 · 2번째"만 띄워 학술국장이 어느
+     * 기획안인지 열어 보기 전에는 알 수 없었다(ssccops-web#204). 같은 사람이 스터디를 둘 제안하는
+     * 것이 정상 흐름(#143)이라 순번만으로는 처리할 건을 고를 수 없다.
+     *
+     * 어느 문항이 대표값인지는 SystemFormContract의 실제 선언(PROPOSAL → programTitle)을 그대로
+     * 쓴다. 잠금 계약(#155)을 시험용 코드로 갈아 끼우는 FormControllerTest와 갈리는데, 저쪽은
+     * 시드가 문항을 더할 때마다 흔들리는 '집합'이고 이쪽은 값 하나라 그 값이 바뀌면 목록의 제목이
+     * 실제로 달라진다.
+     */
+    @Test
+    void getResponsesCarriesTheTitleAnswerOfEachResponse() throws Exception {
+        FormEntity proposalForm = saveProposalForm();
+        MemberEntity proposer =
+                saveMember(UUID.randomUUID(), "20260020", "박제안", "proposer@sscc.org");
+        saveProposalResponse(proposalForm, proposer, 1, "React 스터디", NOW.minusSeconds(ONE_DAY));
+        saveProposalResponse(proposalForm, proposer, 2, "알고리즘 스터디", NOW);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + proposalForm.getId() + "/responses"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                // 정렬은 종전대로 제출 일시 내림차순이라 나중에 낸 2번이 먼저 온다
+                .andExpect(jsonPath("$.data[0].rspnsSeq").value(2))
+                .andExpect(jsonPath("$.data[0].responseTitle").value("알고리즘 스터디"))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data[1].responseTitle").value("React 스터디"))
+                // 늘어난 것은 제목 한 줄뿐이다 — 응답 내용은 여전히 목록에 싣지 않는다
+                .andExpect(jsonPath("$.data[0].rspnsCn").doesNotExist());
+    }
+
+    /*
+     * **값이 없으면 null이다.** 대표 문항을 선언하지 않은 평범한 폼도, 그 문항을 비워 둔 응답도
+     * 마찬가지이며 서버가 "제목 없음" 같은 대체값을 만들지 않는다 — 웹은 값이 없을 때 종전 문구
+     * (순번 표시)로 떨어지므로, 지어낸 문자열은 그 분기를 무력화한다.
+     */
+    @Test
+    void getResponsesLeavesResponseTitleNullWhenThereIsNoDeclaredAnswer() throws Exception {
+        mockMvc.perform(authenticatedGet(responsesPath() + "?statusCode=SUBMITTED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].responseTitle").isEmpty());
+
+        FormEntity proposalForm = saveProposalForm();
+        MemberEntity proposer = saveMember(UUID.randomUUID(), "20260021", "최백지", "blank@sscc.org");
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        proposalForm, proposer, ResponseContent.of(Map.of()), NOW));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + proposalForm.getId() + "/responses"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].responseTitle").isEmpty());
+    }
+
+    /*
+     * 검토 처리의 응답도 목록과 같은 DTO를 쓴다 — 한쪽만 채우면 검토 직후 화면이 목록으로 돌아갈
+     * 때 제목이 사라졌다 다시 나타난다.
+     */
+    @Test
+    void reviewResponseCarriesTheTitleAnswerToo() throws Exception {
+        FormEntity proposalForm = saveProposalForm();
+        MemberEntity proposer = saveMember(UUID.randomUUID(), "20260022", "정검토", "review@sscc.org");
+        Long responseId = saveProposalResponse(proposalForm, proposer, 1, "운영체제 스터디", NOW);
+
+        mockMvc.perform(
+                        authenticatedPost(
+                                "/v1/forms/"
+                                        + proposalForm.getId()
+                                        + "/responses/"
+                                        + responseId
+                                        + "/reviews",
+                                """
+                                {"rspnsSttsCd": "CHANGES_REQUESTED", "rvwOpnnCn": "커리큘럼을 다시 적어 주세요."}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseTitle").value("운영체제 스터디"));
     }
 
     /* ── 상세 ─────────────────────────────────────────────── */
@@ -741,6 +838,40 @@ class FormResponseControllerTest {
                                 targetForm,
                                 respondent,
                                 ResponseContent.of(Map.of("q1", "제안 " + responseSequence)),
+                                submittedAt,
+                                responseSequence))
+                .getId();
+    }
+
+    /*
+     * 대표 문항(programTitle)을 가진 기획안 폼 표본 (#196). 시스템 폼 코드는 리터럴이 아니라
+     * ProposalFormSeed의 상수를 쓴다 — 계약이 그 상수를 열쇠로 삼으므로, 문자열을 다시 적으면
+     * 선언과 표본이 갈려도 테스트가 초록으로 남는다.
+     */
+    private FormEntity saveProposalForm() throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(PROPOSAL_COMPOSITION, QuestionCompositionContent.class);
+        FormEntity proposalForm =
+                FormEntity.create(
+                        operator, "스터디·프로젝트 기획안", content, null, null, FormStatus.OPEN, true);
+        proposalForm.designateAsSystemForm(ProposalFormSeed.SYSTEM_FORM_CODE);
+        return formRepository.saveAndFlush(proposalForm);
+    }
+
+    /** 활동명을 채운 기획안 응답 한 건 (#196) */
+    private Long saveProposalResponse(
+            FormEntity proposalForm,
+            MemberEntity proposer,
+            int responseSequence,
+            String programTitle,
+            Instant submittedAt) {
+
+        return formResponseHistoryRepository
+                .saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                proposalForm,
+                                proposer,
+                                ResponseContent.of(Map.of("programTitle", programTitle)),
                                 submittedAt,
                                 responseSequence))
                 .getId();

@@ -28,11 +28,17 @@ import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
  * 갈리는데, 그 규칙은 "남의 제출 전 답안이 심사 목록에 섞이지 않게" 하는 것이고 내 것을 나에게
  * 숨길 이유는 없다.
  *
+ * **응답 내용을 싣지 않는다는 규칙은 #196에서도 그대로다.** 늘어난 것은 대표 문항의 답 한 줄
+ * (responseTitle)이며 그것이 이 목록의 쓰임이다 — 제출 현황 화면이 "1번째 기획안 · 2번째 기획안"
+ * 으로만 떠 제출자가 자기가 낸 것을 구별할 수 없었다(ssccops-web#204). 어느 문항이 대표값인지는
+ * SystemFormContract의 선언이고, 값이 없으면 null이다(운영자 목록과 같은 규칙).
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record MyFormResponseSummaryResponse(
         Long formRspnsId,
         int rspnsSeq,
+        String responseTitle,
         ResponseStatus rspnsSttsCd,
         int sbmsnSeq,
         OffsetDateTime sbmsnDt,
@@ -40,10 +46,13 @@ public record MyFormResponseSummaryResponse(
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
-    public static MyFormResponseSummaryResponse from(FormResponseHistoryEntity response) {
+    /** 대표 문항의 답은 조립하는 자리에서 받는다 (#196 · FormResponseSummaryResponse와 같은 이유) */
+    public static MyFormResponseSummaryResponse of(
+            FormResponseHistoryEntity response, String responseTitle) {
         return new MyFormResponseSummaryResponse(
                 response.getId(),
                 response.getResponseSequence(),
+                responseTitle,
                 response.getStatus(),
                 response.getSubmissionSequence(),
                 toOffsetDateTime(response.getSubmittedAt()),

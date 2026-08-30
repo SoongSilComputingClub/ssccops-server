@@ -5,7 +5,6 @@ import java.util.List;
 
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AttendanceEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
-import org.sscc.ssccopsserver.domain.academicprogram.entity.FileReferenceEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
@@ -40,15 +39,18 @@ public record SessionDetailResponse(
         String latestOpinion) {
 
     /*
-     * fileReference는 출석 인증사진(#137)이 있으면 그 참조이고 없으면 null이다 — 사진을 아직
-     * 올리지 않은 회차가 흔한 상태라 빈 껍데기를 만들어 내리지 않는다. latestOpinion은 회차
-     * 승인·수정요청(#136)이 남긴 최신 acdm_actv_aprv(SESSION) 행의 사유이며, 아직
-     * 검토되지 않은 회차는 null이다 — 둘 다 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
+     * fileReference는 **이미 조립된 블록을 그대로 받는다** (#200). 그전에는 엔티티를 받아 여기서
+     * 조립했는데, 그 값이 서명된 URL이 되면서 만드는 데 자격 판정과 프리사이너가 필요해졌다 —
+     * DTO가 알 일이 아니라 SessionFileReferenceViewer가 만들어 넘긴다. 사진이 없거나 요청자가
+     * 관계자가 아니면 null이며 그 둘은 응답으로 구별되지 않는다(그 DTO 주석).
+     *
+     * latestOpinion은 회차 승인·수정요청(#136)이 남긴 최신 acdm_actv_aprv(SESSION) 행의 사유이며,
+     * 아직 검토되지 않은 회차는 null이다 — 값을 만들어 내지 않고 조회 결과를 그대로 싣는다.
      */
     public static SessionDetailResponse of(
             SessionEntity session,
             List<AttendanceEntity> attendances,
-            FileReferenceEntity fileReference,
+            SessionFileReferenceResponse fileReference,
             String latestOpinion) {
         CurriculumItemEntity curriculumItem = session.getCurriculumItem();
         MemberEntity registrant = session.getRegistrant();
@@ -69,21 +71,10 @@ public record SessionDetailResponse(
                 session.getStatus().name(),
                 registrant.getId(),
                 registrant.getName(),
-                fileReferenceOf(fileReference),
+                fileReference,
                 rows,
                 presentCount,
                 rows.size(),
                 latestOpinion);
-    }
-
-    /*
-     * 참조가 없으면 블록 자체를 내리지 않는다(null) — 화면은 이 값의 유무 하나로 "사진 있음/
-     * 없음"을 가른다. 필드가 null인 껍데기를 내리면 그 판단이 fileUrlAddr 검사로 한 겹 더 들어간다.
-     */
-    private static SessionFileReferenceResponse fileReferenceOf(FileReferenceEntity fileReference) {
-        return fileReference == null
-                ? null
-                : new SessionFileReferenceResponse(
-                        fileReference.getId(), fileReference.getFileUrl());
     }
 }

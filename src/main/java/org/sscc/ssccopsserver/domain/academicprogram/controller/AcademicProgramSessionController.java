@@ -91,11 +91,22 @@ public class AcademicProgramSessionController {
      * 스터디장 한 사람 말고는 아무도 회차 이력을 볼 수 없다. 다른 활동의 회차 식별자로 부르면
      * 404다(경로의 활동으로 좁혀 조회한다).
      */
-    @Operation(summary = "회차 상세 조회", description = "계획(회차 번호·주제·예정일)과 출석부·집계를 함께 내린다.")
+    @Operation(
+            summary = "회차 상세 조회",
+            description =
+                    "계획(회차 번호·주제·예정일)과 출석부·집계를 함께 내린다."
+                            + " 출석 인증사진(fileReference)은 **그 활동의 관계자**(팀원·스터디장/팀장·"
+                            + "ACADEMIC_PROGRAM_MANAGE)에게만 실리며, 값은 만료가 있는 서명된 URL이다"
+                            + "(expiresInSeconds로 남은 시간을 함께 내린다 — 만료되면 이 조회를 다시"
+                            + " 부른다). 사진이 없는 회차와 관계자가 아닌 요청자는 같은 응답이다"
+                            + "(fileReference: null).")
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionDetailResponse> getSession(
-            @PathVariable Long academicProgramId, @PathVariable Long sessionId) {
-        return ApiResponse.success(sessionService.getSession(academicProgramId, sessionId));
+            @PathVariable Long academicProgramId,
+            @PathVariable Long sessionId,
+            @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                sessionService.getSession(academicProgramId, sessionId, requester));
     }
 
     @Operation(

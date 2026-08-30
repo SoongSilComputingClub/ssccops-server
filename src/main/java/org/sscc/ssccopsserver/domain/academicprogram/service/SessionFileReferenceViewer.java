@@ -107,7 +107,10 @@ public class SessionFileReferenceViewer {
     }
 
     /*
-     * 읽기 서명. 업로드와 달리 contentType을 서명에 넣지 않는다 — 그쪽은 "이 형식만 올려도
+     * 읽기 서명. 업로드 URL 발급(#137)도 이 메서드를 쓴다 — 그 경로는 이미 소유권을 통과한
+     * 뒤라 자격을 다시 묻지 않지만, 서명 자체는 한 곳에서만 만든다(TTL과 버킷이 갈리지 않는다).
+     *
+     * 업로드와 달리 contentType을 서명에 넣지 않는다 — 그쪽은 "이 형식만 올려도
      * 좋다"는 허가라 형식이 조건의 일부지만, 읽기는 이미 저장된 오브젝트를 그대로 내려받는
      * 것이라 조건에 넣을 것이 키뿐이다.
      *
@@ -115,7 +118,7 @@ public class SessionFileReferenceViewer {
      * 실물을 가리킨다는 보장이 애초에 없고(FileReferenceEntity 주석), 확인하려면 조회마다
      * HeadObject가 한 번씩 더 나간다. 없으면 R2가 404를 돌려주고 화면은 다시 올린다.
      */
-    private String presignGet(String objectKey) {
+    public String presignGet(String objectKey) {
         GetObjectRequest getObjectRequest =
                 GetObjectRequest.builder().bucket(bucketName).key(objectKey).build();
 

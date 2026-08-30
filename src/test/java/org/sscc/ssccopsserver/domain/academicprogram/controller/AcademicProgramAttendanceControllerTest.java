@@ -97,9 +97,12 @@ class AcademicProgramAttendanceControllerTest {
 
     private static final String PROGRAMS = "/v1/academic-programs";
 
-    /** application-test.yaml의 r2.public-base-url·r2.bucket-name과 같은 값이어야 한다 */
-    private static final String PUBLIC_BASE_URL = "https://images.test.local";
-
+    /*
+     * application-test.yaml의 r2.bucket-name과 같은 값이어야 한다.
+     *
+     * 공개 도메인(r2.public-base-url)은 이 도메인이 쓰지 않는다 (#200) — 인증사진은 비공개 버킷에
+     * 두고 서명된 URL로만 오간다.
+     */
     private static final String BUCKET = "test-bucket";
 
     @Autowired private MockMvc mockMvc;
@@ -461,14 +464,19 @@ class AcademicProgramAttendanceControllerTest {
                         .getResponse()
                         .getContentAsString();
 
-        String publicUrl = JsonPath.parse(response).read("$.data.publicUrl", String.class);
+        String viewUrl = JsonPath.parse(response).read("$.data.viewUrl", String.class);
         String uploadUrl = JsonPath.parse(response).read("$.data.uploadUrl", String.class);
 
         String keyPrefix =
                 "academic-programs/" + academicProgram.getId() + "/sessions/" + sessionId + "/";
-        assertThat(publicUrl).startsWith(PUBLIC_BASE_URL + "/" + keyPrefix).endsWith(".jpg");
-        String objectKey = publicUrl.substring((PUBLIC_BASE_URL + "/").length());
+        String objectKey = storedObjectKey();
+        assertThat(objectKey).startsWith(keyPrefix).endsWith(".jpg");
         assertThat(uploadUrl).contains(objectKey);
+        /*
+         * viewUrl은 공개 주소가 아니라 **서명된 읽기 주소**다 (#200) — 업로드 직후 미리보기에
+         * 쓰라고 함께 내려주며, 회차 상세가 내려주는 것과 같은 방식으로 서명된다.
+         */
+        assertThat(viewUrl).isEqualTo(signedUrlOf(objectKey, "stub-get"));
 
         // 파일명이 아니라 UUID다 — 같은 이름을 두 번 올려도 앞의 것이 덮이지 않는다
         String fileName = objectKey.substring(objectKey.lastIndexOf('/') + 1);
@@ -499,15 +507,15 @@ class AcademicProgramAttendanceControllerTest {
 
         Long firstId = JsonPath.parse(first).read("$.data.fileReferenceId", Long.class);
         Long secondId = JsonPath.parse(second).read("$.data.fileReferenceId", Long.class);
-        String firstUrl = JsonPath.parse(first).read("$.data.publicUrl", String.class);
-        String secondUrl = JsonPath.parse(second).read("$.data.publicUrl", String.class);
+        String firstUrl = JsonPath.parse(first).read("$.data.viewUrl", String.class);
+        String secondUrl = JsonPath.parse(second).read("$.data.viewUrl", String.class);
 
         assertThat(secondId).isEqualTo(firstId);
-        assertThat(secondUrl).isNotEqualTo(firstUrl).endsWith(".png");
+        assertThat(secondUrl).isNotEqualTo(firstUrl);
 
         entityManager.flush();
         assertThat(fileReferenceRepository.count()).isEqualTo(1);
-        // 저장되는 값은 공개 URL이 아니라 오브젝트 키다 (#200) — 읽기가 그 키로 서명한다
+        // 저장되는 값은 URL이 아니라 오브젝트 키다 (#200) — 읽기가 그 키로 서명한다
         assertThat(fileReferenceRepository.findAll())
                 .singleElement()
                 .satisfies(
@@ -515,8 +523,7 @@ class AcademicProgramAttendanceControllerTest {
                             assertThat(reference.getFileUrl())
                                     .startsWith("academic-programs/")
                                     .endsWith(".png");
-                            assertThat(secondUrl)
-                                    .isEqualTo(PUBLIC_BASE_URL + "/" + reference.getFileUrl());
+                            assertThat(secondUrl).contains(reference.getFileUrl());
                         });
     }
 
@@ -615,9 +622,9 @@ class AcademicProgramAttendanceControllerTest {
     void fileExtensionIsNormalizedToCanonicalExtension() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05");
 
-        assertThat(issuedPublicUrl(sessionId, "jpeg")).endsWith(".jpg");
-        assertThat(issuedPublicUrl(sessionId, ".JPG")).endsWith(".jpg");
-        assertThat(issuedPublicUrl(sessionId, " WEBP ")).endsWith(".webp");
+        assertThat(issuedObjectKey(sessionId, "jpeg")).endsWith(".jpg");
+        assertThat(issuedObjectKey(sessionId, ".JPG")).endsWith(".jpg");
+        assertThat(issuedObjectKey(sessionId, " WEBP ")).endsWith(".webp");
     }
 
     /*
@@ -694,9 +701,10 @@ class AcademicProgramAttendanceControllerTest {
                 .getContentAsString();
     }
 
-    private String issuedPublicUrl(Long sessionId, String fileExt) throws Exception {
-        return JsonPath.parse(issueUpload(sessionId, fileExt))
-                .read("$.data.publicUrl", String.class);
+    /** 발급 뒤 저장된 오브젝트 키. 키에 붙는 확장자가 하나로 굳는지를 이 값으로 본다 */
+    private String issuedObjectKey(Long sessionId, String fileExt) throws Exception {
+        issueUpload(sessionId, fileExt);
+        return storedObjectKey();
     }
 
     /*

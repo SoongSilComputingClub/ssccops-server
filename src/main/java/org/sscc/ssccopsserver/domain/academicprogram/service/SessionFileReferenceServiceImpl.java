@@ -16,7 +16,6 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepositor
 import org.sscc.ssccopsserver.domain.event.code.EventImageType;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
-import org.sscc.ssccopsserver.global.config.R2PublicBaseUrl;
 
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -56,28 +55,30 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
     private final String bucketName;
 
     /*
-     * 공개 읽기 주소는 R2PublicBaseUrl이 검증·조립한다 (#200). 이 서비스가 프로퍼티를 직접 받아
-     * 정규화하던 것을 옮긴 것이며, 검사가 도메인마다 갈리지 않게 하는 것이 목적이다.
-     *
-     * **저장에는 더 이상 쓰지 않는다** — file_rfrnc에는 오브젝트 키가 들어가고 읽기는 서명된
-     * URL이다(#200). 남은 쓰임은 업로드 응답의 publicUrl 한 자리인데, 그 값은 버킷을 공개로
-     * 열었을 때만 뜻이 있다(FileReferenceUploadResponse 주석).
+     * 미리보기 주소를 만드는 자리 (#200). 읽기 서명은 회차 상세와 한 곳에서만 만든다 — TTL과
+     * 버킷이 두 경로에서 갈리면 "상세에서는 열리는데 업로드 직후에는 안 열린다"가 된다.
      */
-    private final R2PublicBaseUrl publicBaseUrl;
+    private final SessionFileReferenceViewer sessionFileReferenceViewer;
 
+    /*
+     * **`r2.public-base-url`을 더 이상 받지 않는다** (#200). 학술 인증사진은 비공개 버킷 +
+     * 서명된 URL로 오가므로 계정 엔드포인트와 키만 있으면 업로드도 조회도 성립한다 — 공개 도메인은
+     * 이 도메인이 쓰지 않는 설정이고, 붙들고 있으면 값이 없거나 잘못된 환경에서 학술 기능이 통째로
+     * 뜨지 못한다. 그 설정은 행사 본문 이미지(#161)의 것으로 남는다.
+     */
     public SessionFileReferenceServiceImpl(
             SessionRepository sessionRepository,
             FileReferenceRepository fileReferenceRepository,
             SessionCorrectionPolicy sessionCorrectionPolicy,
             S3Presigner r2Presigner,
             @Value("${r2.bucket-name}") String bucketName,
-            R2PublicBaseUrl publicBaseUrl) {
+            SessionFileReferenceViewer sessionFileReferenceViewer) {
         this.sessionRepository = sessionRepository;
         this.fileReferenceRepository = fileReferenceRepository;
         this.sessionCorrectionPolicy = sessionCorrectionPolicy;
         this.r2Presigner = r2Presigner;
         this.bucketName = bucketName;
-        this.publicBaseUrl = publicBaseUrl;
+        this.sessionFileReferenceViewer = sessionFileReferenceViewer;
     }
 
     /*
@@ -113,7 +114,7 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
         return new FileReferenceUploadResponse(
                 fileReference.getId(),
                 uploadUrl,
-                publicBaseUrl.urlOf(objectKey),
+                sessionFileReferenceViewer.presignGet(objectKey),
                 imageType.getContentType());
     }
 

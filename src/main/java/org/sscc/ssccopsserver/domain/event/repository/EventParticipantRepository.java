@@ -88,6 +88,15 @@ public interface EventParticipantRepository extends JpaRepository<EventParticipa
     /** 중복 등록 선조회. UNIQUE(uk_event_ptcp_event_member)가 최종 방어선이다 */
     boolean existsByEventAndMember(EventEntity event, MemberEntity member);
 
+    /*
+     * 이 회원의 명단 행 (#198 · 선발 다시 저장하기).
+     *
+     * 등록이 존재 여부만 묻는 것과 달리 행 자체가 필요하다 — 이미 명단에 있으면 새로 만드는
+     * 대신 그 행의 상태를 맞춰야 하고, 그러려면 지금 상태를 알아야 한다. UNIQUE
+     * (uk_event_ptcp_event_member) 덕에 (행사, 회원)당 최대 한 줄이라 Optional이 정확하다.
+     */
+    Optional<EventParticipantEntity> findByEventAndMember(EventEntity event, MemberEntity member);
+
     /** 정원 경고용 확정 인원. 목록 집계(countByEventIds)와 달리 행사 한 건만 본다 */
     long countByEventAndStatus(EventEntity event, EventParticipantStatus status);
 }

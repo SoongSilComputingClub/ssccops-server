@@ -12,10 +12,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramRecruitmentService;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -50,7 +50,10 @@ public class AcademicProgramRecruitmentController {
     private final AcademicProgramRecruitmentService academicProgramRecruitmentService;
 
     /*
-     * 신청자 목록. 폼 응답 목록(#37·#141)을 그대로 내려주므로 응답 스키마도 그쪽 DTO다.
+     * 신청자 목록. 폼 응답 목록(#37·#141)에 **참가 상태**를 얹어 내려준다(#198) — 선발이 심사와
+     * 등록을 함께 하므로 확정이든 대기든 응답은 똑같이 ACCEPTED가 되고, 폼 응답 요약 DTO만으로는
+     * 그 둘이 구별되지 않는다. 그 필드를 폼 도메인의 DTO에 더하지 않은 이유는
+     * RecruitmentApplicationResponse 주석에 있다.
      *
      * **page를 함께 내리지 않는다.** 설계 문서(§3.7)는 "+ page"로 적어 두었으나 폼 응답 목록에는
      * 페이징이 없고(#37 결정 — 목록을 한 번 받아 상태별로 걸러 보며 심사하는 화면이라 이전/다음
@@ -60,8 +63,12 @@ public class AcademicProgramRecruitmentController {
     @Operation(
             summary = "학술 활동 모집 신청자 목록 조회",
             description =
-                    "연결된 모집 폼의 응답 목록을 그대로 내려준다(폼 응답 목록 API와 같은 규칙·같은 응답"
-                            + " 스키마). statusCode를 생략하면 작성 중(DRAFT)을 뺀 전부이며 정렬은 제출"
+                    "연결된 모집 폼의 응답 목록에 참가 상태(eventPtcpId·ptcpSttsCd)를 얹어 내려준다"
+                            + " (그 밖의 필드·기본값·정렬은 폼 응답 목록 API와 같다)."
+                            + " **아직 선발되지 않은 신청자는 두 값이 모두 null**이며 서버가 '미선발'"
+                            + " 같은 대체값을 만들지 않는다. 참가 상태는 응답이 아니라 회원 기준이라"
+                            + " 같은 회원의 응답이 여러 줄이면 같은 값이 함께 실린다."
+                            + " statusCode를 생략하면 작성 중(DRAFT)을 뺀 전부이며 정렬은 제출"
                             + " 일시 내림차순이다. 자격은 이 활동의 스터디장/팀장 본인 **또는**"
                             + " ACADEMIC_PROGRAM_MANAGE이고 어느 쪽도 아니면 403 FORBIDDEN이다."
                             + " 모집 시작 전(APPROVED)이면 빈 목록이 아니라 409"
@@ -69,7 +76,7 @@ public class AcademicProgramRecruitmentController {
                             + " 수락·거절 심사 자체는 이 경로가 아니라 폼 응답 검토 API"
                             + " (POST /v1/forms/{formId}/responses/{formRspnsId}/reviews)를 쓴다.")
     @GetMapping("/applications")
-    public ApiResponse<List<FormResponseSummaryResponse>> getApplications(
+    public ApiResponse<List<RecruitmentApplicationResponse>> getApplications(
             @PathVariable Long academicProgramId,
             @RequestParam(required = false) ResponseStatus statusCode,
             @CurrentMember MemberEntity requester) {
@@ -79,21 +86,27 @@ public class AcademicProgramRecruitmentController {
     }
 
     /*
-     * 선발 확정. 새 자원(event_ptcp 행)이 생기지만 201이 아니라 200인 것은 응답이 만들어진
+     * 선발 저장. 새 자원(event_ptcp 행)이 생기지만 201이 아니라 200인 것은 응답이 만들어진
      * 자원이 아니라 **갱신된 팀원 명단 전체**이고(§3.7) 여러 줄을 한 번에 다루므로 Location으로
-     * 가리킬 대상이 하나로 정해지지 않기 때문이다.
+     * 가리킬 대상이 하나로 정해지지 않기 때문이다. 다시 저장할 수 있게 된 뒤에도(#198) 경로와
+     * 메서드는 그대로다 — 같은 조작("고른 값을 저장한다")이 멱등해진 것이지 다른 조작이 아니다.
      */
     @Operation(
-            summary = "학술 활동 모집 선발 확정",
+            summary = "학술 활동 모집 선발 저장",
             description =
-                    "폼 응답 심사(ACCEPTED)와 팀원 등록(CONFIRMED/WAITLISTED)을 **한 트랜잭션**으로"
-                            + " 함께 처리한다 — 한 줄이라도 실패하면 전부 되돌아간다. **학술국장 전용**"
-                            + " (ACADEMIC_PROGRAM_MANAGE)이며 스터디장/팀장은 신청자 조회만 할 수 있다"
-                            + " (2026-08-23 확정). ptcpSttsCd는 CONFIRMED·WAITLISTED만 받고 그 밖은"
-                            + " 400 INVALID_PARTICIPANT_REGISTRATION_STATUS다. 이미 심사가 끝난"
-                            + " 신청자를 다시 고르면 400 INVALID_RESPONSE_STATUS_TRANSITION, 이미"
-                            + " 명단에 있는 회원이면 409 EVENT_PARTICIPANT_DUPLICATED다."
-                            + " 모집 시작 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED."
+                    "폼 응답 심사(ACCEPTED)와 팀원 등록·상태 조정(CONFIRMED/WAITLISTED)을"
+                            + " **한 트랜잭션**으로 함께 처리한다 — 한 줄이라도 실패하면 전부"
+                            + " 되돌아간다. **멱등하다**: 이미 뽑은 신청자를 다시 고르면 같은 값이면"
+                            + " 아무 일도 하지 않고 다른 값이면 참가 상태를 그리로 옮긴다(확정↔대기"
+                            + " 양방향). 이미 승인된 응답을 다시 심사하지는 않으므로 검토 이력도"
+                            + " 늘지 않는다. **학술국장 전용**(ACADEMIC_PROGRAM_MANAGE)이며"
+                            + " 스터디장/팀장은 신청자 조회만 할 수 있다(2026-08-23 확정)."
+                            + " ptcpSttsCd는 CONFIRMED·WAITLISTED만 받고 그 밖은"
+                            + " 400 INVALID_PARTICIPANT_REGISTRATION_STATUS다. 승인으로 갈 수 없는"
+                            + " 응답(작성 중·수정요청 대기·반려)은 400"
+                            + " INVALID_RESPONSE_STATUS_TRANSITION, 취소(CANCELLED)된 참가자를 다시"
+                            + " 고르면 400 INVALID_PARTICIPANT_STATUS_TRANSITION이다(취소 복원은"
+                            + " 범위 밖). 모집 시작 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED."
                             + " **정원 초과는 차단하지 않는다**(참고치) — 화면이 활동 상세의"
                             + " pscpMaxCnt와 응답 명단의 확정 인원을 비교해 경고한다.")
     @PostMapping("/select")

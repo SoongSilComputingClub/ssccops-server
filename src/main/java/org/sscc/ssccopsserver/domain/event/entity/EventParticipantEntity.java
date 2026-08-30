@@ -123,14 +123,25 @@ public class EventParticipantEntity {
      * 자리다 — 서비스에 if로 옮겨 적으면 상태를 바꾸는 경로가 늘 때마다 규칙이 복제된다.
      *
      *   WAITLISTED → CONFIRMED   승격 (결원이 나면 운영자가 수동으로 올린다)
+     *   CONFIRMED  → WAITLISTED  강등 (#198 · 확정을 다시 대기로 내린다)
      *   CONFIRMED  → CANCELLED   취소 (확정된 사람이 못 오게 됐을 때, 운영자만)
+     *
+     * **강등은 #198에서 열었다.** 그전까지 확정은 사실상 되돌릴 수 없는 조작이라, 모집
+     * 담당자가 잘못 확정한 신청자를 대기로 내리려면 취소(CANCELLED)로 보내는 수밖에 없었다 —
+     * 그런데 취소에서 나가는 길이 없으므로 그 사람은 영영 대기자가 되지 못한다. 확정과 대기
+     * 사이를 오가는 것은 결원·정원 조정이 반복되는 모집 운영의 정상 흐름이고, 그 왕복에
+     * 방향이 하나만 있을 이유가 없다.
      *
      * 그 밖은 전부 400이다. 특히 **CANCELLED에서 나가는 길이 없다** — 취소를 되돌리는 것은
      * 새로 확정하는 것과 결과가 같은데, 그 사이의 정원 판단·대기 순서를 무시하고 되살리는
-     * 경로가 되기 때문이다. 대기자를 바로 취소로 보내는 길도 없다: 그 사람은 참가자였던 적이
-     * 없으므로 명단의 취소가 아니라 신청 철회이며, 그것은 본인의 행위라 별도 이슈다(D14).
-     * 같은 상태로의 재지정도 400이다 — 아무것도 바꾸지 않는 요청을 통과시키면 mdfcn_dt만
-     * 갱신돼 실제 승격·취소 시점을 못 찾는다(#78 NO_CHANGE와 같은 이유).
+     * 경로가 되기 때문이다(강등을 연 뒤에도 그대로다. 강등은 아직 참가자인 사람의 자리를
+     * 옮기는 것이고 취소 복원은 참가자가 아닌 사람을 되살리는 것이라 다른 일이다). 대기자를
+     * 바로 취소로 보내는 길도 없다: 그 사람은 참가자였던 적이 없으므로 명단의 취소가 아니라
+     * 신청 철회이며, 그것은 본인의 행위라 별도 이슈다(D14). 같은 상태로의 재지정도 400이다 —
+     * 아무것도 바꾸지 않는 요청을 통과시키면 mdfcn_dt만 갱신돼 실제 승격·강등·취소 시점을 못
+     * 찾는다(#78 NO_CHANGE와 같은 이유). **선발을 다시 저장하는 경로(#198)가 같은 값을 400으로
+     * 받지 않는 것은 그 요청이 여기까지 오지 않기 때문이다** — 바뀔 것이 없으면 아예 부르지
+     * 않는다(EventParticipationServiceImpl.registerOrUpdateParticipant).
      *
      * 정원은 여기서 보지 않는다. 승격이 정원을 넘겨도 막지 않는 것이 D5이고, 넘겼다는 사실은
      * 서비스가 응답에 실어 화면이 경고한다.
@@ -140,7 +151,8 @@ public class EventParticipantEntity {
                 (this.status == EventParticipantStatus.WAITLISTED
                                 && nextStatus == EventParticipantStatus.CONFIRMED)
                         || (this.status == EventParticipantStatus.CONFIRMED
-                                && nextStatus == EventParticipantStatus.CANCELLED);
+                                && (nextStatus == EventParticipantStatus.WAITLISTED
+                                        || nextStatus == EventParticipantStatus.CANCELLED));
         if (!allowed) {
             throw new GeneralException(EventErrorCode.INVALID_PARTICIPANT_STATUS_TRANSITION);
         }

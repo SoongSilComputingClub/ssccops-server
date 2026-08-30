@@ -29,6 +29,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
@@ -53,6 +54,7 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.Ques
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
@@ -112,6 +114,7 @@ class AcademicProgramRecruitmentControllerTest {
     @Autowired private EventParticipantRepository eventParticipantRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormResponseReviewHistoryRepository formResponseReviewHistoryRepository;
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
@@ -289,6 +292,55 @@ class AcademicProgramRecruitmentControllerTest {
                 .andExpect(jsonPath("$.data[0].member.mbrNm").value("지원자2"));
     }
 
+    /*
+     * 신청자 목록은 참가 상태를 함께 싣는다 (#198).
+     *
+     * 선발이 심사와 등록을 함께 하므로 확정이든 대기든 응답은 똑같이 ACCEPTED가 된다 — 응답
+     * 상태만 보고 그리면 대기로 뽑은 신청자가 확정자와 똑같이 '선발 완료'로 표시된다
+     * (ssccops-web#209). **아직 선발되지 않은 신청자는 두 값 모두 null**이며 서버가 "미선발"
+     * 같은 대체값을 만들지 않는다.
+     */
+    @Test
+    void getApplicationsCarryParticipantStatus() throws Exception {
+        Long waitlisted = saveResponse(applicant, "지원 동기입니다");
+        saveResponse(anotherApplicant, "저도 지원합니다");
+        select("%d:WAITLISTED".formatted(waitlisted));
+
+        Long eventPtcpId =
+                eventParticipantRepository
+                        .findAllByEventAndStatusInOrderByIdAsc(
+                                recruiting.getEvent(), List.of(EventParticipantStatus.WAITLISTED))
+                        .get(0)
+                        .getId();
+
+        // 제출 일시가 같으면 식별자 내림차순이라 나중에 낸 지원자2가 앞이다
+        mockMvc.perform(authorized(get(applicationsPath(recruiting)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
+                .andExpect(jsonPath("$.data[0].member.mbrNm").value("지원자2"))
+                .andExpect(jsonPath("$.data[0].eventPtcpId").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].ptcpSttsCd").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[1].member.mbrNm").value("지원자1"))
+                .andExpect(jsonPath("$.data[1].eventPtcpId").value(eventPtcpId))
+                .andExpect(jsonPath("$.data[1].ptcpSttsCd").value("WAITLISTED"))
+                // 폼 응답 요약의 값은 그대로 실린다 — 참가 상태만 얹은 모양이다
+                .andExpect(jsonPath("$.data[1].formRspnsId").value(waitlisted))
+                .andExpect(jsonPath("$.data[1].rspnsSttsCd").value("ACCEPTED"))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(1));
+    }
+
+    // 취소된 참가자도 그대로 CANCELLED다 — 명단은 활동 이력으로 영구 보존한다(D16)
+    @Test
+    void getApplicationsCarryCancelledParticipantStatus() throws Exception {
+        Long responseId = saveResponse(applicant, "지원 동기입니다");
+        select("%d:CONFIRMED".formatted(responseId));
+        cancel(participantOf(EventParticipantStatus.CONFIRMED));
+
+        mockMvc.perform(authorized(get(applicationsPath(recruiting)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].ptcpSttsCd").value("CANCELLED"));
+    }
+
     // 스터디장도 국장도 아니면 403이다 — 신청자 명부는 인증만으로 열리지 않는다
     @Test
     void getApplicationsAsOutsiderReturns403() throws Exception {
@@ -457,15 +509,111 @@ class AcademicProgramRecruitmentControllerTest {
                 .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
     }
 
-    // 이미 심사가 끝난 신청자를 다시 고르면 폼 응답이 종결 상태라 전이 자체가 성립하지 않는다
+    /*
+     * 같은 값으로 다시 저장하면 아무것도 바뀌지 않는다 (#198).
+     *
+     * 웹이 "지금 화면의 상태를 그대로 보낸다"는 한 가지 모델만 쓸 수 있어야 하므로, 바뀌지 않은
+     * 줄이 함께 실려 오는 것이 정상이다 — 그전까지는 폼 응답이 종결이라 400, 명단 행이 이미
+     * 있으면 409였다. **검토 이력이 늘지 않는 것**까지가 이 규칙이다: 재선발은 재심사가 아니라
+     * 참가 상태를 고치는 일이고, 통과시키면 아무것도 바꾸지 않은 승인이 타임라인에 쌓인다.
+     */
     @Test
-    void selectMembersTwiceReturns400() throws Exception {
+    void selectMembersAgainWithSameStatusChangesNothing() throws Exception {
+        Long responseId = saveResponse(applicant, "지원 동기입니다");
+        selectConfirmed(responseId);
+        Long eventPtcpId = participantOf(EventParticipantStatus.CONFIRMED).getId();
+
+        selectConfirmed(responseId);
+
+        mockMvc.perform(authorized(get(membersPath(recruiting)), teamMemberToken))
+                .andExpect(status().isOk())
+                // 행이 하나 더 생기지도, 상태가 바뀌지도 않는다
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].eventPtcpId").value(eventPtcpId))
+                .andExpect(jsonPath("$.data[0].ptcpSttsCd").value("CONFIRMED"));
+
+        FormResponseHistoryEntity response =
+                formResponseHistoryRepository.findById(responseId).orElseThrow();
+        assertThat(response.getStatus()).isEqualTo(ResponseStatus.ACCEPTED);
+        assertThat(
+                        formResponseReviewHistoryRepository
+                                .findAllByResponseOrderByProcessedAtAscIdAsc(response))
+                .hasSize(1);
+    }
+
+    /*
+     * 확정과 대기 사이는 양방향이다 (#198). 대기로 뒀다가 확정으로 올리고 다시 내리는 것이
+     * 모집 운영의 정상 흐름이라, 그 왕복에 방향이 하나만 있을 이유가 없다. 같은 행이 움직일 뿐
+     * 새 행이 생기지 않는다 — 명단의 열쇠는 (행사, 회원)이다.
+     */
+    @Test
+    void selectMembersMovesBetweenConfirmedAndWaitlisted() throws Exception {
+        Long responseId = saveResponse(applicant, "지원 동기입니다");
+        selectConfirmed(responseId);
+        Long eventPtcpId = participantOf(EventParticipantStatus.CONFIRMED).getId();
+
+        // 강등 — 그전까지 400 INVALID_PARTICIPANT_STATUS_TRANSITION이던 자리다
+        select("%d:WAITLISTED".formatted(responseId))
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].eventPtcpId").value(eventPtcpId))
+                .andExpect(jsonPath("$.data[0].ptcpSttsCd").value("WAITLISTED"));
+
+        // 다시 승격
+        select("%d:CONFIRMED".formatted(responseId))
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].eventPtcpId").value(eventPtcpId))
+                .andExpect(jsonPath("$.data[0].ptcpSttsCd").value("CONFIRMED"));
+
+        // 참가 상태만 오갔을 뿐 심사 결과는 그대로다 — 신청을 냈고 승인됐다는 사실은 변하지 않는다
+        assertThat(formResponseHistoryRepository.findById(responseId).orElseThrow().getStatus())
+                .isEqualTo(ResponseStatus.ACCEPTED);
+    }
+
+    /*
+     * 이미 뽑은 신청자에게도 취소는 고를 수 없다 (#198). 명단 행이 있으면 전이표가
+     * CONFIRMED→CANCELLED를 허용하므로, 이 검사가 없으면 선발 저장이 '이미 뽑힌 사람'에 한해
+     * 취소 API가 된다 — 선발이 고르는 값은 확정과 대기뿐이고 취소는 명단 화면의 조작이다.
+     */
+    @Test
+    void selectMembersWithCancelledStatusReturns400EvenWhenAlreadySelected() throws Exception {
         Long responseId = saveResponse(applicant, "지원 동기입니다");
         selectConfirmed(responseId);
 
         mockMvc.perform(
                         authorized(post(selectPath(recruiting)), managerToken)
+                                .content(selectBody("%d:CANCELLED".formatted(responseId))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARTICIPANT_REGISTRATION_STATUS"));
+    }
+
+    /*
+     * 취소를 되돌리는 것은 이 이슈의 범위 밖이다 — 취소에서 나가는 길이 없다는 전이표가 선발
+     * 경로에도 그대로 걸린다(판정을 서비스에 옮겨 적지 않았다는 뜻이기도 하다).
+     */
+    @Test
+    void selectMembersOfCancelledParticipantReturns400() throws Exception {
+        Long responseId = saveResponse(applicant, "지원 동기입니다");
+        selectConfirmed(responseId);
+        cancel(participantOf(EventParticipantStatus.CONFIRMED));
+
+        mockMvc.perform(
+                        authorized(post(selectPath(recruiting)), managerToken)
                                 .content(selectBody("%d:CONFIRMED".formatted(responseId))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_PARTICIPANT_STATUS_TRANSITION"));
+    }
+
+    /*
+     * 승인으로 갈 수 없는 응답은 종전대로 끊긴다. 재선발이 열렸다고 심사 전이표가 느슨해진 것이
+     * 아니다 — 이미 승인된 응답만 검토를 건너뛴다.
+     */
+    @Test
+    void selectMembersWithDraftResponseReturns400() throws Exception {
+        Long draftId = saveDraft(anotherApplicant);
+
+        mockMvc.perform(
+                        authorized(post(selectPath(recruiting)), managerToken)
+                                .content(selectBody("%d:CONFIRMED".formatted(draftId))))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
     }
@@ -473,10 +621,21 @@ class AcademicProgramRecruitmentControllerTest {
     // ------------------------------------------------------------------ 헬퍼
 
     private void selectConfirmed(Long formResponseId) throws Exception {
-        mockMvc.perform(
+        select("%d:CONFIRMED".formatted(formResponseId));
+    }
+
+    /** 성공을 기대하는 선발 요청. 이어지는 검증은 갱신된 팀원 명단(응답 본문)에 건다 */
+    private ResultActions select(String... selections) throws Exception {
+        return mockMvc.perform(
                         authorized(post(selectPath(recruiting)), managerToken)
-                                .content(selectBody("%d:CONFIRMED".formatted(formResponseId))))
+                                .content(selectBody(selections)))
                 .andExpect(status().isOk());
+    }
+
+    private EventParticipantEntity participantOf(EventParticipantStatus status) {
+        return eventParticipantRepository
+                .findAllByEventAndStatusInOrderByIdAsc(recruiting.getEvent(), List.of(status))
+                .get(0);
     }
 
     /** "응답식별자:상태" 꼴을 selections 본문으로 옮긴다 */
@@ -601,10 +760,14 @@ class AcademicProgramRecruitmentControllerTest {
                 .getId();
     }
 
-    private void saveDraft(MemberEntity respondent) {
-        formResponseHistoryRepository.saveAndFlush(
-                FormResponseHistoryEntity.createDraft(
-                        recruitmentForm, respondent, ResponseContent.of(Map.of("q1", "작성 중"))));
+    private Long saveDraft(MemberEntity respondent) {
+        return formResponseHistoryRepository
+                .saveAndFlush(
+                        FormResponseHistoryEntity.createDraft(
+                                recruitmentForm,
+                                respondent,
+                                ResponseContent.of(Map.of("q1", "작성 중"))))
+                .getId();
     }
 
     private EventParticipantEntity register(

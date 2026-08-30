@@ -16,6 +16,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepositor
 import org.sscc.ssccopsserver.domain.event.code.EventImageType;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.config.R2PublicBaseUrl;
 
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -53,26 +54,30 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
     private final SessionCorrectionPolicy sessionCorrectionPolicy;
     private final S3Presigner r2Presigner;
     private final String bucketName;
-    private final String publicBaseUrl;
 
     /*
-     * publicBaseUrl에 기본값을 두지 않는다 — 값이 없으면 **부팅이 실패한다**. 조용히 빈 값으로
-     * 넘어가면 잘못된 publicUrl이 file_rfrnc.file_url_addr에 굳어 버리고, 그때는 저장된 행을
-     * 전부 치환하는 것 말고 고칠 방법이 없다(EventImageServiceImpl과 같은 판단).
+     * 공개 읽기 주소는 R2PublicBaseUrl이 검증·조립한다 (#200). 이 서비스가 프로퍼티를 직접 받아
+     * 정규화하던 것을 옮긴 것이며, 검사가 도메인마다 갈리지 않게 하는 것이 목적이다.
+     *
+     * **저장에는 더 이상 쓰지 않는다** — file_rfrnc에는 오브젝트 키가 들어가고 읽기는 서명된
+     * URL이다(#200). 남은 쓰임은 업로드 응답의 publicUrl 한 자리인데, 그 값은 버킷을 공개로
+     * 열었을 때만 뜻이 있다(FileReferenceUploadResponse 주석).
      */
+    private final R2PublicBaseUrl publicBaseUrl;
+
     public SessionFileReferenceServiceImpl(
             SessionRepository sessionRepository,
             FileReferenceRepository fileReferenceRepository,
             SessionCorrectionPolicy sessionCorrectionPolicy,
             S3Presigner r2Presigner,
             @Value("${r2.bucket-name}") String bucketName,
-            @Value("${r2.public-base-url}") String publicBaseUrl) {
+            R2PublicBaseUrl publicBaseUrl) {
         this.sessionRepository = sessionRepository;
         this.fileReferenceRepository = fileReferenceRepository;
         this.sessionCorrectionPolicy = sessionCorrectionPolicy;
         this.r2Presigner = r2Presigner;
         this.bucketName = bucketName;
-        this.publicBaseUrl = normalizeBaseUrl(publicBaseUrl);
+        this.publicBaseUrl = publicBaseUrl;
     }
 
     /*
@@ -93,19 +98,23 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
         EventImageType imageType = resolveImageType(request);
 
         String objectKey =
-                "academic-programs/%d/sessions/%d/%s.%s"
-                        .formatted(
-                                academicProgramId,
-                                sessionId,
-                                UUID.randomUUID(),
-                                imageType.getExtension());
-        String publicUrl = publicBaseUrl + "/" + objectKey;
+                FileReferenceEntity.OBJECT_KEY_PREFIX
+                        + "%d/sessions/%d/%s.%s"
+                                .formatted(
+                                        academicProgramId,
+                                        sessionId,
+                                        UUID.randomUUID(),
+                                        imageType.getExtension());
 
-        FileReferenceEntity fileReference = upsert(session, publicUrl);
+        // 저장하는 값은 **키**다 (#200) — 읽기가 그 키로 서명한다
+        FileReferenceEntity fileReference = upsert(session, objectKey);
         String uploadUrl = presignPut(objectKey, imageType);
 
         return new FileReferenceUploadResponse(
-                fileReference.getId(), uploadUrl, publicUrl, imageType.getContentType());
+                fileReference.getId(),
+                uploadUrl,
+                publicBaseUrl.urlOf(objectKey),
+                imageType.getContentType());
     }
 
     /*
@@ -118,20 +127,20 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
      * 거는 순서가 요점이며(최초 가입자 부트스트랩 #71의 '잠그고 다시 센다'와 같은 두 단계),
      * 뒤집으면 잠금을 기다리는 사이 앞선 트랜잭션이 커밋해 낡은 "없다"로 통과한다.
      */
-    private FileReferenceEntity upsert(SessionEntity session, String publicUrl) {
+    private FileReferenceEntity upsert(SessionEntity session, String objectKey) {
         sessionRepository.lockById(session.getId());
 
         return fileReferenceRepository
                 .findBySession(session)
                 .map(
                         existing -> {
-                            existing.changeFileUrl(publicUrl);
+                            existing.changeFileUrl(objectKey);
                             return existing;
                         })
                 .orElseGet(
                         () ->
                                 fileReferenceRepository.saveAndFlush(
-                                        FileReferenceEntity.of(session, publicUrl)));
+                                        FileReferenceEntity.of(session, objectKey)));
     }
 
     /*
@@ -169,15 +178,5 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
                         () ->
                                 new GeneralException(
                                         AcademicProgramErrorCode.UNSUPPORTED_IMAGE_TYPE));
-    }
-
-    /* 끝의 슬래시를 떼어 publicUrl에 `//`가 생기지 않게 한다. 비어 있으면 부팅을 세운다 */
-    private static String normalizeBaseUrl(String publicBaseUrl) {
-        if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
-            throw new IllegalStateException(
-                    "r2.public-base-url 이 비어 있습니다 — 공개 이미지 URL을 조립할 수 없습니다.");
-        }
-        String trimmed = publicBaseUrl.trim();
-        return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
     }
 }

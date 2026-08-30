@@ -74,6 +74,7 @@ public class SessionServiceImpl implements SessionService {
     private final SessionRepository sessionRepository;
     private final AttendanceRepository attendanceRepository;
     private final FileReferenceRepository fileReferenceRepository;
+    private final SessionFileReferenceViewer sessionFileReferenceViewer;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final EventParticipantRepository eventParticipantRepository;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
@@ -112,7 +113,7 @@ public class SessionServiceImpl implements SessionService {
                         .map(row -> AttendanceEntity.of(session, row.participant(), row.present()))
                         .toList());
 
-        return detailOf(session);
+        return detailOf(session, requester);
     }
 
     /*
@@ -146,13 +147,14 @@ public class SessionServiceImpl implements SessionService {
                 curriculumItem, request.actlYmd(), request.prgrsCn(), request.ntcCn(), requester);
         replaceAttendances(session, rows);
 
-        return detailOf(session);
+        return detailOf(session, requester);
     }
 
     @Override
-    public SessionDetailResponse getSession(Long academicProgramId, Long sessionId) {
+    public SessionDetailResponse getSession(
+            Long academicProgramId, Long sessionId, MemberEntity requester) {
         requireAcademicProgramExists(academicProgramId);
-        return detailOf(findSession(sessionId, academicProgramId));
+        return detailOf(findSession(sessionId, academicProgramId), requester);
     }
 
     /*
@@ -323,13 +325,25 @@ public class SessionServiceImpl implements SessionService {
      * 회차 하나짜리 응답이라 이 질의가 건수에 따라 늘지 않는다. session에 연관을 열어 두지
      * 않은 것은 그 연관이 목록·계획 조회에도 딸려 와 쓰지 않는 조회를 만들기 때문이다.
      */
-    private SessionDetailResponse detailOf(SessionEntity session) {
+    /*
+     * 사진 블록은 요청자에 따라 달라진다 (#200) — 그 활동의 관계자에게만 서명된 URL을 내주므로
+     * 상세 조립에 주체가 필요하다. 판정도 서명도 여기서 하지 않고 SessionFileReferenceViewer가
+     * 맡는다(자격이 없으면 서명 자체를 만들지 않는다).
+     *
+     * 쓰기 경로(제출·재제출)도 같은 자리를 지난다 — 그쪽 주체는 언제나 스터디장이라 결과가
+     * 늘 같지만, 조립을 두 벌로 두면 "쓰기 응답에는 사진이 보이는데 조회에는 안 보인다" 같은
+     * 어긋남이 생길 자리가 만들어진다.
+     */
+    private SessionDetailResponse detailOf(SessionEntity session, MemberEntity requester) {
         List<AttendanceEntity> attendances =
                 attendanceRepository.findAllBySessionOrderByIdAsc(session);
         return SessionDetailResponse.of(
                 session,
                 attendances,
-                fileReferenceRepository.findBySession(session).orElse(null),
+                sessionFileReferenceViewer.viewOf(
+                        session.getCurriculumItem().getAcademicProgram(),
+                        fileReferenceRepository.findBySession(session).orElse(null),
+                        requester),
                 latestOpinionOf(session));
     }
 

@@ -12,6 +12,7 @@ import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadResponse;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.config.R2PublicBaseUrl;
 
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -56,22 +57,27 @@ public class EventImageServiceImpl implements EventImageService {
     private final EventRepository eventRepository;
     private final S3Presigner r2Presigner;
     private final String bucketName;
-    private final String publicBaseUrl;
 
     /*
-     * publicBaseUrl에 기본값을 두지 않는다 — 값이 없으면 **부팅이 실패한다**. 조용히 빈 값으로
-     * 넘어가면 잘못된 publicUrl이 본문 마크다운에 문자열로 굳어 버리고, 그때는 이미 저장된
-     * 본문을 전부 치환하는 것 말고 고칠 방법이 없다.
+     * 공개 읽기 주소의 검증·조립은 R2PublicBaseUrl이 한다 (#200에서 이 클래스의 normalizeBaseUrl을
+     * 옮겼다). **값이 잘못되면 부팅이 실패한다**는 성질은 그대로이고, 검사가 하나 늘었다 —
+     * S3 API 엔드포인트는 서명 없는 GET에 401을 돌려주므로 공개 읽기 주소가 될 수 없다.
+     *
+     * 여기가 그 검사의 실질적인 수혜자다: 이 서비스가 만든 publicUrl은 행사 본문 마크다운에
+     * 문자열로 굳어, 잘못된 값이 들어가면 이미 저장된 본문을 전부 치환하는 것 말고는 고칠
+     * 방법이 없다(#200에서 실제로 그렇게 됐다).
      */
+    private final R2PublicBaseUrl publicBaseUrl;
+
     public EventImageServiceImpl(
             EventRepository eventRepository,
             S3Presigner r2Presigner,
             @Value("${r2.bucket-name}") String bucketName,
-            @Value("${r2.public-base-url}") String publicBaseUrl) {
+            R2PublicBaseUrl publicBaseUrl) {
         this.eventRepository = eventRepository;
         this.r2Presigner = r2Presigner;
         this.bucketName = bucketName;
-        this.publicBaseUrl = normalizeBaseUrl(publicBaseUrl);
+        this.publicBaseUrl = publicBaseUrl;
     }
 
     @Override
@@ -112,7 +118,7 @@ public class EventImageServiceImpl implements EventImageService {
                         .toString();
 
         return new EventImageUploadResponse(
-                uploadUrl, publicBaseUrl + "/" + objectKey, objectKey, UPLOAD_URL_TTL.toSeconds());
+                uploadUrl, publicBaseUrl.urlOf(objectKey), objectKey, UPLOAD_URL_TTL.toSeconds());
     }
 
     /*
@@ -129,15 +135,5 @@ public class EventImageServiceImpl implements EventImageService {
             throw new GeneralException(EventErrorCode.UNSUPPORTED_IMAGE_TYPE);
         }
         return imageType;
-    }
-
-    /* 끝의 슬래시를 떼어 publicUrl에 `//`가 생기지 않게 한다. 비어 있으면 부팅을 세운다 */
-    private static String normalizeBaseUrl(String publicBaseUrl) {
-        if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
-            throw new IllegalStateException(
-                    "r2.public-base-url 이 비어 있습니다 — 공개 이미지 URL을 조립할 수 없습니다.");
-        }
-        String trimmed = publicBaseUrl.trim();
-        return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
     }
 }

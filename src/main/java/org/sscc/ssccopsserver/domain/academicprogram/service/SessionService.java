@@ -35,8 +35,15 @@ public interface SessionService {
             SessionSubmitRequest request,
             MemberEntity requester);
 
-    /* 회차 상세. 인증만 요구한다 — 팀원도 자기 활동의 회차를 본다 */
-    SessionDetailResponse getSession(Long academicProgramId, Long sessionId);
+    /*
+     * 회차 상세. 인증만 요구한다 — 팀원도 자기 활동의 회차를 본다.
+     *
+     * **주체를 받는 것은 출석 인증사진 때문이다** (#200). 사진은 그 활동의 관계자에게만 서명된
+     * URL로 내려주므로(팀원·스터디장·학술국장) 상세 조립에 요청자가 필요하다. 조회 자체는 여전히
+     * 인증만이며 관계자가 아니어도 나머지 필드는 그대로 내려간다 — 좁히는 것은 사진 하나다.
+     */
+    SessionDetailResponse getSession(
+            Long academicProgramId, Long sessionId, MemberEntity requester);
 
     /* 회차 목록. 활동 상세 화면 안에서 그 활동의 회차만 보는 용도다 */
     SessionSearchResponse searchSessions(Long academicProgramId, SessionCondition condition);

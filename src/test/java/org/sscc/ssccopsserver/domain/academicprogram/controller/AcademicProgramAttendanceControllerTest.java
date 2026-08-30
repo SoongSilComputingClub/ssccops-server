@@ -52,11 +52,18 @@ import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
+import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
 import com.jayway.jsonpath.JsonPath;
@@ -64,6 +71,8 @@ import com.jayway.jsonpath.JsonPath;
 import software.amazon.awssdk.http.SdkHttpMethod;
 import software.amazon.awssdk.http.SdkHttpRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
@@ -108,12 +117,22 @@ class AcademicProgramAttendanceControllerTest {
     @Autowired private FormRepository formRepository;
     @Autowired private AttendanceRepository attendanceRepository;
     @Autowired private FileReferenceRepository fileReferenceRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private AuthorityRepository authorityRepository;
+    @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
 
     @MockitoBean private S3Presigner r2Presigner;
 
     private UUID leaderToken;
     private MemberEntity leader;
     private UUID otherToken;
+
+    /** 명단에 있는 팀원과 학술국장 — 사진을 볼 수 있는 나머지 두 자격이다 (#200) */
+    private UUID participantToken;
+
+    private UUID managerToken;
 
     private AcademicProgramEntity academicProgram;
     private CurriculumItemEntity firstItem;
@@ -130,9 +149,20 @@ class AcademicProgramAttendanceControllerTest {
         academicProgram = createAcademicProgram("알고리즘 스터디", "OT", "1주차");
         firstItem = curriculumItems(academicProgram).get(0);
 
+        participantToken = UUID.randomUUID();
         present =
                 confirmParticipant(
-                        academicProgram, saveMember(UUID.randomUUID(), "20260403", "참석자"));
+                        academicProgram, saveMember(participantToken, "20260403", "참석자"));
+
+        managerToken = UUID.randomUUID();
+        AuthorityFixture.grant(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                saveMember(managerToken, "20260410", "학술국장"),
+                AuthorityCode.ACADEMIC_PROGRAM_MANAGE);
         absent =
                 confirmParticipant(
                         academicProgram, saveMember(UUID.randomUUID(), "20260404", "결석자"));
@@ -143,6 +173,12 @@ class AcademicProgramAttendanceControllerTest {
                         invocation -> {
                             PutObjectPresignRequest presignRequest = invocation.getArgument(0);
                             return stubPresignedPutObject(presignRequest.putObjectRequest().key());
+                        });
+        when(r2Presigner.presignGetObject(any(GetObjectPresignRequest.class)))
+                .thenAnswer(
+                        invocation -> {
+                            GetObjectPresignRequest presignRequest = invocation.getArgument(0);
+                            return stubPresignedGetObject(presignRequest.getObjectRequest().key());
                         });
     }
 
@@ -471,14 +507,27 @@ class AcademicProgramAttendanceControllerTest {
 
         entityManager.flush();
         assertThat(fileReferenceRepository.count()).isEqualTo(1);
+        // 저장되는 값은 공개 URL이 아니라 오브젝트 키다 (#200) — 읽기가 그 키로 서명한다
         assertThat(fileReferenceRepository.findAll())
                 .singleElement()
-                .satisfies(reference -> assertThat(reference.getFileUrl()).isEqualTo(secondUrl));
+                .satisfies(
+                        reference -> {
+                            assertThat(reference.getFileUrl())
+                                    .startsWith("academic-programs/")
+                                    .endsWith(".png");
+                            assertThat(secondUrl)
+                                    .isEqualTo(PUBLIC_BASE_URL + "/" + reference.getFileUrl());
+                        });
     }
 
-    // 회차 상세(#135)가 그 참조를 싣는다 — 화면은 이 블록의 유무로 사진 유무를 가른다
+    /*
+     * 회차 상세(#135)가 그 참조를 싣는다 — 화면은 이 블록의 유무로 사진 유무를 가른다.
+     *
+     * **fileUrlAddr은 서명된 읽기 URL이다** (#200). 버킷이 비공개라 저장된 키를 그대로 내리면
+     * 열리지 않으므로 조회 시점에 서명해 싣고, 남은 시간을 함께 알려 준다.
+     */
     @Test
-    void sessionDetailCarriesFileReferenceAfterUpload() throws Exception {
+    void sessionDetailCarriesSignedFileReferenceAfterUpload() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05");
 
         mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), leaderToken))
@@ -487,12 +536,78 @@ class AcademicProgramAttendanceControllerTest {
 
         String issued = issueUpload(sessionId, "png");
         Long fileReferenceId = JsonPath.parse(issued).read("$.data.fileReferenceId", Long.class);
-        String publicUrl = JsonPath.parse(issued).read("$.data.publicUrl", String.class);
+        String objectKey = storedObjectKey();
+
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fileReference.fileReferenceId").value(fileReferenceId))
+                // 서명 스텁이 키를 URL에 실어 돌려주므로 '무엇에 서명했는가'가 드러난다
+                .andExpect(
+                        jsonPath("$.data.fileReference.fileUrlAddr")
+                                .value(signedUrlOf(objectKey, "stub-get")))
+                .andExpect(jsonPath("$.data.fileReference.expiresInSeconds").value(900));
+    }
+
+    // 팀원도 사진을 본다 — 명단에 있으면 그 활동의 관계자다
+    @Test
+    void sessionDetailCarriesFileReferenceForParticipant() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+        issueUpload(sessionId, "png");
+
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), participantToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fileReference.fileUrlAddr").isNotEmpty());
+    }
+
+    // 학술국장은 명단에 없어도 본다 — 감독 자격이다
+    @Test
+    void sessionDetailCarriesFileReferenceForManager() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+        issueUpload(sessionId, "png");
+
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.fileReference.fileUrlAddr").isNotEmpty());
+    }
+
+    /*
+     * 관계자가 아니면 사진 블록을 아예 내리지 않는다 (#200) — 인증사진은 얼굴이 찍힌 사진이라
+     * 발급이 곧 읽기 권한이다. 상세의 나머지 필드는 종전대로 내려간다(조회 자체는 인증만이다).
+     *
+     * 사진이 없는 회차와 **같은 응답**이다 — 사진 유무도 관계자가 아닌 사람에게 알릴 값이 아니다.
+     */
+    @Test
+    void sessionDetailHidesFileReferenceFromOutsider() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+        issueUpload(sessionId, "png");
 
         mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.fileReference.fileReferenceId").value(fileReferenceId))
-                .andExpect(jsonPath("$.data.fileReference.fileUrlAddr").value(publicUrl));
+                .andExpect(jsonPath("$.data.sessionId").value(sessionId))
+                .andExpect(jsonPath("$.data.fileReference").value(Matchers.nullValue()));
+    }
+
+    /*
+     * #200 이전에 저장된 행은 값이 전체 URL이다. 마이그레이션 없이 동작해야 하므로, 키가 아니라
+     * URL이 들어 있어도 같은 키로 서명된다(FileReferenceEntity.objectKey).
+     */
+    @Test
+    void sessionDetailSignsLegacyRowsStoringFullUrl() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+        issueUpload(sessionId, "png");
+
+        String objectKey = storedObjectKey();
+        fileReferenceRepository
+                .findAll()
+                .get(0)
+                .changeFileUrl("https://legacy.example.com/" + objectKey);
+        entityManager.flush();
+
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.data.fileReference.fileUrlAddr")
+                                .value(signedUrlOf(objectKey, "stub-get")));
     }
 
     // jpg·jpeg는 둘 다 받되 키에 쓰는 확장자는 하나로 굳힌다. 앞의 점·대문자도 같은 형식이다
@@ -706,6 +821,32 @@ class AcademicProgramAttendanceControllerTest {
     }
 
     /* 진짜 서명 대신 키를 그대로 실은 URL을 돌려준다 (PresignedRequest.url()은 httpRequest에서 온다) */
+    /** 저장된 참조의 오브젝트 키. 회차당 1건이라 고를 것이 없다 */
+    private String storedObjectKey() {
+        entityManager.flush();
+        return fileReferenceRepository.findAll().get(0).getFileUrl();
+    }
+
+    private static PresignedGetObjectRequest stubPresignedGetObject(String objectKey) {
+        URI uri = URI.create(signedUrlOf(objectKey, "stub-get"));
+        return PresignedGetObjectRequest.builder()
+                .expiration(Instant.now().plusSeconds(900))
+                .isBrowserExecutable(true)
+                .signedHeaders(Map.of("host", List.of("test-account.r2.cloudflarestorage.com")))
+                .httpRequest(SdkHttpRequest.builder().method(SdkHttpMethod.GET).uri(uri).build())
+                .build();
+    }
+
+    /** 서명은 흉내만 낸다 — 요청받은 키를 URL에 실어 '무엇에 서명했는가'를 드러낸다 */
+    private static String signedUrlOf(String objectKey, String signature) {
+        return "https://test-account.r2.cloudflarestorage.com/"
+                + BUCKET
+                + "/"
+                + objectKey
+                + "?X-Amz-Signature="
+                + signature;
+    }
+
     private static PresignedPutObjectRequest stubPresignedPutObject(String objectKey) {
         URI uri =
                 URI.create(

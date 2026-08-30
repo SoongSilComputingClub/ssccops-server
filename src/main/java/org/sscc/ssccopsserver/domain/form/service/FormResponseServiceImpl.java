@@ -64,6 +64,13 @@ public class FormResponseServiceImpl implements FormResponseService {
      */
     private final FormReceiptPolicy formReceiptPolicy;
 
+    /*
+     * 코드가 그 폼에서 읽는 qitemId의 선언 (#140 · #196). 여기서 쓰는 것은 대표 문항 하나이며,
+     * 폼 저장 경로(FormServiceImpl)가 잠금에 쓰는 것과 같은 표다 — 목록이 읽는 문항을 그쪽이
+     * 지키므로, 대표 문항이 지워진 폼은 애초에 저장되지 않는다.
+     */
+    private final SystemFormContract systemFormContract;
+
     /** 제출 일시의 기준 시각. 접수 마감 판정(FormReceiptPolicy)과 같은 시계를 쓴다 */
     private final Clock clock;
 
@@ -121,7 +128,10 @@ public class FormResponseServiceImpl implements FormResponseService {
         return formResponseHistoryRepository
                 .findAllByFormAndMemberOrderByResponseSequenceAsc(form, respondent)
                 .stream()
-                .map(MyFormResponseSummaryResponse::from)
+                .map(
+                        response ->
+                                MyFormResponseSummaryResponse.of(
+                                        response, responseTitleOf(response)))
                 .toList();
     }
 
@@ -422,7 +432,9 @@ public class FormResponseServiceImpl implements FormResponseService {
         return formResponseHistoryRepository
                 .findAllForOperatorList(form, statusesToList(statusCode))
                 .stream()
-                .map(FormResponseSummaryResponse::from)
+                .map(
+                        response ->
+                                FormResponseSummaryResponse.of(response, responseTitleOf(response)))
                 .toList();
     }
 
@@ -488,6 +500,31 @@ public class FormResponseServiceImpl implements FormResponseService {
     }
 
     /*
+     * 목록이 한 건을 알아보는 값 (#196).
+     *
+     * **어느 문항의 답인가는 서비스가 정하지 않는다** — SystemFormContract의 선언을 그대로 따르고,
+     * 여기서 하는 일은 그 qitemId의 답을 꺼내는 것뿐이다. 서비스에 "PROPOSAL이면 programTitle"을
+     * 적으면 시스템 폼이 하나 늘 때마다 이 메서드에 분기가 하나씩 붙고, 그 분기는 계약 표와 갈린다
+     * (승인 훅을 sys_form_cd로 찾는 것과 같은 방식이며, 훅을 쓰지 않은 것은 답 한 줄을 꺼내는 데
+     * 다른 도메인의 지식이 필요하지 않기 때문이다 — 기획안의 qitemId는 폼 도메인의 시드가 갖는다).
+     *
+     * 값이 없으면 null이다. 선언이 없는 평범한 폼, 제출자가 비워 둔 답, 아직 아무것도 쓰지 않은
+     * 초안이 모두 여기 해당하며 **서버는 "제목 없음" 같은 대체값을 만들지 않는다**(웹이 종전 문구로
+     * 떨어진다). 쿼리가 늘지 않는 것은 rspns_cn이 응답 행에 함께 실려 오기 때문이다 —
+     * 목록의 쿼리 수는 종전 그대로다(테스트가 못 박는다).
+     */
+    private String responseTitleOf(FormResponseHistoryEntity response) {
+        ResponseContent content = response.getContent();
+        if (content == null) {
+            return null;
+        }
+        return systemFormContract
+                .titleQitemIdOf(response.getForm().getSystemFormCode())
+                .map(content::textAnswer)
+                .orElse(null);
+    }
+
+    /*
      * 검토 처리 (#141). 전이 규칙과 처리 구분 판정은 엔티티(FormResponseHistoryEntity.review)가
      * 갖고 여기서는 범위 검사와 조립만 한다 — 서비스에 if로 옮겨 적으면 상태를 바꾸는 다른
      * 경로가 생길 때 규칙이 갈린다 (LY-02 · FormServiceImpl.changeStatus와 같은 방식).
@@ -528,7 +565,7 @@ public class FormResponseServiceImpl implements FormResponseService {
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (updateDraft 주석과 같은 이유)
         formResponseHistoryRepository.flush();
 
-        return FormResponseSummaryResponse.from(response);
+        return FormResponseSummaryResponse.of(response, responseTitleOf(response));
     }
 
     /*

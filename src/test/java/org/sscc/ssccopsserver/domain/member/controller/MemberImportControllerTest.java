@@ -72,7 +72,7 @@ class MemberImportControllerTest {
     private static final String FULL_MAPPING =
             """
             {"이름":"mbrNm","학번":"stdntNo","기수":"genNo","학과":"scsbjtNm","학년":"scyrNo",\
-            "전화번호":"telno","이메일":"eml","가입일":"joinYmd","등급":"mbrGrdCd","상태":"mbrSttsCd"}""";
+            "전화번호":"telno","이메일":"eml","가입일":"clbJoinYm","등급":"mbrGrdCd","상태":"mbrSttsCd"}""";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private EntityManager entityManager;
@@ -230,22 +230,45 @@ class MemberImportControllerTest {
                 .andExpect(jsonPath("$.data.rows[0].reasons[0].field").value("scyrNo"));
     }
 
+    /*
+     * 동아리 가입 시기는 짐작하지 않는다 (#205). '20-03'은 2020년일 수도 1920년일 수도 있어
+     * 형식 오류이며, 사유는 실행 결과에서 "형식 오류 · 동아리 가입 시기"로 합쳐진다.
+     */
     @Test
-    void reportsInvalidJoinDateFormat() throws Exception {
+    void reportsInvalidClubJoinPeriodFormat() throws Exception {
         String csv =
                 HEADER_LINE
                         + "\n"
-                        + "홍길동,20211234,30,컴퓨터학부,3,010-1111-2222,hong@sscc.org,2021/03/02,정회원,재학\n";
+                        + "홍길동,20211234,30,컴퓨터학부,3,010-1111-2222,hong@sscc.org,20-03,정회원,재학\n";
 
         mockMvc.perform(validationRequest(csv, FULL_MAPPING, managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.rows[0].status").value("ERROR"))
-                .andExpect(jsonPath("$.data.rows[0].reasons[0].field").value("joinYmd"));
+                .andExpect(jsonPath("$.data.rows[0].reasons[0].field").value("clbJoinYm"))
+                .andExpect(jsonPath("$.data.rows[0].reasons[0].message").value("형식 오류"));
     }
 
-    /** 가입일 미입력은 이관일이 되므로 오류가 아니다 */
+    /*
+     * 명부는 시기를 한 칸에 적되 모양이 제각각이다. 연도만 적힌 칸도 오류가 아니다 —
+     * 월을 3월로 짐작하지 않고 비워 둔다.
+     */
     @Test
-    void blankJoinDateIsNotAnError() throws Exception {
+    void acceptsClubJoinPeriodWrittenInVariousShapes() throws Exception {
+        String csv =
+                HEADER_LINE
+                        + "\n"
+                        + "홍길동,20211234,30,컴퓨터학부,3,010-1111-2222,a@sscc.org,2021년 3월,정회원,재학\n"
+                        + "김철수,20211235,30,컴퓨터학부,3,010-1111-2222,b@sscc.org,2021.3,정회원,재학\n"
+                        + "이영희,20211236,30,컴퓨터학부,3,010-1111-2222,c@sscc.org,2021,정회원,재학\n";
+
+        mockMvc.perform(validationRequest(csv, FULL_MAPPING, managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.okCount").value(3));
+    }
+
+    /** 동아리 가입 시기 미입력은 **비운다**. 옛 가입일 매핑과 달리 이관일로 채우지 않는다 */
+    @Test
+    void blankClubJoinPeriodIsNotAnError() throws Exception {
         String csv =
                 HEADER_LINE
                         + "\n"
@@ -613,6 +636,22 @@ class MemberImportControllerTest {
     void rejectsMappingPointingAtUnknownHeader() throws Exception {
         String csv = HEADER_LINE + "\n" + enrolledRow("홍길동", "20211234") + "\n";
         String mapping = "{\"성명\":\"mbrNm\",\"등급\":\"mbrGrdCd\",\"상태\":\"mbrSttsCd\"}";
+
+        mockMvc.perform(validationRequest(csv, mapping, managerToken))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CSV_MAPPING_INVALID"));
+    }
+
+    /*
+     * 사라진 joinYmd 매핑은 목록 밖의 값이라 요청 전체가 거절된다 (#205). 조용히 무시하면
+     * 화면에서 매핑한 컬럼이 서버에서 사라진 채 "정상" 응답이 돌아가고, 운영자는 시기가 통째로
+     * 빈 명부를 이관하고 나서야 알게 된다.
+     */
+    @Test
+    void rejectsRemovedJoinYmdMapping() throws Exception {
+        String csv = HEADER_LINE + "\n" + enrolledRow("홍길동", "20211234") + "\n";
+        String mapping =
+                "{\"이름\":\"mbrNm\",\"가입일\":\"joinYmd\",\"등급\":\"mbrGrdCd\",\"상태\":\"mbrSttsCd\"}";
 
         mockMvc.perform(validationRequest(csv, mapping, managerToken))
                 .andExpect(status().isBadRequest())

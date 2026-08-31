@@ -70,7 +70,12 @@ public class MemberServiceImpl implements MemberService {
     private static final List<String> UNASSIGNABLE_STATUS_CODES =
             List.of(MemberStatusCode.WITHDRAWN.code(), MemberStatusCode.EXPELLED.code());
 
-    // 기수 미배정. 운영진이 사후에 배정하므로 가입 시점에는 0으로 둔다 (gen_no는 NOT NULL)
+    /*
+     * 기수 미배정. 운영진이 사후에 배정하므로 가입 시점에는 0으로 둔다 (gen_no는 NOT NULL).
+     *
+     * 동아리 가입 연도가 채워지면 그 값으로 기수를 **제안**한다 (#205) — 제안이지 저장이
+     * 아니다. 운영진이 확인하고 배정하기 전까지는 여기 0이 남는다 (BR-M43).
+     */
     private static final int UNASSIGNED_GENERATION_NUMBER = 0;
 
     /*
@@ -435,7 +440,7 @@ public class MemberServiceImpl implements MemberService {
     /*
      * 운영진의 회원 정보 수정 (#77).
      *
-     * 바꿀 수 있는 것은 요청 DTO가 담은 여섯 필드뿐이라 여기에 "이 필드는 무시한다"는 분기가
+     * 바꿀 수 있는 것은 요청 DTO가 담은 여덟 필드뿐이라 여기에 "이 필드는 무시한다"는 분기가
      * 없다 — 등급·상태·학번은 애초에 손에 들어오지 않는다. 그것이 이 API의 계약이며, 학번은
      * 엔티티까지 updatable = false로 잠겨 있어 두 겹으로 막힌다.
      *
@@ -462,6 +467,12 @@ public class MemberServiceImpl implements MemberService {
                 request.generationNumber() == null
                         ? UNASSIGNED_GENERATION_NUMBER
                         : request.generationNumber(),
+                /*
+                 * 동아리 가입 연·월은 NULL 허용이라 센티널이 없다 — null은 그대로 '비운다'이며
+                 * 전체 교체 규칙 그대로다. 연도로 기수를 여기서 계산해 채우지 않는다 (BR-M43).
+                 */
+                request.clubJoinYear(),
+                request.clubJoinMonth(),
                 request.name().trim(),
                 departmentName,
                 request.academicYear(),
@@ -482,8 +493,9 @@ public class MemberServiceImpl implements MemberService {
      * 요청에도 경로에도 대상을 지정할 자리가 없으므로 여기서 '본인인가'를 다시 검사하지 않는다 —
      * 검사할 다른 값 자체가 들어오지 않는다.
      *
-     * 기수·이메일은 요청에 없으므로 현재 값을 그대로 다시 넣는다. updateBasicInfo가 여섯 필드를
-     * 한꺼번에 받는 메서드라 두 값을 '건드리지 않음'으로 표현하는 방법이 이것뿐이며, 엔티티에
+     * 기수·이메일·동아리 가입 연·월은 요청에 없으므로 현재 값을 그대로 다시 넣는다.
+     * updateBasicInfo가 여덟 필드를 한꺼번에 받는 메서드라 그 값들을 '건드리지 않음'으로
+     * 표현하는 방법이 이것뿐이며, 엔티티에
      * 본인용 부분 수정 메서드를 하나 더 두면 '어느 필드를 바꿀 수 있는가'가 DTO와 엔티티 두
      * 곳에 적히게 된다.
      */
@@ -500,6 +512,8 @@ public class MemberServiceImpl implements MemberService {
 
         member.updateBasicInfo(
                 member.getGenerationNumber(),
+                member.getClubJoinYear(),
+                member.getClubJoinMonth(),
                 request.name().trim(),
                 departmentName,
                 request.academicYear(),

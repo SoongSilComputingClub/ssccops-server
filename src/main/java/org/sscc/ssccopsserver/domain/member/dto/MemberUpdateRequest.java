@@ -22,6 +22,10 @@ import jakarta.validation.constraints.Size;
  *   이관 데이터 정정은 CSV 이관 기능과 함께 다룬다.
  * - mdfcn_dt — JPA Auditing이 채운다.
  *
+ * 동아리 가입 연·월(clb_join_yr_no·clb_join_mm_no)은 있는데 sys_join_ymd는 없는 것이 갈리는
+ * 지점이다. 전자는 **운영진이 아는 사실을 채우는 것**이고(명부에는 적혀 있는데 시스템에는 없다),
+ * 후자는 **시스템이 기록한 시각**이라 사람이 고쳐 쓸 값이 아니다.
+ *
  * eml은 **운영진 경로에만** 있다. 이관 회원의 잘못 적힌 이메일을 고칠 창구가 필요해서이며,
  * 본인 경로(MemberSelfUpdateRequest)에는 두지 않는다 — 그쪽 값은 Supabase 인증 계정에서
  * 오므로 본인이 바꾸면 로그인 계정과 갈린다.
@@ -57,6 +61,15 @@ import jakarta.validation.constraints.Size;
  */
 public record MemberUpdateRequest(
         @PositiveOrZero Integer generationNumber,
+        /*
+         * 동아리 가입 연·월 (#204). 본인 경로에는 두지 않는다 — 연도가 기수의 근거라 본인이
+         * 고칠 수 있으면 기수를 우회해서 정하는 셈이 된다(MemberSelfUpdateRequest).
+         *
+         * 범위의 하한·상한은 자의적이지만 오타(204 · 20244)를 걸러 낸다. 둘 다 null이 곧
+         * '비운다'이며 위의 전체 교체 규칙을 그대로 따른다 — gen_no처럼 센티널로 바꾸지 않는다.
+         */
+        @Min(1900) @Max(2100) Integer clubJoinYear,
+        @Min(1) @Max(12) Integer clubJoinMonth,
         @NotBlank @Size(max = 50) String name,
         @Size(max = 100) String departmentName,
         @Min(1) @Max(4) Integer academicYear,

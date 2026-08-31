@@ -935,7 +935,7 @@ class FormResponseControllerTest {
                         studentNumber,
                         name,
                         email);
-        member.updateBasicInfo(21, name, "컴퓨터학부", 2, "010-1234-5678", email);
+        member.updateBasicInfo(21, null, null, name, "컴퓨터학부", 2, "010-1234-5678", email);
         return memberRepository.saveAndFlush(member);
     }
 

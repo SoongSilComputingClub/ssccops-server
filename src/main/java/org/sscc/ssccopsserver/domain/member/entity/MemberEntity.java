@@ -204,12 +204,16 @@ public class MemberEntity {
 
     public void updateBasicInfo(
             Integer generationNumber,
+            Integer clubJoinYear,
+            Integer clubJoinMonth,
             String name,
             String departmentName,
             Integer academicYear,
             String phoneNumber,
             String email) {
         this.generationNumber = generationNumber;
+        this.clubJoinYear = clubJoinYear;
+        this.clubJoinMonth = clubJoinMonth;
         this.name = name;
         this.departmentName = departmentName;
         this.academicYear = academicYear;

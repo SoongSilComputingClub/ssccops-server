@@ -98,7 +98,7 @@ public class MemberController {
     @Operation(
             summary = "회원 목록 조회",
             description =
-                    "이름·학번 부분일치 검색과 등급·상태 필터, 정렬(mbrNm·genNo·joinYmd·mdfcnDt, '-'는 내림차순),"
+                    "이름·학번 부분일치 검색과 등급·상태 필터, 정렬(mbrNm·genNo·sysJoinYmd·mdfcnDt, '-'는 내림차순),"
                             + " 커서 페이징을 지원한다. 등급·상태는 코드와 명칭을 함께 내리며 현재 역할도 함께"
                             + " 싣는다. 기준 코드 밖의 필터 값은 400 INVALID_CODE_VALUE다.")
     @RequireAuthority(AuthorityCode.MEMBER_MANAGE)

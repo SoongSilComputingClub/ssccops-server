@@ -15,7 +15,7 @@ import lombok.Getter;
 /*
  * 회원 목록 조회의 sort 파라미터 (#76). 내림차순은 필드명 앞의 '-'로 표기한다 (AP-13).
  *
- * 표기는 데이터사전의 컬럼명(mbr_nm·gen_no·join_ymd·mdfcn_dt)을 카멜케이스로 옮긴 것이며
+ * 표기는 데이터사전의 컬럼명(mbr_nm·gen_no·sys_join_ymd·mdfcn_dt)을 카멜케이스로 옮긴 것이며
  * 웹의 정렬 토글 4종과 1:1로 대응한다. 토글은 같은 열을 두 번 누르면 방향이 뒤집히므로
  * 키 하나에 오름/내림 두 값을 둔다.
  *
@@ -23,6 +23,11 @@ import lombok.Getter;
  * 날짜·시각). 커서가 그 값을 실어 나르므로 문자열로 굳히고 되돌리는 일을 이 enum이 맡는다.
  *
  * JPQL 경로는 여기 두지 않는다 — 이 enum은 API 계약이고 매핑은 Repository의 몫이다 (LY-03).
+ *
+ * ── 동아리 가입 연도(clb_join_yr_no)는 정렬 키로 두지 않는다 (#204) ──
+ * 기수순 정렬이 이미 있고 '기수 = 동아리 가입 연도 − 1982'는 단조증가라 연도순과 결과가 같다.
+ * 게다가 아래 sortValueOf의 주석대로 이 네 키는 모두 NOT NULL이라 NULL 구간 처리가 아예 없는데,
+ * 신규 컬럼은 NULL 허용이라 키로 끼우면 그 분기를 새로 만들어야 한다.
  */
 @Getter
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
@@ -31,8 +36,8 @@ public enum MemberSortOrder {
     NAME_DESC("-mbrNm", SortKey.NAME, true),
     GENERATION_ASC("genNo", SortKey.GENERATION, false),
     GENERATION_DESC("-genNo", SortKey.GENERATION, true),
-    JOIN_DATE_ASC("joinYmd", SortKey.JOIN_DATE, false),
-    JOIN_DATE_DESC("-joinYmd", SortKey.JOIN_DATE, true),
+    JOIN_DATE_ASC("sysJoinYmd", SortKey.JOIN_DATE, false),
+    JOIN_DATE_DESC("-sysJoinYmd", SortKey.JOIN_DATE, true),
     UPDATED_AT_ASC("mdfcnDt", SortKey.UPDATED_AT, false),
     UPDATED_AT_DESC("-mdfcnDt", SortKey.UPDATED_AT, true);
 

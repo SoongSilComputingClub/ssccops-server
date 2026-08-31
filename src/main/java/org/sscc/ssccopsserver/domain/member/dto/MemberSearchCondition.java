@@ -20,7 +20,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * 컨트롤러 시그니처가 자라는 것을 막기 위해서다 (WorkSearchCondition과 같은 판단).
  *
  * 이름을 데이터사전의 컬럼명(mbrGrdCd·mbrSttsCd)으로 둔 것은 이슈 #76의 API 계약 그대로이며,
- * 정렬 표기(mbrNm·genNo·joinYmd·mdfcnDt)와 어휘를 맞추기 위해서다.
+ * 정렬 표기(mbrNm·genNo·sysJoinYmd·mdfcnDt)와 어휘를 맞추기 위해서다.
  *
  * 등급·상태를 enum이 아니라 문자열 목록으로 받는 이유는 WorkSearchCondition과 같다. 바인딩
  * 단계에서 enum 변환이 실패하면 스프링이 '형식 오류'로 묶어 VALIDATION_FAILED(400)를 내는데,

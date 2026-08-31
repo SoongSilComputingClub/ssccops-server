@@ -208,13 +208,13 @@ class MemberQueryServiceTest {
     }
 
     @Test
-    void sortsByJoinDate() {
+    void sortsBySystemJoinDate() {
         saveMember("20200001", "김도현", 31, LocalDate.of(2024, 3, 1));
         saveMember("20200002", "이서연", 32, LocalDate.of(2026, 3, 1));
         saveMember("20200003", "박준호", 33, LocalDate.of(2025, 3, 1));
 
-        assertThat(namesOf(search(sorted("joinYmd")))).containsExactly("김도현", "박준호", "이서연");
-        assertThat(namesOf(search(sorted("-joinYmd")))).containsExactly("이서연", "박준호", "김도현");
+        assertThat(namesOf(search(sorted("sysJoinYmd")))).containsExactly("김도현", "박준호", "이서연");
+        assertThat(namesOf(search(sorted("-sysJoinYmd")))).containsExactly("이서연", "박준호", "김도현");
     }
 
     /*

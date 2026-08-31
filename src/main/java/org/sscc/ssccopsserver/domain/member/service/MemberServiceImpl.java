@@ -175,7 +175,14 @@ public class MemberServiceImpl implements MemberService {
                         user.email(),
                         grade,
                         status,
-                        LocalDate.now(clock));
+                        LocalDate.now(clock),
+                        /*
+                         * 동아리 가입 연·월은 비어 있는 채로 시작한다 (#204). 가입 화면은 본인이
+                         * 쓰는 곳인데 이 값은 기수의 근거라 운영진이 채우는 값이다 — 자동 입력이
+                         * 필요한 자리는 가입 화면이 아니라 운영진의 회원 편집 화면이다.
+                         */
+                        null,
+                        null);
         member.assignAuthUserId(authUserId);
 
         MemberEntity saved = saveOrTranslateConflict(member);

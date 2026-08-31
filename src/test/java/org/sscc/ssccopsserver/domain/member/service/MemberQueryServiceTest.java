@@ -648,7 +648,9 @@ class MemberQueryServiceTest {
                         studentNumber + "@sscc.org",
                         grade(gradeCode),
                         status(statusCode),
-                        systemJoinDate);
+                        systemJoinDate,
+                        null,
+                        null);
         return memberRepository.saveAndFlush(member);
     }
 

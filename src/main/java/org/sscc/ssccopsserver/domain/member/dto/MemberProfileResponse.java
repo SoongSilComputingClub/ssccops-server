@@ -21,6 +21,12 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 실제 버그가 났던 전례가 있다). 화면은 이 목록에 코드가 있는지만 보고 버튼을 감추거나
  * 비활성화하며, 계산은 서버의 AuthorityPolicy 한 곳에만 남는다.
  */
+/*
+ * 동아리 가입 연·월(clb_join_yr_no·clb_join_mm_no)은 여기 담지 않는다 (#204). 본인 프로필이고
+ * 본인이 다룰 값이 아니다 — 그 연도가 기수의 근거라 본인 경로에서는 수정도 막혀 있다
+ * (MemberSelfUpdateRequest). 운영진이 보는 목록·상세(MemberSummaryResponse·MemberDetailResponse)
+ * 에만 싣는다.
+ */
 public record MemberProfileResponse(
         Long memberId,
         String studentNumber,

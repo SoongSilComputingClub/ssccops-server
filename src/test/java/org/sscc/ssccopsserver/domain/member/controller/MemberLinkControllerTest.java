@@ -303,7 +303,9 @@ class MemberLinkControllerTest {
                         memberStatusRepository
                                 .findById(MemberStatusCode.ENROLLED.code())
                                 .orElseThrow(),
-                        LocalDate.of(2019, 3, 1)));
+                        LocalDate.of(2019, 3, 1),
+                        null,
+                        null));
     }
 
     private static String body(String stdntNo, String mbrNm, String telno) {

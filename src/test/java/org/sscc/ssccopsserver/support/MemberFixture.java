@@ -69,7 +69,9 @@ public final class MemberFixture {
                         email,
                         grade,
                         status,
-                        LocalDate.now());
+                        LocalDate.now(),
+                        null,
+                        null);
         if (authUserId != null) {
             member.assignAuthUserId(authUserId);
         }

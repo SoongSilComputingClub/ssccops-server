@@ -103,13 +103,13 @@ class MemberUpdateControllerTest {
     /* ── 운영진 경로 ─────────────────────────────────────── */
 
     /*
-     * 여섯 필드가 그대로 반영되고 mdfcn_dt가 갱신된다.
+     * 여덟 필드가 그대로 반영되고 mdfcn_dt가 갱신된다.
      *
      * 응답의 updatedAt이 수정 전 값이면 서비스가 flush를 미룬 것이다 — 트랜잭션이 끝나야
      * UPDATE가 나가면 auditing이 값을 채우기 전의 엔티티로 응답을 조립하게 된다.
      */
     @Test
-    void managerUpdatesSixFields() throws Exception {
+    void managerUpdatesEightFields() throws Exception {
         Instant before = target.getUpdatedAt();
 
         mockMvc.perform(
@@ -119,6 +119,9 @@ class MemberUpdateControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.memberId").value(target.getId()))
                 .andExpect(jsonPath("$.data.generationNumber").value(31))
+                // 동아리 가입 연·월은 운영진만 고칠 수 있다 (#204)
+                .andExpect(jsonPath("$.data.clubJoinYear").value(2019))
+                .andExpect(jsonPath("$.data.clubJoinMonth").value(3))
                 .andExpect(jsonPath("$.data.name").value("박준호(수정)"))
                 .andExpect(jsonPath("$.data.departmentName").value("컴퓨터학부"))
                 .andExpect(jsonPath("$.data.academicYear").value(4))
@@ -147,7 +150,7 @@ class MemberUpdateControllerTest {
                   "membershipGradeCode": "FULL",
                   "membershipStatusCode": "GRADUATED",
                   "studentNumber": "20991234",
-                  "joinDate": "2000-01-01"
+                  "systemJoinDate": "2000-01-01"
                 }
                 """;
 
@@ -160,6 +163,78 @@ class MemberUpdateControllerTest {
         assertThat(target.getMembershipGrade().getCode()).isEqualTo("TEMP");
         assertThat(target.getMembershipStatus().getCode()).isEqualTo("ENROLLED");
         assertThat(target.getStudentNumber()).isEqualTo("20200003");
+    }
+
+    /*
+     * 월을 모르면 연도만 채운다 — 그것이 이 컬럼을 DATE 하나가 아니라 연·월 둘로 나눈 이유다.
+     * 모르는 일(日)을 1일로 지어내지 않듯 모르는 월도 비워 둔다.
+     */
+    @Test
+    void managerMayFillYearWithoutMonth() throws Exception {
+        String body =
+                """
+                {
+                  "name": "박준호",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 4,
+                  "clubJoinYear": 2019
+                }
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.clubJoinYear").value(2019))
+                .andExpect(jsonPath("$.data.clubJoinMonth").isEmpty());
+
+        assertThat(target.getClubJoinYear()).isEqualTo(2019);
+        assertThat(target.getClubJoinMonth()).isNull();
+    }
+
+    /*
+     * 동아리 가입 연·월은 NULL 허용이라 '비운다'가 성립한다 — 생략하면 null이 되며, 그것이 이
+     * DTO의 전체 교체 규칙이다. gen_no가 null을 미배정(0)으로 받는 것과 갈리는 지점이다.
+     */
+    @Test
+    void managerClearsClubJoinPeriod() throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                patchJson(MEMBERS + "/" + target.getId(), fullUpdateBody()),
+                                MANAGER))
+                .andExpect(status().isOk());
+
+        String body =
+                """
+                {"name": "박준호", "departmentName": "컴퓨터학부", "academicYear": 4}
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.clubJoinYear").isEmpty())
+                .andExpect(jsonPath("$.data.clubJoinMonth").isEmpty())
+                // 기수는 같은 요청에서도 0으로 돌아간다 — NOT NULL이라 지울 자리가 없다
+                .andExpect(jsonPath("$.data.generationNumber").value(0));
+
+        assertThat(target.getClubJoinYear()).isNull();
+        assertThat(target.getClubJoinMonth()).isNull();
+    }
+
+    // 범위 밖의 월은 400이다. 오타를 컬럼까지 흘려보내지 않는다
+    @Test
+    void clubJoinMonthOutOfRangeIs400() throws Exception {
+        String body =
+                """
+                {
+                  "name": "박준호",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 4,
+                  "clubJoinYear": 2019,
+                  "clubJoinMonth": 13
+                }
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     /*
@@ -282,6 +357,50 @@ class MemberUpdateControllerTest {
         assertThat(plainMember.getEmail()).isEqualTo("20200002@sscc.org");
     }
 
+    /*
+     * 동아리 가입 연·월은 본인 경로의 DTO에 없다. 근거는 기수와 같다 — 연도가 기수의 근거라
+     * 본인이 고칠 수 있으면 기수를 우회해서 정하는 셈이 된다. 응답(MemberProfileResponse)에도
+     * 키가 없다: 본인이 다룰 값이 아니다.
+     */
+    @Test
+    void selfUpdateCannotChangeClubJoinPeriod() throws Exception {
+        // 운영진이 먼저 채워 둔다 — 본인 요청이 이 값을 덮어쓰지 못한다는 것이 확인할 점이다
+        String managerBody =
+                """
+                {
+                  "name": "이서연",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 3,
+                  "clubJoinYear": 2019,
+                  "clubJoinMonth": 3
+                }
+                """;
+        mockMvc.perform(
+                        authorized(
+                                patchJson(MEMBERS + "/" + plainMember.getId(), managerBody),
+                                MANAGER))
+                .andExpect(status().isOk());
+
+        String body =
+                """
+                {
+                  "name": "이서연",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 3,
+                  "clubJoinYear": 1999,
+                  "clubJoinMonth": 12
+                }
+                """;
+
+        mockMvc.perform(authorized(patchJson(ME, body), PLAIN_MEMBER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.clubJoinYear").doesNotExist())
+                .andExpect(jsonPath("$.data.clubJoinMonth").doesNotExist());
+
+        assertThat(plainMember.getClubJoinYear()).isEqualTo(2019);
+        assertThat(plainMember.getClubJoinMonth()).isEqualTo(3);
+    }
+
     @Test
     void selfClearingAcademicProfileOfEnrolledMemberIs400() throws Exception {
         String body =
@@ -351,6 +470,8 @@ class MemberUpdateControllerTest {
         return """
                 {
                   "generationNumber": 31,
+                  "clubJoinYear": 2019,
+                  "clubJoinMonth": 3,
                   "name": "박준호(수정)",
                   "departmentName": "컴퓨터학부",
                   "academicYear": 4,

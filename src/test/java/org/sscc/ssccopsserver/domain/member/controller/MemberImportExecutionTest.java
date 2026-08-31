@@ -380,7 +380,7 @@ class MemberImportExecutionTest {
                 .isZero();
         assertThat(
                         jdbcTemplate.queryForObject(
-                                "SELECT join_ymd FROM mbr WHERE stdnt_no = ?",
+                                "SELECT sys_join_ymd FROM mbr WHERE stdnt_no = ?",
                                 LocalDate.class,
                                 "20211234"))
                 .isEqualTo(LocalDate.now());

@@ -115,7 +115,10 @@ public class MemberImportRowExecutor {
                         trimToNull(mapping.valueOf(MemberImportField.EMAIL, row)),
                         grade,
                         status,
-                        joinDate);
+                        joinDate,
+                        // 동아리 가입 시기 매핑은 후속 이슈에서 붙는다 (#205)
+                        null,
+                        null);
         // auth_user_id는 채우지 않는다 — 아직 로그인한 적 없는 회원이다 (계정 연결은 #86의 몫)
 
         MemberEntity saved = memberRepository.saveAndFlush(member);

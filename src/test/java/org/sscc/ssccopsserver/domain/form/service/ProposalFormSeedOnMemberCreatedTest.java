@@ -106,7 +106,9 @@ class ProposalFormSeedOnMemberCreatedTest {
                         memberStatusRepository
                                 .findById(MemberStatusCode.ENROLLED.code())
                                 .orElseThrow(),
-                        LocalDate.now()));
+                        LocalDate.now(),
+                        null,
+                        null));
 
         assertThat(formRepository.findBySystemFormCode(ProposalFormSeed.SYSTEM_FORM_CODE))
                 .isPresent();

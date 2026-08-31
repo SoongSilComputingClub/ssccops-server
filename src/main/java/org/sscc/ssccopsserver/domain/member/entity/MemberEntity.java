@@ -86,8 +86,38 @@ public class MemberEntity {
     @JoinColumn(name = "mbr_stts_cd", nullable = false)
     private MemberStatusEntity membershipStatus;
 
-    @Column(name = "join_ymd", nullable = false)
-    private LocalDate joinDate;
+    /*
+     * 전산 가입일 — 이 사람이 SSCC 전산 시스템에 계정을 만든 날이다. 가입 API는
+     * LocalDate.now(clock)로, CSV 이관은 이관을 실행한 날로 채운다.
+     *
+     * 이름에 sys_를 붙인 것은 join_ymd 한 컬럼이 '전산 가입일'과 '동아리 입부일' 두 뜻으로
+     * 읽혀 왔기 때문이다 (#204). 데이터사전 설명은 'SSCC 최초 가입일'인데 이관 회원만 명부에
+     * 적힌 입부일을 담고 있어, 행만 봐서는 어느 쪽인지 구별할 수 없었다.
+     *
+     * **자바 필드명도 함께 바꾼다.** 컬럼만 고치면 코드에서는 여전히 joinDate로 읽혀 이름이
+     * 다시 갈리는데, 그 모호함을 없애는 것이 이 개명의 목적이다.
+     */
+    @Column(name = "sys_join_ymd", nullable = false)
+    private LocalDate systemJoinDate;
+
+    /*
+     * 동아리 가입 시기 (#204). 이 사람이 SSCC에 입부한 연·월이며, 전산 가입일과 달리 명부가
+     * 아는 사실이다. 기수 산출의 근거이기도 하다 (기수 = 동아리 가입 연도 − 1982).
+     *
+     * **DATE 한 컬럼이 아니라 연·월 두 컬럼이다.** 날짜로 받고 일(日)을 1일로 고정하는 안을
+     * 검토했다가 버렸다 — 모르는 값을 만들어 내는 것이고, 화면·엑셀에서 '3월 1일 입부'로 읽히며
+     * 나중에 진짜 1일 입부와 구별되지 않는다. 선배들이 며칠에 입부했는지 아무도 모른다는 것이
+     * 이 컬럼이 생긴 이유이므로, 모르는 것을 모른다고 둘 수 있는 모양이어야 한다.
+     *
+     * **둘 다 NULL 허용이다.** 기존 join_ymd 값을 백필하지 않기로 했기 때문이다(ssccops#155) —
+     * 두 뜻이 섞여 있어 옮기면 불확실한 값이 곧 기수의 근거가 된다. 넣을 값이 없으니 NOT NULL은
+     * 애초에 성립하지 않고, 월만 비는 경우(연도만 아는 명부)도 그대로 담긴다.
+     */
+    @Column(name = "clb_join_yr_no")
+    private Integer clubJoinYear;
+
+    @Column(name = "clb_join_mm_no")
+    private Integer clubJoinMonth;
 
     // Supabase Auth 사용자 식별자(auth.users.id). 아직 로그인하지 않은 이관 회원은 NULL
     @Column(name = "auth_user_id")
@@ -148,7 +178,9 @@ public class MemberEntity {
             String email,
             MemberGradeEntity membershipGrade,
             MemberStatusEntity membershipStatus,
-            LocalDate joinDate) {
+            LocalDate systemJoinDate,
+            Integer clubJoinYear,
+            Integer clubJoinMonth) {
         return new MemberEntity(
                 null,
                 studentNumber,
@@ -160,7 +192,9 @@ public class MemberEntity {
                 email,
                 membershipGrade,
                 membershipStatus,
-                joinDate,
+                systemJoinDate,
+                clubJoinYear,
+                clubJoinMonth,
                 null,
                 null,
                 null,
@@ -170,12 +204,16 @@ public class MemberEntity {
 
     public void updateBasicInfo(
             Integer generationNumber,
+            Integer clubJoinYear,
+            Integer clubJoinMonth,
             String name,
             String departmentName,
             Integer academicYear,
             String phoneNumber,
             String email) {
         this.generationNumber = generationNumber;
+        this.clubJoinYear = clubJoinYear;
+        this.clubJoinMonth = clubJoinMonth;
         this.name = name;
         this.departmentName = departmentName;
         this.academicYear = academicYear;

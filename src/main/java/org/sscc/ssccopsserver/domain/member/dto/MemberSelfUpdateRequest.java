@@ -16,8 +16,11 @@ import jakarta.validation.constraints.Size;
  * - gen_no — 기수는 운영진이 배정하는 값이다. 본인이 정하면 배정 자체가 뜻을 잃는다.
  * - eml — Supabase 인증 계정에서 오는 값이라 본인이 바꾸면 로그인 계정과 갈린다.
  *   (화면도 이 값을 읽기 전용으로 표시한다 — 가입 화면과 같다.)
+ * - clb_join_yr_no · clb_join_mm_no — 동아리 가입 시기는 운영진이 명부를 보고 채우는 값이다
+ *   (#204). 특히 **연도는 기수의 근거**라, 본인이 고칠 수 있으면 기수를 우회해서 정하는 셈이
+ *   되어 위의 gen_no 항목이 지키려는 것이 그대로 무너진다.
  *
- * 두 경로 모두에 없는 것(등급·상태·학번·auth_user_id·join_ymd)의 근거는 MemberUpdateRequest
+ * 두 경로 모두에 없는 것(등급·상태·학번·auth_user_id·sys_join_ymd)의 근거는 MemberUpdateRequest
  * 주석에 적어 두었다.
  *
  * ── 대상은 경로로 정해진다 ─────────────────────────────────────

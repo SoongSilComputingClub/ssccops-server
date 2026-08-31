@@ -1,7 +1,5 @@
 package org.sscc.ssccopsserver.domain.member.service;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -37,6 +35,9 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberImportRowResult.MemberImpo
 public class MemberImportValidator {
 
     private static final String REQUIRED_MESSAGE = "필수값 누락";
+
+    /* 실행 결과에서 "형식 오류 · 동아리 가입 시기"로 합쳐지는 사유다 (MemberImportServiceImpl) */
+    private static final String FORMAT_MESSAGE = "형식 오류";
     private static final String NO_NAME_TARGET = "(회원명 없음)";
 
     // 데이터사전의 컬럼 길이. DB가 자르기 전에 걸러야 이관 후에 이름이 잘려 있는 일이 없다
@@ -84,7 +85,7 @@ public class MemberImportValidator {
                 mapping.valueOf(MemberImportField.EMAIL, row),
                 EMAIL_MAX_LENGTH,
                 errors);
-        validateJoinDate(mapping, row, errors);
+        validateClubJoinPeriod(mapping, row, errors);
 
         validateDuplicates(studentNumber, reference, duplicates);
 
@@ -253,20 +254,21 @@ public class MemberImportValidator {
                 MemberImportField.PHONE_NUMBER, phoneNumber, PHONE_NUMBER_MAX_LENGTH, errors);
     }
 
-    /** 가입일 미입력은 이관일이 되므로 오류가 아니다. 형식이 어긋난 값만 걸린다 */
-    private static void validateJoinDate(
+    /*
+     * 동아리 가입 시기 (#205). **미입력은 오류가 아니라 빈 값이다** — 옛 가입일 매핑은 미입력을
+     * 이관일로 채웠지만, 이 컬럼은 모르는 것을 모른다고 두기 위해 생겼다.
+     *
+     * 형식 판정을 여기에 적지 않고 ClubJoinPeriod에게 묻는다. 실행(MemberImportRowExecutor)이
+     * 같은 파서로 값을 꺼내므로, 규칙이 두 벌이면 검증을 통과한 행이 실행에서 다르게 읽힌다.
+     */
+    private static void validateClubJoinPeriod(
             MemberImportMapping mapping,
             MemberImportCsvRow row,
             List<MemberImportRowIssue> errors) {
 
-        String raw = mapping.valueOf(MemberImportField.JOIN_DATE, row);
-        if (raw.isBlank()) {
-            return;
-        }
-        try {
-            LocalDate.parse(raw);
-        } catch (DateTimeParseException ex) {
-            errors.add(issue(MemberImportField.JOIN_DATE, "가입일은 yyyy-MM-dd 형식이어야 합니다: " + raw));
+        String raw = mapping.valueOf(MemberImportField.CLUB_JOIN_PERIOD, row);
+        if (ClubJoinPeriod.parse(raw).isEmpty()) {
+            errors.add(issue(MemberImportField.CLUB_JOIN_PERIOD, FORMAT_MESSAGE));
         }
     }
 

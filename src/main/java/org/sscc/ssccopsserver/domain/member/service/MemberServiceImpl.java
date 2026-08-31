@@ -121,7 +121,7 @@ public class MemberServiceImpl implements MemberService {
      */
     private final MemberLinkAttemptLimiter linkAttemptLimiter;
 
-    // 가입일 산출 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
+    // 전산 가입일(sys_join_ymd) 산출 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
 
     /*
@@ -720,7 +720,7 @@ public class MemberServiceImpl implements MemberService {
         MemberRoleAssignmentEntity assignment =
                 memberRoleAssignmentRepository.saveAndFlush(
                         MemberRoleAssignmentEntity.create(
-                                member, role, member.getJoinDate(), true));
+                                member, role, member.getSystemJoinDate(), true));
 
         List<String> capabilities = authorityPolicy.capabilityListOf(member.getId());
         if (!capabilities.contains(AuthorityCode.SUPER.code())) {
@@ -750,7 +750,7 @@ public class MemberServiceImpl implements MemberService {
     private void recordInitialHistories(
             MemberEntity member, MemberGradeEntity grade, MemberStatusEntity status) {
         initialHistoryRecorder.record(
-                member, grade, status, member.getJoinDate(), SIGNUP_HISTORY_REASON, member);
+                member, grade, status, member.getSystemJoinDate(), SIGNUP_HISTORY_REASON, member);
     }
 
     private MemberEntity saveOrTranslateConflict(MemberEntity member) {

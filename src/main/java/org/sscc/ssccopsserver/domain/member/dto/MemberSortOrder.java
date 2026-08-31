@@ -72,7 +72,7 @@ public enum MemberSortOrder {
         return switch (key) {
             case NAME -> member.getName();
             case GENERATION -> String.valueOf(member.getGenerationNumber());
-            case JOIN_DATE -> member.getJoinDate().toString();
+            case JOIN_DATE -> member.getSystemJoinDate().toString();
             case UPDATED_AT -> member.getUpdatedAt().toString();
         };
     }

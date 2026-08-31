@@ -17,7 +17,7 @@ import jakarta.validation.constraints.Size;
  * - eml — Supabase 인증 계정에서 오는 값이라 본인이 바꾸면 로그인 계정과 갈린다.
  *   (화면도 이 값을 읽기 전용으로 표시한다 — 가입 화면과 같다.)
  *
- * 두 경로 모두에 없는 것(등급·상태·학번·auth_user_id·join_ymd)의 근거는 MemberUpdateRequest
+ * 두 경로 모두에 없는 것(등급·상태·학번·auth_user_id·sys_join_ymd)의 근거는 MemberUpdateRequest
  * 주석에 적어 두었다.
  *
  * ── 대상은 경로로 정해진다 ─────────────────────────────────────

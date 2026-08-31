@@ -86,8 +86,19 @@ public class MemberEntity {
     @JoinColumn(name = "mbr_stts_cd", nullable = false)
     private MemberStatusEntity membershipStatus;
 
-    @Column(name = "join_ymd", nullable = false)
-    private LocalDate joinDate;
+    /*
+     * 전산 가입일 — 이 사람이 SSCC 전산 시스템에 계정을 만든 날이다. 가입 API는
+     * LocalDate.now(clock)로, CSV 이관은 이관을 실행한 날로 채운다.
+     *
+     * 이름에 sys_를 붙인 것은 join_ymd 한 컬럼이 '전산 가입일'과 '동아리 입부일' 두 뜻으로
+     * 읽혀 왔기 때문이다 (#204). 데이터사전 설명은 'SSCC 최초 가입일'인데 이관 회원만 명부에
+     * 적힌 입부일을 담고 있어, 행만 봐서는 어느 쪽인지 구별할 수 없었다.
+     *
+     * **자바 필드명도 함께 바꾼다.** 컬럼만 고치면 코드에서는 여전히 joinDate로 읽혀 이름이
+     * 다시 갈리는데, 그 모호함을 없애는 것이 이 개명의 목적이다.
+     */
+    @Column(name = "sys_join_ymd", nullable = false)
+    private LocalDate systemJoinDate;
 
     // Supabase Auth 사용자 식별자(auth.users.id). 아직 로그인하지 않은 이관 회원은 NULL
     @Column(name = "auth_user_id")
@@ -148,7 +159,7 @@ public class MemberEntity {
             String email,
             MemberGradeEntity membershipGrade,
             MemberStatusEntity membershipStatus,
-            LocalDate joinDate) {
+            LocalDate systemJoinDate) {
         return new MemberEntity(
                 null,
                 studentNumber,
@@ -160,7 +171,7 @@ public class MemberEntity {
                 email,
                 membershipGrade,
                 membershipStatus,
-                joinDate,
+                systemJoinDate,
                 null,
                 null,
                 null,

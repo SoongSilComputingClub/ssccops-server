@@ -34,7 +34,7 @@ public record MemberProfileResponse(
         String membershipGradeName,
         String membershipStatusCode,
         String membershipStatusName,
-        LocalDate joinDate,
+        LocalDate systemJoinDate,
         List<MemberRoleResponse> roles,
         List<String> capabilities) {
 
@@ -57,7 +57,7 @@ public record MemberProfileResponse(
                 member.getMembershipGrade().getName(),
                 member.getMembershipStatus().getCode(),
                 member.getMembershipStatus().getName(),
-                member.getJoinDate(),
+                member.getSystemJoinDate(),
                 roles,
                 capabilities);
     }

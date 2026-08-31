@@ -18,7 +18,8 @@ import jakarta.validation.constraints.Size;
  * - stdnt_no — MemberEntity가 updatable = false로 잠가 두었고, 데이터사전도 '가입 후 변경
  *   불가'로 확정했다(ssccops#74). uk_mbr_student_number가 걸려 있어 조용히 바꿀 수도 없다.
  * - auth_user_id — 인증 주체가 정하는 값이다. 본문으로 받으면 남의 계정을 가져올 수 있다.
- * - join_ymd — 가입 시점의 사실이다. 이관 데이터 정정은 CSV 이관 기능과 함께 다룬다.
+ * - sys_join_ymd — 전산 시스템이 계정을 만든 시각의 기록이다. 사람이 고쳐 쓸 값이 아니며,
+ *   이관 데이터 정정은 CSV 이관 기능과 함께 다룬다.
  * - mdfcn_dt — JPA Auditing이 채운다.
  *
  * eml은 **운영진 경로에만** 있다. 이관 회원의 잘못 적힌 이메일을 고칠 창구가 필요해서이며,

@@ -147,7 +147,7 @@ class MemberUpdateControllerTest {
                   "membershipGradeCode": "FULL",
                   "membershipStatusCode": "GRADUATED",
                   "studentNumber": "20991234",
-                  "joinDate": "2000-01-01"
+                  "systemJoinDate": "2000-01-01"
                 }
                 """;
 

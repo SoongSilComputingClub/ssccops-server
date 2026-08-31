@@ -609,14 +609,14 @@ class MemberQueryServiceTest {
     }
 
     private MemberEntity saveMember(
-            String studentNumber, String name, int generationNumber, LocalDate joinDate) {
+            String studentNumber, String name, int generationNumber, LocalDate systemJoinDate) {
         return saveMember(
                 studentNumber,
                 name,
                 generationNumber,
                 MemberGradeCode.TEMP,
                 MemberStatusCode.ENROLLED,
-                joinDate);
+                systemJoinDate);
     }
 
     private MemberEntity saveMember(
@@ -635,7 +635,7 @@ class MemberQueryServiceTest {
             int generationNumber,
             MemberGradeCode gradeCode,
             MemberStatusCode statusCode,
-            LocalDate joinDate) {
+            LocalDate systemJoinDate) {
 
         MemberEntity member =
                 MemberEntity.create(
@@ -648,7 +648,7 @@ class MemberQueryServiceTest {
                         studentNumber + "@sscc.org",
                         grade(gradeCode),
                         status(statusCode),
-                        joinDate);
+                        systemJoinDate);
         return memberRepository.saveAndFlush(member);
     }
 

@@ -129,8 +129,8 @@ class MemberControllerTest {
         MemberEntity member = memberRepository.findByAuthUserId(AUTH_USER_ID).orElseThrow();
         assertThat(member.getEmail()).isEqualTo(EMAIL);
         assertThat(member.getMembershipGrade().getCode()).isEqualTo(MemberGradeCode.TEMP.code());
-        // 가입일은 LocalDate.now()가 아니라 주입된 Clock에서 온다
-        assertThat(member.getJoinDate()).isEqualTo(TODAY);
+        // 전산 가입일은 LocalDate.now()가 아니라 주입된 Clock에서 온다
+        assertThat(member.getSystemJoinDate()).isEqualTo(TODAY);
     }
 
     // 생성된 자원의 위치를 Location으로 알려준다 (AP-01)

@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGenerationResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
@@ -137,6 +138,35 @@ public class MemberController {
     public ApiResponse<List<AssignableMemberResponse>> findAssignableMembers(
             @RequestParam(required = false) AuthorityCode authority) {
         return ApiResponse.success(memberService.findAssignableMembers(authority));
+    }
+
+    /*
+     * 기수 계산 (#205). 운영진의 회원 편집 화면이 연도 입력란에서 부른다.
+     *
+     * **웹이 year - 1982를 스스로 계산하지 않게 하려는 것이다.** 한 줄짜리 뺄셈이라 복제하고
+     * 싶어지지만, 이 저장소에는 판정 규칙이 두 벌이 되어 실제 버그가 난 전례가 있다 — 기준값이
+     * 바뀔 때 고칠 자리가 하나여야 한다.
+     *
+     * 권한은 회원 수정과 같게 건다. 이 값이 쓰이는 자리가 운영진 편집 화면이기 때문이다.
+     *
+     * year를 required = true로 두지 않고 서비스가 판정하는 것은, 그래야 누락도 다른 400과 같은
+     * 응답 봉투로 나가기 때문이다(이관 API의 mapping과 같은 방식).
+     *
+     * 호출은 연도 입력란의 blur·디바운스 시점 한 번이다 — 타이핑마다 부르는 자리가 아니다.
+     */
+    @Operation(
+            summary = "기수 계산",
+            description =
+                    "동아리 가입 연도로 기수를 계산해 돌려준다(기수 = 연도 − 1982, 2018년이 36기)."
+                            + " 계산만 하고 저장하지 않는다 — gen_no에 넣는 것은 운영진이 확인한 뒤이며,"
+                            + " CSV 이관은 이 계산을 쓰지 않는다(BR-M43)."
+                            + " year를 생략하거나 기수가 나오지 않는 연도(1982년 이하)면 400"
+                            + " VALIDATION_FAILED다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @GetMapping("/generation")
+    public ApiResponse<MemberGenerationResponse> calculateGeneration(
+            @RequestParam(required = false) Integer year) {
+        return ApiResponse.success(memberService.calculateGeneration(year));
     }
 
     /*

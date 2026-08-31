@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGenerationResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberLinkRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
@@ -110,6 +111,20 @@ public interface MemberService {
      * 상세를 다시 조회하지 않아도 되게 하기 위해서다.
      */
     MemberDetailResponse updateMember(Long memberId, MemberUpdateRequest request);
+
+    /*
+     * 동아리 가입 연도로 기수를 계산한다 (GET /v1/members/generation, #205).
+     *
+     * **저장하지 않는다.** 회원을 가리키지도 않으며, 운영진이 회원 편집 화면에서 연도를 넣었을 때
+     * 기수 칸에 넣을 값을 미리 보여 주기 위한 계산이다. 실제로 gen_no에 들어가는 것은 사람이
+     * 확인하고 저장했을 때다 (BR-M43).
+     *
+     * 웹이 스스로 뺄셈하지 않게 서버가 내리는 것이다 — 규칙이 두 벌이 되면 기준값이 바뀔 때
+     * 한쪽만 고쳐진다. 계산 자체는 GenerationPolicy 하나가 갖는다.
+     *
+     * 연도가 없거나 기수를 계산할 수 없는 연도면 400 VALIDATION_FAILED다.
+     */
+    MemberGenerationResponse calculateGeneration(Integer clubJoinYear);
 
     /*
      * 본인의 회원 정보 수정 (PATCH /v1/members/me, #77).

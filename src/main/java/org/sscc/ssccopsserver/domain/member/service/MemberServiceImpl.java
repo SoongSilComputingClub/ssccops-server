@@ -25,6 +25,7 @@ import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberChangeHistoryResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberCursor;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGenerationResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberLinkRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
@@ -50,6 +51,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
+import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
@@ -484,6 +486,29 @@ public class MemberServiceImpl implements MemberService {
                 member,
                 currentRolesOf(List.of(member)).getOrDefault(memberId, List.of()),
                 recentChangesOf(memberId));
+    }
+
+    /*
+     * 기수 계산 (#205). 저장하지 않고 계산만 한다 — 트랜잭션도 저장소도 필요 없다.
+     *
+     * 계산할 수 없는 연도를 0이나 음수로 흘려보내지 않고 400으로 끊는다. gen_no의 0은
+     * '미배정' 센티널이라, 1982년 이하를 계산해 내리면 화면이 그것을 기수 칸에 채우는 순간
+     * 배정된 기수와 미배정이 같은 값이 된다.
+     */
+    @Override
+    public MemberGenerationResponse calculateGeneration(Integer clubJoinYear) {
+        if (clubJoinYear == null) {
+            throw new GeneralException(
+                    CommonErrorCode.VALIDATION_FAILED, "동아리 가입 연도(year)가 필요합니다.");
+        }
+        int generationNumber =
+                GenerationPolicy.generationOf(clubJoinYear)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                CommonErrorCode.VALIDATION_FAILED,
+                                                "기수를 계산할 수 있는 연도가 아닙니다: " + clubJoinYear));
+        return new MemberGenerationResponse(generationNumber);
     }
 
     /*

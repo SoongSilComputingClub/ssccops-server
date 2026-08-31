@@ -90,9 +90,24 @@ public class MemberImportRowExecutor {
                                         mapping.valueOf(MemberImportField.STATUS_NAME, row)),
                                 "회원 상태"));
 
-        // 가입일은 CSV 값이고, 미입력이면 이관일이다(주입된 Clock에서 온 값을 부르는 쪽이 넘긴다)
-        LocalDate joinDate =
-                parseDateOrDefault(mapping.valueOf(MemberImportField.JOIN_DATE, row), importDate);
+        /*
+         * 전산 가입일은 **언제나 이관일**이다 (#205 · 주입된 Clock에서 온 값을 부르는 쪽이 넘긴다).
+         * 이관 대상은 아직 전산 시스템에 가입한 적이 없는 사람이라 명부에서 받을 값이 아니다 —
+         * 그동안 명부의 '가입일'(= 동아리 입부일)이 이 자리에 들어가 두 뜻이 섞였다.
+         */
+        LocalDate systemJoinDate = importDate;
+
+        /*
+         * 동아리 가입 시기. 검증을 통과한 행이라 언제나 읽히지만, 검증을 건너뛰고 이 메서드를
+         * 부르는 경로가 생기면 잘못 적힌 칸이 조용히 빈 값으로 흘러가지 않게 orElseThrow로 둔다
+         * (codeOf와 같은 판단). 파서는 검증이 쓴 것과 같은 하나다.
+         */
+        ClubJoinPeriod clubJoinPeriod =
+                ClubJoinPeriod.parse(mapping.valueOf(MemberImportField.CLUB_JOIN_PERIOD, row))
+                        .orElseThrow(
+                                () ->
+                                        new IllegalStateException(
+                                                "검증을 통과한 행의 동아리 가입 시기를 읽을 수 없습니다."));
 
         MemberEntity member =
                 MemberEntity.create(
@@ -101,6 +116,12 @@ public class MemberImportRowExecutor {
                          * 살아 있어 빈 문자열로 채우면 두 번째 졸업 회원부터 UNIQUE 충돌이 난다.
                          */
                         trimToNull(mapping.valueOf(MemberImportField.STUDENT_NUMBER, row)),
+                        /*
+                         * 명부의 기수 값이거나 0(미배정)이다. 동아리 가입 연도가 함께 들어와도
+                         * 그 값으로 계산해 채우지 않는다 (BR-M43 · #205) — 이관은 사람이 한 행씩
+                         * 확인하지 않는 경로라, 자동 계산하면 검증되지 않은 기수가 대량으로
+                         * 들어가 나중에 사실과 구별되지 않는다.
+                         */
                         parseIntOrDefault(
                                 mapping.valueOf(MemberImportField.GENERATION_NUMBER, row),
                                 UNASSIGNED_GENERATION_NUMBER),
@@ -115,10 +136,9 @@ public class MemberImportRowExecutor {
                         trimToNull(mapping.valueOf(MemberImportField.EMAIL, row)),
                         grade,
                         status,
-                        joinDate,
-                        // 동아리 가입 시기 매핑은 후속 이슈에서 붙는다 (#205)
-                        null,
-                        null);
+                        systemJoinDate,
+                        clubJoinPeriod.year(),
+                        clubJoinPeriod.month());
         // auth_user_id는 채우지 않는다 — 아직 로그인한 적 없는 회원이다 (계정 연결은 #86의 몫)
 
         MemberEntity saved = memberRepository.saveAndFlush(member);
@@ -133,7 +153,7 @@ public class MemberImportRowExecutor {
                 saved,
                 grade,
                 status,
-                joinDate,
+                systemJoinDate,
                 IMPORT_HISTORY_REASON,
                 memberRepository.getReferenceById(operatorId));
 
@@ -147,10 +167,6 @@ public class MemberImportRowExecutor {
          */
         return code.orElseThrow(
                 () -> new IllegalStateException("검증을 통과한 행의 %s 코드를 찾을 수 없습니다.".formatted(what)));
-    }
-
-    private static LocalDate parseDateOrDefault(String raw, LocalDate defaultValue) {
-        return raw.isBlank() ? defaultValue : LocalDate.parse(raw);
     }
 
     private static int parseIntOrDefault(String raw, int defaultValue) {

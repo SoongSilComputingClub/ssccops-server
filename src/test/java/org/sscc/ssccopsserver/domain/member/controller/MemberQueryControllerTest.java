@@ -64,6 +64,7 @@ class MemberQueryControllerTest {
 
     private static final String MEMBERS = "/v1/members";
     private static final String ASSIGNABLE = "/v1/members/assignable";
+    private static final String GENERATION = "/v1/members/generation";
     private static final String GRADES = "/v1/member-grades";
     private static final String STATUSES = "/v1/member-statuses";
 
@@ -319,6 +320,42 @@ class MemberQueryControllerTest {
                                                 "WITHDRAWN",
                                                 "EXPELLED")))
                 .andExpect(jsonPath("$.data[0].name").value("재학"));
+    }
+
+    /* ── 기수 계산 (#205) ────────────────────────────────── */
+
+    /*
+     * 연도를 주면 기수를 돌려준다. 웹이 year - 1982를 스스로 계산하지 않게 하려는 API이며,
+     * 계산 규칙의 유일한 구현은 GenerationPolicy다(그쪽 단위 테스트가 값 자체를 못 박는다).
+     */
+    @Test
+    void calculatesGenerationFromClubJoinYear() throws Exception {
+        mockMvc.perform(authorized(get(GENERATION).param("year", "2024"), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.generationNumber").value(42));
+
+        mockMvc.perform(authorized(get(GENERATION).param("year", "2018"), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.generationNumber").value(36));
+    }
+
+    /*
+     * 권한은 회원 수정과 같다 — 이 값이 쓰이는 자리가 운영진 편집 화면이기 때문이다.
+     * 애스펙트가 핸들러 호출 전에 끊으므로 서비스 트랜잭션이 열리지 않는다.
+     */
+    @Test
+    void generationRequiresMemberManage() throws Exception {
+        mockMvc.perform(authorized(get(GENERATION).param("year", "2024"), PLAIN_MEMBER))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    /** 연도가 없으면 계산할 근거가 없다. 다른 400과 같은 응답 봉투로 나간다 */
+    @Test
+    void generationWithoutYearIs400() throws Exception {
+        mockMvc.perform(authorized(get(GENERATION), MANAGER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     /* ── 헬퍼 ────────────────────────────────────────────── */

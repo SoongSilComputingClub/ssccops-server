@@ -88,7 +88,7 @@ public class FormResponseReviewHistoryEntity {
     private int submissionSequence;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "prcs_se_cd", nullable = false, length = 20, updatable = false)
+    @Column(name = "rvw_prcs_se_cd", nullable = false, length = 20, updatable = false)
     private ResponseReviewAction action;
 
     /*

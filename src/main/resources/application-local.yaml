@@ -32,6 +32,13 @@ r2:
   # 굳어 버리고, 그때는 저장된 본문을 전부 치환하는 것 말고 고칠 방법이 없다.
   public-base-url: ${R2_PUBLIC_BASE_URL}
 
+# 이 API 자신의 공개 주소 (#208). 행사 이미지의 영구 읽기 주소
+# ({app.public-base-url}/public/v1/events/{eventId}/images/{fileName})를 이 값으로 조립하며,
+# 그 문자열이 행사 본문 마크다운에 굳는다 — 틀린 값을 넣으면 우리 도메인의 이미지 링크가
+# 통째로 깨진다. 비어 있으면 부팅이 아니라 이미지 발급 요청이 거절된다(AppPublicBaseUrl).
+app:
+  public-base-url: ${APP_PUBLIC_BASE_URL:http://localhost:8080}
+
 # Frontend Configuration (CORS 허용 오리진 · 쉼표로 여러 개)
 # 예전에는 여기에 http://localhost:3000 이 하드코딩돼 있어, docker-compose가 넘기던
 # frontend-url 이 아무 데도 쓰이지 않았다. 웹을 다른 포트로 띄우면 CORS가 막히는데

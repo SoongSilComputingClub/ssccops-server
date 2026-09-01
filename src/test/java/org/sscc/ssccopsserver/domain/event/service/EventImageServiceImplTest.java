@@ -13,10 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.file.service.FilePresigner;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
-
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /*
  * 발급·읽기 두 경로에서 **서명을 만들기 전에 무엇을 확인하는가**를 못 박는다 (#161 · #208).
@@ -28,7 +27,7 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 class EventImageServiceImplTest {
 
     private final EventRepository eventRepository = mock(EventRepository.class);
-    private final S3Presigner r2Presigner = mock(S3Presigner.class);
+    private final FilePresigner filePresigner = mock(FilePresigner.class);
     private final PublicEventService publicEventService = mock(PublicEventService.class);
 
     /*
@@ -57,7 +56,7 @@ class EventImageServiceImplTest {
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(EventErrorCode.UNSUPPORTED_IMAGE_TYPE);
 
-        verifyNoInteractions(r2Presigner);
+        verifyNoInteractions(filePresigner);
     }
 
     /*
@@ -74,7 +73,7 @@ class EventImageServiceImplTest {
                 .isEqualTo(EventErrorCode.EVENT_IMAGE_NOT_FOUND);
 
         verifyNoInteractions(publicEventService);
-        verifyNoInteractions(r2Presigner);
+        verifyNoInteractions(filePresigner);
     }
 
     /*
@@ -93,11 +92,11 @@ class EventImageServiceImplTest {
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(EventErrorCode.EVENT_NOT_FOUND);
 
-        verifyNoInteractions(r2Presigner);
+        verifyNoInteractions(filePresigner);
     }
 
     private EventImageServiceImpl service(AppPublicBaseUrl appPublicBaseUrl) {
         return new EventImageServiceImpl(
-                eventRepository, r2Presigner, "test-bucket", appPublicBaseUrl, publicEventService);
+                eventRepository, filePresigner, appPublicBaseUrl, publicEventService);
     }
 }

@@ -1,23 +1,15 @@
 package org.sscc.ssccopsserver.domain.event.service;
 
-import java.time.Duration;
-
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.event.code.EventImageType;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadResponse;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.file.code.ImageFileType;
+import org.sscc.ssccopsserver.domain.file.service.FilePresigner;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
-
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
-import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /*
  * 행사 이미지 업로드 URL 발급 (#161 · wave2 D6).
@@ -40,13 +32,6 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
 public class EventImageServiceImpl implements EventImageService {
 
     /*
-     * presigned PUT URL의 유효기간. **이 URL은 그 자체로 남의 버킷에 쓸 수 있는 권한**이라
-     * 짧아야 한다 — 운영자가 파일을 고른 직후 한 번 올리는 데 필요한 시간(느린 회선에서 큰
-     * 이미지 한 장)이면 충분하고, 길게 두면 어딘가에 새어 나간 URL이 그만큼 오래 살아 있다.
-     */
-    private static final Duration UPLOAD_URL_TTL = Duration.ofMinutes(10);
-
-    /*
      * 이미지 한 장의 크기 상한(10MB). 행사 본문에 붙는 삽화·포스터를 기준으로 잡았다.
      *
      * **서버가 바이트를 보지 않으므로 이것은 요청이 신고한 크기에 대한 판정이다** — 거짓으로
@@ -55,20 +40,14 @@ public class EventImageServiceImpl implements EventImageService {
      */
     private static final long MAX_IMAGE_SIZE_BYTES = 10L * 1024 * 1024;
 
-    /*
-     * 서명된 읽기 URL의 유효기간 (#208). **학술 인증사진(SessionFileReferenceViewer)과 같은
-     * 15분이고 이유도 같다** — 화면이 이미지를 다시 그리는 데 쓰이는 시간이면 충분하고, 이
-     * URL은 그 자체로 오브젝트를 읽을 수 있는 권한이라 새어 나가면 만료까지 유효하다.
-     *
-     * **만료가 문제가 되지 않는 것은 저장되는 값이 이 URL이 아니기 때문이다.** 본문 마크다운에
-     * 굳는 것은 우리 도메인의 영구 주소이고, 브라우저가 그 주소를 열 때마다 여기서 새 서명이
-     * 나간다. 서명 URL을 그대로 저장했다면 시간이 지난 본문이 통째로 깨졌을 것이다.
-     */
-    private static final Duration VIEW_URL_TTL = Duration.ofMinutes(15);
-
     private final EventRepository eventRepository;
-    private final S3Presigner r2Presigner;
-    private final String bucketName;
+
+    /*
+     * 서명은 파일 도메인이 만든다 (#220). 유효기간(업로드 10분 · 읽기 15분)과 그 근거도 그
+     * 클래스로 함께 옮겼다 — 학술 인증사진과 같은 값·같은 이유였는데 두 도메인이 각자 상수로
+     * 들고 있었고, 그런 값이 갈리면 그 실패는 서버 로그가 아니라 브라우저에서만 보인다.
+     */
+    private final FilePresigner filePresigner;
 
     /*
      * 읽기 경로가 "이 행사가 익명에게 보이는가"를 묻는 자리 (#208). 판정을 여기서 새로 세우지
@@ -90,13 +69,11 @@ public class EventImageServiceImpl implements EventImageService {
 
     public EventImageServiceImpl(
             EventRepository eventRepository,
-            S3Presigner r2Presigner,
-            @Value("${r2.bucket-name}") String bucketName,
+            FilePresigner filePresigner,
             AppPublicBaseUrl appPublicBaseUrl,
             PublicEventService publicEventService) {
         this.eventRepository = eventRepository;
-        this.r2Presigner = r2Presigner;
-        this.bucketName = bucketName;
+        this.filePresigner = filePresigner;
         this.appPublicBaseUrl = appPublicBaseUrl;
         this.publicEventService = publicEventService;
     }
@@ -108,7 +85,7 @@ public class EventImageServiceImpl implements EventImageService {
             throw new GeneralException(EventErrorCode.EVENT_NOT_FOUND);
         }
 
-        EventImageType imageType = resolveImageType(request);
+        ImageFileType imageType = resolveImageType(request);
         if (request.fileSize() > MAX_IMAGE_SIZE_BYTES) {
             throw new GeneralException(EventErrorCode.IMAGE_TOO_LARGE);
         }
@@ -142,22 +119,7 @@ public class EventImageServiceImpl implements EventImageService {
          * 그 '같은 값'을 웹이 짐작하지 않게 응답에도 싣는다 (#210) — 서명에 쓴 것은 이 표의
          * 값이고, 브라우저가 파일에서 읽는 값은 그와 다를 수 있다.
          */
-        PutObjectRequest putObjectRequest =
-                PutObjectRequest.builder()
-                        .bucket(bucketName)
-                        .key(objectKey)
-                        .contentType(imageType.getContentType())
-                        .build();
-
-        String uploadUrl =
-                r2Presigner
-                        .presignPutObject(
-                                PutObjectPresignRequest.builder()
-                                        .signatureDuration(UPLOAD_URL_TTL)
-                                        .putObjectRequest(putObjectRequest)
-                                        .build())
-                        .url()
-                        .toString();
+        String uploadUrl = filePresigner.presignPut(objectKey, imageType.getContentType());
 
         /*
          * 서명에 쓴 contentType을 그대로 돌려준다 (#210). 웹이 파일에서 다시 읽으면
@@ -169,7 +131,7 @@ public class EventImageServiceImpl implements EventImageService {
                 imageUrl,
                 objectKey,
                 imageType.getContentType(),
-                UPLOAD_URL_TTL.toSeconds());
+                filePresigner.uploadUrlTtlSeconds());
     }
 
     /*
@@ -194,20 +156,7 @@ public class EventImageServiceImpl implements EventImageService {
         // 미게시 행사·없는 행사 모두 404 EVENT_NOT_FOUND — 공개 상세와 같은 판정을 그대로 쓴다
         publicEventService.requirePublishedEvent(eventId);
 
-        GetObjectRequest getObjectRequest =
-                GetObjectRequest.builder()
-                        .bucket(bucketName)
-                        .key(EventImageLocation.objectKeyOf(eventId, fileName))
-                        .build();
-
-        return r2Presigner
-                .presignGetObject(
-                        GetObjectPresignRequest.builder()
-                                .signatureDuration(VIEW_URL_TTL)
-                                .getObjectRequest(getObjectRequest)
-                                .build())
-                .url()
-                .toString();
+        return filePresigner.presignGet(EventImageLocation.objectKeyOf(eventId, fileName));
     }
 
     /*
@@ -222,10 +171,10 @@ public class EventImageServiceImpl implements EventImageService {
      * 그래서 판정에 쓰는 값을 하나로 줄인다 — 어긋날 값이 하나뿐이면 어긋날 수 없다. 형식은
      * 서버가 이 표에서 끌어와 서명과 응답에 함께 쓰고, 웹은 그 값을 헤더에 옮겨 적기만 한다
      * (학술 인증사진 SessionFileReferenceServiceImpl과 같은 모양). 허용 목록 자체는
-     * EventImageType이 갖는다(형식을 늘리는 자리를 한 곳으로 묶는다).
+     * ImageFileType이 갖는다(형식을 늘리는 자리를 한 곳으로 묶는다).
      */
-    private EventImageType resolveImageType(EventImageUploadRequest request) {
-        return EventImageType.ofFileExtension(request.normalizedFileExt())
+    private ImageFileType resolveImageType(EventImageUploadRequest request) {
+        return ImageFileType.ofFileExtension(request.normalizedFileExt())
                 .orElseThrow(() -> new GeneralException(EventErrorCode.UNSUPPORTED_IMAGE_TYPE));
     }
 }

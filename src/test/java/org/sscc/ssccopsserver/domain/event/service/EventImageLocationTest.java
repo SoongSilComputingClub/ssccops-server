@@ -6,7 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
-import org.sscc.ssccopsserver.domain.event.code.EventImageType;
+import org.sscc.ssccopsserver.domain.file.code.ImageFileType;
 
 /*
  * 행사 이미지의 키·주소 규칙 (#161 · #208).
@@ -20,7 +20,7 @@ class EventImageLocationTest {
 
     @Test
     void issuedFileNameIsUuidWithCanonicalExtension() {
-        String fileName = EventImageLocation.newFileName(EventImageType.JPEG);
+        String fileName = EventImageLocation.newFileName(ImageFileType.JPEG);
 
         // 확장자는 요청의 jpg/jpeg가 아니라 표가 정한 하나로 굳는다
         assertThat(fileName).endsWith(".jpg");
@@ -30,7 +30,7 @@ class EventImageLocationTest {
     /* 발급이 만든 키를 읽기가 그대로 다시 조립한다 — 이 둘이 갈리면 발급한 주소가 빈다 */
     @Test
     void objectKeyAndPublicPathShareOneFileName() {
-        String fileName = EventImageLocation.newFileName(EventImageType.PNG);
+        String fileName = EventImageLocation.newFileName(ImageFileType.PNG);
 
         assertThat(EventImageLocation.objectKeyOf(7L, fileName)).isEqualTo("events/7/" + fileName);
         assertThat(EventImageLocation.publicPathOf(7L, fileName))

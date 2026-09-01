@@ -1,20 +1,14 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
-import java.time.Duration;
-
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionFileReferenceResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
-import org.sscc.ssccopsserver.domain.academicprogram.entity.FileReferenceEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
+import org.sscc.ssccopsserver.domain.file.entity.FileReferenceEntity;
+import org.sscc.ssccopsserver.domain.file.service.FilePresigner;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
-
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
-import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 
 /*
  * 출석 인증사진을 읽는 자리 (#200).
@@ -31,32 +25,20 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 @Component
 public class SessionFileReferenceViewer {
 
-    /*
-     * 서명된 읽기 URL의 유효기간. 업로드(10분)보다 조금 길다 — 상세를 열어 둔 화면이 이미지를
-     * 다시 그리는 데 쓰이고, 만료되면 상세를 다시 부르면 된다(그래서 남은 시간을 응답에 싣는다).
-     *
-     * 길게 두지 않는 이유는 업로드 URL과 같다: 이 URL은 그 자체로 사진을 읽을 수 있는 권한이라
-     * 어딘가에 새어 나가면 만료까지 유효하다.
-     */
-    private static final Duration VIEW_URL_TTL = Duration.ofMinutes(15);
-
-    private final S3Presigner r2Presigner;
+    private final FilePresigner filePresigner;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
     private final AuthorityPolicy authorityPolicy;
     private final EventParticipantRepository eventParticipantRepository;
-    private final String bucketName;
 
     public SessionFileReferenceViewer(
-            S3Presigner r2Presigner,
+            FilePresigner filePresigner,
             AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy,
             AuthorityPolicy authorityPolicy,
-            EventParticipantRepository eventParticipantRepository,
-            @Value("${r2.bucket-name}") String bucketName) {
-        this.r2Presigner = r2Presigner;
+            EventParticipantRepository eventParticipantRepository) {
+        this.filePresigner = filePresigner;
         this.academicProgramOwnershipPolicy = academicProgramOwnershipPolicy;
         this.authorityPolicy = authorityPolicy;
         this.eventParticipantRepository = eventParticipantRepository;
-        this.bucketName = bucketName;
     }
 
     /*
@@ -75,7 +57,7 @@ public class SessionFileReferenceViewer {
         return new SessionFileReferenceResponse(
                 fileReference.getId(),
                 presignGet(fileReference.objectKey()),
-                VIEW_URL_TTL.toSeconds());
+                filePresigner.viewUrlTtlSeconds());
     }
 
     /*
@@ -107,28 +89,13 @@ public class SessionFileReferenceViewer {
     }
 
     /*
-     * 읽기 서명. 업로드 URL 발급(#137)도 이 메서드를 쓴다 — 그 경로는 이미 소유권을 통과한
-     * 뒤라 자격을 다시 묻지 않지만, 서명 자체는 한 곳에서만 만든다(TTL과 버킷이 갈리지 않는다).
-     *
-     * 업로드와 달리 contentType을 서명에 넣지 않는다 — 그쪽은 "이 형식만 올려도
-     * 좋다"는 허가라 형식이 조건의 일부지만, 읽기는 이미 저장된 오브젝트를 그대로 내려받는
-     * 것이라 조건에 넣을 것이 키뿐이다.
-     *
-     * **오브젝트가 실제로 있는지는 확인하지 않는다.** 서버가 PUT을 관측하지 않으므로 참조가
-     * 실물을 가리킨다는 보장이 애초에 없고(FileReferenceEntity 주석), 확인하려면 조회마다
-     * HeadObject가 한 번씩 더 나간다. 없으면 R2가 404를 돌려주고 화면은 다시 올린다.
+     * 읽기 서명 (#220부터 FilePresigner에 위임한다). 업로드 URL 발급(#137)도 이 메서드를 쓴다 —
+     * 그 경로는 이미 소유권을 통과한 뒤라 자격을 다시 묻지 않지만, **학술 인증사진의 서명이
+     * 나가는 자리는 여전히 이 클래스 하나**다. 서명 자체가 공통으로 내려간 뒤에도 이 자리를
+     * 남겨 두는 것은, 자격 판정과 서명이 붙어 있어야 "판정 없이 서명하는 경로"가 생기지 않기
+     * 때문이다(발급이 곧 읽기 권한이다).
      */
     public String presignGet(String objectKey) {
-        GetObjectRequest getObjectRequest =
-                GetObjectRequest.builder().bucket(bucketName).key(objectKey).build();
-
-        return r2Presigner
-                .presignGetObject(
-                        GetObjectPresignRequest.builder()
-                                .signatureDuration(VIEW_URL_TTL)
-                                .getObjectRequest(getObjectRequest)
-                                .build())
-                .url()
-                .toString();
+        return filePresigner.presignGet(objectKey);
     }
 }

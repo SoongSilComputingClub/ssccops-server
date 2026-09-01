@@ -230,7 +230,7 @@ class EventImageControllerTest {
     void unsupportedFileExtensionReturns400() throws Exception {
         Long eventId = createEvent();
 
-        // SVG는 이미지이면서 스크립트를 담을 수 있는 문서라 의도적으로 뺐다(EventImageType)
+        // SVG는 이미지이면서 스크립트를 담을 수 있는 문서라 의도적으로 뺐다(ImageFileType)
         expectImageBadRequest(eventId, "svg");
         expectImageBadRequest(eventId, "exe");
         expectImageBadRequest(eventId, "bmp");

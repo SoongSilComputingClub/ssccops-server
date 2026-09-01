@@ -155,15 +155,21 @@ public class EventController {
      * 짧게 사는 서명된 PUT 주소를 내주는 것뿐이다.
      *
      * 새 오브젝트 키를 발급하는 요청이라 201이며 **Location은 두지 않는다** — 그 시점에는
-     * 아직 아무것도 올라와 있지 않아 가리킬 자원이 없다(응답의 publicUrl이 업로드 뒤 열릴
+     * 아직 아무것도 올라와 있지 않아 가리킬 자원이 없다(응답의 imageUrl이 업로드 뒤 열릴
      * 주소다). 권한은 클래스 레벨 EVENT_MANAGE 그대로다.
+     *
+     * imageUrl은 R2의 주소가 아니라 **우리 API의 리다이렉트 주소**다 (#208 ·
+     * GET /public/v1/events/{eventId}/images/{fileName}). 버킷이 비공개라(ssccops#156) 읽기도
+     * 서명이 필요하고, 서명은 만료되는데 이 값은 본문 마크다운에 문자열로 굳기 때문이다.
      */
     @Operation(
             summary = "행사 본문 이미지 업로드 URL 발급",
             description =
                     "R2로 직접 PUT 할 presigned URL을 발급한다(서버는 파일을 받지 않는다)."
                             + " 웹은 uploadUrl로 요청 본문의 contentType과 **같은 Content-Type 헤더를 붙여**"
-                            + " 한 번 PUT 하고, 본문 마크다운에는 publicUrl을 넣는다."
+                            + " 한 번 PUT 하고, 본문 마크다운에는 imageUrl을 넣는다."
+                            + " imageUrl은 만료되지 않는 우리 API의 주소이며, 열릴 때마다 서명된"
+                            + " R2 GET URL로 302 리다이렉트된다(버킷은 비공개다)."
                             + " 허용 형식은 image/png·image/jpeg·image/webp·image/gif이며 확장자와"
                             + " 어긋나면 400 UNSUPPORTED_IMAGE_TYPE, 10MB를 넘으면 413 IMAGE_TOO_LARGE,"
                             + " 없는 행사는 404 EVENT_NOT_FOUND다."

@@ -100,8 +100,8 @@ class AcademicProgramAttendanceControllerTest {
     /*
      * application-test.yaml의 r2.bucket-name과 같은 값이어야 한다.
      *
-     * 공개 도메인(r2.public-base-url)은 이 도메인이 쓰지 않는다 (#200) — 인증사진은 비공개 버킷에
-     * 두고 서명된 URL로만 오간다.
+     * 공개 도메인 설정은 이 도메인이 쓰지 않았고 (#200 — 인증사진은 비공개 버킷에 두고 서명된
+     * URL로만 오간다) 지금은 아예 없다 (#208 — 행사 이미지도 같은 방식으로 옮겨 갔다).
      */
     private static final String BUCKET = "test-bucket";
 

@@ -71,8 +71,8 @@ class EventImageControllerTest {
 
     private static final String EVENTS = "/v1/events";
 
-    /** application-test.yaml의 r2.public-base-url·r2.bucket-name과 같은 값이어야 한다 */
-    private static final String PUBLIC_BASE_URL = "https://images.test.local";
+    /** application-test.yaml의 app.public-base-url과 같은 값이어야 한다 */
+    private static final String APP_BASE_URL = "https://api.test.local";
 
     private static final String BUCKET = "test-bucket";
 
@@ -145,7 +145,7 @@ class EventImageControllerTest {
                         .getContentAsString();
 
         String objectKey = JsonPath.parse(response).read("$.data.objectKey", String.class);
-        String publicUrl = JsonPath.parse(response).read("$.data.publicUrl", String.class);
+        String imageUrl = JsonPath.parse(response).read("$.data.imageUrl", String.class);
         String uploadUrl = JsonPath.parse(response).read("$.data.uploadUrl", String.class);
 
         assertThat(objectKey).startsWith("events/" + eventId + "/").endsWith(".png");
@@ -155,7 +155,12 @@ class EventImageControllerTest {
         assertThat(UUID.fromString(fileName.substring(0, fileName.length() - ".png".length())))
                 .isNotNull();
 
-        assertThat(publicUrl).isEqualTo(PUBLIC_BASE_URL + "/" + objectKey);
+        /*
+         * 본문 마크다운에 박힐 값은 R2의 주소가 아니라 **우리 API의 리다이렉트 주소**다 (#208).
+         * 버킷이 비공개라 읽기에도 서명이 필요한데, 서명은 만료되고 이 문자열은 본문에 굳는다.
+         */
+        assertThat(imageUrl)
+                .isEqualTo(APP_BASE_URL + "/public/v1/events/" + eventId + "/images/" + fileName);
         assertThat(uploadUrl).contains(objectKey);
 
         ArgumentCaptor<PutObjectPresignRequest> captor =

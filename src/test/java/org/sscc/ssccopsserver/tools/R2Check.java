@@ -39,7 +39,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * 추측 말고는 좁힐 방법이 없었다.
  *
  * 다섯 칸을 순서대로 확인한다:
- *   1. 설정      account-id·bucket·키가 있는가, public-base-url이 공개 도메인인가
+ *   1. 설정      account-id·bucket·키가 있는가
  *   2. 자격증명   HeadBucket — 이 키로 그 버킷에 닿는가
  *   3. CORS      버킷의 현재 규칙. --apply-cors를 주면 브라우저 PUT이 되는 규칙으로 덮어쓴다
  *   4. 서명 PUT   운영 코드와 같은 빈으로 서명해 실제 바이트를 올린다
@@ -56,7 +56,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  *
  * 값은 환경변수에서 읽는다(.env가 있으면 Gradle이 주입한다):
  *   R2_ACCOUNT_ID · R2_ACCESS_KEY_ID · R2_SECRET_ACCESS_KEY · R2_BUCKET_NAME
- *   R2_PUBLIC_BASE_URL · FRONTEND_URL(쉼표로 여러 개, CORS 허용 오리진의 기본값)
+ *   FRONTEND_URL(쉼표로 여러 개, CORS 허용 오리진의 기본값)
  */
 public final class R2Check {
 
@@ -122,7 +122,6 @@ public final class R2Check {
         config.put("accessKeyId", env("R2_ACCESS_KEY_ID"));
         config.put("secretAccessKey", env("R2_SECRET_ACCESS_KEY"));
         config.put("bucket", env("R2_BUCKET_NAME"));
-        config.put("publicBaseUrl", env("R2_PUBLIC_BASE_URL"));
         return config;
     }
 
@@ -132,16 +131,7 @@ public final class R2Check {
         System.out.println("  access-key-id  : " + mask(config.get("accessKeyId")));
         System.out.println("  secret         : " + mask(config.get("secretAccessKey")));
         System.out.println("  bucket         : " + orMissing(config.get("bucket")));
-        System.out.println("  public-base-url: " + orMissing(config.get("publicBaseUrl")));
         System.out.println("  CORS 허용 오리진 : " + (origins.isEmpty() ? "(없음)" : origins));
-
-        String publicBaseUrl = config.get("publicBaseUrl");
-        if (publicBaseUrl != null && publicBaseUrl.contains(".r2.cloudflarestorage.com")) {
-            System.out.println(
-                    "  [경고] public-base-url이 S3 API 엔드포인트입니다 — 이 호스트는 서명 없는 GET에"
-                            + " 언제나 401을 돌려주므로 <img src>로는 절대 열리지 않습니다."
-                            + " 업로드에는 영향이 없습니다(PUT은 서명된 URL을 씁니다).");
-        }
     }
 
     /*

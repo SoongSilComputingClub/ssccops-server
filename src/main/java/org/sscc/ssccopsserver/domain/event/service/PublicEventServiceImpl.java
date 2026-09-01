@@ -83,16 +83,7 @@ public class PublicEventServiceImpl implements PublicEventService {
      */
     @Override
     public PublicEventDetailResponse getPublishedEvent(Long eventId) {
-        EventEntity event =
-                eventRepository
-                        .findByIdAndStatus(eventId, EventStatus.PUBLISHED)
-                        .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));
-
-        // 접수가 끝난 학술 event는 목록에서 빠지는 것과 같은 기준으로 상세에서도 404다 —
-        // 코드를 나누면 "그 번호에 무엇인가 있다"가 새어 나간다 (findByIdAndStatus와 같은 태도)
-        if (!isVisibleToPublic(event, academicEventIdsAmong(List.of(event)))) {
-            throw new GeneralException(EventErrorCode.EVENT_NOT_FOUND);
-        }
+        EventEntity event = findVisibleEvent(eventId);
 
         long confirmedCount =
                 eventParticipantRepository
@@ -106,6 +97,34 @@ public class PublicEventServiceImpl implements PublicEventService {
                 eventPhasePolicy.phaseOf(event),
                 eventReceiptPolicy.receiptStatusOf(event),
                 confirmedCount);
+    }
+
+    /*
+     * 이미지 리다이렉트(#208)가 서명 전에 묻는 자리. 판정은 상세와 **완전히 같다** — 여기서
+     * 다시 세우지 않고 findVisibleEvent를 부르는 것이 이 메서드의 전부이며, 읽어 온 엔티티를
+     * 쓰지 않고 버리는 것은 이미지에 필요한 것이 "보이는가" 하나뿐이기 때문이다.
+     */
+    @Override
+    public void requirePublishedEvent(Long eventId) {
+        findVisibleEvent(eventId);
+    }
+
+    /*
+     * 익명에게 보이는 행사를 찾는다. 없거나 보이지 않으면 **둘 다** 404 EVENT_NOT_FOUND다 —
+     * 코드를 나누면 "그 번호에 무엇인가 있다"가 새어 나간다 (findByIdAndStatus와 같은 태도).
+     *
+     * 접수가 끝난 학술 event는 목록에서 빠지는 것과 같은 기준으로 여기서도 404다(#187).
+     */
+    private EventEntity findVisibleEvent(Long eventId) {
+        EventEntity event =
+                eventRepository
+                        .findByIdAndStatus(eventId, EventStatus.PUBLISHED)
+                        .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));
+
+        if (!isVisibleToPublic(event, academicEventIdsAmong(List.of(event)))) {
+            throw new GeneralException(EventErrorCode.EVENT_NOT_FOUND);
+        }
+        return event;
     }
 
     /*

@@ -39,8 +39,6 @@ r2:
   access-key-id: ${PROD_R2_ACCESS_KEY_ID}
   secret-access-key: ${PROD_R2_SECRET_ACCESS_KEY}
   bucket-name: ${PROD_R2_BUCKET_NAME}
-  # 공개 읽기용 도메인 (#161). 기본값이 없으므로 값을 넣지 않으면 부팅이 실패한다 (의도된 것이다)
-  public-base-url: ${PROD_R2_PUBLIC_BASE_URL}
 
 # 이 API 자신의 공개 주소 (#208). 행사 이미지의 영구 읽기 주소
 # ({app.public-base-url}/public/v1/events/{eventId}/images/{fileName})를 이 값으로 조립하며,

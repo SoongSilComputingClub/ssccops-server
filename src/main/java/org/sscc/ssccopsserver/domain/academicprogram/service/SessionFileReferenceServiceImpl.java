@@ -61,10 +61,13 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
     private final SessionFileReferenceViewer sessionFileReferenceViewer;
 
     /*
-     * **`r2.public-base-url`을 더 이상 받지 않는다** (#200). 학술 인증사진은 비공개 버킷 +
-     * 서명된 URL로 오가므로 계정 엔드포인트와 키만 있으면 업로드도 조회도 성립한다 — 공개 도메인은
-     * 이 도메인이 쓰지 않는 설정이고, 붙들고 있으면 값이 없거나 잘못된 환경에서 학술 기능이 통째로
-     * 뜨지 못한다. 그 설정은 행사 본문 이미지(#161)의 것으로 남는다.
+     * **공개 읽기 도메인 설정을 받지 않는다** (#200). 학술 인증사진은 비공개 버킷 + 서명된 URL로
+     * 오가므로 계정 엔드포인트와 키만 있으면 업로드도 조회도 성립한다 — 붙들고 있으면 값이 없거나
+     * 잘못된 환경에서 학술 기능이 통째로 뜨지 못한다.
+     *
+     * 마지막까지 그 설정을 쓰던 행사 본문 이미지(#161)도 같은 방식으로 옮겨 가면서
+     * `r2.public-base-url` 자체가 사라졌다 (#208) — 공개 접근은 버킷 단위라 두 기능이 버킷 하나를
+     * 나눠 쓰는 한 성립할 수 없었다(ssccops#156).
      */
     public SessionFileReferenceServiceImpl(
             SessionRepository sessionRepository,

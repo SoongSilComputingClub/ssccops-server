@@ -54,8 +54,6 @@ r2:
   access-key-id: test-access-key
   secret-access-key: test-secret-key
   bucket-name: test-bucket
-  # 공개 읽기용 도메인 (#161). 이미지 발급 테스트가 publicUrl 접두사로 이 값을 확인한다
-  public-base-url: https://images.test.local
 
 # 이 API 자신의 공개 주소 (#208). 행사 이미지 리다이렉트 주소의 접두사이며
 # EventImageControllerTest·PublicEventImageControllerTest가 이 값으로 발급 주소를 확인한다.

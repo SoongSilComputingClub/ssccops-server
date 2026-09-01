@@ -22,8 +22,12 @@ import lombok.RequiredArgsConstructor;
  * 되어 같은 형식이 두 벌로 쌓인다. 그래서 jpg·jpeg처럼 통용되는 확장자를 함께 받되
  * (fileExtensions) 키에 쓰는 값은 하나로 굳힌다.
  *
- * contentType과 확장자를 **둘 다** 보고 서로 맞아야 통과시킨다 — 한쪽만 보면 `evil.html`을
- * `image/png`라고 주장하거나 그 반대로 통과시킬 수 있다.
+ * **찾는 길은 확장자 하나뿐이다** (#210 · ssccops#157). 예전에는 contentType으로도 찾을 수
+ * 있었고 행사 이미지가 두 값을 교차 검증했는데, 서버가 바이트를 보지 않는 이상 어느 쪽도 파일의
+ * 진짜 정체가 아니라 요청이 한 신고라 그 검증은 지킬 것을 지키지 못했다 — 대신 브라우저가
+ * `File.type`을 비우거나 비표준으로 채우는 흔한 경우에 멀쩡한 업로드만 막았다. 지금은 두
+ * 사용처(행사 #161 · 학술 #137)가 모두 확장자만 넘기고, contentType은 이 표의 값을 서명과
+ * 응답에 함께 쓴다.
  */
 @Getter
 @RequiredArgsConstructor
@@ -41,23 +45,11 @@ public enum EventImageType {
     /** 요청 파일명에서 받아 주는 확장자들 (전부 소문자) */
     private final Set<String> fileExtensions;
 
-    /** contentType으로 형식을 찾는다. 대소문자와 앞뒤 공백은 무시한다 */
-    public static Optional<EventImageType> ofContentType(String contentType) {
-        if (contentType == null) {
-            return Optional.empty();
-        }
-        String normalized = contentType.trim().toLowerCase(Locale.ROOT);
-        return Arrays.stream(values())
-                .filter(type -> type.contentType.equals(normalized))
-                .findFirst();
-    }
-
     /*
-     * 확장자만으로 형식을 찾는다 (#137 · 출석 인증사진). 행사 이미지(#161)는 파일명과
-     * contentType을 함께 받아 서로 맞는지까지 보지만, 학술 인증사진 업로드 요청에는 fileExt
-     * 하나뿐이라 그 교차 검증이 성립하지 않는다 — 대신 서명에 실을 contentType을 이 표에서
-     * 끌어와 응답으로 돌려주고, 웹은 그 값을 그대로 PUT 헤더에 쓴다
-     * (SessionFileReferenceServiceImpl 주석).
+     * 확장자만으로 형식을 찾는다 (#137 출석 인증사진 · #210부터 행사 이미지도 같다). 요청이
+     * 신고하는 값이 확장자 하나뿐이므로 서명에 실을 contentType은 이 표에서 끌어오고, 그 값을
+     * 응답으로 돌려주어 웹이 그대로 PUT 헤더에 쓰게 한다(SessionFileReferenceServiceImpl ·
+     * EventImageServiceImpl 주석).
      *
      * 허용 목록을 학술 도메인에 한 벌 더 적지 않고 이 표를 함께 쓰는 것은, 두 벌이 되면
      * SVG를 뺀 이유 같은 판단이 한쪽에만 반영되기 때문이다(위 주석 — 형식을 늘리는 자리는
@@ -71,11 +63,5 @@ public enum EventImageType {
         return Arrays.stream(values())
                 .filter(type -> type.fileExtensions.contains(normalized))
                 .findFirst();
-    }
-
-    /** 이 형식이 그 확장자를 인정하는가. 판단만 하고 거절은 서비스가 한다 */
-    public boolean matchesExtension(String fileExtension) {
-        return fileExtension != null
-                && fileExtensions.contains(fileExtension.trim().toLowerCase(Locale.ROOT));
     }
 }

@@ -44,13 +44,31 @@ class EventImageServiceImplTest {
         EventImageServiceImpl service = service(new AppPublicBaseUrl(""));
 
         assertThatThrownBy(
-                        () ->
-                                service.issueUploadUrl(
-                                        1L,
-                                        new EventImageUploadRequest(
-                                                "poster.png", "image/png", 1024L)))
+                        () -> service.issueUploadUrl(1L, new EventImageUploadRequest("png", 1024L)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("app.public-base-url");
+    }
+
+    /*
+     * 형식 판정은 **서명보다 먼저다** (#210). 확장자 하나로 끝나므로 여기서 거절되면 업로드
+     * 허가가 아예 만들어지지 않는다 — 서명을 먼저 만들고 나중에 거르면 응답이 실패해도 그 URL은
+     * 유효해서 아무도 참조하지 않는 오브젝트가 버킷에 남는다.
+     *
+     * 정규화하고도 빈 문자열이 되는 값(`.`)을 쓰는 것은, 그것이 예전 계약에서 "확장자가 없는
+     * 파일명"이 오던 자리이기 때문이다.
+     */
+    @Test
+    void unknownFileExtensionNeverReachesTheSigner() {
+        when(eventRepository.existsById(1L)).thenReturn(true);
+        EventImageServiceImpl service = service(new AppPublicBaseUrl("https://api.sscc.club"));
+
+        assertThatThrownBy(
+                        () -> service.issueUploadUrl(1L, new EventImageUploadRequest(".", 1024L)))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(EventErrorCode.UNSUPPORTED_IMAGE_TYPE);
+
+        verifyNoInteractions(r2Presigner);
     }
 
     /*

@@ -151,10 +151,12 @@ public enum EventErrorCode implements ErrorCode {
             HttpStatus.PAYLOAD_TOO_LARGE, "EVENT_CONTENT_TOO_LARGE", "행사 본문이 너무 큽니다."),
 
     /*
-     * 400 — 허용 목록에 없는 이미지 형식이거나 contentType과 확장자가 서로 어긋날 때 (#161 · D6).
+     * 400 — 요청한 확장자가 허용 목록에 없을 때 (#161 · D6).
      *
-     * 두 경우를 한 코드로 묶는 것은 운영자가 할 일이 같기 때문이다("허용되는 형식의 파일을
-     * 고르라"). 허용 목록은 EventImageType이 갖는다.
+     * **뜻이 하나로 좁아졌다** (#210). 예전에는 "허용 목록 밖" 말고도 "요청의 contentType과
+     * 확장자가 서로 어긋남"이 이 코드로 왔는데, 이제 요청이 신고하는 값이 확장자 하나뿐이라
+     * 어긋날 짝이 없다. 운영자가 할 일은 그때나 지금이나 같다("허용되는 형식의 파일을 고르라").
+     * 허용 목록은 EventImageType이 갖는다.
      */
     UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다."),
 

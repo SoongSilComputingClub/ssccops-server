@@ -156,7 +156,7 @@ public enum EventErrorCode implements ErrorCode {
      * **뜻이 하나로 좁아졌다** (#210). 예전에는 "허용 목록 밖" 말고도 "요청의 contentType과
      * 확장자가 서로 어긋남"이 이 코드로 왔는데, 이제 요청이 신고하는 값이 확장자 하나뿐이라
      * 어긋날 짝이 없다. 운영자가 할 일은 그때나 지금이나 같다("허용되는 형식의 파일을 고르라").
-     * 허용 목록은 EventImageType이 갖는다.
+     * 허용 목록은 ImageFileType이 갖는다.
      */
     UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다."),
 

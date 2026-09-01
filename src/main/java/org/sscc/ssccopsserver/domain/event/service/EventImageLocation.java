@@ -7,7 +7,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-import org.sscc.ssccopsserver.domain.event.code.EventImageType;
+import org.sscc.ssccopsserver.domain.file.code.ImageFileType;
 
 /*
  * 행사 이미지가 버킷의 어디에 있고 우리 도메인의 어느 주소로 읽히는가 (#161 · #208).
@@ -18,7 +18,7 @@ import org.sscc.ssccopsserver.domain.event.code.EventImageType;
  * 학술 인증사진이 같은 버킷에 있다는 것이 이 이슈의 출발점이므로(ssccops#156) 그 조작은
  * 곧 남의 얼굴 사진이다.
  *
- * 그래서 파일명은 **우리가 발급한 형태만** 통과시킨다: 소문자 UUID + `.` + EventImageType이
+ * 그래서 파일명은 **우리가 발급한 형태만** 통과시킨다: 소문자 UUID + `.` + ImageFileType이
  * 정한 확장자. 정규화(대문자를 소문자로 바꿔 준다든지)를 하지 않는 것은 그 관용이 곧 "무엇이
  * 키가 되는가"를 흐리기 때문이고, 우리가 마크다운에 넣는 값은 언제나 이 형태다.
  */
@@ -32,7 +32,7 @@ public final class EventImageLocation {
 
     /*
      * `{소문자 UUID}.{확장자}`. UUID.randomUUID().toString()이 내는 형태 그대로이며,
-     * 확장자 자체의 허용 여부는 정규식이 아니라 EventImageType 표가 판단한다(형식을 늘리는
+     * 확장자 자체의 허용 여부는 정규식이 아니라 ImageFileType 표가 판단한다(형식을 늘리는
      * 자리를 한 곳으로 묶는다).
      */
     private static final Pattern FILE_NAME_PATTERN =
@@ -40,17 +40,17 @@ public final class EventImageLocation {
                     "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.]([a-z0-9]+)$");
 
     private static final Set<String> ALLOWED_EXTENSIONS =
-            Arrays.stream(EventImageType.values())
-                    .map(EventImageType::getExtension)
+            Arrays.stream(ImageFileType.values())
+                    .map(ImageFileType::getExtension)
                     .collect(Collectors.toUnmodifiableSet());
 
     private EventImageLocation() {}
 
     /*
-     * 새 파일명을 만든다. 원본 파일명을 쓰지 않는 이유는 EventImageType 주석에 있다 —
+     * 새 파일명을 만든다. 원본 파일명을 쓰지 않는 이유는 ImageFileType 주석에 있다 —
      * 한글·공백·`../`가 키가 되고 대소문자만 다른 같은 형식이 여러 벌로 쌓인다.
      */
-    public static String newFileName(EventImageType imageType) {
+    public static String newFileName(ImageFileType imageType) {
         return UUID.randomUUID() + "." + imageType.getExtension();
     }
 

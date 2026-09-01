@@ -150,7 +150,7 @@ public enum AcademicProgramErrorCode implements ErrorCode {
 
     /*
      * 400 — 인증사진 업로드(#137)의 fileExt가 허용 목록 밖일 때. 허용 목록 자체는 행사 이미지와
-     * 같은 EventImageType이며(형식을 늘리는 자리를 한 곳으로 묶는다) SVG를 빼는 이유도 같다 —
+     * 같은 ImageFileType이며(형식을 늘리는 자리를 한 곳으로 묶는다) SVG를 빼는 이유도 같다 —
      * 공개 도메인에서 그대로 열리므로 스크립트를 담을 수 있는 문서를 허용하면 XSS 경로가 된다.
      *
      * 코드 문자열이 EventErrorCode.UNSUPPORTED_IMAGE_TYPE과 같은 것은 화면이 고를 안내가 같기

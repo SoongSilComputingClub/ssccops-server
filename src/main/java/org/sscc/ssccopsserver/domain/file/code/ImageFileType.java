@@ -1,4 +1,4 @@
-package org.sscc.ssccopsserver.domain.event.code;
+package org.sscc.ssccopsserver.domain.file.code;
 
 import java.util.Arrays;
 import java.util.Locale;
@@ -9,7 +9,11 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 
 /*
- * 행사 본문에 올릴 수 있는 이미지 형식 (#161 · wave2 D6).
+ * 업로드를 허용하는 이미지 형식 (#161 · wave2 D6 · #220에서 event 도메인에서 옮겨 왔다).
+ *
+ * **행사 본문 이미지와 학술 출석 인증사진이 이 표 하나를 함께 쓴다.** 원래 event 도메인에
+ * 있었고 학술이 그것을 import 하고 있었는데, 두 도메인이 대등하게 쓰는 값이 한쪽 도메인에
+ * 살면 그 방향이 우연히 정해진 것으로 굳는다 — 파일 도메인이 생겼으므로 여기로 옮긴다.
  *
  * **허용 목록이며 넷으로 시작한다.** SVG를 넣지 않는 것은 그것이 이미지이면서 동시에 스크립트를
  * 담을 수 있는 문서라서다 — 읽기 주소(imageUrl)를 브라우저가 그대로 열므로 허용하는 순간 XSS
@@ -31,7 +35,7 @@ import lombok.RequiredArgsConstructor;
  */
 @Getter
 @RequiredArgsConstructor
-public enum EventImageType {
+public enum ImageFileType {
     PNG("image/png", "png", Set.of("png")),
     JPEG("image/jpeg", "jpg", Set.of("jpg", "jpeg")),
     WEBP("image/webp", "webp", Set.of("webp")),
@@ -55,7 +59,7 @@ public enum EventImageType {
      * SVG를 뺀 이유 같은 판단이 한쪽에만 반영되기 때문이다(위 주석 — 형식을 늘리는 자리는
      * 한 곳이다).
      */
-    public static Optional<EventImageType> ofFileExtension(String fileExtension) {
+    public static Optional<ImageFileType> ofFileExtension(String fileExtension) {
         if (fileExtension == null) {
             return Optional.empty();
         }

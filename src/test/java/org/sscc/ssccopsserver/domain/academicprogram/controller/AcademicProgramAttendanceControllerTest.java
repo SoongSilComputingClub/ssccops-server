@@ -44,12 +44,13 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramR
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AttendanceRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
-import org.sscc.ssccopsserver.domain.academicprogram.repository.FileReferenceRepository;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.file.code.FileTargetType;
+import org.sscc.ssccopsserver.domain.file.repository.FileReferenceRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
@@ -524,6 +525,13 @@ class AcademicProgramAttendanceControllerTest {
                                     .startsWith("academic-programs/")
                                     .endsWith(".png");
                             assertThat(secondUrl).contains(reference.getFileUrl());
+                            /*
+                             * 소유자는 FK가 아니라 (대상_구분_코드, 대상_ID) 두 값이다 (#220).
+                             * 회차 상세가 그 짝으로 되찾으므로, 한쪽만 어긋나면 방금 올린 사진이
+                             * 상세에서 사라진다.
+                             */
+                            assertThat(reference.getTargetType()).isEqualTo(FileTargetType.SESSION);
+                            assertThat(reference.getTargetId()).isEqualTo(sessionId);
                         });
     }
 
@@ -629,7 +637,7 @@ class AcademicProgramAttendanceControllerTest {
 
     /*
      * 허용 목록 밖은 400이다. SVG는 이미지이면서 스크립트를 담을 수 있는 문서라 공개 도메인에서
-     * 그대로 열리는 순간 XSS 경로가 되므로 의도적으로 빠져 있다(EventImageType).
+     * 그대로 열리는 순간 XSS 경로가 되므로 의도적으로 빠져 있다(ImageFileType).
      */
     @Test
     void unsupportedFileExtensionReturns400() throws Exception {

@@ -124,6 +124,18 @@ public class EventImageServiceImpl implements EventImageService {
         String objectKey = EventImageLocation.objectKeyOf(eventId, fileName);
 
         /*
+         * 본문에 박힐 값은 **우리 도메인의 영구 주소**다 — 서명한 것이 아니다. 서명은 만료되고
+         * 이 문자열은 마크다운에 굳으므로, 여기에 서명 URL을 실으면 시간이 지난 본문이 통째로
+         * 깨진다(#208 결정 1).
+         *
+         * **서명보다 먼저 조립한다.** app.public-base-url이 비면 여기서 요청이 실패하는데,
+         * 순서를 뒤집으면 그 실패 전에 이미 업로드 허가(서명된 PUT URL)를 하나 내준 뒤가 된다 —
+         * 응답이 실패해도 그 URL은 유효해서 아무도 참조하지 않는 오브젝트가 버킷에 남는다.
+         */
+        String imageUrl =
+                appPublicBaseUrl.urlOf(EventImageLocation.publicPathOf(eventId, fileName));
+
+        /*
          * contentType까지 서명에 넣으므로 웹은 **같은 Content-Type 헤더로** PUT 해야 한다.
          * 서명에서 빼면 허가받은 URL로 아무 형식이나 올릴 수 있어 위의 형식 검사가 무의미해진다.
          */
@@ -143,14 +155,6 @@ public class EventImageServiceImpl implements EventImageService {
                                         .build())
                         .url()
                         .toString();
-
-        /*
-         * 본문에 박힐 값은 **우리 도메인의 영구 주소**다 — 지금 서명한 것이 아니다. 서명은
-         * 만료되고 이 문자열은 마크다운에 굳으므로, 여기에 서명 URL을 실으면 시간이 지난 본문이
-         * 통째로 깨진다(#208 결정 1).
-         */
-        String imageUrl =
-                appPublicBaseUrl.urlOf(EventImageLocation.publicPathOf(eventId, fileName));
 
         return new EventImageUploadResponse(
                 uploadUrl, imageUrl, objectKey, UPLOAD_URL_TTL.toSeconds());

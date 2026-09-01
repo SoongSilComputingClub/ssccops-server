@@ -61,6 +61,10 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  * 값은 저장소에 없다) 무엇보다 이 테스트가 확인하려는 것은 서명 알고리즘이 아니라 서버가
  * 무엇에 서명을 요청하는가(버킷·키·contentType·유효기간)와 그 결과를 어떤 계약으로 내리는가다.
  * 목은 요청받은 키를 그대로 URL에 실어 돌려주므로 "발급한 키로 서명했는가"까지 드러난다.
+ *
+ * **요청이 신고하는 것은 확장자와 크기뿐이다** (#210 · ssccops#157). contentType은 서버가 정해
+ * 서명과 응답에 함께 싣는데, 여기서 확인해야 하는 것은 그 둘이 **같은 값**이라는 사실이다 —
+ * 갈리면 브라우저의 PUT만 R2에서 조용히 거절되고 서버 로그에는 아무것도 남지 않는다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -125,20 +129,21 @@ class EventImageControllerTest {
     }
 
     /*
-     * 발급의 기본형. 키 규칙(events/{eventId}/{uuid}.{ext})과 응답 네 필드, 그리고 서명을
+     * 발급의 기본형. 키 규칙(events/{eventId}/{uuid}.{ext})과 응답 다섯 필드, 그리고 서명을
      * 요청한 내용(버킷·키·contentType·유효기간)까지 한자리에서 못 박는다 — 웹과 합의한 계약이
-     * 이 넷이고, 셋 중 하나만 어긋나도 브라우저의 PUT이 R2에서 거절된다.
+     * 이것이고, 하나만 어긋나도 브라우저의 PUT이 R2에서 거절된다.
      */
     @Test
-    void issueUploadUrlReturns201WithKeyRuleAndFourFields() throws Exception {
+    void issueUploadUrlReturns201WithKeyRuleAndFiveFields() throws Exception {
         Long eventId = createEvent();
 
         String response =
                 mockMvc.perform(
                                 authorized(post(EVENTS + "/" + eventId + "/images"), managerToken)
-                                        .content(imageBody("poster.png", "image/png", 204_800)))
+                                        .content(imageBody("png", 204_800)))
                         .andExpect(status().isCreated())
                         .andExpect(jsonPath("$.success").value(true))
+                        .andExpect(jsonPath("$.data.contentType").value("image/png"))
                         .andExpect(jsonPath("$.data.expiresInSeconds").value(600))
                         .andReturn()
                         .getResponse()
@@ -149,9 +154,8 @@ class EventImageControllerTest {
         String uploadUrl = JsonPath.parse(response).read("$.data.uploadUrl", String.class);
 
         assertThat(objectKey).startsWith("events/" + eventId + "/").endsWith(".png");
-        // 파일명이 아니라 UUID다 — 같은 이름을 두 번 올려도 앞의 것이 덮이지 않는다
+        // 키의 이름 부분은 UUID다 — 같은 파일을 두 번 올려도 앞의 것이 덮이지 않는다
         String fileName = objectKey.substring(objectKey.lastIndexOf('/') + 1);
-        assertThat(fileName).doesNotContain("poster");
         assertThat(UUID.fromString(fileName.substring(0, fileName.length() - ".png".length())))
                 .isNotNull();
 
@@ -169,39 +173,84 @@ class EventImageControllerTest {
         PutObjectPresignRequest presignRequest = captor.getValue();
         assertThat(presignRequest.putObjectRequest().bucket()).isEqualTo(BUCKET);
         assertThat(presignRequest.putObjectRequest().key()).isEqualTo(objectKey);
-        // contentType까지 서명에 넣지 않으면 허가받은 URL로 아무 형식이나 올릴 수 있다
+        /*
+         * contentType까지 서명에 넣지 않으면 허가받은 URL로 아무 형식이나 올릴 수 있다. 그리고
+         * 서명한 그 값이 곧 응답의 contentType이어야 한다 (#210) — 웹은 그것을 PUT 헤더에 옮겨
+         * 적을 뿐이고, 둘이 갈리면 R2가 PUT을 거절한다.
+         */
         assertThat(presignRequest.putObjectRequest().contentType()).isEqualTo("image/png");
+        assertThat(JsonPath.parse(response).read("$.data.contentType", String.class))
+                .isEqualTo(presignRequest.putObjectRequest().contentType());
         assertThat(presignRequest.signatureDuration().toMinutes()).isEqualTo(10);
     }
 
     /*
      * jpg·jpeg는 둘 다 받되 키에 쓰는 확장자는 하나로 굳힌다 — 통용되는 확장자를 그대로 쓰면
      * 같은 형식이 두 벌로 쌓이고 대소문자까지 섞이면 네 벌이 된다.
+     *
+     * **정규화를 서버가 한다** (#210) — 앞의 점·대문자·앞뒤 공백은 화면이 무엇을 붙여 보내든
+     * 서버가 떼어 낸다. 웹에 맡기면 규칙이 두 벌이 되고, 한쪽만 바뀌는 날 멀쩡한 파일이 400으로
+     * 튕긴다(그것이 ssccops#157에서 실제로 난 일이다).
      */
     @Test
     void jpegVariantsShareOneCanonicalExtension() throws Exception {
         Long eventId = createEvent();
 
-        assertThat(issuedObjectKey(eventId, "photo.jpeg", "image/jpeg")).endsWith(".jpg");
-        assertThat(issuedObjectKey(eventId, "photo.JPG", "IMAGE/JPEG")).endsWith(".jpg");
+        assertThat(issued(eventId, "jpeg").objectKey()).endsWith(".jpg");
+        assertThat(issued(eventId, "JPG").objectKey()).endsWith(".jpg");
+        assertThat(issued(eventId, ".jpg").objectKey()).endsWith(".jpg");
+        assertThat(issued(eventId, " .JPEG ").objectKey()).endsWith(".jpg");
+
+        // 넷 모두 같은 형식이므로 서버가 정하는 contentType도 하나다
+        assertThat(issued(eventId, "jpeg").contentType()).isEqualTo("image/jpeg");
+        assertThat(issued(eventId, ".JPG").contentType()).isEqualTo("image/jpeg");
     }
 
     /*
-     * 형식 거절 네 경우를 한자리에 둔다 — 확인하려는 것이 "둘 다 보고 서로 맞아야 한다"라
-     * 경우 간 비교가 곧 규칙이다. 넷 모두 같은 코드인 것은 운영자가 할 일이 같기 때문이다.
+     * 응답의 contentType은 **그 확장자의 표준 값**이다 (#210). 웹이 이 값을 PUT 헤더에 그대로
+     * 쓰므로, 브라우저가 파일에서 읽는 비표준 값(image/jpg 같은)이 여기 실리면 안 된다 —
+     * 서명은 표준 값으로 되어 있어 그 PUT은 R2에서 거절된다.
      */
     @Test
-    void unsupportedOrMismatchedImageTypeReturns400() throws Exception {
+    void responseContentTypeIsTheStandardValueOfTheExtension() throws Exception {
         Long eventId = createEvent();
 
-        // 허용 목록에 없는 형식. SVG는 스크립트를 담을 수 있어 의도적으로 뺐다
-        expectImageBadRequest(eventId, "logo.svg", "image/svg+xml");
-        // 확장자만 허용 목록 밖
-        expectImageBadRequest(eventId, "poster.bmp", "image/png");
-        // contentType과 확장자가 서로 어긋난다
-        expectImageBadRequest(eventId, "poster.png", "image/jpeg");
-        // 확장자가 아예 없다
-        expectImageBadRequest(eventId, "poster", "image/png");
+        assertThat(issued(eventId, "png").contentType()).isEqualTo("image/png");
+        assertThat(issued(eventId, "jpg").contentType()).isEqualTo("image/jpeg");
+        assertThat(issued(eventId, "webp").contentType()).isEqualTo("image/webp");
+        assertThat(issued(eventId, "gif").contentType()).isEqualTo("image/gif");
+    }
+
+    /*
+     * 확장자 거절. **이제 거절 사유는 하나다** (#210) — "허용 목록에 없다". 예전에는
+     * "contentType과 확장자가 서로 어긋난다"가 같은 코드로 함께 왔는데, 요청이 신고하는 값이
+     * 하나뿐이라 어긋날 짝이 없어졌다.
+     */
+    @Test
+    void unsupportedFileExtensionReturns400() throws Exception {
+        Long eventId = createEvent();
+
+        // SVG는 이미지이면서 스크립트를 담을 수 있는 문서라 의도적으로 뺐다(EventImageType)
+        expectImageBadRequest(eventId, "svg");
+        expectImageBadRequest(eventId, "exe");
+        expectImageBadRequest(eventId, "bmp");
+        // 점 하나만 보내면 정규화 후 빈 문자열이다 — 어떤 허용 형식과도 맞지 않는다
+        expectImageBadRequest(eventId, ".");
+    }
+
+    /*
+     * fileExt가 비면 형식 판정에 닿기 전에 400이다(@NotBlank · VALIDATION_FAILED). 학술
+     * 인증사진(#137)과 같은 제약이라 같은 자리에서 끊긴다 — 코드가 UNSUPPORTED_IMAGE_TYPE이
+     * 아닌 것은 "고를 수 없는 형식"이 아니라 요청이 값을 아예 빠뜨린 경우이기 때문이다.
+     */
+    @Test
+    void blankFileExtReturns400() throws Exception {
+        Long eventId = createEvent();
+
+        mockMvc.perform(
+                        authorized(post(EVENTS + "/" + eventId + "/images"), managerToken)
+                                .content(imageBody(" ", 1024)))
+                .andExpect(status().isBadRequest());
     }
 
     /*
@@ -215,12 +264,12 @@ class EventImageControllerTest {
 
         mockMvc.perform(
                         authorized(post(EVENTS + "/" + eventId + "/images"), managerToken)
-                                .content(imageBody("poster.png", "image/png", limit)))
+                                .content(imageBody("png", limit)))
                 .andExpect(status().isCreated());
 
         mockMvc.perform(
                         authorized(post(EVENTS + "/" + eventId + "/images"), managerToken)
-                                .content(imageBody("poster.png", "image/png", limit + 1)))
+                                .content(imageBody("png", limit + 1)))
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.code").value("IMAGE_TOO_LARGE"));
     }
@@ -230,7 +279,7 @@ class EventImageControllerTest {
     void issueUploadUrlForUnknownEventReturns404() throws Exception {
         mockMvc.perform(
                         authorized(post(EVENTS + "/999999/images"), managerToken)
-                                .content(imageBody("poster.png", "image/png", 1024)))
+                                .content(imageBody("png", 1024)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("EVENT_NOT_FOUND"));
     }
@@ -240,31 +289,34 @@ class EventImageControllerTest {
     void issueUploadUrlWithoutEventManageIsForbidden() throws Exception {
         mockMvc.perform(
                         authorized(post(EVENTS + "/1/images"), outsiderToken)
-                                .content(imageBody("poster.png", "image/png", 1024)))
+                                .content(imageBody("png", 1024)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     /* ── 도우미 ───────────────────────────────────────────── */
 
-    private String issuedObjectKey(Long eventId, String fileName, String contentType)
-            throws Exception {
+    /* 발급 한 번의 결과 중 이 테스트가 보는 두 값 — 키의 확장자와 서버가 정한 형식 */
+    private record Issued(String objectKey, String contentType) {}
+
+    private Issued issued(Long eventId, String fileExt) throws Exception {
         String response =
                 mockMvc.perform(
                                 authorized(post(EVENTS + "/" + eventId + "/images"), managerToken)
-                                        .content(imageBody(fileName, contentType, 1024)))
+                                        .content(imageBody(fileExt, 1024)))
                         .andExpect(status().isCreated())
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        return JsonPath.parse(response).read("$.data.objectKey", String.class);
+        return new Issued(
+                JsonPath.parse(response).read("$.data.objectKey", String.class),
+                JsonPath.parse(response).read("$.data.contentType", String.class));
     }
 
-    private void expectImageBadRequest(Long eventId, String fileName, String contentType)
-            throws Exception {
+    private void expectImageBadRequest(Long eventId, String fileExt) throws Exception {
         mockMvc.perform(
                         authorized(post(EVENTS + "/" + eventId + "/images"), managerToken)
-                                .content(imageBody(fileName, contentType, 1024)))
+                                .content(imageBody(fileExt, 1024)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("UNSUPPORTED_IMAGE_TYPE"));
     }
@@ -285,11 +337,11 @@ class EventImageControllerTest {
         return JsonPath.parse(response).read("$.data.eventId", Long.class);
     }
 
-    private static String imageBody(String fileName, String contentType, long fileSize) {
+    private static String imageBody(String fileExt, long fileSize) {
         return """
-               {"fileName": "%s", "contentType": "%s", "fileSize": %d}
+               {"fileExt": "%s", "fileSize": %d}
                """
-                .formatted(fileName, contentType, fileSize);
+                .formatted(fileExt, fileSize);
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

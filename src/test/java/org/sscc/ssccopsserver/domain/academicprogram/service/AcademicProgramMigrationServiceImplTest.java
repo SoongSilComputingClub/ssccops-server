@@ -155,6 +155,35 @@ class AcademicProgramMigrationServiceImplTest {
         EventEntity event = program.getEvent();
         assertThat(event.getTitle()).isEqualTo("알고리즘 스터디");
         assertThat(event.getPlaceName()).isEqualTo("전산관 401호");
+
+        /*
+         * 행사 본문은 기획안 전체를 옮긴 마크다운이다 (#222). 예전에는 goal_cn 한 문단만
+         * 들어가, 리더가 손대지 않고 모집을 시작하면 지원자에게 커리큘럼·준비물·일정이
+         * 통째로 보이지 않았다(ssccops#158). 치환 규칙 자체는 ProposalEventBodyWriterTest가
+         * 보고, 여기서는 그 결과가 실제로 mtxt_cn까지 닿는지만 확인한다.
+         */
+        assertThat(event.getContentMarkdown())
+                .isEqualTo(
+                        """
+                        ## 활동 소개
+
+                        알고리즘 문제 풀이 근육을 만든다
+
+                        ## 준비물
+
+                        노트북
+
+                        ## 일정
+
+                        매주 화요일 19:00
+
+                        ## 커리큘럼
+
+                        | 회차 | 내용 | 계획일 |
+                        | --- | --- | --- |
+                        | 1 | 오리엔테이션 | 2026-03-05 |
+                        | 2 | React, 그리고 상태관리 | - |"""
+                                .stripTrailing());
         assertThat(event.getBeginAt())
                 .isEqualTo(LocalDate.of(2026, 3, 2).atStartOfDay(SERVICE_ZONE).toInstant());
         /*

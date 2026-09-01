@@ -38,6 +38,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberRoleClassificationEntit
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusHistoryEntity;
+import org.sscc.ssccopsserver.domain.member.repository.MemberChangeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -83,6 +84,7 @@ class MemberQueryServiceTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private MemberChangeHistoryRepository memberChangeHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
     @Autowired private TestEntityManager entityManager;
 
@@ -101,6 +103,7 @@ class MemberQueryServiceTest {
                         memberStatusHistoryRepository,
                         new MemberInitialHistoryRecorder(
                                 memberGradeHistoryRepository, memberStatusHistoryRepository),
+                        new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(FIXED_CLOCK),
                         FIXED_CLOCK);

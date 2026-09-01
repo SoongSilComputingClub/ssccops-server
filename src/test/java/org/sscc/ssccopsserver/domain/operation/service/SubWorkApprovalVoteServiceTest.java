@@ -21,6 +21,7 @@ import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberChangeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -34,6 +35,7 @@ import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
+import org.sscc.ssccopsserver.domain.member.service.MemberProfileChangeRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
@@ -111,6 +113,7 @@ class SubWorkApprovalVoteServiceTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private MemberChangeHistoryRepository memberChangeHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
@@ -143,6 +146,7 @@ class SubWorkApprovalVoteServiceTest {
                         memberStatusHistoryRepository,
                         new MemberInitialHistoryRecorder(
                                 memberGradeHistoryRepository, memberStatusHistoryRepository),
+                        new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(FIXED_CLOCK),
                         FIXED_CLOCK);

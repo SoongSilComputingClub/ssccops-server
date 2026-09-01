@@ -6,12 +6,13 @@ import java.util.Comparator;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.member.dto.MemberChangeHistoryResponse;
+import org.sscc.ssccopsserver.domain.member.entity.MemberChangeHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeHistoryEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusHistoryEntity;
 
 /*
- * 세 출처의 이력을 하나의 타임라인으로 합치는 **유일한 구현** (#82).
+ * 네 출처의 이력을 하나의 타임라인으로 합치는 **유일한 구현** (#82 · #226에서 프로필 변경 추가).
  *
  * 회원 상세의 '최근 3건'(#76)과 통합 이력 조회(#82)가 이 클래스를 함께 쓴다. 두 벌이 되면
  * 상세 카드와 이력 화면이 같은 데이터를 다르게 표시하게 되는데, 그 어긋남은 터지지 않고
@@ -43,11 +44,11 @@ public final class MemberChangeHistoryAssembler {
     private MemberChangeHistoryAssembler() {}
 
     /*
-     * 세 출처를 합쳐 발생 시각 역순으로 내린다. 읽지 않기로 한 출처는 빈 목록으로 넘긴다.
+     * 네 출처를 합쳐 발생 시각 역순으로 내린다. 읽지 않기로 한 출처는 빈 목록으로 넘긴다.
      *
-     * **하나의 SQL로 UNION 하지 않는다.** 컬럼 이름도 개수도 다른 세 테이블을 질의 하나로
+     * **하나의 SQL로 UNION 하지 않는다.** 컬럼 이름도 개수도 다른 네 테이블을 질의 하나로
      * 맞추려면 상수 컬럼과 캐스팅이 늘어서고, 그렇게 만든 질의는 어느 출처가 무엇을 담는지
-     * 읽어 낼 수 없게 된다. 세 리포지토리에서 각각 받아 여기서 합치는 편이 읽기도 테스트하기도
+     * 읽어 낼 수 없게 된다. 네 리포지토리에서 각각 받아 여기서 합치는 편이 읽기도 테스트하기도
      * 쉽다(이슈 #82의 권고).
      *
      * 역할 배정 한 행은 **두 줄**이 될 수 있다 — 부여(role_bgng_ymd)와, 종료일이 채워져 있다면
@@ -58,6 +59,7 @@ public final class MemberChangeHistoryAssembler {
             List<MemberGradeHistoryEntity> gradeHistories,
             List<MemberStatusHistoryEntity> statusHistories,
             List<MemberRoleAssignmentEntity> roleAssignments,
+            List<MemberChangeHistoryEntity> profileChanges,
             ZoneId zone) {
 
         List<MemberChangeHistoryResponse> merged = new ArrayList<>();
@@ -72,6 +74,15 @@ public final class MemberChangeHistoryAssembler {
             if (assignment.getRoleEndDate() != null) {
                 merged.add(MemberChangeHistoryResponse.roleEnded(assignment, zone));
             }
+        }
+
+        /*
+         * 프로필 변경은 한 행이 한 줄이다 (#226). 한 번의 저장이 여러 항목을 바꾸면 행 자체가
+         * 여러 개 만들어져 있으므로 여기서 펼칠 것이 없다 — 역할처럼 한 행이 두 사건인 경우와
+         * 갈리는 지점이다.
+         */
+        for (MemberChangeHistoryEntity history : profileChanges) {
+            merged.add(MemberChangeHistoryResponse.from(history));
         }
 
         merged.sort(NEWEST_FIRST);

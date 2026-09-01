@@ -56,8 +56,25 @@ public class MemberEntity {
      * uk_mbr_student_number는 그대로 유지한다 — NULL은 UNIQUE 제약에 걸리지 않기 때문이다.
      * 다만 학번 미입력을 빈 문자열로 저장하면 두 번째 졸업 회원부터 UNIQUE 충돌이 나므로
      * 반드시 NULL로 저장해야 한다.
+     *
+     * ── updatable = false였다. 지금은 아니다 (#226 · ssccops#161) ──
+     * 데이터사전이 '가입 후 변경 불가'로 확정하고(ssccops#74) 이 컬럼이 그 잠금의 마지막
+     * 방어선이었다. 뒤집은 근거는 **오타가 실제로 들어온다**는 사실이다 — 학번은 가입 시점에
+     * 본인이 손으로 입력하고 CSV 이관은 명부에서 옮겨 오는데, 지금까지는 어떤 경로로도 고칠 수
+     * 없어 잘못 들어온 학번이 그 회원을 영영 따라다녔다.
+     *
+     * 잠금이 지키려던 것("학번은 사람을 가리키는 열쇠라 함부로 바뀌면 안 된다")은 사라지지
+     * 않고 **누가 언제 무엇을 무엇으로 바꿨는지 남기는 것**으로 옮겨 갔다 — 등급·상태가 이미
+     * 그 방식이고(#78), 프로필 변경은 mbr_chg_hstry에 쌓인다(MemberChangeHistoryEntity).
+     * 그래서 이 컬럼을 바꾸는 유일한 자리는 아래 changeStudentNumber이며, 그것을 부르는 곳도
+     * 운영진의 회원 정보 수정 하나뿐이다(본인 경로에는 필드 자체가 없다).
+     *
+     * ⚠️ 학번을 고치면 **계정 연결 판정이 바뀐다.** 이관 회원이 계정을 붙이는 경로는 학번·
+     * 회원명·연락처 3종 완전 일치이므로(MemberLinkPolicy), 아직 연결하지 않은 회원의 학번을
+     * 고치면 옛 학번으로는 더는 연결되지 않는다. 서버는 막지 않는다 — 오타 정정이면 그것이
+     * 바로 목적이고, 잘못 고쳤을 때의 안내는 화면의 몫이다.
      */
-    @Column(name = "stdnt_no", updatable = false, length = 20)
+    @Column(name = "stdnt_no", length = 20)
     private String studentNumber;
 
     @Column(name = "gen_no", nullable = false)
@@ -219,6 +236,18 @@ public class MemberEntity {
         this.academicYear = academicYear;
         this.phoneNumber = phoneNumber;
         this.email = email;
+    }
+
+    /*
+     * 학번 변경 (#226). updateBasicInfo에 끼워 넣지 않고 따로 둔 것은 **바꿀 수 있는 경로를
+     * 눈에 보이게 하기 위해서다** — 본인 수정도 updateBasicInfo를 부르는데 거기에 학번이 섞여
+     * 있으면 현재 값을 다시 넣는 인자 하나가 실수로 빠지는 날 본인 수정이 학번을 지운다.
+     *
+     * 비우는 값은 빈 문자열이 아니라 NULL이어야 한다(위 주석). 앞뒤 공백을 다듬어 NULL로
+     * 만드는 일은 부르는 쪽(서비스의 trimToNull)이 이미 하고 있으므로 여기서 또 하지 않는다.
+     */
+    public void changeStudentNumber(String studentNumber) {
+        this.studentNumber = studentNumber;
     }
 
     public void changeMembershipGrade(MemberGradeEntity membershipGrade) {

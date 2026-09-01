@@ -107,18 +107,25 @@ public class AcademicProgramMigrationServiceImpl implements AcademicProgramMigra
     }
 
     /*
-     * 행사 본문(mtxt_cn)은 NOT NULL이라 무엇이든 들어가야 한다. 활동 소개·목표를 복사하는 것은
-     * 빈 문자열로 두면 승인 직후의 행사가 제목만 있는 껍데기가 되기 때문이다 — 게시 전 상태
-     * (DRAFT)라 아무에게도 보이지 않지만, 리더가 모집 공고를 쓸 때 백지가 아니라 자기가 낸
-     * 기획안에서 시작하게 된다. 같은 문장이 acdm_actv.goal_cn에도 있는 것은 중복이 아니라
-     * 복사다 — 이관 이후 둘은 각자 편집되는 다른 값이며, 어느 쪽도 다른 쪽을 따라가지 않는다.
+     * 행사 본문(mtxt_cn)은 **기획안 전체를 마크다운으로 치환한 결과**다 (#222 · ssccops#158).
+     *
+     * 예전에는 goal_cn 하나만 복사했고 근거는 "리더가 백지가 아니라 자기 기획안에서 시작하게
+     * 한다"였다 — 본문을 사람이 마저 쓰는 초안으로 본 것이다. 실제로는 리더가 고치지 않은 채
+     * 모집을 시작해, 지원자가 보는 공고에 활동 소개 한 문단만 뜨고 커리큘럼·준비물·일정이
+     * 통째로 빠졌다. 제출자가 이미 적어 낸 정보라 옮기지 않을 이유가 없다.
+     *
+     * 치환 규칙(섹션 구성·빈 값 생략·표 형식)은 ProposalEventBodyWriter가 갖는다 — 여기가
+     * 마크다운 문법을 알면 엔티티를 만드는 일과 문서를 쓰는 일이 한 자리에 섞인다.
+     *
+     * 여전히 **복사이지 연결이 아니다.** 같은 문장이 acdm_actv.goal_cn에도 있는 것은 중복이
+     * 아니며, 이관 이후 둘은 각자 편집되고 어느 쪽도 다른 쪽을 따라가지 않는다.
      */
     private EventEntity createEvent(ProposalDraft draft, MemberEntity proposer) {
         return EventEntity.create(
                 findEventClassification(),
                 proposer,
                 draft.title(),
-                draft.goalContent(),
+                ProposalEventBodyWriter.write(draft),
                 null,
                 null,
                 startOfDay(draft.periodBeginDate()),

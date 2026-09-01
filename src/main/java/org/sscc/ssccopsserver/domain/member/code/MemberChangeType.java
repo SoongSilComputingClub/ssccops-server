@@ -4,14 +4,15 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 
 /*
- * 회원 변경 이력의 종류 (#76 · #82에서 역할 두 종을 더함).
+ * 회원 변경 이력의 종류 (#76 · #82에서 역할 두 종을 · #226에서 프로필 한 종을 더함).
  *
- * mbr_grd_hstry·mbr_stts_hstry·mbr_role_rel은 테이블이 셋이지만 화면에서는 '이 회원에게 무슨 일이
- * 있었는가' 하나의 목록이다. 세 출처를 합쳐 시간 역순으로 내릴 때 각 줄이 어느 쪽에서 왔는지
- * 알려주는 값이며, 프론트는 이 값으로 배지 색과 문구를 고른다.
+ * mbr_grd_hstry·mbr_stts_hstry·mbr_role_rel·mbr_chg_hstry는 테이블이 넷이지만 화면에서는
+ * '이 회원에게 무슨 일이 있었는가' 하나의 목록이다. 네 출처를 합쳐 시간 역순으로 내릴 때 각
+ * 줄이 어느 쪽에서 왔는지 알려주는 값이며, 프론트는 이 값으로 배지 색과 문구를 고른다.
  *
  * 이력 테이블을 하나로 합치지 않는 것은 데이터사전이 따로 정의하고 있기 때문이다 —
  * 상태 이력에만 있는 종료 예정일(stts_end_prnmnt_ymd)처럼 한쪽에만 있는 컬럼도 있다.
+ * 프로필 변경(mbr_chg_hstry)이 범용 표인데도 등급·상태를 흡수하지 않는 이유가 그것이다.
  *
  * **역할은 한 행이 두 사건이다.** mbr_role_rel 한 행에는 시작일(role_bgng_ymd)과 종료일
  * (role_end_ymd)이 함께 있고, 종료는 삭제가 아니라 종료일을 채우는 것이므로(#81) 임기가 끝난
@@ -35,7 +36,18 @@ public enum MemberChangeType {
     ROLE_ASSIGNED(MemberHistorySource.ROLE),
 
     /** 역할 종료 (mbr_role_rel · role_end_ymd) */
-    ROLE_ENDED(MemberHistorySource.ROLE);
+    ROLE_ENDED(MemberHistorySource.ROLE),
+
+    /*
+     * 회원 정보 변경 (mbr_chg_hstry · #226) — 학번·기수·회원명·학과 등 아홉 항목 중 하나가
+     * 바뀐 사건이다. **어느 항목인지는 이 값이 말하지 않는다.** 등급·상태·역할은 종류가 곧
+     * 항목이지만 프로필은 한 표에 아홉 항목이 섞여 있어, 그것은 응답의 changeField가 답한다.
+     *
+     * 값이 담기는 자리도 갈린다. 등급·상태는 코드와 표시명이 따로 있어 previousCode·
+     * previousName 네 칸을 다 쓰지만, 프로필 값에는 코드/명 구분이 없어 previousName·newName
+     * 두 칸만 채우고 코드 자리는 비운다 (MemberChangeHistoryResponse 주석).
+     */
+    PROFILE(MemberHistorySource.PROFILE);
 
     /** 이 종류가 어느 출처에서 왔는가. type 필터(MemberHistorySource)와 표시 종류를 잇는다 */
     private final MemberHistorySource source;

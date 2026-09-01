@@ -694,6 +694,13 @@ public class MemberServiceImpl implements MemberService {
                         memberStatusHistoryRepository.findByMemberIdOrderByCreatedAtDescIdDesc(
                                 memberId, limit),
                         List.of(),
+                        /*
+                         * 프로필 변경도 싣지 않는다 (#226). 역할을 뺀 것과 같은 이유이며 이쪽이
+                         * 더 심하다 — 한 번의 폼 저장이 최대 아홉 줄을 만들 수 있어, 세 칸짜리
+                         * '최근 변경'이 연락처 수정 한 번으로 가득 찬다. 항목별 변경의 시간축은
+                         * 통합 이력 화면에서 본다.
+                         */
+                        List.of(),
                         clock.getZone())
                 .stream()
                 .limit(RECENT_CHANGE_LIMIT)

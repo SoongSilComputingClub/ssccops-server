@@ -3,7 +3,18 @@ package org.sscc.ssccopsserver.domain.form.code;
 import java.util.Optional;
 
 /*
- * form_rspns_rvw_hstry.prcs_se_cd — 폼 응답 처리 구분 코드 (#141).
+ * form_rspns_rvw_hstry.rvw_prcs_se_cd — 폼 응답 검토 처리 구분 코드 (#141).
+ *
+ * 컬럼명이 일반명 prcs_se_cd였다가 '검토(rvw)'를 앞에 붙였다(#224 · ssccops#159). 데이터사전의
+ * 표준코드는 코드그룹ID = 컬럼ID로 묶이는데 회의 안건(mtg_dtl)도 같은 이름의 컬럼을 쓰면서
+ * 값 집합이 PENDING · HOLD · CLOSED로 전혀 달라, 아래 4종은 넣을 그룹이 없어 사전에 등재되지
+ * 못하고 있었다. 한쪽만 한정어를 붙이면 남은 쪽이 일반명을 계속 점유해 다음 테이블에서 같은
+ * 충돌이 반복되므로 회의 쪽도 agnd_prcs_se_cd로 함께 옮겼다. 두 컬럼은 뜻도 다르다 — 안건 쪽은
+ * '지금 어떤 상태인가'이고 이쪽은 '그때 무슨 일이 있었는가'다.
+ *
+ * 응답 DTO의 필드명도 함께 prcsSeCd → rvwPrcsSeCd로 바뀐다(FormResponseReviewHistoryResponse).
+ * 컬럼만 바꾸고 필드명을 남기지 않는 것은, 웹이 이미 이름 충돌을 자기 접두사(RspnsPrcsSeCd ·
+ * RSPNS_PRCS_SE_NM)로 우회하고 있어 이름을 반만 고치면 그 우회가 영구화되기 때문이다.
  *
  * 이력 한 줄이 "누가 · 언제 · 무엇을 했는가"를 스스로 말하려면 그 '무엇'을 담을 어휘가 있어야
  * 한다. 결과 상태(rspns_stts_cd)를 그대로 베껴 두지 않는 것은 두 축의 뜻이 다르기 때문이다 —

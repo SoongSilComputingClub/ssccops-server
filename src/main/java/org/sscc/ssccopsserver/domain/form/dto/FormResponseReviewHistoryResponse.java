@@ -19,11 +19,16 @@ import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity
  * 회원 상세로 이동하는 링크를 걸기 때문이다.
  *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
+ *
+ * 처리 구분 필드는 prcsSeCd가 아니라 rvwPrcsSeCd다(#224 · ssccops#159). 컬럼(rvw_prcs_se_cd)에서
+ * 유도한 이름이며, 개명의 이유는 회의 안건(mtg_dtl)이 같은 이름의 컬럼을 다른 값 집합으로 쓰고
+ * 있어 데이터사전의 표준코드 그룹(코드그룹ID = 컬럼ID)에 둘을 함께 담을 수 없었기 때문이다.
+ * 이 필드가 이번 개명에서 유일하게 움직이는 API 계약이므로 웹과 동시에 배포한다.
  */
 public record FormResponseReviewHistoryResponse(
         Long formRspnsRvwHstryId,
         int sbmsnSeq,
-        ResponseReviewAction prcsSeCd,
+        ResponseReviewAction rvwPrcsSeCd,
         Long prcsMbrId,
         String prcsMbrNm,
         String rvwOpnnCn,

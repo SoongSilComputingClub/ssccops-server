@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.event.service;
 
 import java.time.Duration;
-import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -12,7 +11,7 @@ import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadResponse;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
-import org.sscc.ssccopsserver.global.config.R2PublicBaseUrl;
+import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
 
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -79,26 +78,26 @@ public class EventImageServiceImpl implements EventImageService {
     private final PublicEventService publicEventService;
 
     /*
-     * 공개 읽기 주소의 검증·조립은 R2PublicBaseUrl이 한다 (#200에서 이 클래스의 normalizeBaseUrl을
-     * 옮겼다). **값이 잘못되면 부팅이 실패한다**는 성질은 그대로이고, 검사가 하나 늘었다 —
-     * S3 API 엔드포인트는 서명 없는 GET에 401을 돌려주므로 공개 읽기 주소가 될 수 없다.
+     * 본문 마크다운에 박힐 읽기 주소의 호스트 (#208). 옛 R2PublicBaseUrl(버킷의 공개 도메인)이
+     * 있던 자리이며, 버킷을 비공개로 유지하기로 하면서 조립해야 하는 값이 **우리 API의 주소**로
+     * 바뀌었다 — 이미지는 이제 우리 도메인의 리다이렉트 엔드포인트로 읽힌다.
      *
-     * 여기가 그 검사의 실질적인 수혜자다: 이 서비스가 만든 publicUrl은 행사 본문 마크다운에
-     * 문자열로 굳어, 잘못된 값이 들어가면 이미 저장된 본문을 전부 치환하는 것 말고는 고칠
-     * 방법이 없다(#200에서 실제로 그렇게 됐다).
+     * 여기가 그 검사의 실질적인 수혜자인 것은 그대로다: 이 서비스가 만든 imageUrl은 행사 본문
+     * 마크다운에 문자열로 굳어, 잘못된 값이 들어가면 이미 저장된 본문을 전부 치환하는 것 말고는
+     * 고칠 방법이 없다(#200에서 실제로 그렇게 됐다).
      */
-    private final R2PublicBaseUrl publicBaseUrl;
+    private final AppPublicBaseUrl appPublicBaseUrl;
 
     public EventImageServiceImpl(
             EventRepository eventRepository,
             S3Presigner r2Presigner,
             @Value("${r2.bucket-name}") String bucketName,
-            R2PublicBaseUrl publicBaseUrl,
+            AppPublicBaseUrl appPublicBaseUrl,
             PublicEventService publicEventService) {
         this.eventRepository = eventRepository;
         this.r2Presigner = r2Presigner;
         this.bucketName = bucketName;
-        this.publicBaseUrl = publicBaseUrl;
+        this.appPublicBaseUrl = appPublicBaseUrl;
         this.publicEventService = publicEventService;
     }
 
@@ -114,9 +113,15 @@ public class EventImageServiceImpl implements EventImageService {
             throw new GeneralException(EventErrorCode.IMAGE_TOO_LARGE);
         }
 
-        // 키 규칙 events/{eventId}/{uuid}.{ext} (D6). UUID라 같은 파일을 두 번 올려도 덮이지 않는다
-        String objectKey =
-                "events/%d/%s.%s".formatted(eventId, UUID.randomUUID(), imageType.getExtension());
+        /*
+         * 키 규칙 events/{eventId}/{uuid}.{ext} (D6). UUID라 같은 파일을 두 번 올려도 덮이지 않는다.
+         *
+         * **규칙을 여기 적지 않고 EventImageLocation에서 받아 온다** (#208). 읽기 경로가 요청의
+         * 파일명으로 같은 키를 다시 조립하므로, 규칙이 두 벌이 되면 한쪽만 바뀌는 날 발급한
+         * 주소가 아무것도 가리키지 않는다.
+         */
+        String fileName = EventImageLocation.newFileName(imageType);
+        String objectKey = EventImageLocation.objectKeyOf(eventId, fileName);
 
         /*
          * contentType까지 서명에 넣으므로 웹은 **같은 Content-Type 헤더로** PUT 해야 한다.
@@ -139,8 +144,16 @@ public class EventImageServiceImpl implements EventImageService {
                         .url()
                         .toString();
 
+        /*
+         * 본문에 박힐 값은 **우리 도메인의 영구 주소**다 — 지금 서명한 것이 아니다. 서명은
+         * 만료되고 이 문자열은 마크다운에 굳으므로, 여기에 서명 URL을 실으면 시간이 지난 본문이
+         * 통째로 깨진다(#208 결정 1).
+         */
+        String imageUrl =
+                appPublicBaseUrl.urlOf(EventImageLocation.publicPathOf(eventId, fileName));
+
         return new EventImageUploadResponse(
-                uploadUrl, publicBaseUrl.urlOf(objectKey), objectKey, UPLOAD_URL_TTL.toSeconds());
+                uploadUrl, imageUrl, objectKey, UPLOAD_URL_TTL.toSeconds());
     }
 
     /*

@@ -14,8 +14,10 @@ import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.R2PublicBaseUrl;
 
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 /*
@@ -54,9 +56,27 @@ public class EventImageServiceImpl implements EventImageService {
      */
     private static final long MAX_IMAGE_SIZE_BYTES = 10L * 1024 * 1024;
 
+    /*
+     * 서명된 읽기 URL의 유효기간 (#208). **학술 인증사진(SessionFileReferenceViewer)과 같은
+     * 15분이고 이유도 같다** — 화면이 이미지를 다시 그리는 데 쓰이는 시간이면 충분하고, 이
+     * URL은 그 자체로 오브젝트를 읽을 수 있는 권한이라 새어 나가면 만료까지 유효하다.
+     *
+     * **만료가 문제가 되지 않는 것은 저장되는 값이 이 URL이 아니기 때문이다.** 본문 마크다운에
+     * 굳는 것은 우리 도메인의 영구 주소이고, 브라우저가 그 주소를 열 때마다 여기서 새 서명이
+     * 나간다. 서명 URL을 그대로 저장했다면 시간이 지난 본문이 통째로 깨졌을 것이다.
+     */
+    private static final Duration VIEW_URL_TTL = Duration.ofMinutes(15);
+
     private final EventRepository eventRepository;
     private final S3Presigner r2Presigner;
     private final String bucketName;
+
+    /*
+     * 읽기 경로가 "이 행사가 익명에게 보이는가"를 묻는 자리 (#208). 판정을 여기서 새로 세우지
+     * 않는 것이 요점이다 — 공개 상세와 같은 기준을 써야 상세는 404인데 포스터만 열리는 상태가
+     * 생기지 않는다(#187의 학술 event 접수 종료 판정이 대표적이다).
+     */
+    private final PublicEventService publicEventService;
 
     /*
      * 공개 읽기 주소의 검증·조립은 R2PublicBaseUrl이 한다 (#200에서 이 클래스의 normalizeBaseUrl을
@@ -73,11 +93,13 @@ public class EventImageServiceImpl implements EventImageService {
             EventRepository eventRepository,
             S3Presigner r2Presigner,
             @Value("${r2.bucket-name}") String bucketName,
-            R2PublicBaseUrl publicBaseUrl) {
+            R2PublicBaseUrl publicBaseUrl,
+            PublicEventService publicEventService) {
         this.eventRepository = eventRepository;
         this.r2Presigner = r2Presigner;
         this.bucketName = bucketName;
         this.publicBaseUrl = publicBaseUrl;
+        this.publicEventService = publicEventService;
     }
 
     @Override
@@ -119,6 +141,44 @@ public class EventImageServiceImpl implements EventImageService {
 
         return new EventImageUploadResponse(
                 uploadUrl, publicBaseUrl.urlOf(objectKey), objectKey, UPLOAD_URL_TTL.toSeconds());
+    }
+
+    /*
+     * 읽기 서명 (#208). **하는 일은 둘이며 순서가 있다 — 내줘도 되는지 먼저 정하고, 그 다음에
+     * 서명한다.** 서명은 곧 읽기 권한이라 만들어 두고 나중에 거르는 구조는 한 줄만 어긋나도
+     * 그대로 새어 나간다(SessionFileReferenceViewer와 같은 태도).
+     *
+     * 파일명을 먼저 보는 것은 그 값이 **오브젝트 키의 일부**이기 때문이다. 버킷에는 학술
+     * 출석 인증사진이 같이 들어 있어(ssccops#156) `../`가 낀 파일명이 키가 되면 그것이 곧
+     * 남의 얼굴 사진이다 — 형태가 어긋나면 행사를 조회하기도 전에 끊는다.
+     *
+     * **오브젝트가 실제로 있는지는 확인하지 않는다.** 서버가 PUT을 관측하지 않아 참조가 실물을
+     * 가리킨다는 보장이 애초에 없고, 확인하려면 요청마다 HeadObject가 한 번 더 나간다. 없으면
+     * R2가 404를 돌려주고 브라우저에는 깨진 이미지가 보인다.
+     */
+    @Override
+    public String viewUrlOf(Long eventId, String fileName) {
+        if (!EventImageLocation.isValidFileName(fileName)) {
+            throw new GeneralException(EventErrorCode.EVENT_IMAGE_NOT_FOUND);
+        }
+
+        // 미게시 행사·없는 행사 모두 404 EVENT_NOT_FOUND — 공개 상세와 같은 판정을 그대로 쓴다
+        publicEventService.requirePublishedEvent(eventId);
+
+        GetObjectRequest getObjectRequest =
+                GetObjectRequest.builder()
+                        .bucket(bucketName)
+                        .key(EventImageLocation.objectKeyOf(eventId, fileName))
+                        .build();
+
+        return r2Presigner
+                .presignGetObject(
+                        GetObjectPresignRequest.builder()
+                                .signatureDuration(VIEW_URL_TTL)
+                                .getObjectRequest(getObjectRequest)
+                                .build())
+                .url()
+                .toString();
     }
 
     /*

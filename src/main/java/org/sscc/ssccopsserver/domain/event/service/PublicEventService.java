@@ -33,4 +33,17 @@ public interface PublicEventService {
      * 것도 알려 줄 이유가 없다 (폼 응답의 범위 검사가 코드를 나누지 않는 것과 같은 판단).
      */
     PublicEventDetailResponse getPublishedEvent(Long eventId);
+
+    /*
+     * 그 행사가 익명에게 보이는가 — 보이지 않으면 404 EVENT_NOT_FOUND로 끊는다 (#208).
+     *
+     * 행사 이미지 리다이렉트(GET /public/v1/events/{eventId}/images/{fileName})가 서명을
+     * 만들기 전에 부른다. 상세와 **같은 판정**을 쓰는 것이 요점이다 — 이미지 쪽에 판정을 한 벌
+     * 더 적으면 "학술 event는 접수 중일 때만 공개한다"(#187) 같은 규칙이 한쪽에만 반영되고,
+     * 그 순간 상세는 404인데 포스터는 열리는 상태가 된다.
+     *
+     * 상세(getPublishedEvent)를 부르지 않는 이유는 그쪽이 확정 인원 집계까지 하기 때문이다.
+     * 이미지 한 장을 내주는 데 필요한 것은 "보이는가" 하나뿐이다.
+     */
+    void requirePublishedEvent(Long eventId);
 }

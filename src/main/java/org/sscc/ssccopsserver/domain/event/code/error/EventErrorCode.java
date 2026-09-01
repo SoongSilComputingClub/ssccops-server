@@ -165,7 +165,20 @@ public enum EventErrorCode implements ErrorCode {
      * 버킷/도메인 정책의 몫이고, 여기서 끊는 것은 화면이 업로드를 시작하기 전에 안내하기
      * 위해서다. 본문 상한(EVENT_CONTENT_TOO_LARGE)과 같은 413이지만 대상이 다르다.
      */
-    IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "IMAGE_TOO_LARGE", "이미지가 너무 큽니다.");
+    IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "IMAGE_TOO_LARGE", "이미지가 너무 큽니다."),
+
+    /*
+     * 404 — 행사 이미지 읽기 주소의 파일명이 우리가 발급한 형태가 아닐 때 (#208).
+     *
+     * 버킷은 비공개이고 읽기는 요청 시점에 서명하므로, 파일명은 곧 **무엇에 서명할지**를 정하는
+     * 값이다. `../`나 경로 구분자가 낀 값이 키가 되면 같은 버킷의 학술 인증사진을 지목할 수
+     * 있다(ssccops#156) — 그래서 형태가 어긋나면 서명을 만들기 전에 끊는다.
+     *
+     * 400이 아니라 404인 것은 이 경로의 응답을 하나로 묶기 위해서다. 미게시 행사·없는 행사가
+     * 모두 404 EVENT_NOT_FOUND인 자리에서 형태만 상태 코드가 갈리면, 그 차이가 곧 "그 파일명은
+     * 형태는 맞다"는 정보가 된다.
+     */
+    EVENT_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_IMAGE_NOT_FOUND", "행사 이미지를 찾을 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

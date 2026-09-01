@@ -119,6 +119,13 @@ public class MemberServiceImpl implements MemberService {
      */
     private final MemberInitialHistoryRecorder initialHistoryRecorder;
 
+    /*
+     * 회원 정보 변경 이력 기록 (#226). 운영진 경로와 본인 경로가 **같은 한 벌**을 쓴다 —
+     * 두 벌이 되면 경로마다 이력에 남는 항목이 갈리고, 그때부터 이 표는 "회원 정보가 언제
+     * 어떻게 바뀌었는가"에 답하지 못한다.
+     */
+    private final MemberProfileChangeRecorder profileChangeRecorder;
+
     // 프로필의 capabilities는 인가 애스펙트와 같은 정책으로 계산한다 (#9) — 두 벌로 두면 갈린다
     private final AuthorityPolicy authorityPolicy;
 
@@ -440,30 +447,51 @@ public class MemberServiceImpl implements MemberService {
     }
 
     /*
-     * 운영진의 회원 정보 수정 (#77).
+     * 운영진의 회원 정보 수정 (#77 · #226에서 학번이 열렸다).
      *
-     * 바꿀 수 있는 것은 요청 DTO가 담은 여덟 필드뿐이라 여기에 "이 필드는 무시한다"는 분기가
-     * 없다 — 등급·상태·학번은 애초에 손에 들어오지 않는다. 그것이 이 API의 계약이며, 학번은
-     * 엔티티까지 updatable = false로 잠겨 있어 두 겹으로 막힌다.
+     * 바꿀 수 있는 것은 요청 DTO가 담은 아홉 필드뿐이라 여기에 "이 필드는 무시한다"는 분기가
+     * 없다 — 등급·상태는 애초에 손에 들어오지 않는다(이력을 함께 남기는 전용 API가 있다).
+     *
+     * **학번은 #226에서 이 목록에 들어왔다.** 엔티티의 updatable = false가 풀렸고, 그 잠금이
+     * 지키던 것은 mbr_chg_hstry가 대신 지킨다 — 바뀐 항목마다 "누가 언제 무엇을 무엇으로"가
+     * 한 줄씩 남는다(MemberProfileChangeRecorder). 이력을 남기지 못하면 잠금을 풀 수 없다는
+     * 것이 이 변경의 전제이므로, 기록은 이 트랜잭션 안에 있다.
      *
      * 조회를 findWithGradeAndStatusById로 하는 것은 응답이 상세와 같은 모양이라 등급·상태의
      * 코드·명칭이 필요하기 때문이다(단건 조회와 같은 이유).
      *
      * **flush를 명시적으로 부른다.** mdfcn_dt는 JPA Auditing이 UPDATE 직전에 채우는데,
      * 트랜잭션이 끝날 때까지 flush가 미뤄지면 응답에 실리는 updatedAt이 수정 전 값이 된다 —
-     * 화면이 방금 저장한 항목만 예전 시각으로 그리게 된다.
+     * 화면이 방금 저장한 항목만 예전 시각으로 그리게 된다. 학번이 열린 뒤로는 그 flush가
+     * uk_mbr_student_number 위반을 드러내는 자리이기도 하다(아래).
      */
     @Override
     @Transactional
-    public MemberDetailResponse updateMember(Long memberId, MemberUpdateRequest request) {
+    public MemberDetailResponse updateMember(
+            Long memberId, MemberUpdateRequest request, MemberEntity changer) {
         MemberEntity member =
                 memberRepository
                         .findWithGradeAndStatusById(memberId)
                         .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
 
         String departmentName = trimToNull(request.departmentName());
-        validateAcademicProfile(member, departmentName, request.academicYear());
+        /*
+         * 학번 미입력은 빈 문자열이 아니라 NULL로 저장한다 — 가입 경로와 같은 이유이며,
+         * 빈 문자열로 채우면 두 번째 졸업 회원부터 uk_mbr_student_number 충돌이 난다.
+         */
+        String studentNumber = trimToNull(request.studentNumber());
+        /*
+         * 이 경로에서는 학번도 필수 학적 항목이다 — 바꿀 수 있게 됐으니 재학 회원의 학번을
+         * 비우는 요청은 거절해야 한다. 규칙은 가입·이관과 같은 AcademicProfilePolicy 한 벌을
+         * 그대로 부르며, 여기 두 번째 사본을 쓰지 않는다.
+         */
+        validateAcademicProfile(
+                member, studentNumber, departmentName, request.academicYear(), true);
+        validateStudentNumberAvailable(member, studentNumber);
 
+        MemberProfileSnapshot before = MemberProfileSnapshot.of(member);
+
+        member.changeStudentNumber(studentNumber);
         member.updateBasicInfo(
                 // gen_no는 NOT NULL이라 '지움'이 없다. 미배정은 가입과 같은 0 센티널이다
                 request.generationNumber() == null
@@ -480,7 +508,8 @@ public class MemberServiceImpl implements MemberService {
                 request.academicYear(),
                 trimToNull(request.phoneNumber()),
                 trimToNull(request.email()));
-        memberRepository.flush();
+        flushOrTranslateStudentNumberConflict();
+        profileChangeRecorder.record(member, before, MemberProfileSnapshot.of(member), changer);
 
         return MemberDetailResponse.of(
                 member,
@@ -523,6 +552,14 @@ public class MemberServiceImpl implements MemberService {
      * 표현하는 방법이 이것뿐이며, 엔티티에
      * 본인용 부분 수정 메서드를 하나 더 두면 '어느 필드를 바꿀 수 있는가'가 DTO와 엔티티 두
      * 곳에 적히게 된다.
+     *
+     * **학번은 여기서 건드리지 않는다** (#226). changeStudentNumber를 부르지 않으므로 현재
+     * 값이 그대로 남고, 이력에도 학번 행이 생길 수 없다 — 요청 DTO에 필드가 없다는 계약이
+     * 서비스에서도 그대로 성립한다.
+     *
+     * **이력은 운영진 경로와 같은 한 벌로 남는다** (#226). 본인 수정이면 변경자가 본인일 뿐이며,
+     * "회원 정보가 언제 어떻게 바뀌었는가"를 답하는 표라 경로로 가르지 않는다. 변경자로 넘기는
+     * member는 대상 회원 그 자신인데, 이 경로에서는 대상이 곧 인증 주체라 그것이 사실이다.
      */
     @Override
     @Transactional
@@ -533,7 +570,15 @@ public class MemberServiceImpl implements MemberService {
                         .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
 
         String departmentName = trimToNull(request.departmentName());
-        validateAcademicProfile(member, departmentName, request.academicYear());
+        /*
+         * 학번은 이 경로로 바꿀 수 없으므로 필수 학적 항목에서 뺀다(마지막 인자 false).
+         * 넣으면 학번이 비어 있는 재학 회원(CSV 이관이 경고로만 통과시킨 행)이 자기 연락처조차
+         * 고칠 수 없게 된다 — 고칠 수 없는 값 때문에 고칠 수 있는 값이 막히는 셈이다.
+         */
+        validateAcademicProfile(
+                member, member.getStudentNumber(), departmentName, request.academicYear(), false);
+
+        MemberProfileSnapshot before = MemberProfileSnapshot.of(member);
 
         member.updateBasicInfo(
                 member.getGenerationNumber(),
@@ -545,6 +590,7 @@ public class MemberServiceImpl implements MemberService {
                 trimToNull(request.phoneNumber()),
                 member.getEmail());
         memberRepository.flush();
+        profileChangeRecorder.record(member, before, MemberProfileSnapshot.of(member), member);
 
         return MemberProfileResponse.of(
                 member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
@@ -621,25 +667,72 @@ public class MemberServiceImpl implements MemberService {
      * 기준 코드 테이블에 enum 밖의 상태가 늘어난 경우(from이 null)는 규칙 밖으로 둔다 —
      * 조건부 필수는 재학 하나에만 걸리는 규칙이라 모르는 상태를 재학처럼 다룰 근거가 없다.
      */
+    /*
+     * @param studentNumberEditable 이 경로가 학번을 바꿀 수 있는가. 운영진 경로는 true,
+     *     본인 경로는 false다 (#226 전에는 어느 경로도 바꿀 수 없어 언제나 false였다)
+     */
     private static void validateAcademicProfile(
-            MemberEntity member, String departmentName, Integer academicYear) {
+            MemberEntity member,
+            String studentNumber,
+            String departmentName,
+            Integer academicYear,
+            boolean studentNumberEditable) {
         MemberStatusCode statusCode = MemberStatusCode.from(member.getMembershipStatus().getCode());
         if (statusCode == null) {
             return;
         }
 
-        boolean missingUpdatableField =
+        /*
+         * **고칠 수 없는 항목 때문에 저장을 막지는 않는다.** 이 경로로 바꿀 수 없는 학번이
+         * 비어 있다는 이유로 400을 내면, 학번 없이 이관된 재학 회원은 자기 연락처조차 고칠 수
+         * 없다 — 고칠 방법을 주지 않은 채 막기만 하는 셈이다. 학번이 열린 경로(운영진, #226)
+         * 에서는 반대로 반드시 봐야 한다: 재학 회원의 학번을 비우는 요청은 거절해야 한다.
+         */
+        boolean missingBlockingField =
                 AcademicProfilePolicy.missingRequiredFields(
-                                statusCode, member.getStudentNumber(), departmentName, academicYear)
+                                statusCode, studentNumber, departmentName, academicYear)
                         .stream()
                         .anyMatch(
                                 field ->
-                                        field
-                                                != AcademicProfilePolicy.AcademicField
-                                                        .STUDENT_NUMBER);
+                                        studentNumberEditable
+                                                || field
+                                                        != AcademicProfilePolicy.AcademicField
+                                                                .STUDENT_NUMBER);
 
-        if (missingUpdatableField) {
+        if (missingBlockingField) {
             throw new GeneralException(MemberErrorCode.ACADEMIC_PROFILE_REQUIRED);
+        }
+    }
+
+    /*
+     * 다른 회원이 쓰고 있는 학번인가 (#226).
+     *
+     * 자기 자신의 현재 값은 통과시킨다 — 전체 교체 API라 바꾸지 않는 저장에도 지금 학번이
+     * 그대로 실려 오고, 그것을 중복으로 보면 이름만 고치는 저장이 통째로 막힌다.
+     *
+     * **선조회만으로 끝내지 않는다.** 두 요청이 같은 학번을 동시에 내면 둘 다 이 검사를
+     * 통과하므로, UNIQUE 위반(flushOrTranslateStudentNumberConflict)도 같은 409로 옮긴다 —
+     * 가입이 이미 하는 방식이다.
+     */
+    private void validateStudentNumberAvailable(MemberEntity member, String studentNumber) {
+        if (studentNumber == null || studentNumber.equals(member.getStudentNumber())) {
+            return;
+        }
+        if (memberRepository.existsByStudentNumber(studentNumber)) {
+            throw new GeneralException(MemberErrorCode.STUDENT_NUMBER_DUPLICATED);
+        }
+    }
+
+    /*
+     * 회원 정보 수정의 flush (#226). 가입의 saveOrTranslateConflict와 나눈 것은 여기서 날 수
+     * 있는 UNIQUE 위반이 학번 하나뿐이기 때문이다 — auth_user_id는 이 경로가 건드리지 않으므로
+     * 제약명을 읽지 못한 경우의 기본값을 '이미 가입된 계정'으로 두면 사실이 아닌 안내가 된다.
+     */
+    private void flushOrTranslateStudentNumberConflict() {
+        try {
+            memberRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            throw new GeneralException(MemberErrorCode.STUDENT_NUMBER_DUPLICATED);
         }
     }
 

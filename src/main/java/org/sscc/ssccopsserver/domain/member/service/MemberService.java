@@ -99,18 +99,27 @@ public interface MemberService {
     /*
      * 운영진의 회원 정보 수정 (PATCH /v1/members/{mbrId}, #77).
      *
-     * 바꾸는 것은 요청 DTO에 있는 여섯 필드뿐이다 — 등급·상태는 이력을 함께 남겨야 해 전용
-     * API가 따로 있고(#78), 학번은 updatable = false로 잠겨 있다. **막는 방법이 DTO에 필드를
-     * 두지 않는 것**이라 이 메서드에는 무시하는 분기가 없다.
+     * 바꾸는 것은 요청 DTO에 있는 필드뿐이다 — 등급·상태는 이력을 함께 남겨야 해 전용 API가
+     * 따로 있다(#78). **막는 방법이 DTO에 필드를 두지 않는 것**이라 이 메서드에는 무시하는
+     * 분기가 없다.
      *
-     * 재학 회원의 학과·학년 필수는 가입·CSV 이관과 같은 규칙(AcademicProfilePolicy)을
+     * **학번은 #226에서 열렸다.** 엔티티의 updatable = false를 풀었고, 그 잠금이 지키던 것은
+     * 변경 이력(mbr_chg_hstry)이 대신 지킨다 — 바뀐 항목마다 한 줄씩 남으며 그래서 이 메서드가
+     * 변경자를 받는다. 다른 회원이 쓰는 학번은 409, 재학 회원의 학번을 비우면 400이다.
+     *
+     * 재학 회원의 학번·학과·학년 필수는 가입·CSV 이관과 같은 규칙(AcademicProfilePolicy)을
      * 쓴다. 요청에는 상태가 없으므로 회원을 읽어 그 상태로 판정한다 — 없는 회원은 404,
      * 어긴 값은 400 VALIDATION_FAILED다.
      *
      * 응답이 조회(getMemberDetail)와 같은 MemberDetailResponse인 것은 수정 화면이 저장 직후
      * 상세를 다시 조회하지 않아도 되게 하기 위해서다.
      */
-    MemberDetailResponse updateMember(Long memberId, MemberUpdateRequest request);
+    /**
+     * @param changer 변경 이력의 변경자(chnrg_mbr_id). 요청 본문이 아니라 @CurrentMember에서 온다 — 받아 주면 스스로 적어 넣을 수
+     *     있어 이력이 증거가 되지 못한다 (#78 규칙)
+     */
+    MemberDetailResponse updateMember(
+            Long memberId, MemberUpdateRequest request, MemberEntity changer);
 
     /*
      * 동아리 가입 연도로 기수를 계산한다 (GET /v1/members/generation, #205).

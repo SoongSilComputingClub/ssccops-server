@@ -38,6 +38,18 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
 
 **주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — 지금은 `prod`도 `update`라 두 환경의 제약이 같다. 리네임·삭제가 필요한 변경을 만들면 dev DB에도 수동 `ALTER`가 필요할 수 있다(지금은 개발 단계라 드리프트가 쌓이면 통째로 재생성해도 되지만, 늘어날수록 이 트레이드오프가 부담이 된다 — Flyway/Liquibase 도입을 그때 검토한다). **`ddl-auto: update`로도 근본 원인은 해결되지 않았다** — 실제로는 부팅 중 Hibernate가 EntityManagerFactory(당시 엔티티 26종 메타모델)를 만드는 도중 컨테이너가 OOM으로 죽고 있었다(`exit 137`, ssccops-server#107). 그때는 `Dockerfile`의 `ENTRYPOINT`에 JVM 메모리 플래그를 명시해 막았지만, **배포가 Render 무료 티어(512MB)에서 Coolify(13.6GB)로 옮겨오며 그 제약이 사라져 플래그도 걷어냈다**(#202). 지금은 JVM 기본값에 맡긴다 — 엔티티는 39종으로 늘었지만 메모리 여유가 그보다 훨씬 크다. **나중에 컨테이너 메모리를 좁게 제한하게 되면 이 절을 다시 볼 것** (`exit 137`이 재발하면 힙 밖 메모리부터 의심한다).
 
+## 결정 기록 (ADR)
+
+되돌리기 어려운 결정 — 여러 컴포넌트에 걸치거나 운영·보안에 영향을 주는 것 — 은 기획 저장소의
+**[`ssccops/docs/decisions/`](https://github.com/SoongSilComputingClub/ssccops/tree/main/docs/decisions)**
+에 한 장씩 남긴다. 목차와 쓰는 법은 그 저장소의 `AGENTS.md`에 있다.
+
+**논의는 `[DECISION]` 이슈에서, 확정은 ADR 파일로.** 이슈는 ADR 링크 없이 닫지 않는다.
+
+이 저장소의 판단 중 ADR로 올라갈 것과 여기 남을 것을 가른다 — **ADR은 '왜', 코드 주석은
+'어떻게'**다. 주석에서 ADR을 가리키면(`ADR-0003 참고`) 둘이 갈라지지 않는다. 아래 절들은
+여전히 이 저장소의 규칙이며 ADR로 옮기지 않는다.
+
 ## 아키텍처
 
 패키지 루트는 `org.sscc.ssccopsserver` (Gradle group도 `org.sscc`) — SSCC 동아리 프로젝트이므로 Spring Initializr 기본값(`com.example`)을 쓰지 않는다.
@@ -229,10 +241,10 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
 
 ## 커밋 · 브랜치 · PR 컨벤션
 
-`.github/workflows/`가 강제하는 것과 사람이 지켜야 하는 규칙이 나뉜다 (자세한 배경은 로컬 전용 `.private-workspace/CONTRIBUTING.md` 참고 — git에는 포함되지 않음):
+`.github/workflows/`가 강제하는 것과 사람이 지켜야 하는 규칙이 나뉜다 (자세한 배경은 로컬 전용 `private-workspace/CONTRIBUTING.md` 참고 — git에는 포함되지 않음):
 
-- 브랜치: 이슈 생성 시 `issue-branch-creator.yml`이 제목 앞 태그(`[Feat]`/`[Fix]`/`[Refactor]`)를 읽어 `{type}/#{이슈번호}-{슬러그}` 형식으로 자동 생성. 직접 만들어야 한다면 같은 형식을 따른다.
-- 커밋 메시지: 이슈가 있으면 `#{이슈번호} {type}({scope}): 설명`, 없으면 `{type}({scope}): 설명`. 타입은 `pr-labeler.yml`이 그대로 파싱해 PR 라벨을 붙이므로 표기를 벗어나면 라벨이 안 붙는다 — `feat`/`fix`/`refactor`/`design`/`style`/`docs`/`test`/`chore`/`init`/`rename`/`remove`/`cicd`/`hotfix`.
+- 브랜치: 이슈 생성 시 `issue-branch-creator.yml`이 제목 앞 태그(`[FEAT]`/`[FIX]`/`[REFACTOR]`)를 읽어 `{type}/#{이슈번호}-{슬러그}` 형식으로 자동 생성. 직접 만들어야 한다면 같은 형식을 따른다.
+- 커밋 메시지: 이슈가 있으면 `#{이슈번호} {type}({scope}): 설명`, 없으면 `{type}({scope}): 설명`. 타입은 `feat`/`fix`/`refactor`/`design`/`style`/`docs`/`test`/`chore`/`init`/`rename`/`remove`/`cicd`/`hotfix`. **PR의 타입 라벨은 연결된 이슈의 라벨에서만 온다**(`pr-labeler.yml`) — 커밋 표기는 라벨에 아무 영향을 주지 않으므로, 표기를 지키는 이유는 `git log`가 읽히기 때문이다. 이슈를 연결하지 않은 PR에는 타입 라벨이 붙지 않는다.
 - PR 제목은 `[#이슈번호] 총 작업 내용` — Squash merge 시 그대로 커밋 제목이 되므로 형식을 반드시 지킨다. 이 레포는 Squash and merge만 사용.
 - `main`으로 향하는 PR은 `integrate-prod.yml`이 Spotless → Checkstyle → Test/JaCoCo → SonarQube Quality Gate → `bootJar` 순서로 실행되며, Quality Gate를 통과하지 못하면 머지할 수 없다.
 - **배포는 저장소가 하지 않는다** (#202). Coolify가 GitHub App으로 이 저장소를 직접 보고 있어, `develop` 푸시는 dev로 `main` 푸시는 prod로 **자동 배포**된다. 이미지도 Coolify가 레포의 멀티스테이지 `Dockerfile`로 직접 빌드하므로 GHCR을 거치지 않는다.

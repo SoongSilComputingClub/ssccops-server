@@ -1,23 +1,99 @@
 name: "✨ Feat"
 description: "새로운 기능 추가"
+title: "[FEAT] "
 labels: ["feat"]
 type: SubTask
 body:
+  - type: markdown
+    attributes:
+      value: |
+        제목 앞 `[FEAT]`을 **지우지 마세요.** 이 접두사로 브랜치(`feat/#번호-...`)와 라벨이 자동 생성됩니다.
+        생성 후 상단 **Parent issue**에서 `ssccops`의 Story·Task를 연결하세요 (cross-repo 가능).
+
   - type: textarea
+    id: description
     attributes:
       label: 📄 설명
-      description: 새로운 기능에 대한 설명을 작성해 주세요.
-      placeholder: 자세히 적을수록 좋습니다!
+      description: |
+        **무엇을 만드는가**보다 **왜 필요한가**를 먼저 적습니다.
+        지금 무엇이 안 되고 있는지, 이것이 생기면 무엇이 달라지는지.
+      placeholder: |
+        기획안 시스템 폼 시드가 기동 때만 돌아, 회원이 없는 환경은 다음 기동까지 폼이 없다.
+        로컬은 `ddl-auto: create-drop`이라 그 '다음 기동'이 방금 만든 회원을 함께 지워
+        어떤 순서로도 폼이 서지 못한다.
     validations:
       required: true
+
   - type: textarea
+    id: work
     attributes:
       label: ✅ 작업할 내용
-      description: 할 일을 체크박스 형태로 작성해주세요.
-      placeholder: 최대한 세분화 해서 적어주세요!
+      description: |
+        체크박스로 씁니다. **각 항목에 "왜 이렇게"를 한 줄 붙이면** 구현할 때 판단이 흔들리지 않습니다.
+      value: |
+        - [ ]
+        - [ ]
+      placeholder: |
+        - [ ] 회원 생성 이벤트를 `MemberEntity`의 `@DomainEvents`로 낸다 — 서비스마다 발행을 심으면
+              새 경로가 조용히 빠뜨린다
+        - [ ] 시더가 `@TransactionalEventListener(AFTER_COMMIT)`로 듣는다 — 가입이 롤백되면
+              생성자로 삼은 회원이 사라지는데 폼만 남는다
+        - [ ] 기동 경로(`ApplicationRunner`)는 유지한다 — 회원은 있는데 폼이 없는 기존 DB용
     validations:
       required: true
+
   - type: textarea
+    id: rejected
+    attributes:
+      label: 🚫 검토했으나 택하지 않은 길
+      description: |
+        **이 저장소에서 가장 값나가는 칸입니다.** 코드 주석이 늘 기각한 대안을 적는 것과 같은 이유로,
+        이슈에도 남깁니다 — 구현하는 사람이 "그냥 이렇게 하면 되지 않나"에 다시 부딪히지 않습니다.
+        아직 대안을 안 따져봤으면 비워 두세요.
+      placeholder: |
+        | 후보 | 왜 안 되는가 |
+        |---|---|
+        | 시드를 `data.sql`로 옮긴다 | 문항 구성이 JSONB라 H2와 PostgreSQL이 같은 리터럴을 다르게 읽는다 |
+        | `creatr_mbr_id`를 NULL 허용 | 목록 질의의 `join fetch f.creator`가 그 폼을 통째로 뺀다 |
+    validations:
+      required: false
+
+  - type: textarea
+    id: precheck
+    attributes:
+      label: 🔍 먼저 확인할 것
+      description: |
+        착수 전에 **실측**이 필요한 것. 여기 적힌 결과에 따라 작업 범위가 달라지는 항목만 씁니다.
+      placeholder: |
+        - [ ] dev에 폼이 실제로 서 있는가 — `GET /v1/forms/system/PROPOSAL`이 200인지 404인지.
+              404라면 이 이슈는 지금 dev를 막고 있는 문제다
+    validations:
+      required: false
+
+  - type: textarea
+    id: ddl
+    attributes:
+      label: 🗄 배포 전 수동 DDL
+      description: |
+        **`dev`·`prod`는 `ddl-auto: update`라 컬럼 삭제·이름 변경·타입 변경·제약 변경을 반영하지 않습니다.**
+        (새 테이블·컬럼·인덱스 추가는 자동입니다.) 그런 변경이 있으면 배포 전에 실행할 SQL을 여기 적으세요.
+        해당 없으면 비워 둡니다 — 비어 있다는 것이 "확인했고 필요 없다"는 뜻이 되도록 씁니다.
+      render: sql
+      placeholder: |
+        ALTER TABLE form_rspns_hstry DROP CONSTRAINT uk_form_rspns_hstry_form_member;
+        ALTER TABLE form_rspns_hstry ADD CONSTRAINT uk_form_rspns_hstry_form_member_seq
+            UNIQUE (form_id, mbr_id, rspns_seq);
+    validations:
+      required: false
+
+  - type: textarea
+    id: refs
     attributes:
       label: 🙋🏻 참고 자료
-      description: 참고 자료가 있다면 작성해 주세요.
+      description: 상위 이슈, 관련 코드 경로, 선행 이슈, 설계 문서.
+      placeholder: |
+        - 상위: SoongSilComputingClub/ssccops#152
+        - `domain/form/service/ProposalFormSeeder.java` (#173)
+        - 선행: #173 (시드가 있어야 이 경로가 성립한다)
+    validations:
+      required: false

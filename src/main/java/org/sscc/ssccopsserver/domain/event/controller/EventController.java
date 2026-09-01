@@ -166,12 +166,15 @@ public class EventController {
             summary = "행사 본문 이미지 업로드 URL 발급",
             description =
                     "R2로 직접 PUT 할 presigned URL을 발급한다(서버는 파일을 받지 않는다)."
-                            + " 웹은 uploadUrl로 요청 본문의 contentType과 **같은 Content-Type 헤더를 붙여**"
-                            + " 한 번 PUT 하고, 본문 마크다운에는 imageUrl을 넣는다."
+                            + " 요청은 확장자(fileExt)와 크기(fileSize)뿐이며 형식은 서버가 정한다 —"
+                            + " 앞의 점·대소문자는 서버가 정규화하므로 jpg·.JPG·jpeg 모두 같은 형식이다."
+                            + " 웹은 uploadUrl로 **응답의 contentType을 그대로 Content-Type 헤더에 붙여**"
+                            + " 한 번 PUT 한다(파일에서 다시 읽으면 서명과 어긋난다)."
+                            + " 본문 마크다운에는 imageUrl을 넣는다."
                             + " imageUrl은 만료되지 않는 우리 API의 주소이며, 열릴 때마다 서명된"
                             + " R2 GET URL로 302 리다이렉트된다(버킷은 비공개다)."
-                            + " 허용 형식은 image/png·image/jpeg·image/webp·image/gif이며 확장자와"
-                            + " 어긋나면 400 UNSUPPORTED_IMAGE_TYPE, 10MB를 넘으면 413 IMAGE_TOO_LARGE,"
+                            + " 허용 확장자는 png·jpg·jpeg·webp·gif이며 그 밖의 확장자는"
+                            + " 400 UNSUPPORTED_IMAGE_TYPE, 10MB를 넘으면 413 IMAGE_TOO_LARGE,"
                             + " 없는 행사는 404 EVENT_NOT_FOUND다."
                             + " uploadUrl은 expiresInSeconds 뒤 만료되므로 저장해 두고 재사용하지 않는다.")
     @PostMapping("/{eventId}/images")

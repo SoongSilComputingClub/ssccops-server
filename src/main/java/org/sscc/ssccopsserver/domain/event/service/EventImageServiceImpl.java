@@ -138,6 +138,9 @@ public class EventImageServiceImpl implements EventImageService {
         /*
          * contentType까지 서명에 넣으므로 웹은 **같은 Content-Type 헤더로** PUT 해야 한다.
          * 서명에서 빼면 허가받은 URL로 아무 형식이나 올릴 수 있어 위의 형식 검사가 무의미해진다.
+         *
+         * 그 '같은 값'을 웹이 짐작하지 않게 응답에도 싣는다 (#210) — 서명에 쓴 것은 이 표의
+         * 값이고, 브라우저가 파일에서 읽는 값은 그와 다를 수 있다.
          */
         PutObjectRequest putObjectRequest =
                 PutObjectRequest.builder()
@@ -156,8 +159,17 @@ public class EventImageServiceImpl implements EventImageService {
                         .url()
                         .toString();
 
+        /*
+         * 서명에 쓴 contentType을 그대로 돌려준다 (#210). 웹이 파일에서 다시 읽으면
+         * (`File.type`) 비거나 비표준인 값이 나와 서명과 어긋나고, 그 PUT은 R2에서 조용히
+         * 거절된다 — 서버 로그에는 아무것도 남지 않는다(ssccops#157).
+         */
         return new EventImageUploadResponse(
-                uploadUrl, imageUrl, objectKey, UPLOAD_URL_TTL.toSeconds());
+                uploadUrl,
+                imageUrl,
+                objectKey,
+                imageType.getContentType(),
+                UPLOAD_URL_TTL.toSeconds());
     }
 
     /*
@@ -199,18 +211,21 @@ public class EventImageServiceImpl implements EventImageService {
     }
 
     /*
-     * contentType과 확장자를 둘 다 보고 서로 맞아야 통과시킨다 — 한쪽만 보면 `evil.html`을
-     * image/png라고 주장하거나 그 반대로 통과시킬 수 있다. 허용 목록 자체는 EventImageType이
-     * 갖는다(형식을 늘리는 자리를 한 곳으로 묶는다).
+     * **확장자 하나로 형식을 정한다** (#210 · ssccops#157). 예전에는 요청이 실어 보낸
+     * contentType과 파일명의 확장자를 둘 다 보고 서로 맞아야 통과시켰는데, 그 교차 검증은
+     * 지킬 것을 지키지 못하면서 멀쩡한 업로드만 막았다 — 서버는 바이트를 보지 않으므로 어느
+     * 쪽도 파일의 진짜 정체가 아니라 **요청이 한 신고**이고, `evil.html`을 `poster.png` ·
+     * `image/png`로 신고하면 둘 다 맞아떨어져 그대로 통과한다. 반대로 브라우저가 채우는
+     * `File.type`은 비거나(`""`) 비표준(`image/jpg`)일 수 있어, 진짜 PNG를 올리는 요청이
+     * 400으로 튕겼다.
+     *
+     * 그래서 판정에 쓰는 값을 하나로 줄인다 — 어긋날 값이 하나뿐이면 어긋날 수 없다. 형식은
+     * 서버가 이 표에서 끌어와 서명과 응답에 함께 쓰고, 웹은 그 값을 헤더에 옮겨 적기만 한다
+     * (학술 인증사진 SessionFileReferenceServiceImpl과 같은 모양). 허용 목록 자체는
+     * EventImageType이 갖는다(형식을 늘리는 자리를 한 곳으로 묶는다).
      */
     private EventImageType resolveImageType(EventImageUploadRequest request) {
-        EventImageType imageType =
-                EventImageType.ofContentType(request.contentType())
-                        .orElseThrow(
-                                () -> new GeneralException(EventErrorCode.UNSUPPORTED_IMAGE_TYPE));
-        if (!imageType.matchesExtension(request.fileExtension())) {
-            throw new GeneralException(EventErrorCode.UNSUPPORTED_IMAGE_TYPE);
-        }
-        return imageType;
+        return EventImageType.ofFileExtension(request.normalizedFileExt())
+                .orElseThrow(() -> new GeneralException(EventErrorCode.UNSUPPORTED_IMAGE_TYPE));
     }
 }

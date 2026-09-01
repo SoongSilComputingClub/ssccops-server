@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.UUID;
@@ -24,7 +23,6 @@ import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
-import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
@@ -33,7 +31,6 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepos
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
-import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
@@ -106,9 +103,15 @@ class AcademicProgramApprovalEffectsServiceImplTest {
                 .contains("프로젝트장");
     }
 
-    // 역할 부여가 실패하면(이미 겹치는 기간에 같은 역할을 갖고 있음) 폼도 만들어지지 않는다
+    /*
+     * 이미 리더 역할을 갖고 있어도 승인 후속 처리는 끝까지 간다.
+     *
+     * 한 사람이 스터디를 둘 이상 이끄는 것은 정상이므로, 역할 부여는 건너뛰되 모집 폼은 만들어져야
+     * 한다 — 여기서 실패하면 부작용 하나 때문에 기획안 승인 자체가 롤백된다. 배정이 **늘지 않는
+     * 것**까지 함께 못 박는다: 통과만 확인하면 중복 배정이 쌓이는 구현도 이 테스트를 지난다.
+     */
     @Test
-    void doesNotCreateFormWhenLeaderRoleAssignmentFails() {
+    void skipsLeaderRoleAssignmentWhenAlreadyAssigned() {
         MemberEntity leader = saveMember("20260403", "이미리더");
         // 오늘부터 무기한으로 이미 스터디장 역할을 갖고 있다 — 새 배정과 기간이 겹친다
         MemberRoleFixture.assign(
@@ -120,16 +123,18 @@ class AcademicProgramApprovalEffectsServiceImplTest {
 
         AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "중복 리더 스터디", leader);
         long formCountBefore = formRepository.count();
+        int assignmentCountBefore =
+                memberRoleAssignmentRepository.findCurrentByMemberId(leader.getId()).size();
 
-        assertThatThrownBy(() -> effectsService.applyPostApprovalEffects(academicProgram))
-                .isInstanceOf(GeneralException.class)
-                .satisfies(
-                        ex ->
-                                assertThat(((GeneralException) ex).getErrorCode())
-                                        .isEqualTo(MemberErrorCode.ROLE_ALREADY_ASSIGNED));
+        effectsService.applyPostApprovalEffects(academicProgram);
+        flushAndClear();
 
-        assertThat(formRepository.count()).isEqualTo(formCountBefore);
-        assertThat(academicProgram.getEvent().getForm()).isNull();
+        // 배정은 늘지 않는다 — 이미 가진 역할을 한 벌 더 만들지 않는다
+        assertThat(memberRoleAssignmentRepository.findCurrentByMemberId(leader.getId()))
+                .hasSize(assignmentCountBefore);
+        // 그래도 모집 폼은 만들어진다 — 승인 본체가 롤백되지 않는다
+        assertThat(formRepository.count()).isEqualTo(formCountBefore + 1);
+        assertThat(academicProgram.getEvent().getForm()).isNotNull();
     }
 
     // ------------------------------------------------------------------ 헬퍼

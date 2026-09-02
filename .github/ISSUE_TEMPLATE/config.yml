@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/SoongSilComputingClub/ssccops/issues/new/choose
     about: 이 리포는 Sub-task 전용입니다. 요구사항·결함 정의는 ssccops에서 하고, 그 이슈를 Parent로 연결하세요
   - name: 📖 이슈 · 칸반 운영 가이드
-    url: https://github.com/SoongSilComputingClub/ssccops/blob/main/docs/project/issue-and-board-guide.md
+    url: https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/project/issue-and-board-guide.md
     about: 어떤 템플릿을 언제 쓰는지, 제목 접두어가 브랜치·라벨을 어떻게 정하는지

@@ -58,7 +58,21 @@ public class AcademicProgramController {
                 academicProgramService.getAcademicProgram(academicProgramId, viewer));
     }
 
-    @Operation(summary = "활동 목록 조회", description = "스터디·프로젝트 목록 화면, 대시보드 상태별 카운트 겸용. 커서 페이징이다.")
+    /*
+     * 목록 조회 (#131). mine 필터가 역할을 함께 받는 이유는 AcademicProgramMineRole 주석에 있다
+     * (#215) — mine=true는 스터디장과 제출자를 함께 주는데 isLeader는 리더만 참이라, 두 값의
+     * 기준이 다르다는 것을 모르면 목록 길이로 "스터디장인가"를 판정하게 된다.
+     */
+    @Operation(
+            summary = "활동 목록 조회",
+            description =
+                    "스터디·프로젝트 목록 화면, 대시보드 상태별 카운트 겸용. 커서 페이징이다."
+                            + " mine은 역할 표기다 — mine=true는 **스터디장 또는 기획안 제출자**(지금까지의 동작),"
+                            + " mine=leader는 스터디장/팀장 본인, mine=proposer는 제출자 본인의 활동만 본다."
+                            + " mine 없음·빈 값·mine=false는 필터를 걸지 않고, 그 밖의 값은 400"
+                            + " INVALID_CODE_VALUE다. **\"이 사람이 스터디장인가\"를 판정할 때는 mine=true가"
+                            + " 아니라 mine=leader를 쓴다** — true는 제출만 한 회원에게도 결과를 주고, 그 행들은"
+                            + " isLeader가 전부 false다.")
     @GetMapping
     public ApiResponse<List<AcademicProgramSummaryResponse>> searchAcademicPrograms(
             @Valid @ModelAttribute AcademicProgramCondition condition,

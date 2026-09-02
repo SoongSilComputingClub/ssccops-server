@@ -13,10 +13,9 @@ import org.junit.jupiter.api.Test;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.file.service.FilePresigner;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
-
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 
 /*
  * 발급·읽기 두 경로에서 **서명을 만들기 전에 무엇을 확인하는가**를 못 박는다 (#161 · #208).
@@ -28,26 +27,15 @@ import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 class EventImageServiceImplTest {
 
     private final EventRepository eventRepository = mock(EventRepository.class);
-    private final S3Presigner r2Presigner = mock(S3Presigner.class);
+    private final FilePresigner filePresigner = mock(FilePresigner.class);
     private final PublicEventService publicEventService = mock(PublicEventService.class);
 
     /*
-     * app.public-base-url이 비면 **발급이 거절된다**.
-     *
-     * 조용히 넘어가지 않는 이유는 이 값으로 만든 주소가 행사 본문 마크다운에 문자열로 굳기
-     * 때문이다 — 잘못된 주소가 저장되면 본문을 전부 치환하는 것 말고는 고칠 방법이 없다(#200에서
-     * 실제로 그렇게 됐다). 요청을 실패시키면 저장될 값이 애초에 만들어지지 않는다.
+     * **app.public-base-url이 빈 경우는 여기서 보지 않는다** (#216). 그 값이 없는 서버는 아예
+     * 뜨지 않으므로(AppPublicBaseUrl 생성자) 발급 경로가 빈 값을 만날 수 없다 — 도달할 수 없는
+     * 상황을 여기서 검증하면 그 테스트가 곧 "부팅해도 된다"는 잘못된 약속이 된다.
+     * 부팅이 실패하는 것 자체는 AppPublicBaseUrlTest가 본다.
      */
-    @Test
-    void issuingIsRefusedWhenAppPublicBaseUrlIsBlank() {
-        when(eventRepository.existsById(1L)).thenReturn(true);
-        EventImageServiceImpl service = service(new AppPublicBaseUrl(""));
-
-        assertThatThrownBy(
-                        () -> service.issueUploadUrl(1L, new EventImageUploadRequest("png", 1024L)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("app.public-base-url");
-    }
 
     /*
      * 형식 판정은 **서명보다 먼저다** (#210). 확장자 하나로 끝나므로 여기서 거절되면 업로드
@@ -68,7 +56,7 @@ class EventImageServiceImplTest {
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(EventErrorCode.UNSUPPORTED_IMAGE_TYPE);
 
-        verifyNoInteractions(r2Presigner);
+        verifyNoInteractions(filePresigner);
     }
 
     /*
@@ -85,7 +73,7 @@ class EventImageServiceImplTest {
                 .isEqualTo(EventErrorCode.EVENT_IMAGE_NOT_FOUND);
 
         verifyNoInteractions(publicEventService);
-        verifyNoInteractions(r2Presigner);
+        verifyNoInteractions(filePresigner);
     }
 
     /*
@@ -104,11 +92,11 @@ class EventImageServiceImplTest {
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(EventErrorCode.EVENT_NOT_FOUND);
 
-        verifyNoInteractions(r2Presigner);
+        verifyNoInteractions(filePresigner);
     }
 
     private EventImageServiceImpl service(AppPublicBaseUrl appPublicBaseUrl) {
         return new EventImageServiceImpl(
-                eventRepository, r2Presigner, "test-bucket", appPublicBaseUrl, publicEventService);
+                eventRepository, filePresigner, appPublicBaseUrl, publicEventService);
     }
 }

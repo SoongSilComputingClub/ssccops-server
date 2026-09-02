@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.MemberChangeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -36,6 +37,7 @@ class MemberServiceImplTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private MemberChangeHistoryRepository memberChangeHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
 
     private MemberService memberService() {
@@ -49,6 +51,7 @@ class MemberServiceImplTest {
                 memberStatusHistoryRepository,
                 new MemberInitialHistoryRecorder(
                         memberGradeHistoryRepository, memberStatusHistoryRepository),
+                new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                 authorityPolicy,
                 new MemberLinkAttemptLimiter(Clock.systemDefaultZone()),
                 Clock.systemDefaultZone());

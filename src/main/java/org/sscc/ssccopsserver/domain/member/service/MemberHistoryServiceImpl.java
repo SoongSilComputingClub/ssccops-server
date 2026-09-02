@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.MemberHistorySource;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.dto.MemberChangeHistoryResponse;
+import org.sscc.ssccopsserver.domain.member.repository.MemberChangeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
@@ -25,14 +26,15 @@ public class MemberHistoryServiceImpl implements MemberHistoryService {
     private final MemberGradeHistoryRepository memberGradeHistoryRepository;
     private final MemberStatusHistoryRepository memberStatusHistoryRepository;
     private final MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    private final MemberChangeHistoryRepository memberChangeHistoryRepository;
 
     // 역할 사건의 발생 시각을 날짜에서 만들 때 쓰는 시간대 (AP-12 — 서비스 표준 시간대)
     private final Clock clock;
 
     /*
-     * 세 출처를 합쳐 발생 시각 역순으로 내린다 (#82).
+     * 네 출처를 합쳐 발생 시각 역순으로 내린다 (#82 · #226에서 프로필 변경이 합류했다).
      *
-     * **페이징을 두지 않는다.** 세 테이블을 합치므로 단일 컬럼 커서가 성립하지 않고,
+     * **페이징을 두지 않는다.** 네 테이블을 합치므로 단일 컬럼 커서가 성립하지 않고,
      * (occurredAt, historyType, id) 복합 커서를 인코딩하려면 세 출처의 식별자 공간이 서로
      * 다르다는 사실까지 커서에 담아야 한다 — 그렇게 만든 커서는 출처를 하나 더 늘리는 순간
      * 형식이 깨진다. 한 회원의 이력은 가입 이력 두 건에 등급·상태 변경 몇 건, 역할 임기
@@ -68,6 +70,10 @@ public class MemberHistoryServiceImpl implements MemberHistoryService {
                         : List.of(),
                 sources.contains(MemberHistorySource.ROLE)
                         ? memberRoleAssignmentRepository.findAllByMemberId(memberId)
+                        : List.of(),
+                sources.contains(MemberHistorySource.PROFILE)
+                        ? memberChangeHistoryRepository.findByMemberIdOrderByCreatedAtDescIdDesc(
+                                memberId)
                         : List.of(),
                 clock.getZone());
     }

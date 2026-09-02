@@ -206,6 +206,8 @@ public class MemberController {
                             + " 기수와 이메일은 이 경로로 바꿀 수 없다 — 기수는 운영진이 배정하는 값이고,"
                             + " 이메일은 인증 계정에서 오므로 본인이 바꾸면 로그인 계정과 갈린다."
                             + " 등급·상태·학번도 바꿀 수 없다(요청 본문에 필드 자체가 없다)."
+                            + " 학번은 운영진 경로에서만 열려 있다(#226) — 신원 식별자이고 계정 연결 판정의 재료다."
+                            + " 바뀐 항목은 운영진 경로와 같은 회원 변경 이력에 남으며 그때 변경자는 본인이다."
                             + " 재학 회원이 학과·학년을 비우면 400 VALIDATION_FAILED다."
                             + " 응답은 세션 조회(GET /v1/auth/session)의 member 블록과 같은 모양이라"
                             + " 저장 직후 세션을 다시 조회할 필요가 없다.")
@@ -217,25 +219,37 @@ public class MemberController {
     }
 
     /*
-     * 운영진의 회원 정보 수정 (#77).
+     * 운영진의 회원 정보 수정 (#77 · #226에서 학번이 열렸다).
      *
-     * 바꿀 수 있는 필드는 요청 DTO가 정한다 — 등급·상태(#78)·학번은 애초에 담기지 않으므로
-     * 여기에 걸러내는 코드가 없다. 없는 회원은 404, 재학 회원의 학과·학년 누락은 400이다.
+     * 바꿀 수 있는 필드는 요청 DTO가 정한다 — 등급·상태(#78)는 애초에 담기지 않으므로 여기에
+     * 걸러내는 코드가 없다. 없는 회원은 404, 재학 회원의 학과·학년 누락은 400이다.
+     *
+     * **변경자를 요청 본문으로 받지 않는다.** 등급·상태 변경과 같은 자리이며(#78 규칙),
+     * 바뀐 항목마다 남는 mbr_chg_hstry의 chnrg_mbr_id가 그것으로 채워진다 — 본문으로 받으면
+     * 스스로 적어 넣을 수 있어 이력이 증거가 되지 못한다.
      */
     @Operation(
             summary = "회원 정보 수정",
             description =
-                    "기수·동아리 가입 연·월·이름·학과·학년·연락처·이메일을 고친다."
+                    "학번·기수·동아리 가입 연·월·이름·학과·학년·연락처·이메일을 고치고,"
+                            + " 바뀐 항목마다 회원 변경 이력(mbr_chg_hstry)을 한 트랜잭션에서 남긴다."
+                            + " 변경자는 요청 본문이 아니라 토큰에서 가져온다."
                             + " 등급·상태는 변경 이력을 함께 남겨야 해 전용 API가 따로 있고,"
-                            + " 학번·전산 가입일(sysJoinYmd)·계정 식별자는 바꿀 수 없다"
+                            + " 전산 가입일(sysJoinYmd)·계정 식별자는 바꿀 수 없다"
                             + " (요청 본문에 필드 자체가 없어 넣어도 무시된다)."
                             + " PATCH이지만 본문은 한 벌 전체이며, 생략한 선택 필드는 비우는 것으로 본다."
-                            + " 재학 회원이 학과·학년을 비우면 400 VALIDATION_FAILED, 없는 회원은 404다.")
+                            + " 같은 값으로 다시 저장해도 성공하며 그때는 이력이 남지 않는다."
+                            + " 다른 회원이 쓰는 학번은 409 STUDENT_NUMBER_DUPLICATED,"
+                            + " 재학 회원이 학번·학과·학년을 비우면 400 VALIDATION_FAILED, 없는 회원은 404다."
+                            + " ⚠️ 아직 계정을 연결하지 않은 이관 회원의 학번을 고치면"
+                            + " 옛 학번으로는 더는 계정 연결이 되지 않는다(연결은 학번·회원명·연락처 3종 일치다).")
     @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
     @PatchMapping("/{memberId}")
     public ApiResponse<MemberDetailResponse> updateMember(
-            @PathVariable Long memberId, @Valid @RequestBody MemberUpdateRequest request) {
-        return ApiResponse.success(memberService.updateMember(memberId, request));
+            @PathVariable Long memberId,
+            @Valid @RequestBody MemberUpdateRequest request,
+            @CurrentMember MemberEntity changer) {
+        return ApiResponse.success(memberService.updateMember(memberId, request, changer));
     }
 
     /*

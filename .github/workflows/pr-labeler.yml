@@ -1,208 +1,116 @@
 name: PR Labeler
 
+# PR에 크기 라벨과 타입 라벨을 붙인다.
+#
+# 타입은 **연결된 이슈의 라벨에서 가져온다.** 이슈를 열 때 제목 접두어로 이미 정해진 값이라
+# 여기서 다시 판정하지 않는다 — 같은 판정을 두 곳에서 하면 갈린다.
+# 이슈가 연결되지 않았으면 타입 라벨은 건드리지 않는다.
+
 on:
   pull_request:
-    types: [opened, synchronize, edited]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  # ==========================================================================
-  # Size Label - PR 크기에 따른 라벨 (변경 시 업데이트)
-  # ==========================================================================
-  size-label:
+  label:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
+      issues: write # 라벨 '생성'은 issues 스코프다. pull-requests만으로는 403이 난다
 
     steps:
-      - name: Label PR by Size
+      - name: Label PR
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.payload.pull_request.number;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
 
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
-
-            const totalChanges = pr.additions + pr.deletions;
-
-            console.log(`📊 PR #${prNumber} 변경: +${pr.additions} -${pr.deletions} (총 ${totalChanges} lines)`);
-
-            const sizeLabels = {
-              'size/XS': { max: 10, color: '3CBF00' },
-              'size/S': { max: 50, color: '5D9801' },
-              'size/M': { max: 200, color: 'FBCA04' },
-              'size/L': { max: 500, color: 'FFA500' },
-              'size/XL': { max: Infinity, color: 'D93F0B' }
+            // 크기 구간은 배열로 둔다 — 객체 키 순서에 기대면 재배치할 때 판정이 조용히 바뀐다
+            const SIZES = [
+              { name: 'size/XS', max: 10,       color: '3CBF00' },
+              { name: 'size/S',  max: 50,       color: '5D9801' },
+              { name: 'size/M',  max: 200,      color: 'FBCA04' },
+              { name: 'size/L',  max: 500,      color: 'FFA500' },
+              { name: 'size/XL', max: Infinity, color: 'D93F0B' }
+            ];
+            const TYPES = {
+              feat:     { color: '0E8A16', description: '새로운 기능' },
+              fix:      { color: 'D93F0B', description: '버그 수정' },
+              refactor: { color: '1D76DB', description: '리팩토링' },
+              chore:    { color: 'D4C5F9', description: '기타 변경사항' },
+              design:   { color: 'F9D0C4', description: 'UI/디자인 변경' },
+              style:    { color: 'FEF2C0', description: '코드 스타일 변경' },
+              docs:     { color: '0075CA', description: '문서 수정' },
+              test:     { color: 'BFD4F2', description: '테스트 코드' },
+              cicd:     { color: 'FBCA04', description: 'CI/CD 관련' }
             };
 
-            let newSizeLabel = 'size/XL';
-            for (const [label, config] of Object.entries(sizeLabels)) {
-              if (totalChanges <= config.max) {
-                newSizeLabel = label;
-                break;
-              }
-            }
-
-            // 현재 라벨 확인
-            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber
-            });
-
-            const currentSizeLabel = currentLabels.find(l => l.name.startsWith('size/'));
-
-            // 같은 라벨이면 스킵
-            if (currentSizeLabel?.name === newSizeLabel) {
-              console.log(`✅ 이미 올바른 크기 라벨: ${newSizeLabel}`);
-              return;
-            }
-
-            // 기존 size 라벨 제거
-            if (currentSizeLabel) {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                name: currentSizeLabel.name
-              });
-            }
-
-            // 라벨이 없으면 생성
-            try {
-              await github.rest.issues.getLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                name: newSizeLabel
-              });
-            } catch (error) {
-              if (error.status === 404) {
-                await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: newSizeLabel,
-                  color: sizeLabels[newSizeLabel].color,
-                  description: `PR size: ${newSizeLabel.replace('size/', '')}`
-                });
-              }
-            }
-
-            // 새 라벨 추가
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              labels: [newSizeLabel]
-            });
-
-            console.log(`✅ 크기 라벨 적용: ${newSizeLabel}`);
-
-  # ==========================================================================
-  # Type Label - PR 커밋들에서 타입 추출 (없을 때만 추가)
-  # ==========================================================================
-  type-label:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-
-    steps:
-      - name: Label PR by Commit Types
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = context.payload.pull_request.number;
-
-            const typeLabels = {
-              'feat':     { color: '0E8A16', description: '새로운 기능' },
-              'fix':      { color: 'D93F0B', description: '버그 수정' },
-              'refactor': { color: '1D76DB', description: '리팩토링' },
-              'design':   { color: 'F9D0C4', description: 'UI/디자인 변경' },
-              'style':    { color: 'FEF2C0', description: '코드 스타일 변경' },
-              'docs':     { color: '0075CA', description: '문서 수정' },
-              'test':     { color: 'BFD4F2', description: '테스트 코드' },
-              'chore':    { color: 'D4C5F9', description: '기타 변경사항' },
-              'init':     { color: '5319E7', description: '초기 생성' },
-              'rename':   { color: 'C2E0C6', description: '파일/폴더명 변경' },
-              'remove':   { color: 'B60205', description: '파일 삭제' },
-              'cicd':     { color: 'FBCA04', description: 'CI/CD 관련' }
-            };
-
-            const typeKeys = Object.keys(typeLabels);
-
-            // 대괄호 형식 + Conventional Commits 모두 지원
-            const typePattern = new RegExp(
-              `(?:^|\\s)(?:\\[?(${typeKeys.join('|')})\\]?)(?::|\\s|\\(|$)`,
-              'i'
-            );
-
-            const { data: commits } = await github.rest.pulls.listCommits({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
-
-            const detectedTypes = new Set();
-
-            for (const commit of commits) {
-              const message = commit.commit.message.split('\n')[0];
-              const match = message.match(typePattern);
-              if (match) {
-                detectedTypes.add(match[1].toLowerCase());
-              }
-            }
-
-            if (detectedTypes.size === 0) {
-              console.log('⚠️ 커밋에서 타입을 찾을 수 없습니다.');
-              return;
-            }
-
-            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber
-            });
-
-            const currentLabelNames = currentLabels.map(l => l.name.toLowerCase());
-
-            const labelsToAdd = [...detectedTypes].filter(
-              type => !currentLabelNames.includes(type)
-            );
-
-            if (labelsToAdd.length === 0) {
-              console.log('✅ 이미 모든 타입 라벨이 존재합니다.');
-              return;
-            }
-
-            // 없다면 라벨 생성
-            for (const type of labelsToAdd) {
-              if (!typeLabels[type]) continue;
+            const ensure = async (name, color, description) => {
               try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: type
-                });
+                await github.rest.issues.getLabel({ owner, repo, name });
               } catch (e) {
-                if (e.status === 404) {
-                  await github.rest.issues.createLabel({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    name: type,
-                    color: typeLabels[type].color,
-                    description: typeLabels[type].description
-                  });
-                }
+                if (e.status !== 404) throw e;
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
               }
+            };
+            const drop = async (name) => {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+              } catch (e) {
+                if (e.status !== 404) throw e; // 그 사이 누가 뗐을 수 있다
+              }
+            };
+
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: issue_number });
+            const { data: current } = await github.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });
+            const names = current.map(l => l.name);
+
+            // ── 크기 ────────────────────────────────────────────────────────
+            const changes = pr.additions + pr.deletions;
+            const size = SIZES.find(s => changes <= s.max);
+
+            if (!names.includes(size.name)) {
+              // 붙인 뒤에 뗀다. 지우고 만들다 실패하면 크기 라벨이 없는 PR이 남는다
+              await ensure(size.name, size.color, `PR size: ${size.name.replace('size/', '')}`);
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [size.name] });
+              for (const stale of names.filter(n => n.startsWith('size/'))) await drop(stale);
+            }
+            console.log(`📊 +${pr.additions} -${pr.deletions} → ${size.name}`);
+
+            // ── 타입 ────────────────────────────────────────────────────────
+            const linked = await github.graphql(`
+              query($owner: String!, $repo: String!, $pr: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    closingIssuesReferences(first: 10) {
+                      nodes { number labels(first: 30) { nodes { name } } }
+                    }
+                  }
+                }
+              }`, { owner, repo, pr: issue_number });
+
+            let type = null;
+            let from = null;
+            for (const issue of linked.repository.pullRequest.closingIssuesReferences.nodes) {
+              const hit = issue.labels.nodes.map(l => l.name).find(n => n in TYPES);
+              if (hit) { type = hit; from = issue.number; break; }
             }
 
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              labels: labelsToAdd
-            });
+            if (!type) {
+              console.log('ℹ️ 연결된 이슈가 없거나 그 이슈에 타입 라벨이 없어 타입은 그대로 둡니다.');
+              console.log('   PR 본문에 `- closed: #번호`를 넣으면 그 이슈의 타입을 따라갑니다.');
+              return;
+            }
 
-            console.log(`✅ 타입 라벨 추가: ${labelsToAdd.join(', ')}`);
+            if (!names.includes(type)) {
+              await ensure(type, TYPES[type].color, TYPES[type].description);
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: [type] });
+            }
+            // PR당 타입 라벨은 하나다. size/* 와 목록 밖 라벨은 건드리지 않는다
+            for (const stale of names.filter(n => n in TYPES && n !== type)) await drop(stale);
+
+            console.log(`🏷 타입: ${type} (이슈 #${from})`);

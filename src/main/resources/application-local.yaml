@@ -31,7 +31,8 @@ r2:
 # 이 API 자신의 공개 주소 (#208). 행사 이미지의 영구 읽기 주소
 # ({app.public-base-url}/public/v1/events/{eventId}/images/{fileName})를 이 값으로 조립하며,
 # 그 문자열이 행사 본문 마크다운에 굳는다 — 틀린 값을 넣으면 우리 도메인의 이미지 링크가
-# 통째로 깨진다. 비어 있으면 부팅이 아니라 이미지 발급 요청이 거절된다(AppPublicBaseUrl).
+# 통째로 깨진다. **없거나 스킴이 빠지면 부팅이 실패한다**(#216 · AppPublicBaseUrl) — 설정 누락이
+# 몇 시간 뒤 발급 500으로 발견되던 것을 배포 로그 첫 줄로 옮긴 것이다.
 app:
   public-base-url: ${APP_PUBLIC_BASE_URL:http://localhost:8080}
 

@@ -30,12 +30,13 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramA
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AttendanceRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
-import org.sscc.ssccopsserver.domain.academicprogram.repository.FileReferenceRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionAttendanceCount;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
+import org.sscc.ssccopsserver.domain.file.code.FileTargetType;
+import org.sscc.ssccopsserver.domain.file.service.FileReferenceService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -73,7 +74,7 @@ public class SessionServiceImpl implements SessionService {
     private final CurriculumItemRepository curriculumItemRepository;
     private final SessionRepository sessionRepository;
     private final AttendanceRepository attendanceRepository;
-    private final FileReferenceRepository fileReferenceRepository;
+    private final FileReferenceService fileReferenceService;
     private final SessionFileReferenceViewer sessionFileReferenceViewer;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final EventParticipantRepository eventParticipantRepository;
@@ -342,7 +343,9 @@ public class SessionServiceImpl implements SessionService {
                 attendances,
                 sessionFileReferenceViewer.viewOf(
                         session.getCurriculumItem().getAcademicProgram(),
-                        fileReferenceRepository.findBySession(session).orElse(null),
+                        fileReferenceService
+                                .findByTarget(FileTargetType.SESSION, session.getId())
+                                .orElse(null),
                         requester),
                 latestOpinionOf(session));
     }

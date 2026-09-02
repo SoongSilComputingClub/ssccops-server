@@ -42,10 +42,15 @@ import org.sscc.ssccopsserver.support.MemberFixture;
  * 회원 정보 수정 API (#77) — 운영진 경로(PATCH /v1/members/{mbrId})와 본인 경로(PATCH
  * /v1/members/me).
  *
- * 이 클래스가 못 박는 것은 세 가지다:
- *  1. 두 경로가 고칠 수 있는 필드가 다르다 (본인은 기수·이메일을 못 바꾼다).
- *  2. **어느 경로로도 등급·상태·학번은 바뀌지 않는다** — 요청 본문에 넣어도 필드가 없어 무시된다.
- *  3. 인가 계단이 경로마다 다르다 (타인 수정은 MEMBER_MANAGE, 본인 수정은 가입만).
+ * 이 클래스가 못 박는 것은 네 가지다:
+ *  1. 두 경로가 고칠 수 있는 필드가 다르다 (본인은 기수·이메일·학번을 못 바꾼다).
+ *  2. **어느 경로로도 등급·상태는 바뀌지 않는다** — 요청 본문에 넣어도 필드가 없어 무시된다.
+ *  3. **학번은 운영진 경로에서만 바뀐다** (#226). 중복은 409, 재학 회원 비우기는 400,
+ *     졸업 회원 비우기는 NULL 저장이다.
+ *  4. 인가 계단이 경로마다 다르다 (타인 수정은 MEMBER_MANAGE, 본인 수정은 가입만).
+ *
+ * 이력이 실제로 남는지는 MemberProfileChangeHistoryTest가 따로 본다 — 이 클래스는 무엇이
+ * 바뀌는가를, 그쪽은 무엇이 기록되는가를 맡는다.
  *
  * MemberQueryControllerTest와 같은 방식으로 스텁 JwtDecoder가 토큰 문자열을 그대로 sub로 쓴다 —
  * 한 클래스에서 권한 있는 회원·권한 없는 회원·미가입 주체를 번갈아 흉내 내야 한다.
@@ -103,13 +108,13 @@ class MemberUpdateControllerTest {
     /* ── 운영진 경로 ─────────────────────────────────────── */
 
     /*
-     * 여덟 필드가 그대로 반영되고 mdfcn_dt가 갱신된다.
+     * 아홉 필드가 그대로 반영되고 mdfcn_dt가 갱신된다 (#226에서 학번이 아홉 번째로 늘었다).
      *
      * 응답의 updatedAt이 수정 전 값이면 서비스가 flush를 미룬 것이다 — 트랜잭션이 끝나야
      * UPDATE가 나가면 auditing이 값을 채우기 전의 엔티티로 응답을 조립하게 된다.
      */
     @Test
-    void managerUpdatesEightFields() throws Exception {
+    void managerUpdatesNineFields() throws Exception {
         Instant before = target.getUpdatedAt();
 
         mockMvc.perform(
@@ -135,12 +140,13 @@ class MemberUpdateControllerTest {
     }
 
     /*
-     * 등급·상태·학번은 요청에 넣어도 바뀌지 않는다. 요청 DTO에 필드 자체가 없어 조용히
-     * 버려지며, **바뀌지 않는다는 것이 이 API의 계약이다** — 등급·상태는 이력을 함께 남기는
-     * 전용 API(#78)가, 학번은 updatable = false가 지킨다.
+     * 등급·상태는 요청에 넣어도 바뀌지 않는다. 요청 DTO에 필드 자체가 없어 조용히 버려지며,
+     * **바뀌지 않는다는 것이 이 API의 계약이다** — 이력을 함께 남기는 전용 API(#78)가 지킨다.
+     *
+     * 학번은 이 목록을 떠났다 (#226). 같은 요청에 실린 학번은 이제 실제로 반영된다.
      */
     @Test
-    void gradeStatusAndStudentNumberAreNotChangeable() throws Exception {
+    void gradeAndStatusAreNotChangeable() throws Exception {
         String body =
                 """
                 {
@@ -158,11 +164,105 @@ class MemberUpdateControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.membershipGradeCode").value("TEMP"))
                 .andExpect(jsonPath("$.data.membershipStatusCode").value("ENROLLED"))
-                .andExpect(jsonPath("$.data.studentNumber").value("20200003"));
+                .andExpect(jsonPath("$.data.studentNumber").value("20991234"));
 
         assertThat(target.getMembershipGrade().getCode()).isEqualTo("TEMP");
         assertThat(target.getMembershipStatus().getCode()).isEqualTo("ENROLLED");
-        assertThat(target.getStudentNumber()).isEqualTo("20200003");
+        assertThat(target.getStudentNumber()).isEqualTo("20991234");
+    }
+
+    /* ── 학번 (#226) ─────────────────────────────────────── */
+
+    /*
+     * 오타로 들어온 학번을 고친다 — 이 이슈가 존재하는 이유 그 자체다. updatable = false가
+     * 풀렸다는 것이 여기서 확인된다.
+     */
+    @Test
+    void managerFixesStudentNumber() throws Exception {
+        String body =
+                """
+                {
+                  "studentNumber": "20200099",
+                  "name": "박준호",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 2
+                }
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.studentNumber").value("20200099"));
+
+        assertThat(target.getStudentNumber()).isEqualTo("20200099");
+    }
+
+    /*
+     * 다른 회원이 쓰는 학번은 409다. 선조회로 걸리는 경로이며, 동시 요청은 UNIQUE 위반으로만
+     * 드러나 같은 코드로 옮겨진다(그 경로는 서비스의 flush 번역이 맡는다).
+     */
+    @Test
+    void duplicatedStudentNumberIs409() throws Exception {
+        String body =
+                """
+                {
+                  "studentNumber": "20200002",
+                  "name": "박준호",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 2
+                }
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("STUDENT_NUMBER_DUPLICATED"));
+    }
+
+    /*
+     * 자기 학번을 그대로 다시 보내는 것은 중복이 아니다. 전체 교체 API라 바꾸지 않는 저장에도
+     * 지금 값이 실려 오므로, 이것을 막으면 이름만 고치는 저장이 통째로 409가 된다.
+     */
+    @Test
+    void resavingOwnStudentNumberIsNotDuplicate() throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                patchJson(MEMBERS + "/" + target.getId(), fullUpdateBody()),
+                                MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.studentNumber").value("20200003"));
+    }
+
+    // 재학 회원은 학번이 필수다 — 비우면 400이며, 판정은 가입·이관과 같은 AcademicProfilePolicy다
+    @Test
+    void clearingStudentNumberOfEnrolledMemberIs400() throws Exception {
+        String body =
+                """
+                {"name": "박준호", "departmentName": "컴퓨터학부", "academicYear": 2}
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    /*
+     * 졸업 회원의 학번은 비울 수 있고, 그때 저장되는 값은 빈 문자열이 아니라 **NULL**이다.
+     * 빈 문자열이면 두 번째 졸업 회원부터 uk_mbr_student_number 충돌이 난다.
+     */
+    @Test
+    void clearingStudentNumberOfGraduatedMemberStoresNull() throws Exception {
+        MemberEntity graduated =
+                saveMember(UUID.randomUUID(), "20150002", "졸업생", MemberStatusCode.GRADUATED);
+
+        String body =
+                """
+                {"studentNumber": "   ", "name": "졸업생"}
+                """;
+
+        mockMvc.perform(authorized(patchJson(MEMBERS + "/" + graduated.getId(), body), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.studentNumber").isEmpty());
+
+        assertThat(graduated.getStudentNumber()).isNull();
     }
 
     /*
@@ -174,6 +274,7 @@ class MemberUpdateControllerTest {
         String body =
                 """
                 {
+                  "studentNumber": "20200003",
                   "name": "박준호",
                   "departmentName": "컴퓨터학부",
                   "academicYear": 4,
@@ -204,7 +305,12 @@ class MemberUpdateControllerTest {
 
         String body =
                 """
-                {"name": "박준호", "departmentName": "컴퓨터학부", "academicYear": 4}
+                {
+                  "studentNumber": "20200003",
+                  "name": "박준호",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 4
+                }
                 """;
 
         mockMvc.perform(authorized(patchJson(MEMBERS + "/" + target.getId(), body), MANAGER))
@@ -224,6 +330,7 @@ class MemberUpdateControllerTest {
         String body =
                 """
                 {
+                  "studentNumber": "20200003",
                   "name": "박준호",
                   "departmentName": "컴퓨터학부",
                   "academicYear": 4,
@@ -368,6 +475,7 @@ class MemberUpdateControllerTest {
         String managerBody =
                 """
                 {
+                  "studentNumber": "20200002",
                   "name": "이서연",
                   "departmentName": "컴퓨터학부",
                   "academicYear": 3,
@@ -399,6 +507,27 @@ class MemberUpdateControllerTest {
 
         assertThat(plainMember.getClubJoinYear()).isEqualTo(2019);
         assertThat(plainMember.getClubJoinMonth()).isEqualTo(3);
+    }
+
+    /*
+     * 본인 경로에는 학번 칸 자체가 없다 (#226). 본문에 실어 보내도 무시되며, 그것이 이 DTO를
+     * 나눈 이유다 — 학번은 자기소개가 아니라 신원 식별자이고 계정 연결 판정의 재료다.
+     */
+    @Test
+    void selfUpdateCannotChangeStudentNumber() throws Exception {
+        String body =
+                """
+                {
+                  "studentNumber": "29999999",
+                  "name": "이서연",
+                  "departmentName": "컴퓨터학부",
+                  "academicYear": 3
+                }
+                """;
+
+        mockMvc.perform(authorized(patchJson(ME, body), PLAIN_MEMBER)).andExpect(status().isOk());
+
+        assertThat(plainMember.getStudentNumber()).isEqualTo("20200002");
     }
 
     @Test
@@ -469,6 +598,7 @@ class MemberUpdateControllerTest {
     private static String fullUpdateBody() {
         return """
                 {
+                  "studentNumber": "20200003",
                   "generationNumber": 31,
                   "clubJoinYear": 2019,
                   "clubJoinMonth": 3,

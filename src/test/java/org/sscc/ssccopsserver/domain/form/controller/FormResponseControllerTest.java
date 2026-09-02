@@ -485,7 +485,8 @@ class FormResponseControllerTest {
                 .andExpect(jsonPath("$.data.sbmsnSeq").value(1))
                 .andExpect(jsonPath("$.data.reviewHistories.length()").value(2))
                 // 시간순이므로 먼저 한 처리가 앞이다
-                .andExpect(jsonPath("$.data.reviewHistories[0].prcsSeCd").value("REQUEST_CHANGES"))
+                .andExpect(
+                        jsonPath("$.data.reviewHistories[0].rvwPrcsSeCd").value("REQUEST_CHANGES"))
                 .andExpect(
                         jsonPath("$.data.reviewHistories[0].rvwOpnnCn")
                                 .value("지원 동기를 더 구체적으로 적어주세요."))
@@ -494,7 +495,7 @@ class FormResponseControllerTest {
                 .andExpect(jsonPath("$.data.reviewHistories[0].prcsMbrNm").value("김운영"))
                 .andExpect(jsonPath("$.data.reviewHistories[0].prcsMbrId").isNumber())
                 .andExpect(jsonPath("$.data.reviewHistories[0].prcsDt").exists())
-                .andExpect(jsonPath("$.data.reviewHistories[1].prcsSeCd").value("ACCEPT"))
+                .andExpect(jsonPath("$.data.reviewHistories[1].rvwPrcsSeCd").value("ACCEPT"))
                 // 승인은 검토 의견이 선택이라 비어 있을 수 있다
                 .andExpect(jsonPath("$.data.reviewHistories[1].rvwOpnnCn").doesNotExist());
     }

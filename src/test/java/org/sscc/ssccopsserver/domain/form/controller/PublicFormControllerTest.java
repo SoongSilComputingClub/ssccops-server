@@ -1169,15 +1169,16 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.data.sbmsnSeq").value(2))
                 .andExpect(jsonPath("$.data.rspnsCn.q1").value("김철수"))
                 .andExpect(jsonPath("$.data.reviewHistories.length()").value(3))
-                .andExpect(jsonPath("$.data.reviewHistories[0].prcsSeCd").value("SUBMIT"))
+                .andExpect(jsonPath("$.data.reviewHistories[0].rvwPrcsSeCd").value("SUBMIT"))
                 .andExpect(jsonPath("$.data.reviewHistories[0].sbmsnSeq").value(1))
-                .andExpect(jsonPath("$.data.reviewHistories[1].prcsSeCd").value("REQUEST_CHANGES"))
+                .andExpect(
+                        jsonPath("$.data.reviewHistories[1].rvwPrcsSeCd").value("REQUEST_CHANGES"))
                 .andExpect(
                         jsonPath("$.data.reviewHistories[1].rvwOpnnCn")
                                 .value("지원 동기를 더 구체적으로 적어주세요."))
                 // 처리자_명은 제출자에게도 보인다 (#177 결정 1 — 동아리 내부 결재다)
                 .andExpect(jsonPath("$.data.reviewHistories[1].prcsMbrNm").value("김운영"))
-                .andExpect(jsonPath("$.data.reviewHistories[2].prcsSeCd").value("SUBMIT"))
+                .andExpect(jsonPath("$.data.reviewHistories[2].rvwPrcsSeCd").value("SUBMIT"))
                 .andExpect(jsonPath("$.data.reviewHistories[2].sbmsnSeq").value(2));
     }
 

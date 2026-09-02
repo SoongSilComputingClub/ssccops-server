@@ -2,6 +2,15 @@
 -- H2/Postgres 양쪽에서 동일하게 동작하도록 ON CONFLICT 대신 WHERE NOT EXISTS로 멱등성을 보장한다.
 -- spring.sql.init.mode=always라 매 기동마다 실행되므로, 이미 시드된 DB에서 두 번째 실행이
 -- 아무것도 바꾸지 않아야 한다. 값을 고칠 때도 UPDATE로 덮어쓰지 말 것 — 화면에서 손댄 값을 되돌린다.
+--
+-- ⚠ 이 파일에 **없는** 시드가 하나 있다: 기획안 시스템 폼(sys_form_cd = 'PROPOSAL', #173).
+-- 자바(ProposalFormSeeder)가 세운다. 문항 구성이 JSONB 컬럼이라 H2와 PostgreSQL이 같은 SQL
+-- 리터럴을 다르게 읽어 한 벌의 SQL로 양쪽을 만족시킬 수 없고, qitemId가 SystemFormContract·이관과
+-- 공유하는 계약이라 SQL 문자열로 두면 선언과 시드가 두 벌이 되기 때문이다(사연은 ProposalFormSeed
+-- 클래스 주석에 있다). 폼이 안 보인다고 이 파일에서 찾지 말 것 — 여기 없는 것이 정상이다.
+--
+-- 이 파일은 **회원을 시드하지 않는다.** 최초 가입자 부트스트랩(#71)이 mbr 건수가 0인지로
+-- 판정하므로, 유령 회원을 하나라도 넣으면 그 창구가 닫힌 채 뜨고 아무도 최고관리자가 되지 못한다.
 
 -- 회원 등급(mbr_grd). 코드값·명칭은 웹이 이미 화면에 쓰고 있는 어휘(shared/config/codes.ts MBR_GRD_NM)와
 -- 글자 하나까지 맞춘다. 어긋나면 예외가 아니라 빈 라벨로 떨어져 조용히 깨진다.
@@ -144,6 +153,7 @@ WHERE NOT EXISTS (SELECT 1 FROM role WHERE role_nm = '최고관리자');
 --   ├── EXECUTIVE 임원
 --   │   ├── OPERATOR 운영자
 --   │   │   ├── WORK_MANAGE · SUB_WORK_TYPE_READ · RESPONSE_REVIEW · MEETING_MANAGE
+--   │   │   ├── EVENT_MANAGE (ssccops#134) · ACADEMIC_PROGRAM_MANAGE (#130)
 --   │   │   └── FORM_MANAGE ├── FORM_READ · FORM_WRITE · FORM_STATUS_CHANGE
 --   │   ├── FORM_LABEL_MANAGE · MEMBER_MANAGE · ROLE_MANAGE
 --   ├── SUB_WORK_TYPE_MANAGE (#101에서 EXECUTIVE 밑에서 분리)
@@ -195,6 +205,13 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'SUB_WORK_TYPE_READ');
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'MEETING_MANAGE', '회의 관리', 'OPERATOR', '회의의 등록·조회·상태 전이와 안건 관리.', TRUE, 5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'MEETING_MANAGE');
+
+-- #130: 학술 활동(스터디/프로젝트) 관리. OPERATOR의 자식이라 국장 이상(OPERATOR를 직접
+-- 부여받은 역할)은 트리 펼침으로 자동 보유하고, SUPER도 EXECUTIVE > OPERATOR 경로로 닿는다.
+-- indct_seqno 7은 develop에서 먼저 합류한 EVENT_MANAGE(ssccops#134, 6번)의 다음 자리다.
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'ACADEMIC_PROGRAM_MANAGE', '학술 활동 관리', 'OPERATOR', '학술 활동(스터디/프로젝트)의 기획안·회차·종료 승인, 모집 시작, 유형 코드테이블 관리.', TRUE, 7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'ACADEMIC_PROGRAM_MANAGE');
 
 -- #101: 업무·하위 업무를 조회만 할 수 있는 권한. WORK_MANAGE의 자식이라 그 보유자(국장 이상,
 -- 그리고 WORK_MANAGE를 직접 부여받은 임의의 역할)는 트리 펼침으로 자동 보유한다.
@@ -254,6 +271,14 @@ WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_WRITE');
 INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
 SELECT 'FORM_STATUS_CHANGE', '폼 접수 상태 변경', 'FORM_MANAGE', '폼의 접수 시작·마감 전이.', TRUE, 3, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'FORM_STATUS_CHANGE');
+
+-- ssccops#134: 행사 관리(wave2 · D8). 행사 CRUD·게시 전이·신청 심사·참가자 등록·승격을 하나로
+-- 묶는 권한이다. OPERATOR의 자식이라 국장 이상 + SUPER가 트리 펼침으로 자동 보유한다 —
+-- 역할 매핑을 따로 넣지 않는 것은 그래서다. 공개 조회는 익명(permitAll)이라 EVENT_READ를
+-- 두지 않는다(필요해지면 그때 자식으로 추가).
+INSERT INTO authrt (authrt_cd, authrt_nm, up_authrt_cd, authrt_expln, sys_yn, indct_seqno, crt_dt, mdfcn_dt)
+SELECT 'EVENT_MANAGE', '행사 관리', 'OPERATOR', '행사 등록·게시와 신청 심사·참가자 등록·승격.', TRUE, 6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM authrt WHERE authrt_cd = 'EVENT_MANAGE');
 
 -- #123: 결재·투표 자격. 직위 코드(role.role_pstn_cd)로 갈리던 승인·투표 자격을 권한으로 옮겼다.
 --
@@ -477,6 +502,27 @@ WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '스터디운영')
 -- prod(main)는 아직 배포되지 않았고 dev는 DB를 통째로 재생성하므로(ddl-auto: update가 컬럼
 -- 삭제를 반영하지 않는다), 이미 시드된 DB를 위한 값 이전 경로를 남기지 않는다 (ssccops#108).
 
+-- 행사 분류(event_clsf, ssccops#134 · D13). role_clsf처럼 화면에서 추가·수정하는 운영 데이터
+-- 코드테이블이라 여기 넣는 것은 고정 어휘가 아니라 초기값이다 — 서버 코드에 enum으로 굳히지
+-- 않는다. 코드값·명칭은 데이터사전 표준코드 시트(event_clsf_cd)와 글자 하나까지 맞춘다.
+-- 행사 상태(event_stts_cd)·참가자 상태(ptcp_stts_cd)는 EventStatus·EventParticipantStatus
+-- enum이 코드값을 갖는 고정코드라 여기 시드할 것이 없다 — form_stts_cd와 같은 성격이다.
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'RECRUIT', '모집', 1
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'RECRUIT');
+
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'SEMINAR', '세미나', 2
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'SEMINAR');
+
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'PROJECT', '프로젝트', 3
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'PROJECT');
+
+INSERT INTO event_clsf (event_clsf_cd, event_clsf_nm, indct_seqno)
+SELECT 'EVENT', '행사', 4
+WHERE NOT EXISTS (SELECT 1 FROM event_clsf WHERE event_clsf_cd = 'EVENT');
+
 -- 폼 라벨(form_lbl)은 일부러 시드하지 않는다 (#31에서 결정).
 -- 후보로 거론된 어휘(신규모집·회원연장·행사·스터디·연도·학기) 중 연도·학기는 해마다 값이
 -- 달라져(2026 → 2027, 1학기 → 2학기) 시드로 굳히면 매년 이 파일을 고쳐야 하고, 고치지 않으면
@@ -484,3 +530,27 @@ WHERE NOT EXISTS (SELECT 1 FROM sub_work_type WHERE type_nm = '스터디운영')
 -- 데이터라 초기값을 서버가 정할 근거가 없다 — 기준 코드(mbr_grd·mbr_stts)와 다른 성격이다.
 -- 폼 상태(form_stts_cd)는 FormStatus enum이 코드값을 갖고 명칭은 화면이 갖는 어휘라
 -- 별도 코드 테이블이 없어 여기 시드할 것도 없다.
+--
+-- 예외가 하나 있는데 이 파일이 아니라 자바에 있다: 기획안 시스템 폼(sys_form_cd = 'PROPOSAL', #173)이
+-- 라벨 '기획안'을 함께 세운다(ProposalFormSeeder). 그 라벨은 운영진이 고르는 초기값이 아니라
+-- 코드가 세운 폼을 목록에서 눈으로 찾는 단서라 폼과 함께 생겨야 한다 — 폼 쪽 시드가 여기 있지 않은
+-- 이유(qitem_cpst_cn JSONB 리터럴을 H2와 PostgreSQL이 다르게 읽는다)는 ProposalFormSeed 주석에 있다.
+
+-- 학술 활동 유형(acdm_actv_type, #130). enum이 아니라 코드테이블인 것은 세미나·특강·
+-- 대회 등 새 유형이 배포 없이 시드 추가만으로 열려야 하기 때문이다(학술관리_기능범위.md §2).
+-- event_clsf(wave2 D13)와 같은 멱등 시드 패턴을 따른다.
+--
+-- acdm_actv_type_cd는 지정한다(sub_work_type과 달리 IDENTITY가 아니라 코드 문자열
+-- PK다 — authrt와 같은 이유). 감사 컬럼(crt_dt·mdfcn_dt)·use_yn은 이 파일이 JPA를 거치지
+-- 않는 순수 SQL이라 직접 넣는다 — 빠뜨리면 NOT NULL 위반으로 기동이 깨진다.
+--
+-- 테이블·컬럼 이름은 엔티티를 따라가야 한다(#178 데이터사전 등재로 academic_program_type에서
+-- 바뀌었다). 이 파일은 순수 SQL이라 @Table·@Column을 고쳐도 따라오지 않으므로, 한쪽만 고치면
+-- 로컬·테스트 부팅이 이 INSERT에서 곧바로 깨진다.
+INSERT INTO acdm_actv_type (acdm_actv_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
+SELECT 'STUDY', '스터디', 1, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM acdm_actv_type WHERE acdm_actv_type_cd = 'STUDY');
+
+INSERT INTO acdm_actv_type (acdm_actv_type_cd, type_nm, indct_seqno, use_yn, crt_dt, mdfcn_dt)
+SELECT 'PROJECT', '프로젝트', 2, TRUE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM acdm_actv_type WHERE acdm_actv_type_cd = 'PROJECT');

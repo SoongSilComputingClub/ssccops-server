@@ -45,6 +45,37 @@ management:
       export:
         enabled: false
 
+# Cloudflare R2 (S3 호환 오브젝트 스토리지, ssccops#113). R2Config가 컨텍스트 기동 시
+# S3Client를 즉시 만들므로(빈 생성 자체는 네트워크를 타지 않는다) 값이 없으면 R2와 무관한
+# 모든 테스트가 컨텍스트 로딩 단계에서 실패한다. R2ConnectionManualTest(태그 r2-manual)만
+# 이 값을 실제로 쓰며 기본 test 태스크에서 제외돼 있어 더미 값으로도 문제없다.
+r2:
+  account-id: test-account
+  access-key-id: test-access-key
+  secret-access-key: test-secret-key
+  bucket-name: test-bucket
+
+# 이 API 자신의 공개 주소 (#208). 행사 이미지 리다이렉트 주소의 접두사이며
+# EventImageControllerTest·PublicEventImageControllerTest가 이 값으로 발급 주소를 확인한다.
+app:
+  public-base-url: https://api.test.local
+
 # Frontend Configuration (CORS 허용 오리진)
 frontend:
   url: http://localhost:5173
+
+# 기획안 시스템 폼 시드가 회원 생성에 반응하는 경로를 끈다 (#184).
+#
+# 시드가 세운 폼은 생성자 회원을 FK로 묶는다(form.creatr_mbr_id). 그런데 공용 H2(testdb)를
+# 쓰면서 회원을 실제로 커밋했다가 지우는 테스트가 여럿 있어(명부 이관·역할 자기잠금·계정 연결),
+# 그 회원이 시드의 명의로 뽑히면 정리 단계의 DELETE FROM mbr이 참조 무결성 위반으로 깨진다.
+# 회원 도메인 테스트가 정리하려고 기획안 폼의 존재를 알아야 하는 것은 방향이 거꾸로다 —
+# 위 관측성 내보내기를 끈 것과 같은 종류의 결정이다.
+#
+# 끄는 것이 무해한 이유는 이 경로를 확인하는 테스트가 ProposalFormSeedOnMemberCreatedTest
+# 하나이고, 그 클래스가 자기 전용 DB와 함께 이 값을 스스로 켜기 때문이다. 기동 시드(ApplicationRunner)는
+# 이 값과 무관하게 그대로 돈다.
+ssccops:
+  form:
+    proposal-seed:
+      on-member-created: false

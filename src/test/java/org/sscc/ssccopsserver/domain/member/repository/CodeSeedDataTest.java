@@ -14,6 +14,7 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.ActiveProfiles;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleClassificationEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
@@ -40,6 +41,7 @@ class CodeSeedDataTest {
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @Autowired private SubWorkTypeRepository subWorkTypeRepository;
+    @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
 
     @Test
     void seedsEveryGradeCodeTheWebRenders() {
@@ -247,6 +249,7 @@ class CodeSeedDataTest {
         long authorities = authorityRepository.count();
         long grants = roleAuthorityRelationRepository.count();
         long subWorkTypes = subWorkTypeRepository.count();
+        long academicProgramTypes = academicProgramTypeRepository.count();
 
         new ResourceDatabasePopulator(new ClassPathResource("data.sql")).execute(dataSource);
 
@@ -257,5 +260,19 @@ class CodeSeedDataTest {
         assertThat(authorityRepository.count()).isEqualTo(authorities);
         assertThat(roleAuthorityRelationRepository.count()).isEqualTo(grants);
         assertThat(subWorkTypeRepository.count()).isEqualTo(subWorkTypes);
+        assertThat(academicProgramTypeRepository.count()).isEqualTo(academicProgramTypes);
+    }
+
+    // #130 — STUDY/PROJECT 시드가 정확히 들어가는지도 확인한다 (event_clsf와 같은 멱등 패턴)
+    @Test
+    void seedsAcademicProgramTypes() {
+        assertThat(academicProgramTypeRepository.findAll())
+                .extracting(
+                        type -> type.getCode(),
+                        type -> type.getName(),
+                        type -> type.getDisplayOrder(),
+                        type -> type.isActive())
+                .containsExactlyInAnyOrder(
+                        tuple("STUDY", "스터디", 1, true), tuple("PROJECT", "프로젝트", 2, true));
     }
 }

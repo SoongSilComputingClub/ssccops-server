@@ -3,9 +3,11 @@ package org.sscc.ssccopsserver.domain.form.dto;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.List;
 
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 
 /*
@@ -25,29 +27,66 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
  * 목록에 없는 응답(DRAFT)을 직접 열면 두 값은 모두 null이다 — 이웃을 만들어 주면 심사 목록에서
  * 빠져 있던 응답이 이동만으로 심사 흐름 안에 들어온다.
  *
+ * 처리 이력(reviewHistories)은 #141에서 더했다. 별도 엔드포인트를 두지 않은 것은 화면이 상세와
+ * 이력을 언제나 함께 그리기 때문이다 — 나누면 상세를 여는 모든 화면이 두 번 요청하고, 두 응답
+ * 사이에 다른 검토자의 처리가 끼어들면 화면의 상태와 타임라인이 서로 다른 시점을 가리킨다.
+ * 시간순(처리 일시 오름차순)이며 처리가 없는 응답에서는 빈 배열이다 — null이 아니다.
+ *
+ * sbmsnSeq(제출 회차)를 함께 내리는 것은 이력의 각 줄이 몇 회차에 대한 처리였는지 읽으려면
+ * "지금 몇 회차인가"라는 기준점이 필요하기 때문이다.
+ *
+ * rspnsSeq(응답 순번)는 #143에서 더했고 sbmsnSeq와 **다른 값이다** — 앞은 이 응답자의 몇 번째
+ * 응답인가(다중 응답 폼에서 늘어난다)이고, 뒤는 그 응답을 몇 번 냈는가(수정요청 뒤 재제출에서
+ * 늘어난다)다. 둘을 같은 값으로 읽으면 "2회차"가 두 번째 제안인지 첫 제안의 재제출인지 갈린다.
+ *
+ * academicProgramPreview는 #150에서 더했다. **sys_form_cd = 'PROPOSAL'인 폼의 응답에서만
+ * 채워지고 그 밖에서는 null이다** — 승인하면 만들어질 학술 활동의 유형(typeCd)과 커리큘럼
+ * 회차(curriculumItems), 그리고 지금 승인이 가능한지(migratable·failureReason)가 실린다.
+ *
+ * 값을 만드는 것은 실제 이관과 **같은 파서**다(ProposalResponseParser). 검토 화면이 자기
+ * 파싱을 따로 하면 검토자가 승인한 것과 서버가 만드는 것이 갈리는데, 커리큘럼은 자유 텍스트로
+ * 접수되므로(정규식을 걸지 않는다) 그 갈림이 실제로 일어난다 — 파싱은 한 곳에만 둔다는
+ * ssccops#148의 BR이 이 필드의 존재 이유다.
+ *
+ * 타입이 Object인 것은 폼 도메인이 그 모양을 알아서는 안 되기 때문이다(SystemFormApprovalHook)
+ * — 실제 형태는 학술 도메인의 AcademicProgramPreviewResponse가 정하고, 폼은 그것을 그대로
+ * 실어 내릴 뿐이다. 여기에 학술 도메인의 DTO를 import하면 폼이 학술을 알게 된다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormResponseDetailResponse(
         Long formRspnsId,
+        int rspnsSeq,
         ResponseStatus rspnsSttsCd,
         OffsetDateTime sbmsnDt,
+        int sbmsnSeq,
         ResponseMemberDetail member,
         ResponseContent rspnsCn,
+        List<FormResponseReviewHistoryResponse> reviewHistories,
         Long prevFormRspnsId,
-        Long nextFormRspnsId) {
+        Long nextFormRspnsId,
+        Object academicProgramPreview) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static FormResponseDetailResponse of(
-            FormResponseHistoryEntity response, Long previousId, Long nextId) {
+            FormResponseHistoryEntity response,
+            List<FormResponseReviewHistoryEntity> reviewHistories,
+            Long previousId,
+            Long nextId,
+            Object academicProgramPreview) {
         return new FormResponseDetailResponse(
                 response.getId(),
+                response.getResponseSequence(),
                 response.getStatus(),
                 toOffsetDateTime(response.getSubmittedAt()),
+                response.getSubmissionSequence(),
                 ResponseMemberDetail.from(response.getMember()),
                 response.getContent(),
+                reviewHistories.stream().map(FormResponseReviewHistoryResponse::from).toList(),
                 previousId,
-                nextId);
+                nextId,
+                academicProgramPreview);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

@@ -129,8 +129,8 @@ class MemberControllerTest {
         MemberEntity member = memberRepository.findByAuthUserId(AUTH_USER_ID).orElseThrow();
         assertThat(member.getEmail()).isEqualTo(EMAIL);
         assertThat(member.getMembershipGrade().getCode()).isEqualTo(MemberGradeCode.TEMP.code());
-        // 가입일은 LocalDate.now()가 아니라 주입된 Clock에서 온다
-        assertThat(member.getJoinDate()).isEqualTo(TODAY);
+        // 전산 가입일은 LocalDate.now()가 아니라 주입된 Clock에서 온다
+        assertThat(member.getSystemJoinDate()).isEqualTo(TODAY);
     }
 
     // 생성된 자원의 위치를 Location으로 알려준다 (AP-01)
@@ -198,6 +198,36 @@ class MemberControllerTest {
 
         assertThat(memberRepository.findByAuthUserId(AUTH_USER_ID).orElseThrow().getStudentNumber())
                 .isNull();
+    }
+
+    /*
+     * 가입 경로는 동아리 가입 시기를 건드리지 않는다 (#204). 연·월은 비어 있는 채로 시작하고
+     * 기수도 미배정(0)이다 — 자동 입력이 필요한 자리는 가입 화면이 아니라 운영진 화면이다.
+     * 비는 것은 동아리 가입 시기뿐이라 전산 가입일은 그대로 채워진다.
+     */
+    @Test
+    void signupLeavesClubJoinPeriodEmpty() throws Exception {
+        mockMvc.perform(
+                        signup(
+                                """
+                                {
+                                  "name": "이서연",
+                                  "phoneNumber": "010-0000-0000",
+                                  "memberStatusCode": "GRADUATED",
+                                  "studentNumber": ""
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.generationNumber").value(0))
+                // 본인 프로필 응답에는 동아리 가입 연·월 키 자체가 없다
+                .andExpect(jsonPath("$.data.clubJoinYear").doesNotExist())
+                .andExpect(jsonPath("$.data.clubJoinMonth").doesNotExist());
+
+        MemberEntity member = memberRepository.findByAuthUserId(AUTH_USER_ID).orElseThrow();
+        assertThat(member.getClubJoinYear()).isNull();
+        assertThat(member.getClubJoinMonth()).isNull();
+        assertThat(member.getGenerationNumber()).isZero();
+        assertThat(member.getSystemJoinDate()).isEqualTo(TODAY);
     }
 
     @Test

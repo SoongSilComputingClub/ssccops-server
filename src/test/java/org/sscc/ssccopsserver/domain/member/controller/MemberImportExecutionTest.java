@@ -86,7 +86,7 @@ class MemberImportExecutionTest {
     private static final String FULL_MAPPING =
             """
             {"이름":"mbrNm","학번":"stdntNo","기수":"genNo","학과":"scsbjtNm","학년":"scyrNo",\
-            "전화번호":"telno","이메일":"eml","가입일":"joinYmd","등급":"mbrGrdCd","상태":"mbrSttsCd"}""";
+            "전화번호":"telno","이메일":"eml","가입일":"clbJoinYm","등급":"mbrGrdCd","상태":"mbrSttsCd"}""";
 
     // 이름 없는 행. 회원명·학번·학과·학년이 한꺼번에 걸려 FAILED가 된다
     private static final String INVALID_ROW = ",,,,,,,,정회원,재학";
@@ -343,9 +343,13 @@ class MemberImportExecutionTest {
         assertThat(gradeHistory("aftr_mbr_grd_cd", memberId, String.class)).isEqualTo("FULL");
         assertThat(gradeHistory("grd_chg_rsn_cn", memberId, String.class)).isEqualTo("CSV 이관");
         assertThat(gradeHistory("chnrg_mbr_id", memberId, Long.class)).isEqualTo(managerId);
-        // 적용일은 이력을 남긴 시각이 아니라 그 회원의 가입일이다
+        /*
+         * 적용일은 이력을 남긴 시각이 아니라 그 회원의 **전산 가입일**이며, 이관에서는 그것이
+         * 곧 이관일이다 (#205). 명부의 '가입일'(= 동아리 입부일)로 옮기지 않는다 — 그 값은
+         * 비어 있을 수 있고, 이력이 가리켜야 하는 것은 시스템이 기록을 남긴 시점이다.
+         */
         assertThat(gradeHistory("grd_aplcn_ymd", memberId, LocalDate.class))
-                .isEqualTo(LocalDate.of(2021, 3, 2));
+                .isEqualTo(LocalDate.now());
 
         assertThat(statusHistory("bfr_mbr_stts_cd", memberId, String.class)).isNull();
         assertThat(statusHistory("aftr_mbr_stts_cd", memberId, String.class)).isEqualTo("ENROLLED");
@@ -354,9 +358,12 @@ class MemberImportExecutionTest {
     }
 
     /*
-     * 가입일 미입력은 **이관일**(주입된 Clock)이고, 기수 미입력은 0(미배정)이며 학번으로 추정하지
-     * 않는다 (BR-M43). 학번 미입력은 빈 문자열이 아니라 **NULL**이다 —
-     * uk_mbr_student_number가 살아 있어 빈 문자열이면 두 번째 졸업 회원부터 UNIQUE 충돌이 난다.
+     * 기수 미입력은 0(미배정)이며 학번으로 추정하지 않는다 (BR-M43). 학번 미입력은 빈 문자열이
+     * 아니라 **NULL**이다 — uk_mbr_student_number가 살아 있어 빈 문자열이면 두 번째 졸업 회원부터
+     * UNIQUE 충돌이 난다.
+     *
+     * **동아리 가입 시기 미입력은 비운다** (#205). 옛 가입일 매핑은 이관일로 채웠지만, 이 컬럼은
+     * 모르는 것을 모른다고 두기 위해 생겼다. 전산 가입일은 CSV와 무관하게 언제나 이관일이다.
      */
     @Test
     void blankOptionalValuesFallBackToTheirDefaults() throws Exception {
@@ -378,18 +385,58 @@ class MemberImportExecutionTest {
                                 Integer.class,
                                 "20211234"))
                 .isZero();
-        assertThat(
-                        jdbcTemplate.queryForObject(
-                                "SELECT join_ymd FROM mbr WHERE stdnt_no = ?",
-                                LocalDate.class,
-                                "20211234"))
+        assertThat(memberColumn("sys_join_ymd", LocalDate.class, "20211234"))
                 .isEqualTo(LocalDate.now());
+        assertThat(memberColumn("clb_join_yr_no", Integer.class, "20211234")).isNull();
+        assertThat(memberColumn("clb_join_mm_no", Integer.class, "20211234")).isNull();
 
         // 학번 없는 두 행이 서로 충돌하지 않는다(NULL은 UNIQUE에 걸리지 않는다)
         assertThat(
                         jdbcTemplate.queryForObject(
                                 "SELECT COUNT(*) FROM mbr WHERE stdnt_no IS NULL", Integer.class))
                 .isEqualTo(2);
+    }
+
+    /*
+     * 명부의 '가입일' 칸은 이제 **동아리 가입 시기**로 들어간다 (#205). 이관 대상은 아직 전산
+     * 시스템에 가입한 적이 없는 사람이라 전산 가입일은 CSV가 아니라 이관일이며, 그 칸에 적힌
+     * 값은 운영진이 기록한 동아리 입부일이다 — 그동안 둘이 한 컬럼에 섞여 있었다.
+     */
+    @Test
+    void clubJoinPeriodComesFromCsvWhileSystemJoinDateIsTheImportDate() throws Exception {
+        perform(csv(enrolled("홍길동", "20211234")), managerToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.createdCount").value(1));
+
+        assertThat(memberColumn("clb_join_yr_no", Integer.class, "20211234")).isEqualTo(2021);
+        assertThat(memberColumn("clb_join_mm_no", Integer.class, "20211234")).isEqualTo(3);
+        assertThat(memberColumn("sys_join_ymd", LocalDate.class, "20211234"))
+                .isEqualTo(LocalDate.now());
+    }
+
+    /*
+     * 🚫 **동아리 가입 연도가 들어와도 기수를 계산해 채우지 않는다** (BR-M43 · #205).
+     *
+     * 이관은 사람이 한 행씩 확인하지 않는 대량 경로라, 여기서 자동 계산하면 128명의 기수가
+     * 검증 없이 들어가고 그 값은 나중에 사실과 구별되지 않는다. 2021년이면 계산상 39기지만
+     * 명부에 적힌 30이 그대로 남고, 기수 칸이 비어 있으면 0(미배정)이다 — 연도가 있어도 그렇다.
+     * 자동 제안은 운영진이 한 명씩 보는 편집 화면에서만 동작한다(GET /v1/members/generation).
+     */
+    @Test
+    void generationIsNeverComputedFromClubJoinYear() throws Exception {
+        String csv =
+                csv(
+                        "홍길동,20211234,30,컴퓨터학부,3,010-1111-2222,a@sscc.org,2021-03-02,정회원,재학",
+                        "김철수,20211235,,컴퓨터학부,3,010-1111-2222,b@sscc.org,2021-03-02,정회원,재학");
+
+        perform(csv, managerToken)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.createdCount").value(2));
+
+        // 계산했다면 39가 들어갔을 자리에 명부의 값이 그대로 있다
+        assertThat(memberColumn("gen_no", Integer.class, "20211234")).isEqualTo(30);
+        assertThat(memberColumn("gen_no", Integer.class, "20211235")).isZero();
+        assertThat(memberColumn("clb_join_yr_no", Integer.class, "20211235")).isEqualTo(2021);
     }
 
     // ------------------------------------------------------------------ 재실행 · fileToken
@@ -513,6 +560,12 @@ class MemberImportExecutionTest {
         builder.param("fileToken", fileToken);
         builder.header("Authorization", "Bearer " + authToken);
         return builder;
+    }
+
+    /** 이관된 회원의 컬럼 하나를 학번으로 읽는다. 엔티티가 아니라 컬럼을 보는 것이 요점이다 */
+    private <T> T memberColumn(String column, Class<T> type, String studentNumber) {
+        return jdbcTemplate.queryForObject(
+                "SELECT " + column + " FROM mbr WHERE stdnt_no = ?", type, studentNumber);
     }
 
     private static String csv(String... rows) {

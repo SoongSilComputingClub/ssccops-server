@@ -37,6 +37,19 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
     Optional<FormEntity> findByIdAndStatus(Long id, FormStatus status);
 
     /*
+     * 시스템 폼 조회 (#140). **코드가 폼을 찾는 유일한 경로다.**
+     *
+     * form_id로 찾는 코드를 두지 않는 것이 이 메서드의 존재 이유다 — form_id는 IDENTITY라
+     * 환경마다 다르고, 제목·라벨은 화면에서 바뀌는 운영 데이터다. 승인자 판정이 역할'명'을 보던
+     * 동안 '총무'를 '재무'로 개명하는 것만으로 승인자가 사라진 일이 있었다(#118 → #123).
+     *
+     * sys_form_cd에 UNIQUE가 걸려 있어 결과는 최대 한 건이다. 첫 호출자는 기획안 시스템 폼
+     * 시드(#173 ProposalFormSeeder)이며 "이미 세웠는가"를 이 조회 하나로 판정한다 — 제목이나
+     * form_id로 물으면 제목을 고친 다음 기동에서 폼이 하나 더 생긴다.
+     */
+    Optional<FormEntity> findBySystemFormCode(String systemFormCode);
+
+    /*
      * 라벨로 거른 폼 목록(#34). 관계 테이블을 지나는 조인이라 파생 쿼리로는 표현이 길어져
      * 연관 경로를 그대로 쓰는 파생 이름 대신 여기서 이름을 고정한다.
      */

@@ -2,7 +2,7 @@ package org.sscc.ssccopsserver.domain.form.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,16 +36,22 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
+import org.sscc.ssccopsserver.domain.form.service.ProposalFormSeed;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
@@ -58,7 +64,7 @@ import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 /*
- * 운영자용 폼 응답 조회·상태 변경 API(#37) 통합 검증.
+ * 운영자용 폼 응답 조회·검토 처리 API(#37 · #141) 통합 검증.
  *
  * 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다 (PublicFormControllerTest와
  * 같은 방식). 제출 일시가 정렬과 인접 응답 계산의 기준이라 시각도 고정한다 — 시스템 시각을 쓰면
@@ -97,6 +103,24 @@ class FormResponseControllerTest {
             }
             """;
 
+    /*
+     * 기획안 시스템 폼의 축소 표본 (#196). 대표 문항(programTitle) 하나만 두는 것은 이 테스트가
+     * 보는 것이 "선언된 문항의 답이 목록에 실리는가"이기 때문이다 — 시드의 문항 열한 개를 옮기면
+     * 시드가 바뀔 때마다 이 표본도 함께 고쳐야 한다.
+     */
+    private static final String PROPOSAL_COMPOSITION =
+            """
+            {
+              "pages": [{"pageTtl": "기획안", "pageDescCn": null}],
+              "qitems": [
+                {
+                  "qitemId": "programTitle", "qitemLblNm": "활동명", "qitemTypeCd": "SHORT_TEXT",
+                  "reqYn": false, "pageSeq": 0, "optionList": []
+                }
+              ]
+            }
+            """;
+
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private MemberRepository memberRepository;
@@ -107,6 +131,7 @@ class FormResponseControllerTest {
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private FormResponseReviewHistoryRepository formResponseReviewHistoryRepository;
     @Autowired private FormResponseService formResponseService;
     @PersistenceContext private EntityManager entityManager;
 
@@ -181,6 +206,31 @@ class FormResponseControllerTest {
                 .andExpect(jsonPath("$.data[0].formRspnsId").value(draftId))
                 // 제출하지 않은 응답은 제출 일시를 가질 수 없다 (ssccops #64)
                 .andExpect(jsonPath("$.data[0].sbmsnDt").doesNotExist());
+    }
+
+    /*
+     * 다중 응답 폼에서는 같은 회원의 응답이 **별도 행**으로 나오고 각 행이 응답 순번을 싣는다
+     * (#143). 순번이 없으면 운영자는 이름이 같은 두 줄을 제출 일시로만 구별해야 하고, 응답 하나를
+     * 승인하려다 다른 하나를 여는 일이 생긴다.
+     *
+     * 목록 정렬은 종전대로 제출 일시 내림차순이라 나중에 낸 2번이 먼저 온다 — 순번 오름차순으로
+     * 바꾸지 않은 것은 그 정렬이 상세의 이전/다음 이동과 한 벌이기 때문이다.
+     */
+    @Test
+    void getResponsesListsEachResponseOfTheSameMemberSeparately() throws Exception {
+        FormEntity multiple = saveMultipleResponseForm("스터디 제안서");
+        MemberEntity proposer =
+                saveMember(UUID.randomUUID(), "20260010", "박제안", "proposer@sscc.org");
+        saveSubmittedResponse(multiple, proposer, 1, NOW.minusSeconds(ONE_DAY));
+        saveSubmittedResponse(multiple, proposer, 2, NOW);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + multiple.getId() + "/responses"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].rspnsSeq").value(2))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data[0].member.mbrNm").value("박제안"))
+                .andExpect(jsonPath("$.data[1].member.mbrNm").value("박제안"));
     }
 
     /*
@@ -272,6 +322,84 @@ class FormResponseControllerTest {
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
     }
 
+    /* ── 대표 문항 (#196) ─────────────────────────────────── */
+
+    /*
+     * 이 이슈의 한 줄이다 — 검토 목록이 회원명 옆에 "1번째 · 2번째"만 띄워 학술국장이 어느
+     * 기획안인지 열어 보기 전에는 알 수 없었다(ssccops-web#204). 같은 사람이 스터디를 둘 제안하는
+     * 것이 정상 흐름(#143)이라 순번만으로는 처리할 건을 고를 수 없다.
+     *
+     * 어느 문항이 대표값인지는 SystemFormContract의 실제 선언(PROPOSAL → programTitle)을 그대로
+     * 쓴다. 잠금 계약(#155)을 시험용 코드로 갈아 끼우는 FormControllerTest와 갈리는데, 저쪽은
+     * 시드가 문항을 더할 때마다 흔들리는 '집합'이고 이쪽은 값 하나라 그 값이 바뀌면 목록의 제목이
+     * 실제로 달라진다.
+     */
+    @Test
+    void getResponsesCarriesTheTitleAnswerOfEachResponse() throws Exception {
+        FormEntity proposalForm = saveProposalForm();
+        MemberEntity proposer =
+                saveMember(UUID.randomUUID(), "20260020", "박제안", "proposer@sscc.org");
+        saveProposalResponse(proposalForm, proposer, 1, "React 스터디", NOW.minusSeconds(ONE_DAY));
+        saveProposalResponse(proposalForm, proposer, 2, "알고리즘 스터디", NOW);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + proposalForm.getId() + "/responses"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                // 정렬은 종전대로 제출 일시 내림차순이라 나중에 낸 2번이 먼저 온다
+                .andExpect(jsonPath("$.data[0].rspnsSeq").value(2))
+                .andExpect(jsonPath("$.data[0].responseTitle").value("알고리즘 스터디"))
+                .andExpect(jsonPath("$.data[1].rspnsSeq").value(1))
+                .andExpect(jsonPath("$.data[1].responseTitle").value("React 스터디"))
+                // 늘어난 것은 제목 한 줄뿐이다 — 응답 내용은 여전히 목록에 싣지 않는다
+                .andExpect(jsonPath("$.data[0].rspnsCn").doesNotExist());
+    }
+
+    /*
+     * **값이 없으면 null이다.** 대표 문항을 선언하지 않은 평범한 폼도, 그 문항을 비워 둔 응답도
+     * 마찬가지이며 서버가 "제목 없음" 같은 대체값을 만들지 않는다 — 웹은 값이 없을 때 종전 문구
+     * (순번 표시)로 떨어지므로, 지어낸 문자열은 그 분기를 무력화한다.
+     */
+    @Test
+    void getResponsesLeavesResponseTitleNullWhenThereIsNoDeclaredAnswer() throws Exception {
+        mockMvc.perform(authenticatedGet(responsesPath() + "?statusCode=SUBMITTED"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].responseTitle").isEmpty());
+
+        FormEntity proposalForm = saveProposalForm();
+        MemberEntity proposer = saveMember(UUID.randomUUID(), "20260021", "최백지", "blank@sscc.org");
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        proposalForm, proposer, ResponseContent.of(Map.of()), NOW));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + proposalForm.getId() + "/responses"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].responseTitle").isEmpty());
+    }
+
+    /*
+     * 검토 처리의 응답도 목록과 같은 DTO를 쓴다 — 한쪽만 채우면 검토 직후 화면이 목록으로 돌아갈
+     * 때 제목이 사라졌다 다시 나타난다.
+     */
+    @Test
+    void reviewResponseCarriesTheTitleAnswerToo() throws Exception {
+        FormEntity proposalForm = saveProposalForm();
+        MemberEntity proposer = saveMember(UUID.randomUUID(), "20260022", "정검토", "review@sscc.org");
+        Long responseId = saveProposalResponse(proposalForm, proposer, 1, "운영체제 스터디", NOW);
+
+        mockMvc.perform(
+                        authenticatedPost(
+                                "/v1/forms/"
+                                        + proposalForm.getId()
+                                        + "/responses/"
+                                        + responseId
+                                        + "/reviews",
+                                """
+                                {"rspnsSttsCd": "CHANGES_REQUESTED", "rvwOpnnCn": "커리큘럼을 다시 적어 주세요."}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.responseTitle").value("운영체제 스터디"));
+    }
+
     /* ── 상세 ─────────────────────────────────────────────── */
 
     @Test
@@ -342,36 +470,204 @@ class FormResponseControllerTest {
                 .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
     }
 
-    /* ── 상태 변경 ─────────────────────────────────────────── */
-
     /*
-     * 심사 번복은 실제 운영에서 일어난다 — 승인한 지원자를 다시 반려하거나, 반려를 되돌려
-     * 심사 전으로 놓기도 한다. 세 상태 사이는 어느 방향으로도 막지 않는다.
+     * 처리 이력은 상세와 함께 나간다 (#141). 별도 엔드포인트를 두지 않았으므로 상세 응답이
+     * 타임라인을 싣지 않으면 이력이 남아도 화면에 닿을 길이 없다.
      */
     @Test
-    void changeStatusAllowsEveryReviewTransition() throws Exception {
-        changeStatus(submittedId, "ACCEPTED")
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.rspnsSttsCd").value("ACCEPTED"));
-        changeStatus(submittedId, "REJECTED")
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.rspnsSttsCd").value("REJECTED"));
-        changeStatus(submittedId, "SUBMITTED")
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.rspnsSttsCd").value("SUBMITTED"));
-        // 승인 → 반려처럼 심사 결과끼리 바로 넘어가는 경우도 막지 않는다
-        changeStatus(acceptedId, "REJECTED").andExpect(status().isOk());
-        changeStatus(rejectedId, "ACCEPTED").andExpect(status().isOk());
+    void getResponseIncludesReviewTimeline() throws Exception {
+        review(submittedId, "CHANGES_REQUESTED", "지원 동기를 더 구체적으로 적어주세요.")
+                .andExpect(status().isOk());
+        review(submittedId, "ACCEPTED", null).andExpect(status().isOk());
 
-        assertThat(reload(submittedId).getStatus()).isEqualTo(ResponseStatus.SUBMITTED);
-        assertThat(reload(acceptedId).getStatus()).isEqualTo(ResponseStatus.REJECTED);
-        assertThat(reload(rejectedId).getStatus()).isEqualTo(ResponseStatus.ACCEPTED);
+        mockMvc.perform(authenticatedGet(responsePath(submittedId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sbmsnSeq").value(1))
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2))
+                // 시간순이므로 먼저 한 처리가 앞이다
+                .andExpect(
+                        jsonPath("$.data.reviewHistories[0].rvwPrcsSeCd").value("REQUEST_CHANGES"))
+                .andExpect(
+                        jsonPath("$.data.reviewHistories[0].rvwOpnnCn")
+                                .value("지원 동기를 더 구체적으로 적어주세요."))
+                .andExpect(jsonPath("$.data.reviewHistories[0].sbmsnSeq").value(1))
+                // 처리자_명은 이력에 복사돼 있지 않고 mbr에서 조인해 온다
+                .andExpect(jsonPath("$.data.reviewHistories[0].prcsMbrNm").value("김운영"))
+                .andExpect(jsonPath("$.data.reviewHistories[0].prcsMbrId").isNumber())
+                .andExpect(jsonPath("$.data.reviewHistories[0].prcsDt").exists())
+                .andExpect(jsonPath("$.data.reviewHistories[1].rvwPrcsSeCd").value("ACCEPT"))
+                // 승인은 검토 의견이 선택이라 비어 있을 수 있다
+                .andExpect(jsonPath("$.data.reviewHistories[1].rvwOpnnCn").doesNotExist());
     }
 
-    // 상태 변경은 응답자 정보를 그대로 돌려준다 — 웹은 재조회로 화면을 맞추지만 본문은 비어 있지 않다
+    // 아직 아무 처리도 없는 응답은 빈 배열이다 — null이면 웹이 두 경우를 따로 다뤄야 한다
     @Test
-    void changeStatusReturnsChangedResponse() throws Exception {
-        changeStatus(submittedId, "ACCEPTED")
+    void getResponseWithoutAnyReviewHasEmptyTimeline() throws Exception {
+        mockMvc.perform(authenticatedGet(responsePath(submittedId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reviewHistories").isArray())
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(0));
+    }
+
+    /*
+     * N+1 회귀 방지 (#141). 처리 이력은 줄마다 처리자_명을 그리는데 이름을 이력에 복사하지 않고
+     * mbr에서 조인하기로 했으므로, 그 대가가 N+1이면 복사하지 않기로 한 결정이 무너진다.
+     * 폼 1 + 응답 1 + 인접 식별자 1 + 이력 1로 네 번이고 이력이 몇 줄이든 그대로다.
+     */
+    @Test
+    void getResponseRunsFourQueriesRegardlessOfTimelineLength() {
+        /*
+         * 이력 행은 API가 아니라 리포지토리로 직접 만든다. 전이표(#141)가 번복을 막아 한 응답에
+         * 검토 요청을 여러 번 보낼 수 없고, 재제출은 응답자의 토큰이 필요해 이 테스트의 고정
+         * 주체(운영자)로는 만들 수 없다 — 표본을 정상 경로로 만들려면 준비 코드가 검증하려는
+         * 것(쿼리 수)을 덮는다.
+         */
+        FormResponseHistoryEntity response =
+                formResponseHistoryRepository.findById(submittedId).orElseThrow();
+        for (int index = 0; index < 4; index++) {
+            formResponseReviewHistoryRepository.save(
+                    FormResponseReviewHistoryEntity.record(
+                            response,
+                            ResponseReviewAction.REQUEST_CHANGES,
+                            operator,
+                            "다시 봐주세요 " + index,
+                            NOW.plusSeconds(index)));
+        }
+        entityManager.flush();
+        entityManager.clear();
+
+        Statistics statistics =
+                entityManager
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        FormResponseDetailResponse detail =
+                formResponseService.getResponse(form.getId(), submittedId);
+
+        assertThat(detail.reviewHistories()).hasSize(4);
+        // 처리자 이름이 실제로 채워졌는지까지 함께 본다 — 비어 있으면 조인 없이도 쿼리 4회다
+        assertThat(detail.reviewHistories())
+                .allSatisfy(history -> assertThat(history.prcsMbrNm()).isNotBlank());
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
+    }
+
+    /* ── 검토 처리 ─────────────────────────────────────────── */
+
+    /*
+     * 아직 결론이 나지 않은 응답에서는 세 결론 중 무엇이든 고를 수 있다. 심사가 열려 있는 것은
+     * SUBMITTED와 CHANGES_REQUESTED 둘뿐이며, 그 둘에서 나가는 길이 이 테스트의 표본이다.
+     */
+    @Test
+    void reviewFromOpenStatusesReachesEveryConclusion() throws Exception {
+        review(submittedId, "CHANGES_REQUESTED", "학과를 다시 확인해주세요.")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("CHANGES_REQUESTED"));
+        // 수정요청 뒤에도 검토자는 응답자의 재제출을 기다리지 않고 결론을 낼 수 있다
+        review(submittedId, "ACCEPTED", null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("ACCEPTED"));
+
+        Long anotherId = saveResponse(form, "20260011", "조하늘", ResponseStatus.SUBMITTED, 5);
+        review(anotherId, "REJECTED", "지원 자격을 충족하지 않습니다.")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("REJECTED"));
+
+        assertThat(reload(submittedId).getStatus()).isEqualTo(ResponseStatus.ACCEPTED);
+        assertThat(reload(anotherId).getStatus()).isEqualTo(ResponseStatus.REJECTED);
+    }
+
+    /*
+     * **심사 번복을 없앤 것이 이 이슈의 두 번째 결정이다** (#141). 승인 직후 후속 처리가
+     * 시작되므로 — 기획안이 승인되면 활동이 개설되고 역할이 부여된다 — 그 뒤에 승인을 반려로
+     * 되돌리면 이미 만들어진 것들을 되돌릴 방법이 없다. 잘못 누른 반려를 승인으로 되돌리는 것도
+     * 같은 이유로 막힌다: 오조작의 탈출구는 번복이 아니라 새 응답이다.
+     */
+    @Test
+    void reviewOnConcludedResponseReturns400() throws Exception {
+        for (String target : List.of("ACCEPTED", "CHANGES_REQUESTED", "REJECTED")) {
+            review(acceptedId, target, "다시 보겠습니다.")
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
+            review(rejectedId, target, "다시 보겠습니다.")
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
+        }
+
+        assertThat(reload(acceptedId).getStatus()).isEqualTo(ResponseStatus.ACCEPTED);
+        assertThat(reload(rejectedId).getStatus()).isEqualTo(ResponseStatus.REJECTED);
+    }
+
+    /*
+     * 같은 상태로의 재지정도 막는다 (#141). #37에서는 "아무것도 바꾸지 않을 뿐"이라며 통과시켰지만,
+     * 처리 이력이 생긴 뒤로는 그 요청이 아무것도 바꾸지 않은 이력 한 줄을 남겨 실제 심사 시점을
+     * 못 찾게 만든다 (등급·상태 변경의 NO_CHANGE와 같은 이유).
+     */
+    @Test
+    void reviewWithSameStatusReturns400() throws Exception {
+        review(submittedId, "CHANGES_REQUESTED", "다시 봐주세요.").andExpect(status().isOk());
+        review(submittedId, "CHANGES_REQUESTED", "다시 봐주세요.")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
+
+        assertThat(reload(submittedId).getStatus()).isEqualTo(ResponseStatus.CHANGES_REQUESTED);
+    }
+
+    /*
+     * **이 이슈의 핵심 규칙이다.** 수정요청·반려는 응답자에게 무엇을 하라는 통보라 사유 없이
+     * 성립하지 않는다. 공백만 있는 문자열도 없는 것으로 본다 — 통과시키면 이력 행은 남지만
+     * "왜"가 비어 있어 증거가 되지 못하고, 그 행은 잠겨 있어 나중에 채울 수도 없다.
+     */
+    @Test
+    void reviewWithoutOpinionReturns400ForChangesRequestedAndReject() throws Exception {
+        assertOpinionRequired("CHANGES_REQUESTED", null, 0);
+        assertOpinionRequired("CHANGES_REQUESTED", "   ", 1);
+        assertOpinionRequired("REJECTED", null, 2);
+        assertOpinionRequired("REJECTED", "   ", 3);
+
+        // 거절된 요청은 이력도 남기지 않는다. 상태가 함께 되돌아가는지는 FormResponseReviewRollbackTest가
+        // 본다 — 트랜잭션을 건 테스트에서는 실제 롤백이 일어나지 않아 여기서는 확인할 수 없다
+        assertThat(formResponseReviewHistoryRepository.count()).isZero();
+    }
+
+    /*
+     * 표본을 경우마다 새로 만드는 것은 트랜잭션을 건 테스트에서 **실제 롤백이 일어나지 않기**
+     * 때문이다. 거절된 요청도 영속성 컨텍스트의 상태는 이미 바꿔 놓았으므로, 같은 응답에 두 번
+     * 걸면 두 번째는 검토 의견이 아니라 전이 규칙(같은 상태로의 재지정)에 먼저 걸려 무엇을
+     * 검증하는 테스트인지가 흐려진다.
+     */
+    private void assertOpinionRequired(String target, String opinion, int sampleNo)
+            throws Exception {
+        Long responseId =
+                saveResponse(
+                        form,
+                        "2028000" + sampleNo,
+                        "의견 표본 " + sampleNo,
+                        ResponseStatus.SUBMITTED,
+                        20 + sampleNo);
+
+        review(responseId, target, opinion)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("REVIEW_OPINION_REQUIRED"));
+    }
+
+    // 승인은 통보할 것이 없어 검토 의견이 선택이다. 필드를 아예 빼도 된다
+    @Test
+    void reviewAcceptWithoutOpinionSucceeds() throws Exception {
+        mockMvc.perform(
+                        authenticatedPost(
+                                reviewPath(submittedId), "{\"rspnsSttsCd\": \"ACCEPTED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("ACCEPTED"));
+
+        assertThat(reload(submittedId).getStatus()).isEqualTo(ResponseStatus.ACCEPTED);
+    }
+
+    // 검토 처리는 응답자 정보를 그대로 돌려준다 — 웹은 재조회로 화면을 맞추지만 본문은 비어 있지 않다
+    @Test
+    void reviewReturnsChangedResponse() throws Exception {
+        review(submittedId, "ACCEPTED", null)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.formRspnsId").value(submittedId))
                 .andExpect(jsonPath("$.data.member.mbrNm").value("이서연"));
@@ -382,9 +678,9 @@ class FormResponseControllerTest {
      * DRAFT → SUBMITTED가 여기서도 막히는 것이 요점이다 — 제출은 응답자만 할 수 있는 일이다.
      */
     @Test
-    void changeStatusFromDraftReturns400() throws Exception {
+    void reviewOnDraftReturns400() throws Exception {
         for (String target : List.of("SUBMITTED", "ACCEPTED", "REJECTED")) {
-            changeStatus(draftId, target)
+            review(draftId, target, "사유")
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
         }
@@ -397,9 +693,9 @@ class FormResponseControllerTest {
      * 모순된다 (ssccops #64 — DRAFT는 제출 일시가 NULL인 유일한 상태다).
      */
     @Test
-    void changeStatusToDraftReturns400() throws Exception {
+    void reviewToDraftReturns400() throws Exception {
         for (Long responseId : List.of(submittedId, acceptedId, rejectedId)) {
-            changeStatus(responseId, "DRAFT")
+            review(responseId, "DRAFT", "사유")
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
         }
@@ -408,25 +704,40 @@ class FormResponseControllerTest {
         assertThat(reload(submittedId).getSubmittedAt()).isNotNull();
     }
 
+    /*
+     * **#37에서 열려 있던 전이 하나가 닫혔다.** 검토자가 응답을 미심사(SUBMITTED)로 되돌리는
+     * 요청은 이제 400이다 — 처리 구분 어휘에 검토자가 쓸 SUBMIT이 없어 옮겨 적을 자리가 없고,
+     * SUBMIT으로 기록하면 응답자가 한 제출을 검토자 이름으로 남기게 된다. 심사 번복 자체는
+     * 승인 ↔ 수정요청 ↔ 반려로 그대로 열려 있고, SUBMITTED로 돌아가는 길은 응답자의 재제출이다.
+     */
+    @Test
+    void reviewToSubmittedReturns400() throws Exception {
+        review(acceptedId, "SUBMITTED", "다시 심사하겠습니다.")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RESPONSE_STATUS_TRANSITION"));
+
+        assertThat(reload(acceptedId).getStatus()).isEqualTo(ResponseStatus.ACCEPTED);
+    }
+
     // 기준 코드 밖의 값은 enum 역직렬화 실패를 전역 핸들러가 옮긴 것이다 (VL-09)
     @Test
-    void changeStatusWithUnknownCodeReturns400() throws Exception {
-        changeStatus(submittedId, "APPROVED")
+    void reviewWithUnknownCodeReturns400() throws Exception {
+        review(submittedId, "APPROVED", null)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
     }
 
     @Test
-    void changeStatusWithoutStatusReturns400() throws Exception {
-        mockMvc.perform(authenticatedPatch(responsePath(submittedId) + "/status", "{}"))
+    void reviewWithoutStatusReturns400() throws Exception {
+        mockMvc.perform(authenticatedPost(reviewPath(submittedId), "{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
     // 폼 범위 검사는 조회뿐 아니라 쓰기에도 걸린다 — 남의 폼 응답을 심사할 수 있으면 더 나쁘다
     @Test
-    void changeStatusOnAnotherFormsResponseReturns404() throws Exception {
-        changeStatus(otherFormResponseId, "ACCEPTED")
+    void reviewOnAnotherFormsResponseReturns404() throws Exception {
+        review(otherFormResponseId, "ACCEPTED", null)
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
 
@@ -444,10 +755,32 @@ class FormResponseControllerTest {
         mockMvc.perform(get(responsesPath())).andExpect(status().isUnauthorized());
         mockMvc.perform(get(responsePath(submittedId))).andExpect(status().isUnauthorized());
         mockMvc.perform(
-                        patch(responsePath(submittedId) + "/status")
+                        post(reviewPath(submittedId))
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"rspnsSttsCd\": \"ACCEPTED\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /*
+     * 인가는 클래스 전체에 걸린 RESPONSE_REVIEW다 (#9). 검토 처리는 남의 지원서에 결론을 내리는
+     * 조작이라 권한이 빠지면 조회보다 나쁘다 — 핸들러가 하나 늘 때 애노테이션을 빠뜨리는 것만으로
+     * 열리는 자리를 만들지 않기 위해 클래스에 걸어 두었고, 새 경로도 그 안에 들어 있는지 본다.
+     */
+    @Test
+    void reviewWithoutResponseReviewAuthorityReturns403() throws Exception {
+        MemberRoleAssignmentEntity assignment =
+                memberRoleAssignmentRepository.findAll().stream()
+                        .filter(row -> row.getMember().getId().equals(operator.getId()))
+                        .findFirst()
+                        .orElseThrow();
+        memberRoleAssignmentRepository.delete(assignment);
+        entityManager.flush();
+
+        review(submittedId, "ACCEPTED", null)
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        assertThat(reload(submittedId).getStatus()).isEqualTo(ResponseStatus.SUBMITTED);
     }
 
     /* ── 준비 ─────────────────────────────────────────────── */
@@ -460,17 +793,89 @@ class FormResponseControllerTest {
         return responsesPath() + "/" + formResponseId;
     }
 
-    private ResultActions changeStatus(Long formResponseId, String status) throws Exception {
-        return mockMvc.perform(
-                authenticatedPatch(
-                        responsePath(formResponseId) + "/status",
-                        "{\"rspnsSttsCd\": \"" + status + "\"}"));
+    private String reviewPath(Long formResponseId) {
+        return responsePath(formResponseId) + "/reviews";
+    }
+
+    /** 검토 의견이 null이면 필드 자체를 빼지 않고 null로 보낸다 — 웹이 비운 칸을 그렇게 보낸다 */
+    private ResultActions review(Long formResponseId, String status, String opinion)
+            throws Exception {
+        String body =
+                "{\"rspnsSttsCd\": \""
+                        + status
+                        + "\", \"rvwOpnnCn\": "
+                        + (opinion == null ? "null" : "\"" + opinion + "\"")
+                        + "}";
+        return mockMvc.perform(authenticatedPost(reviewPath(formResponseId), body));
     }
 
     private FormResponseHistoryEntity reload(Long formResponseId) {
         entityManager.flush();
         entityManager.clear();
         return formResponseHistoryRepository.findById(formResponseId).orElseThrow();
+    }
+
+    /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */
+    private FormEntity saveMultipleResponseForm(String title) throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
+        return formRepository.saveAndFlush(
+                FormEntity.create(operator, title, content, null, null, FormStatus.OPEN, true));
+    }
+
+    /*
+     * 응답 순번을 지정한 제출 응답 (#143). saveResponse와 갈리는 것은 응답자를 새로 만들지
+     * 않는다는 점이다 — 다중 응답은 **같은 회원**의 응답이 여러 건인 상황이라 회원을 받아야 한다.
+     */
+    private Long saveSubmittedResponse(
+            FormEntity targetForm,
+            MemberEntity respondent,
+            int responseSequence,
+            Instant submittedAt) {
+
+        return formResponseHistoryRepository
+                .saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                targetForm,
+                                respondent,
+                                ResponseContent.of(Map.of("q1", "제안 " + responseSequence)),
+                                submittedAt,
+                                responseSequence))
+                .getId();
+    }
+
+    /*
+     * 대표 문항(programTitle)을 가진 기획안 폼 표본 (#196). 시스템 폼 코드는 리터럴이 아니라
+     * ProposalFormSeed의 상수를 쓴다 — 계약이 그 상수를 열쇠로 삼으므로, 문자열을 다시 적으면
+     * 선언과 표본이 갈려도 테스트가 초록으로 남는다.
+     */
+    private FormEntity saveProposalForm() throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(PROPOSAL_COMPOSITION, QuestionCompositionContent.class);
+        FormEntity proposalForm =
+                FormEntity.create(
+                        operator, "스터디·프로젝트 기획안", content, null, null, FormStatus.OPEN, true);
+        proposalForm.designateAsSystemForm(ProposalFormSeed.SYSTEM_FORM_CODE);
+        return formRepository.saveAndFlush(proposalForm);
+    }
+
+    /** 활동명을 채운 기획안 응답 한 건 (#196) */
+    private Long saveProposalResponse(
+            FormEntity proposalForm,
+            MemberEntity proposer,
+            int responseSequence,
+            String programTitle,
+            Instant submittedAt) {
+
+        return formResponseHistoryRepository
+                .saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                proposalForm,
+                                proposer,
+                                ResponseContent.of(Map.of("programTitle", programTitle)),
+                                submittedAt,
+                                responseSequence))
+                .getId();
     }
 
     private FormEntity saveForm(String title) throws Exception {
@@ -531,7 +936,7 @@ class FormResponseControllerTest {
                         studentNumber,
                         name,
                         email);
-        member.updateBasicInfo(21, name, "컴퓨터학부", 2, "010-1234-5678", email);
+        member.updateBasicInfo(21, null, null, name, "컴퓨터학부", 2, "010-1234-5678", email);
         return memberRepository.saveAndFlush(member);
     }
 
@@ -539,8 +944,8 @@ class FormResponseControllerTest {
         return get(path).header("Authorization", "Bearer any-token");
     }
 
-    private MockHttpServletRequestBuilder authenticatedPatch(String path, String body) {
-        return patch(path)
+    private MockHttpServletRequestBuilder authenticatedPost(String path, String body) {
+        return post(path)
                 .header("Authorization", "Bearer any-token")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);

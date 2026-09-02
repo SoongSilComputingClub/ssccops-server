@@ -55,6 +55,27 @@ public record ResponseContent(Map<String, Object> answers) {
         return answers;
     }
 
+    /*
+     * 문자열 답 하나 (#196). 없거나·공백뿐이거나·문자열이 아니면 null이다.
+     *
+     * **여기서 던지지 않는다.** 이관의 파서(ProposalResponseParser.text)는 같은 자리에서 형이
+     * 어긋나면 거절하는데, 그쪽은 그 값으로 활동을 만드는 길이라 추측이 곧 잘못된 데이터가 된다.
+     * 이 메서드의 쓰임은 목록에 제목 한 줄을 그리는 것이라, 읽지 못한 답 하나 때문에 목록 조회가
+     * 통째로 500이 되는 쪽이 훨씬 나쁘다 — 값이 없으면 없는 대로 null이고 화면은 종전 문구로
+     * 떨어진다(응답 상세의 미리보기가 예외를 던지지 않는 것과 같은 판단).
+     *
+     * 꺼내는 규칙을 호출부에 두지 않는 것은 이 record가 존재하는 이유 그대로다 — 다중선택은
+     * 배열이고 나머지는 문자열이라는 사실을 아는 자리가 하나여야 한다.
+     */
+    public String textAnswer(String questionItemId) {
+        Object value = answers.get(questionItemId);
+        if (!(value instanceof CharSequence text)) {
+            return null;
+        }
+        String answer = text.toString().trim();
+        return answer.isEmpty() ? null : answer;
+    }
+
     /** 해당 문항에 답이 있는지. 빈 문자열·빈 배열은 답하지 않은 것으로 본다 */
     public boolean hasAnswer(String questionItemId) {
         Object value = answers.get(questionItemId);

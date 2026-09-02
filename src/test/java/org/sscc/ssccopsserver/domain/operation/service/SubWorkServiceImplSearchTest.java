@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -22,6 +23,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberChangeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -34,6 +36,7 @@ import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.domain.member.service.MemberInitialHistoryRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
+import org.sscc.ssccopsserver.domain.member.service.MemberProfileChangeRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
@@ -113,6 +116,7 @@ class SubWorkServiceImplSearchTest {
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
     @Autowired private MemberStatusHistoryRepository memberStatusHistoryRepository;
+    @Autowired private MemberChangeHistoryRepository memberChangeHistoryRepository;
     @Autowired private AuthorityPolicy authorityPolicy;
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private TestEntityManager entityManager;
@@ -147,6 +151,7 @@ class SubWorkServiceImplSearchTest {
                         memberStatusHistoryRepository,
                         new MemberInitialHistoryRecorder(
                                 memberGradeHistoryRepository, memberStatusHistoryRepository),
+                        new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(FIXED_CLOCK),
                         FIXED_CLOCK);
@@ -311,6 +316,51 @@ class SubWorkServiceImplSearchTest {
 
         assertThat(idsOf(response)).containsExactly(overdue);
         assertThat(response.subWorks().get(0).isDelayed()).isTrue();
+    }
+
+    /*
+     * 지연 판정은 서버 안에 두 벌 있다 — 단건·요약 응답은 SubWorkEntity.isDelayedBefore가,
+     * 목록 필터는 SubWorkRepositoryImpl이 같은 조건을 SQL로 옮겨 쓴다. 한쪽만 고치면 같은
+     * 건이 목록에는 '지연'으로 잡히는데 상세에서는 아니게 되므로, 같은 데이터로 두 답이
+     * 일치하는지를 여기서 못 박는다 (#194 · 완료 업무가 '지연'으로 표기된 ssccops#112).
+     *
+     * 케이스는 SubWorkEntityTest와 같은 넷이다 — 마감 지난 미완료 / 마감 지난 완료 /
+     * 마감일이 오늘 / 마감 없음. 그중 지연은 첫 번째뿐이다.
+     */
+    @Test
+    void singleJudgementAndOverdueFilterAgreeOnEveryCase() {
+        Long overdue = createSubWork(springMtWorkId, "마감 지난 미완료 건", OVERDUE);
+        Long doneOverdue = createSubWork(springMtWorkId, "마감 지나 완료한 건", OVERDUE);
+        complete(doneOverdue);
+        Long dueToday = createSubWork(springMtWorkId, "오늘 아침 마감", DUE_TODAY);
+        Long undated = createSubWork(springMtWorkId, "마감 없는 건", null);
+
+        Instant overdueBefore = new DeadlinePolicy(FIXED_CLOCK).overdueBefore();
+        entityManager.flush();
+        entityManager.clear();
+
+        // 단건 판정
+        assertThat(delayedBefore(overdue, overdueBefore)).isTrue();
+        assertThat(delayedBefore(doneOverdue, overdueBefore)).isFalse();
+        assertThat(delayedBefore(dueToday, overdueBefore)).isFalse();
+        assertThat(delayedBefore(undated, overdueBefore)).isFalse();
+
+        // 목록 필터. 단건이 지연이라고 한 건과 정확히 같은 집합이어야 한다
+        List<Long> delayedBySingleJudgement =
+                subWorkRepository.findAll().stream()
+                        .filter(subWork -> subWork.isDelayedBefore(overdueBefore))
+                        .map(SubWorkEntity::getId)
+                        .toList();
+
+        assertThat(idsOf(search(condition().isOverdue(true).build())))
+                .containsExactlyInAnyOrderElementsOf(delayedBySingleJudgement)
+                .containsExactly(overdue);
+
+        // 목록에 실리는 지연 플래그도 같은 판정을 거친다 — 완료 건은 여기서도 지연이 아니다
+        assertThat(search(condition().build()).subWorks())
+                .filteredOn(SubWorkSummaryResponse::isDelayed)
+                .extracting(SubWorkSummaryResponse::subWorkId)
+                .containsExactly(overdue);
     }
 
     // isOverdue=false는 '지연이 아닌 건만'이 아니라 필터 없음이다
@@ -619,6 +669,11 @@ class SubWorkServiceImplSearchTest {
         entityManager.flush();
         entityManager.clear();
         return subWorkService.searchSubWorks(condition);
+    }
+
+    // 목록이 아니라 엔티티에게 직접 묻는다 — 목록 필터와 답이 갈리는지 보려면 두 경로가 필요하다
+    private boolean delayedBefore(Long subWorkId, Instant overdueBefore) {
+        return subWorkRepository.findById(subWorkId).orElseThrow().isDelayedBefore(overdueBefore);
     }
 
     private static List<Long> idsOf(SubWorkSearchResponse response) {

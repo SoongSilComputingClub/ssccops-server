@@ -143,7 +143,9 @@ class MemberLinkConcurrencyTest {
                                         memberStatusRepository
                                                 .findById(MemberStatusCode.ENROLLED.code())
                                                 .orElseThrow(),
-                                        LocalDate.of(2019, 3, 1)))
+                                        LocalDate.of(2019, 3, 1),
+                                        null,
+                                        null))
                         .getId();
     }
 

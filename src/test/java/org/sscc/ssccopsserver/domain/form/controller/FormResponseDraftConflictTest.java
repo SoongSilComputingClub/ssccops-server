@@ -44,7 +44,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  *
  * 자동 저장은 타이핑마다 도는 요청이라 두 탭이 열려 있거나 디바운스가 겹치면 첫 저장 두 건이
  * 동시에 도착할 수 있다. 둘 다 선조회에서 "행이 없다"를 보고 INSERT를 시도하면 하나는 반드시
- * (form_id, mbr_id) UNIQUE에 걸리는데, 그때 500이 나가면 웹은 서버가 고장난 것으로 읽는다.
+ * (form_id, mbr_id, rspns_seq) UNIQUE에 걸리는데(#143에서 제약이 옮겨진 뒤에도 두 요청이 같은
+ * 다음 순번을 계산하므로 마찬가지다), 그때 500이 나가면 웹은 서버가 고장난 것으로 읽는다.
  *
  * 실제 스레드를 두 개 띄우는 대신 리포지토리를 대체해 제약 위반만 재현한다 — 확인 대상은 경합의
  * 타이밍이 아니라 "제약 위반이 무엇으로 번역되는가" 한 가지이고, 스레드로 재현하면 타이밍에 따라
@@ -110,11 +111,20 @@ class FormResponseDraftConflictTest {
                                         FormStatus.OPEN))
                         .getId();
 
-        // 선조회는 통과시키고(행이 없다) 저장에서만 제약 위반을 일으킨다 — 경합의 결과가 이 모양이다
-        given(formResponseHistoryRepository.findByFormAndMember(any(), any()))
+        /*
+         * 선조회는 통과시키고(초안이 없다) 저장에서만 제약 위반을 일으킨다 — 경합의 결과가 이 모양이다.
+         *
+         * 두 요청이 같은 마지막 순번(0)을 읽어 같은 다음 번호(1)를 계산하므로, #143에서 제약이
+         * (form_id, mbr_id, rspns_seq)로 옮겨진 뒤에도 부딪히는 것은 그대로다.
+         */
+        given(formResponseHistoryRepository.findByFormAndMemberAndStatus(any(), any(), any()))
                 .willReturn(Optional.empty());
+        given(formResponseHistoryRepository.existsByFormAndMemberAndStatusIn(any(), any(), any()))
+                .willReturn(false);
+        given(formResponseHistoryRepository.findLastResponseSequence(any(), any())).willReturn(0);
         given(formResponseHistoryRepository.saveAndFlush(any()))
-                .willThrow(new DataIntegrityViolationException("uk_form_rspns_hstry_form_member"));
+                .willThrow(
+                        new DataIntegrityViolationException("uk_form_rspns_hstry_form_member_seq"));
 
         mockMvc.perform(
                         put("/v1/forms/" + formId + "/responses/draft")

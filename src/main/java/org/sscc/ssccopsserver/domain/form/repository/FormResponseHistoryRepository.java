@@ -20,12 +20,80 @@ public interface FormResponseHistoryRepository
         extends JpaRepository<FormResponseHistoryEntity, Long> {
 
     /*
-     * "내가 이 폼에 낸 응답". (form_id, mbr_id) UNIQUE 덕분에 반드시 0건 아니면 1건이라
-     * List가 아니라 Optional로 받는다 — 자동 저장(#36)이 매번 이 조회로 이어 쓸 행을 찾는다.
+     * "내가 이 폼에 낸 응답" 전부 (#143 · 응답 순번 오름차순).
+     *
+     * **원래 Optional을 돌려주는 findByFormAndMember였다.** 다중 응답이 열리면서 그 단건 전제가
+     * 깨졌고, 시그니처를 그대로 두면 두 번째 응답이 있는 회원의 조회가 조용히 예외
+     * (IncorrectResultSizeDataAccessException)로 떨어진다 — 이름을 바꾸는 편이 호출부를 전부
+     * 다시 보게 만든다(제출 중복 판정 · 공개 폼의 alreadySubmitted · 내 응답 목록).
+     *
+     * 정렬 기준이 순번인 것은 그것이 "몇 번째로 시작한 응답인가"이기 때문이다. 제출 일시로
+     * 정렬하면 아직 내지 않은 초안이 NULL로 끝이나 처음에 몰린다.
      */
-    Optional<FormResponseHistoryEntity> findByFormAndMember(FormEntity form, MemberEntity member);
+    List<FormResponseHistoryEntity> findAllByFormAndMemberOrderByResponseSequenceAsc(
+            FormEntity form, MemberEntity member);
 
-    boolean existsByFormAndMember(FormEntity form, MemberEntity member);
+    /*
+     * 작성 중인 내 응답 (#36 · #143). 초안은 폼 종류와 무관하게 언제나 최대 1건이라 Optional이다 —
+     * 그 사실을 지키는 것은 부분 유니크 인덱스(PostgreSQL)와 saveDraft의 판정 두 겹이며,
+     * 자동 저장 API(GET·PUT .../responses/draft)의 단건 계약이 여기에 얹혀 있다.
+     */
+    Optional<FormResponseHistoryEntity> findByFormAndMemberAndStatus(
+            FormEntity form, MemberEntity member, ResponseStatus status);
+
+    /*
+     * 새 초안을 시작할 수 있는가의 판단 근거 (#143 · #192).
+     *
+     * **원래 상태를 보지 않는 existsByFormAndMember였다.** 초안이 없음을 이미 확인한 뒤라 남은
+     * 것은 정의상 제출 이상이라는 논리였는데, 그 "제출 이상"에 반려가 들어 있어 반려된 응답자가
+     * 새 초안조차 만들지 못했다 — 반려는 그 응답에 대한 종결이지 그 폼에 대한 종결이 아니다.
+     * 그래서 막는 상태를 호출부가 명시해 넘긴다(ResponseStatus.blockingNewResponse).
+     *
+     * 상태 집합을 여기 적어 굳히지 않는 것은 이 리포지토리의 다른 질의와 같다 — 기준이 두 벌이
+     * 되면 갈린다.
+     */
+    boolean existsByFormAndMemberAndStatusIn(
+            FormEntity form, MemberEntity member, Collection<ResponseStatus> statuses);
+
+    /*
+     * 이 회원이 이 폼에서 마지막으로 쓴 응답 순번 (#143). 다음 응답은 이 값 + 1로 시작한다.
+     *
+     * count(*)로 세지 않는 것은 응답이 지워진 적이 있으면 이미 쓴 번호를 다시 배정하기 때문이다 —
+     * 그 순간 UNIQUE 위반이 나고, 사용자에게는 "왜인지 두 번째 제안이 안 된다"로 보인다.
+     * 행이 없으면 max가 NULL이므로 coalesce로 0을 돌려준다(첫 응답이 1이 된다).
+     */
+    @Query(
+            "select coalesce(max(r.responseSequence), 0) from FormResponseHistoryEntity r"
+                    + " where r.form = :form and r.member = :member")
+    int findLastResponseSequence(
+            @Param("form") FormEntity form, @Param("member") MemberEntity member);
+
+    /*
+     * "내가 행사에 낸 신청" 전부 (ssccops#145 · GET /v1/events/my-applications).
+     *
+     * 행사에 연결된 폼의 응답만 고른다 — 폼 응답 전부를 끌어와 서비스에서 거르면 행사와 무관한
+     * 지원서·설문 응답까지 메모리로 올라오고, 그 수는 회원이 오래 활동할수록 는다. 폼은 행사에
+     * 전속(uk_event_form)이라 exists 하나로 끝난다.
+     *
+     * 상태 집합을 호출부가 넘기는 것은 이 리포지토리의 다른 질의와 같다 — 내 신청 조회는
+     * ResponseStatus.submittedOrLater()를 넘겨 DRAFT를 뺀다(제출 전 초안은 신청이 아니다).
+     * 같은 EnumSet을 여기 적어 굳히면 그 기준이 두 벌이 된다.
+     *
+     * 폼을 함께 페치하는 것은 호출부가 form_id로 행사를 짝지어야 하기 때문이다 — LAZY 프록시의
+     * 식별자 접근에 기대면 매핑을 조금만 손대도 조용히 N+1로 되돌아간다 (findAllForOperatorList
+     * 주석과 같은 자리).
+     *
+     * 정렬은 '최신 신청 순'(제출 일시 내림차순)이고 동률은 식별자로 끊는다 — DRAFT가 빠져
+     * sbmsn_dt가 언제나 있으므로 운영자 목록과 달리 coalesce가 필요 없다.
+     */
+    @Query(
+            "select r from FormResponseHistoryEntity r join fetch r.form f"
+                    + " where r.member = :member and r.status in :statuses"
+                    + " and exists (select e.id from EventEntity e where e.form = f)"
+                    + " order by r.submittedAt desc, r.id desc")
+    List<FormResponseHistoryEntity> findEventApplicationsByMember(
+            @Param("member") MemberEntity member,
+            @Param("statuses") Collection<ResponseStatus> statuses);
 
     /*
      * 문항 식별자 보호(#32 수정)의 판단 근거. 상태를 가리지 않고 한 건이라도 있으면 참이다 —
@@ -33,6 +101,14 @@ public interface FormResponseHistoryRepository
      * 되는 것은 아니다. 목록의 responseCount가 DRAFT를 빼는 것과는 판단 기준이 다르다.
      */
     boolean existsByForm(FormEntity form);
+
+    /*
+     * 행사 폼 연결 변경 가드(ssccops#139 · D11)의 판단 근거. 문항 식별자 보호(existsByForm)와
+     * 기준이 다르다 — 그쪽은 DRAFT를 포함하지만, "신청이 발생했는가"는 제출 이상
+     * (ResponseStatus.submittedOrLater)만 본다. 작성 중인 초안은 아직 낸 신청이 아니라서
+     * 폼 연결을 바꿔도 잃는 것이 없다.
+     */
+    boolean existsByFormAndStatusIn(FormEntity form, Collection<ResponseStatus> statuses);
 
     /*
      * 폼별 응답 목록(#37). 운영자용 목록 표가 회원_명·학번·학과·등급·상태를 그리므로 회원과
@@ -106,4 +182,19 @@ public interface FormResponseHistoryRepository
      */
     @EntityGraph(attributePaths = {"member", "member.membershipGrade", "member.membershipStatus"})
     Optional<FormResponseHistoryEntity> findByIdAndForm(Long id, FormEntity form);
+
+    /*
+     * 제출자용 본인 응답 단건 조회 (#177 · GET .../responses/mine/{formRspnsId}).
+     *
+     * 운영자용(findByIdAndForm)에 **응답자 조건을 하나 더 건다.** 폼 범위만으로 찾으면 제출자가
+     * 남의 응답 식별자를 대입하는 것으로 그 답과 검토 사유를 통째로 읽는다 — 폼 범위 검사가 폼
+     * 경계를 넘는 것을 막듯, 여기서는 회원 경계를 넘는 것을 막는 조건이다. 세 값을 함께 걸어
+     * 없는 응답과 남의 응답이 같은 빈 결과가 되게 한다(코드를 나누면 그 응답이 존재하는지가
+     * 새어 나간다).
+     *
+     * 엔티티 그래프를 걸지 않는 것은 이 조회가 회원 정보를 응답에 싣지 않기 때문이다
+     * (MyFormResponseDetailResponse) — 조건에 쓰는 회원은 이미 인증 주체로 손에 있다.
+     */
+    Optional<FormResponseHistoryEntity> findByIdAndFormAndMember(
+            Long id, FormEntity form, MemberEntity member);
 }

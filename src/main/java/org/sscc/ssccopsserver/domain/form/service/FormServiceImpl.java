@@ -8,11 +8,13 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
@@ -26,10 +28,11 @@ import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormQuestionHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
-import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.QuestionItem;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormQuestionHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseCount;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
@@ -46,12 +49,35 @@ public class FormServiceImpl implements FormService {
     /** 복제본 제목 접미. 웹 목 스토어(duplicateForm)가 이미 쓰던 표기를 그대로 굳힌다 */
     private static final String COPY_SUFFIX = " (복사본)";
 
+    /*
+     * 빈 DRAFT 폼(createEmptyDraft)이 갖는 기본 페이지 제목. 페이지를 아예 두지 않으면
+     * qitemCpstCn.pages가 NULL이 되고, @JsonInclude(NON_NULL)이 응답에서 키를 통째로 빼
+     * 편집기가 pages.map(...)에서 죽는다. QuestionCompositionValidator도 "빈 폼이라도 페이지
+     * 한 장은 있어야 한다"고 못 박으므로, 그 규칙과 같은 모양(페이지 1장 · 문항 0개)으로 만든다.
+     */
+    private static final String DEFAULT_PAGE_TITLE = "페이지 1";
+
     private final FormRepository formRepository;
     private final FormLabelRepository formLabelRepository;
     private final FormLabelRelationRepository formLabelRelationRepository;
     private final FormResponseHistoryRepository formResponseHistoryRepository;
+    private final FormQuestionHistoryRepository formQuestionHistoryRepository;
     private final QuestionCompositionValidator questionCompositionValidator;
     private final FormLabelService formLabelService;
+
+    /*
+     * "이 폼이 학술 활동에 연결됐는가"를 묻는 유일한 진입점 (#190). form 도메인이 학술 도메인의
+     * Repository만 보고 Service는 보지 않는다 — AcademicProgramServiceImpl이 FormService를
+     * 주입받으므로 서비스끼리 물면 생성자 주입이 고리가 된다(회원 도메인이 SubWorkService만
+     * 아는 것과 같은 규칙). 조인 판별의 근거는 findIdByFormId 주석에 있다.
+     */
+    private final AcademicProgramRepository academicProgramRepository;
+
+    /*
+     * 코드가 시스템 폼에 요구하는 qitemId 선언 (#140). 여기서 요구 목록을 들고 있지 않는 것은,
+     * 그 목록의 주인이 폼 도메인이 아니라 그 폼을 읽는 코드이기 때문이다.
+     */
+    private final SystemFormContract systemFormContract;
 
     /*
      * 접수 가능 판정·표시용 접수 상태의 유일한 구현 (#33). 여기서 직접 상태와 기간을 비교하지
@@ -100,10 +126,20 @@ public class FormServiceImpl implements FormService {
 
     /*
      * 폼 상세. 응답 요약(#37)이 목록의 responseCount와 같은 집계에서 나온다 — 상세 화면은
-     * '전체 · 제출 · 승인 · 반려' 네 숫자를 보여주고 목록은 그중 전체만 쓴다.
+     * '전체 · 제출 · 수정요청 · 승인 · 반려' 숫자를 보여주고 목록은 그중 전체만 쓴다.
      *
      * 상태별 집계를 위해 질의를 하나 더 두지 않는다. 두 벌이 되면 폼 목록이 폼마다 두 번씩
      * 집계하게 되고, 무엇보다 총합과 상태별 합이 어긋날 여지가 생긴다 (FormResponseCount 주석).
+     *
+     * 계약 문항 목록(systemRequiredQitemIds)을 함께 싣는다 (#155). 저장 경로가 거절 근거로 쓰는 것과
+     * 정확히 같은 호출(systemFormContract.requiredQitemIdsOf)이며, 그것이 요점이다 — 조회 쪽이 계약을
+     * 따로 읽거나 폼 구성에서 역산하면 화면이 잠그는 문항과 서버가 거절하는 문항이 갈라질 수 있다.
+     *
+     * 시스템 폼인지를 여기서 따로 묻지 않는다. 평범한 폼은 sys_form_cd가 NULL이라 계약이 이미 빈
+     * 집합을 돌려주며, 여기서 isSystemForm()을 한 번 더 보면 "언제 비는가"라는 판단이 두 벌이 된다.
+     *
+     * 목록(FormSummaryResponse)에는 싣지 않는다 — 문항 편집은 상세·편집 화면에서만 하므로 목록 카드는
+     * 쓸 일이 없고, qitemCpstCn을 목록에서 빼는 규칙과 같은 줄기다.
      */
     @Override
     public FormDetailResponse getForm(Long formId) {
@@ -112,7 +148,9 @@ public class FormServiceImpl implements FormService {
                 form,
                 formReceiptPolicy.receiptStatusOf(form),
                 labelsOf(form),
-                responseSummaryOf(form));
+                responseSummaryOf(form),
+                systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()),
+                academicProgramRepository.findIdByFormId(formId).orElse(null));
     }
 
     /*
@@ -121,6 +159,10 @@ public class FormServiceImpl implements FormService {
      *
      * 폼과 라벨 연결을 한 트랜잭션에 묶는 것은 둘 중 하나만 남으면 라벨 없는 폼이거나 폼 없는
      * 연결이 되기 때문이다 (AR-11).
+     *
+     * 생성 시점의 구성도 qitem_ver = 1로 이력에 한 행 남긴다 (#140). 수정에서만 남기면 1번
+     * 버전의 내용만 어디에도 없어, 이력을 처음부터 되짚으면 2번으로 바뀌기 전이 무엇이었는지
+     * 폼의 현재 값에서 역산해야 한다.
      */
     @Override
     @Transactional
@@ -146,7 +188,9 @@ public class FormServiceImpl implements FormService {
                                 composition,
                                 receiptBeginAt,
                                 receiptEndAt,
-                                status));
+                                status,
+                                request.multipleResponseAllowed()));
+        recordQuestionComposition(form, creator);
 
         return FormSaveResponse.of(form, replaceLabels(form, request.labelIdsOrEmpty()));
     }
@@ -154,10 +198,15 @@ public class FormServiceImpl implements FormService {
     /*
      * 폼 수정. 문항 구성은 부분 갱신이 아니라 전체 교체다 (QuestionCompositionContent 주석).
      * 편집 자동 저장(ssccops #63)도 같은 엔드포인트를 쓰므로 자주 호출된다.
+     *
+     * 수행자(actor)를 받는 것은 #140부터다. 그전까지는 수정 이력을 남기지 않아 주체를 요구하지
+     * 않았는데, 문항 구성 이력(form_qitem_hstry)이 생기면서 변경자를 적을 자리가 생겼다.
+     * 요청 본문으로 받지 않는 것은 #78이 세운 규칙과 같다 — 받아 주면 "누가 바꿨는가"를 스스로
+     * 적어 넣을 수 있어 이력이 증거가 되지 못한다.
      */
     @Override
     @Transactional
-    public FormSaveResponse updateForm(Long formId, FormSaveRequest request) {
+    public FormSaveResponse updateForm(Long formId, FormSaveRequest request, MemberEntity actor) {
         FormEntity form = findForm(formId);
 
         QuestionCompositionContent composition =
@@ -165,8 +214,17 @@ public class FormServiceImpl implements FormService {
         Instant receiptBeginAt = toInstant(request.rcptBgngDt());
         Instant receiptEndAt = toInstant(request.rcptEndDt());
         FormEntity.requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
+        ensureAcademicReceiptPeriodUnchanged(form, receiptBeginAt, receiptEndAt);
         // 교체 전 구성과 비교해야 하므로 update() 호출보다 먼저 검사한다
         ensureExistingQuestionItemsKept(form, composition);
+
+        /*
+         * 시스템 폼의 코드 계약 검사 (#140). 응답 유무를 보는 위 검사와 나란히 두지만 기준이
+         * 다르다 — 이쪽은 응답이 한 건도 없어도 코드가 요구하는 qitemId를 지울 수 없다.
+         * 요구 목록은 폼이 아니라 그 폼을 읽는 코드가 선언한다(SystemFormContract).
+         */
+        form.requireSystemContractKept(
+                composition, systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
 
         /*
          * 본문에 formSttsCd가 실려 와도 무시한다 (#33). 라벨(labelIds)과 해석이 갈리는데, 라벨은
@@ -178,7 +236,20 @@ public class FormServiceImpl implements FormService {
          * 늘 실려 있어, 거절하면 자동 저장이 통째로 멈춘다. 반대로 그 값을 받아 쓰면 타이핑
          * 한 번이 접수 상태를 덮어쓴다. 상태를 바꾸는 길은 POST /v1/forms/{formId}/status뿐이다.
          */
-        form.update(request.formTtlNm(), composition, receiptBeginAt, receiptEndAt);
+        /*
+         * 버전이 올랐을 때만 이력을 남긴다 (#140). 올랐는지는 엔티티가 판단해 돌려준다 —
+         * 여기서 구성을 한 번 더 비교하면 "구성이 바뀌었는가"라는 같은 규칙이 두 벌이 되고,
+         * 그때부터 버전과 이력이 갈릴 수 있다.
+         */
+        if (form.update(
+                request.formTtlNm(),
+                composition,
+                receiptBeginAt,
+                receiptEndAt,
+                request.multipleResponseAllowed())) {
+            recordQuestionComposition(form, actor);
+        }
+
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
         formRepository.flush();
 
@@ -194,6 +265,19 @@ public class FormServiceImpl implements FormService {
      * 복제한 폼에 지난 회차의 분류가 따라붙으면 목록 필터가 거짓말을 한다.
      *
      * 생성자는 원본 생성자가 아니라 복제를 수행한 회원이다 — 사본을 만든 사람이 사본의 주인이다.
+     *
+     * **시스템 폼의 사본은 시스템 폼이 아니다** (#140). sys_form_cd에 UNIQUE가 걸려 있어 승계하면
+     * 저장 자체가 실패하고, 실패하지 않더라도 코드가 두 폼 중 어느 쪽을 가리키는지 알 수 없게
+     * 된다. 문항 구성 버전도 승계하지 않고 1에서 다시 시작한다 — 사본의 이력은 여기서 시작하므로
+     * 원본의 버전을 물려받으면 그 앞 버전의 이력이 없는 채로 번호만 큰 폼이 된다. 해제 코드를
+     * 여기 적지 않고 FormEntity.create가 언제나 그 상태로 만들게 둔 것은, 새 폼을 만드는 경로가
+     * 늘 때마다 해제를 다시 적어야 하는 것을 피하기 위해서다.
+     *
+     * **다중 응답 허용 여부(#143)는 반대로 승계한다.** 시스템 폼 코드와 갈리는 것은 그쪽이
+     * "환경에 하나뿐인 이름"이라 사본이 가지면 UNIQUE에 걸리는 값인 반면, 이쪽은 문항 구성·제목과
+     * 같은 폼의 설정이기 때문이다 — "이 폼과 똑같은 것 하나 더"라고 했는데 응답 접수 규칙만
+     * 조용히 달라지면 다음 회차 폼이 지난 회차와 다르게 동작한다. 접수 기간을 초기화하는 것과도
+     * 갈린다: 기간은 회차마다 반드시 새로 정하는 값이지만 이 설정은 그대로 두는 것이 기본이다.
      */
     @Override
     @Transactional
@@ -208,7 +292,9 @@ public class FormServiceImpl implements FormService {
                                 source.getQuestionComposition().deepCopy(),
                                 null,
                                 null,
-                                FormStatus.DRAFT));
+                                FormStatus.DRAFT,
+                                source.isMultipleResponseAllowed()));
+        recordQuestionComposition(copy, creator);
 
         return FormDuplicateResponse.of(copy, source.getId());
     }
@@ -233,10 +319,62 @@ public class FormServiceImpl implements FormService {
         return FormStatusChangeResponse.of(form, formReceiptPolicy.receiptStatusOf(form));
     }
 
+    /*
+     * 문항 0개인 DRAFT 폼 생성 (#133). requireOpenable()은 DRAFT를 만들 때는 돌지 않으므로
+     * 빈 qitems가 그대로 통과한다 — 문항 0개 금지는 여는(OPEN) 쪽에만 걸린다(FormEntity 주석).
+     *
+     * pages는 비우지 않고 기본 페이지 한 장을 넣는다 (#186). NULL로 두면 응답의 qitemCpstCn에
+     * pages 키가 통째로 빠져(@JsonInclude(NON_NULL)) 편집기가 pages.map(...)에서 죽고,
+     * 무엇보다 QuestionCompositionValidator가 요구하는 최소 구조(페이지 1장)와도 어긋난다.
+     */
+    @Override
+    @Transactional
+    public FormEntity createEmptyDraft(String title, MemberEntity creator) {
+        QuestionCompositionContent composition =
+                new QuestionCompositionContent(
+                        List.of(new QuestionCompositionContent.Page(DEFAULT_PAGE_TITLE, null)),
+                        List.of());
+        return formRepository.save(FormEntity.create(creator, title, composition, null, null));
+    }
+
+    /*
+     * 접수 기간만 갱신 (#133). changeStatus(OPEN)보다 먼저 불러야 requireOpenable()의 접수 기간
+     * 정합성 검사가 갱신된 기간을 본다 — 호출 순서는 이 메서드가 아니라 호출부의 책임이다.
+     */
+    @Override
+    @Transactional
+    public void changeReceiptPeriod(Long formId, Instant receiptBeginAt, Instant receiptEndAt) {
+        FormEntity form = findForm(formId);
+        form.changeReceiptPeriod(receiptBeginAt, receiptEndAt);
+    }
+
     private FormEntity findForm(Long formId) {
         return formRepository
                 .findById(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+    }
+
+    /*
+     * 학술 활동에 연결된 폼의 접수 기간 잠금 (#190 · 400 ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED).
+     *
+     * 저장소는 form.rcpt_bgng_dt/rcpt_end_dt 하나인데 입력 화면이 "모집 관리"와 "폼 편집" 둘이라,
+     * 모집 시작 뒤 폼 편집(PUT)에서 그 값을 덮어쓰면 두 화면이 같은 값을 두고 경쟁한다. 학술 연결
+     * 폼의 접수 기간을 쓰는 유일한 경로는 START_RECRUITMENT 오케스트레이션(changeReceiptPeriod)
+     * 이며, 이 경로에서는 거부한다.
+     *
+     * 막는 것은 접수 기간 두 필드뿐이다 — 제목·문항 구성·라벨·다중 응답 등 나머지 편집은 그대로
+     * 통과한다(ssccops-web#193 — 학술국장이 편집 화면에서 문항을 채우는 것은 정상 동선이다).
+     * 값이 현재와 같으면(편집 자동 저장이 상세 응답을 그대로 되돌려 보내는 경우) 통과한다 —
+     * 바뀐 값일 때만 학술 연결 여부를 조회한다.
+     */
+    private void ensureAcademicReceiptPeriodUnchanged(
+            FormEntity form, Instant receiptBeginAt, Instant receiptEndAt) {
+        boolean periodChanged =
+                !Objects.equals(form.getReceiptBeginAt(), receiptBeginAt)
+                        || !Objects.equals(form.getReceiptEndAt(), receiptEndAt);
+        if (periodChanged && academicProgramRepository.findIdByFormId(form.getId()).isPresent()) {
+            throw new GeneralException(FormErrorCode.ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED);
+        }
     }
 
     /*
@@ -253,16 +391,25 @@ public class FormServiceImpl implements FormService {
             return;
         }
 
-        Set<String> nextIds =
-                next.qitems().stream().map(QuestionItem::qitemId).collect(Collectors.toSet());
-        boolean anyRemoved =
-                form.getQuestionComposition().qitems().stream()
-                        .map(QuestionItem::qitemId)
-                        .anyMatch(qitemId -> !nextIds.contains(qitemId));
+        Set<String> nextIds = QuestionCompositionContent.qitemIdsOf(next);
+        Set<String> currentIds =
+                QuestionCompositionContent.qitemIdsOf(form.getQuestionComposition());
 
-        if (anyRemoved) {
+        if (!nextIds.containsAll(currentIds)) {
             throw new GeneralException(FormErrorCode.QUESTION_ITEM_IN_USE);
         }
+    }
+
+    /*
+     * 문항 구성 이력 한 행 (#140). 생성·복제·버전이 오른 수정이 모두 이 자리를 지난다 —
+     * 세 경로가 각자 이력을 만들면 어느 한 곳만 빠져도 이력에 구멍이 생기고, 구멍이 있는
+     * 이력은 "그때 무엇이었는가"에 답하지 못해 없는 것과 같아진다.
+     *
+     * 버전과 구성을 넘기지 않는 것은 엔티티 팩토리가 폼에서 직접 읽기 때문이다
+     * (FormQuestionHistoryEntity.of 주석).
+     */
+    private void recordQuestionComposition(FormEntity form, MemberEntity changedBy) {
+        formQuestionHistoryRepository.save(FormQuestionHistoryEntity.of(form, changedBy));
     }
 
     /*

@@ -7,11 +7,14 @@ import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
@@ -38,6 +41,48 @@ public interface FormResponseService {
 
     /** 응답자용 폼 조회. 지금 응답을 받지 않는 폼이면 문항을 내려주지 않고 끊는다 */
     PublicFormResponse getPublicForm(Long formId, MemberEntity respondent);
+
+    /*
+     * 회원용 시스템 폼 조회 (#181 · GET /v1/forms/system/{sysFormCd}).
+     *
+     * sysFormCd로 폼의 form_id·제목·다중 응답 여부·문항 구성과 지금 새 응답을 받는지를 돌려준다.
+     * sysFormCd를 싣는 다른 조회는 전부 FORM_READ 권한이 걸려 일반 회원(기획안 제출자)이 부를 수
+     * 없어, 재제출 화면이 폼 번호를 얻을 길이 없었다.
+     *
+     * **접수 가능 여부를 보지 않는다** — 재제출 화면은 마감된 폼의 문항도 그려야 하고(#177),
+     * 자기가 낸 것을 확인·재제출하는 흐름의 재료라 GET .../responses/mine과 같은 기준이다.
+     * acceptingYn은 "지금 새 응답을 받는가"만 전하며 판정은 FormReceiptPolicy 하나가 한다.
+     *
+     * 없는 코드는 404 FORM_NOT_FOUND다 — 아직 시드되지 않았거나(회원이 한 명도 없으면 기획안
+     * 폼 시드를 미룬다) 지워진 경우다. sys_form_cd UNIQUE가 환경당 한 건을 보장하므로 여러 건을
+     * 가정하지 않는다.
+     */
+    SystemFormResponse getSystemForm(String systemFormCode);
+
+    /*
+     * 내 응답 목록 (#143). 대상은 언제나 인증 주체 본인이라 자동 저장과 같은 이유로 회원
+     * 식별자를 받지 않는다.
+     *
+     * 작성 중(DRAFT)도 함께 돌려주며, 접수가 끝난 폼에서도 조회된다 — 이 조회는 쓰기와 짝을
+     * 이루지 않아 접수 판정을 걸 이유가 없고, 걸면 마감 직후부터 자기가 낸 것을 볼 수 없다.
+     */
+    List<MyFormResponseSummaryResponse> getMyResponses(Long formId, MemberEntity respondent);
+
+    /*
+     * 제출자용 본인 응답 상세 (#177). 내 답 전체(rspnsCn)와 검토 처리 이력을 함께 돌려준다 —
+     * 수정요청 사유를 읽고 이전 답을 불러오는 것이 이 조회의 목적이며, 그 둘이 없으면 재제출은
+     * 전체 본문을 처음부터 다시 치는 것으로만 된다.
+     *
+     * 회원 식별자를 받지 않는 것은 자동 저장·내 응답 목록이 세운 규칙 그대로이고, 여기에 더해
+     * **응답 식별자가 본인 행을 가리키지 않으면 404다** — 폼 범위 검사가 폼 경계를 지키듯 회원
+     * 경계를 지키는 조건이며, 없는 응답과 남의 응답이 같은 코드로 끊긴다.
+     *
+     * 접수 가능 여부를 보지 않는다. 내 응답 목록과 같은 기준이다 — 자기가 낸 것을 확인하는
+     * 조회라 접수가 끝난 뒤에도 열려야 하고, 오히려 마감 뒤에 수정요청 사유를 읽는 것이 이
+     * 경로의 실제 쓰임이다.
+     */
+    MyFormResponseDetailResponse getMyResponse(
+            Long formId, Long formResponseId, MemberEntity respondent);
 
     /** 응답 제출. 응답자·상태·제출 일시는 요청이 아니라 서버가 정한다 */
     FormResponseSubmitResponse submitResponse(
@@ -69,9 +114,32 @@ public interface FormResponseService {
     FormResponseDetailResponse getResponse(Long formId, Long formResponseId);
 
     /*
-     * 응답 상태 변경 (#37). SUBMITTED ↔ ACCEPTED ↔ REJECTED만 오갈 수 있고 DRAFT가 얽힌 전이는
-     * 거절한다. 수행자는 어디에도 남지 않는다 (응답 상태 이력 테이블이 없다 — 감사 로그 #8).
+     * 응답 한 건의 현재 심사 상태 (#198).
+     *
+     * 부르는 쪽은 심사가 이미 끝났는지를 알아야 하는 경로다 — 학술 모집 선발이 같은 신청자를
+     * 다시 저장할 때, 이미 ACCEPTED인 응답에 검토를 한 번 더 걸면 종결 상태라 400이고 통과해도
+     * 처리 이력에 아무것도 바꾸지 않은 승인이 한 줄 더 쌓인다(#141). 재선발은 재심사가 아니다.
+     *
+     * 상세(getResponse)를 부르지 않는 것은 그쪽이 검토 이력과 인접 응답까지 함께 조회하기
+     * 때문이고, 검토를 무조건 걸어 예외로 갈라내지 않는 것은 "이미 승인된 응답"과 "승인할 수
+     * 없는 응답"이 같은 코드로 도착하기 때문이다. 범위 검사는 다른 조회와 같다 — 다른 폼의
+     * 응답 식별자는 없는 응답과 같은 404다.
      */
-    FormResponseSummaryResponse changeResponseStatus(
-            Long formId, Long formResponseId, FormResponseStatusChangeRequest request);
+    ResponseStatus getResponseStatus(Long formId, Long formResponseId);
+
+    /*
+     * 검토 처리 (#141). 상태 변경과 처리 이력 INSERT를 **한 트랜잭션**으로 묶는다 — "심사한다"와
+     * "그 사실을 남긴다"는 나눌 수 없는 한 건이라, 이력 저장이 실패하면 상태도 되돌아간다
+     * (#78의 MemberChangeRollbackTest 선례).
+     *
+     * 도달할 수 있는 상태는 ACCEPTED · CHANGES_REQUESTED · REJECTED 셋이며 수정요청·반려는
+     * 검토 의견이 필수다. 승인·반려는 종결이라 그 뒤로는 어떤 검토도 걸 수 없다(전이표는
+     * FormResponseHistoryEntity.changeStatus). 처리자(reviewer)는 요청 본문이 아니라
+     * @CurrentMember에서 온다.
+     */
+    FormResponseSummaryResponse reviewResponse(
+            Long formId,
+            Long formResponseId,
+            FormResponseReviewRequest request,
+            MemberEntity reviewer);
 }

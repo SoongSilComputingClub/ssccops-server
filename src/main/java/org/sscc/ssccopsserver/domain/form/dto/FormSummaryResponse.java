@@ -17,7 +17,7 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * 쓰이지도 않는 JSON이 폼 수만큼 곱해져 목록 응답이 비대해진다 (AP-15의 반대편 — 값이 없어도
  * 필드는 내리되, 쓰지 않는 필드는 애초에 넣지 않는다).
  *
- * responseCount는 제출 이상(SUBMITTED·ACCEPTED·REJECTED)만 센다. 작성 중인 임시저장(DRAFT)은
+ * responseCount는 제출 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 센다. 작성 중인 임시저장(DRAFT)은
  * 아직 응답자가 낸 것이 아니라, 세면 운영진이 보는 "응답 N건"이 실제 접수 건수보다 부풀어
  * 마감 판단을 잘못하게 만든다.
  *
@@ -25,6 +25,14 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * FormReceiptPolicy). 접수 기간이 끝난 폼은 자동으로 CLOSED가 되지 않으므로 formSttsCd만
  * 그리면 이미 응답을 받지 않는 폼이 목록에서 계속 '접수 중'으로 보인다. 배치로 상태를
  * 덮어쓰는 대신 이 필드로 나눈다 — 배지 문구는 이 값으로 고른다 (ssccops-web #9).
+ *
+ * sysFormCd·sysYn·qitemVer는 #140에서 더했다. 목록 카드에도 싣는 것은 시스템 폼임을 상세로
+ * 들어가기 전에 알아야 하기 때문이다 — 목록에서 삭제 버튼을 눌러 보고 나서 409를 받는 것과
+ * 애초에 잠금 배지를 보는 것은 다르다. 문항 구성(qitemCpstCn)을 빼는 것과 어긋나 보이지만,
+ * 그쪽은 폼마다 수십 개로 늘어나는 값이고 이쪽은 세 개의 스칼라다.
+ *
+ * mltplRspnsYn(#143)도 같은 이유로 목록에 싣는다 — 상세로 들어가기 전에 "여러 건 받는 폼"임을
+ * 배지로 그릴 수 있어야 하고, 스칼라 하나라 목록 응답을 키우지 않는다.
  *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
@@ -35,6 +43,10 @@ public record FormSummaryResponse(
         FormReceiptStatus receiptStatus,
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
+        String sysFormCd,
+        boolean sysYn,
+        int qitemVer,
+        boolean mltplRspnsYn,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
         OffsetDateTime mdfcnDt) {
@@ -53,6 +65,10 @@ public record FormSummaryResponse(
                 receiptStatus,
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
+                form.getSystemFormCode(),
+                form.isSystemForm(),
+                form.getQuestionVersion(),
+                form.isMultipleResponseAllowed(),
                 labels,
                 responseCount,
                 toOffsetDateTime(form.getUpdatedAt()));

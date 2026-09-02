@@ -43,8 +43,15 @@ public class MemberInitialHistoryRecorder {
         this.memberStatusHistoryRepository = memberStatusHistoryRepository;
     }
 
+    /*
+     * 적용일은 **전산 가입일**(mbr.sys_join_ymd)이다 — 가입은 가입한 날, 이관은 이관을 실행한
+     * 날이다. 컬럼이 join_ymd에서 개명되며 이 값의 뜻이 '전산 가입일'로 확정됐다 (#204).
+     *
+     * **동아리 입부 시기(clb_join_yr_no)로 옮기지 않는다.** 옮기고 싶어지는 자리지만 그 값은
+     * 비어 있을 수 있고(NULL 허용), 이력이 가리켜야 하는 것은 시스템이 기록을 남긴 시점이다.
+     */
     /**
-     * @param appliedDate 적용일. 두 경로 모두 회원의 가입일(mbr.join_ymd)이다
+     * @param appliedDate 적용일. 두 경로 모두 회원의 전산 가입일(mbr.sys_join_ymd)이다
      * @param changeReason 변경 사유. 가입은 '회원가입', 이관은 'CSV 이관'
      * @param changedBy 변경자(chnrg_mbr_id). 가입은 본인, 이관은 요청한 운영자
      */

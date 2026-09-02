@@ -46,7 +46,7 @@ public class MemberRepositoryImpl implements MemberRepositoryCustom {
 
     private static final String NAME_PATH = "m.name";
     private static final String GENERATION_PATH = "m.generationNumber";
-    private static final String JOIN_DATE_PATH = "m.joinDate";
+    private static final String JOIN_DATE_PATH = "m.systemJoinDate";
     private static final String UPDATED_AT_PATH = "m.updatedAt";
 
     private final EntityManager entityManager;
@@ -123,7 +123,7 @@ public class MemberRepositoryImpl implements MemberRepositoryCustom {
      * 커서보다 뒤에 있는 회원들. 정렬 키가 같은 회원이 여럿일 수 있어(동명이인·같은 기수)
      * 식별자로 동률을 끊는다.
      *
-     * 정렬 키 넷(mbr_nm·gen_no·join_ymd·mdfcn_dt)이 모두 NOT NULL이라 NULL 구간을 따로
+     * 정렬 키 넷(mbr_nm·gen_no·sys_join_ymd·mdfcn_dt)이 모두 NOT NULL이라 NULL 구간을 따로
      * 다루지 않는다 — 업무 목록이 nulls last를 신경 쓰는 것과 갈리는 지점이다.
      */
     private String cursorCondition(MemberSearchQuery query, Map<String, Object> parameters) {

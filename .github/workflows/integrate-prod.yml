@@ -5,7 +5,7 @@
 #   - 소스 코드 정적 분석 (Spotless, Checkstyle)
 #   - 테스트 수행 및 JaCoCo 커버리지 생성
 #   - SonarQube 코드 품질/커버리지/보안 분석
-#   - JAR artifact 생성 (deploy-prod workflow에서 사용)
+#   - JAR 빌드 검증 (bootJar 가 깨지지 않는지만 본다 — 배포는 Coolify 몫이다)
 #
 # Job 구조:
 #   lint ──┬──> analyze ──> build
@@ -301,12 +301,6 @@ jobs:
 
       - name: Build Spring Boot JAR
         run: ./gradlew bootJar
-
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: spring-boot-app
-          path: build/libs/*.jar
 
       - name: Integration Summary
         run: |

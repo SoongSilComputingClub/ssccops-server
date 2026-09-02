@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
 import java.net.URI;
+import java.util.List;
 
 import jakarta.validation.Valid;
 
@@ -16,7 +17,10 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -37,7 +41,8 @@ import lombok.RequiredArgsConstructor;
  * **두 경로 모두 인증이 필요하다.** '공개'는 누구나 링크를 열 수 있다는 뜻이지 익명으로 제출할
  * 수 있다는 뜻이 아니다 — 응답자는 Google OAuth 회원가입을 먼저 마친 회원이며(ssccops #61),
  * 그래서 form_rspns_hstry.mbr_id가 NOT NULL을 유지한다. SecurityConfig의 permitAll 목록에
- * (Swagger·헬스 프로브뿐이다) 이 경로가 들어가지 않는지 확인할 것.
+ * 이 경로가 들어가지 않는지 확인할 것 — 그쪽에는 Swagger·헬스 프로브와 /public/v1/**
+ * (익명 행사 조회, ssccops#143)만 있고, 이 컨트롤러의 경로는 /v1 아래라 접두사부터 갈린다.
  *
  * 등급 제한은 두지 않는다. 가입 직후의 임시회원(TEMP)도 응답할 수 있어야 하며, 미가입 주체는
  * @CurrentMember 리졸버가 403 SIGNUP_REQUIRED로 끊는다.
@@ -67,12 +72,48 @@ public class PublicFormController {
                             + " '공개'는 누구나 링크를 열 수 있다는 뜻이지 익명으로 낼 수 있다는 뜻이 아니다."
                             + " 지금 응답을 받지 않는 폼(DRAFT·CLOSED·접수 기간 밖)은 문항을 내려주지 않고"
                             + " 409 FORM_NOT_ACCEPTING으로 응답한다. 없는 폼은 404 NOT_FOUND다."
-                            + " alreadySubmitted가 true면 웹은 작성 화면 대신 제출 내역 화면을 보여준다"
-                            + " (임시저장 응답은 제출로 치지 않는다).")
+                            + " **alreadySubmitted는 '냈는가'가 아니라 '더 낼 수 없는가'다** — 다중 응답을 허용하는"
+                            + " 폼(mltplRspnsYn = true)에서는 이미 냈어도 false이며, 그 화면은 작성 폼을 계속 보여줘야"
+                            + " 한다. true면 웹은 작성 화면 대신 제출 내역 화면을 보여준다(임시저장 응답은 제출로 치지"
+                            + " 않는다). **반려된(REJECTED) 응답도 세우지 않는다** — 반려는 그 응답에 대한 종결이지"
+                            + " 그 폼에 대한 종결이 아니라, 단일 응답 폼이라도 다시 낼 수 있다(#192)."
+                            + " myResponseCount는 내가 낸 건수(임시저장 제외, 반려 포함)이고 submittedAt은 마지막 제출"
+                            + " 일시라, alreadySubmitted가 false인데 값이 있을 수 있다.")
     @GetMapping("/{formId}/public")
     public ApiResponse<PublicFormResponse> getPublicForm(
             @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(formResponseService.getPublicForm(formId, respondent));
+    }
+
+    /*
+     * 회원용 시스템 폼 조회 (#181). sys_form_cd로 폼의 form_id와 문항 구성을 얻는 경로다.
+     *
+     * sysFormCd를 싣는 다른 조회(GET /v1/forms · GET /v1/forms/{formId})는 전부
+     * @RequireAuthority(FORM_READ)라 기획안 제출자(일반 회원)가 부를 수 없다. 그 회원이 자기
+     * 기획안을 재제출하는 화면(apps/lms)이 폼 번호를 얻을 길이 없어 열어 둔다.
+     *
+     * 이 컨트롤러의 다른 핸들러와 같은 이유로 @RequireAuthority를 붙이지 않는다 — 권한은 운영자의
+     * 어휘이고, 하나라도 걸면 재제출이 필요한 회원이 화면을 열 수 없다. 경로에 mbrId를 두지 않는
+     * 것도 /draft·/mine이 세운 규칙 그대로다. @CurrentMember로 주체를 받는 것은 인증(및 미가입
+     * 차단)을 다른 핸들러와 같은 계단으로 태우기 위해서이며 등급 제한은 없다(임시회원도 조회된다).
+     *
+     * 운영자용 GET /v1/forms/{formId}(FormController)와는 경로 세그먼트 수가 달라 겹치지 않는다.
+     */
+    @Operation(
+            summary = "회원용 시스템 폼 조회",
+            description =
+                    "sys_form_cd로 시스템 폼 한 건을 받아 간다. **인증만 필요하다** — sysFormCd를 싣는 운영자용"
+                            + " 조회는 FORM_READ 권한이 걸려 일반 회원(기획안 제출자)이 부를 수 없어 이 경로를 연다."
+                            + " form_id는 IDENTITY라 환경마다 다르므로 화면은 코드로 폼을 찾아야 한다. **접수 가능"
+                            + " 여부를 보지 않고** 마감된 폼도 200으로 문항 구성(qitemCpstCn)을 함께 내려준다 —"
+                            + " CHANGES_REQUESTED 재제출은 접수 마감에 막히지 않으므로(#177) 재제출 화면은 마감된"
+                            + " 폼의 문항도 그려야 한다. acceptingYn은 FormReceiptPolicy 판정 그대로이며 \"지금 새"
+                            + " 기획안을 낼 수 있는가\"만 답한다(재제출 예외와는 무관하다). 없는 코드는 404 NOT_FOUND다"
+                            + " — 아직 시드되지 않았거나 지워진 경우이며, 한 코드가 가리키는 폼은 환경당 하나다.")
+    @GetMapping("/system/{sysFormCd}")
+    public ApiResponse<SystemFormResponse> getSystemForm(
+            @PathVariable String sysFormCd, @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(formResponseService.getSystemForm(sysFormCd));
     }
 
     /*
@@ -87,9 +128,15 @@ public class PublicFormController {
                         + " 필수·형식·최대 선택 수를 다시 검사하며, 분기(branchMap)로 건너뛴 페이지의 필수 문항은 요구하지 않는다. 필수 누락은"
                         + " 400 REQUIRED_ANSWER_MISSING, 형식 불일치는 400 ANSWER_PATTERN_MISMATCH, 최대 선택"
                         + " 초과는 400 ANSWER_SELECTION_LIMIT_EXCEEDED, 폼에 없는 문항이 섞이면 400"
-                        + " UNKNOWN_QUESTION_ITEM이다. 한 회원은 한 폼에 1건만 낼 수 있어 재제출은 409"
-                        + " RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로"
-                        + " 응답한다. 빈 값(\"\"·[])인 문항은 저장하지 않는다.")
+                        + " UNKNOWN_QUESTION_ITEM이다. **몇 건까지 낼 수 있는지는 폼이 정한다(mltplRspnsYn)** — 허용하지"
+                        + " 않는 폼에 심사 중·승인된 응답이 있는데 또 내면 409 RESPONSE_ALREADY_SUBMITTED이고, 허용하는 폼이면"
+                        + " 새 응답으로 접수되며 rspnsSeq(응답 순번)가 1 는다. **반려된 응답만 남아 있으면 폼의 종류와 무관하게 새 응답으로"
+                        + " 접수된다**(#192) — 반려는 그 응답에 대한 종결이라 되돌리는 길이 번복이 아니라 새 응답이고, 반려된 행은 그대로"
+                        + " 남는다. 임시저장이나 수정요청받은 응답이 있으면 새로 만들지 않고 그 응답을 낸 것이 된다 (그때는 rspnsSeq가 그대로이고"
+                        + " 제출 회차만 오른다). 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING으로 응답한다. **다만 수정요청받은"
+                        + " 응답의 재제출은 접수 마감에 막히지 않는다** — 검토가 접수 뒤에 이뤄지는 폼(기획안)에서는 마감 후에 수정요청이 나가고,"
+                        + " 그때 재제출까지 막으면 응답자에게 다시 낼 길이 없다. 새 응답 제출은 초안을 내는 것을 포함해 종전대로 마감 판정을 탄다. 빈"
+                        + " 값(\"\"·[])인 문항은 저장하지 않는다.")
     @PostMapping("/{formId}/responses")
     public ResponseEntity<ApiResponse<FormResponseSubmitResponse>> submitFormResponse(
             @PathVariable Long formId,
@@ -100,6 +147,82 @@ public class PublicFormController {
                 formResponseService.submitResponse(formId, request, respondent);
         URI location = URI.create("/v1/forms/" + formId + "/responses/" + response.formRspnsId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 내 응답 목록 (#143). 다중 응답을 허용하는 폼에서 "내가 지금까지 낸 것들"을 보는 경로다.
+     *
+     * 경로에 mbrId를 두지 않는 것은 자동 저장(#36)이 세운 규칙 그대로다 — 대상은 언제나 인증
+     * 주체 본인이며, 받을 자리를 만들지 않는 것이 남의 응답에 닿는 경로를 막는 방법이다. 남의
+     * 응답을 읽는 길은 RESPONSE_REVIEW 권한이 걸린 운영자용 경로(FormResponseController) 하나여야
+     * 한다.
+     *
+     * **리터럴 mine 세그먼트가 운영자용 GET /{formRspnsId}를 가로채지 않는다.** 스프링이 경로 변수보다 리터럴
+     * 세그먼트를 먼저 고르므로 /responses/mine은 언제나 이쪽으로 온다 — /responses/draft(#36)가
+     * 같은 자리에서 같은 이유로 안전한 것과 같으며, 순서에 기대는 것이 아니라 명세로 정해진
+     * 동작이다. 두 컨트롤러가 경로 접두사를 공유하므로 헷갈리기 쉬운 자리라 적어 둔다.
+     *
+     * 접수가 끝난 폼에서도 조회된다 — 자동 저장 조회와 갈리는 지점이며 근거는 서비스 주석에 있다.
+     */
+    @Operation(
+            summary = "내 응답 목록 조회",
+            description =
+                    "응답자 본인이 이 폼에 낸 응답을 순번(rspnsSeq) 오름차순으로 내려준다. 대상은 언제나 인증 주체"
+                            + " 본인이라 경로에 회원 식별자를 두지 않는다. 한 건도 없으면 빈 배열이다."
+                            + " **작성 중(DRAFT) 응답도 포함한다** — 운영자용 목록이 DRAFT를 빼는 것과 기준이 다르며,"
+                            + " 내 것을 나에게 숨길 이유가 없기 때문이다(그 응답은 sbmsnDt가 null이다)."
+                            + " rspnsSeq(응답 순번)와 sbmsnSeq(제출 회차)는 **다른 값이다** — 앞은 몇 번째 응답인가이고"
+                            + " 뒤는 그 응답을 몇 번 냈는가다(수정요청 뒤 재제출하면 뒤만 오른다)."
+                            + " 응답 내용(rspnsCn)은 싣지 않되 **대표 문항의 답(responseTitle)** 한 줄은 싣는다 —"
+                            + " 기획안 폼이면 활동명이며, 그 폼의 대표 문항이 무엇인지는 서버(SystemFormContract)가"
+                            + " 선언한다. 선언이 없는 폼·비워 둔 답은 null이고 서버가 대체값을 만들지 않는다."
+                            + " 접수가 끝났거나 아직 열지 않은 폼도 409가 아니라"
+                            + " 200으로 답한다 — 자기가 낸 것을 확인하는 조회라 접수 가능 여부와 무관하다."
+                            + " 없는 폼은 404 NOT_FOUND다.")
+    @GetMapping("/{formId}/responses/mine")
+    public ApiResponse<List<MyFormResponseSummaryResponse>> getMyFormResponses(
+            @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(formResponseService.getMyResponses(formId, respondent));
+    }
+
+    /*
+     * 내 응답 상세 (#177). 수정요청 사유를 읽고 이전 답을 불러오는 경로다.
+     *
+     * #141이 검토 처리 이력과 재제출 흐름을 만들었지만 제출자 쪽 화면 경로는 열지 않았다 —
+     * 응답 내용은 내 응답 목록(#143)이 싣지 않고, 검토 이력을 실은 상세는 운영자용이라 클래스
+     * 레벨 RESPONSE_REVIEW에 막혀 본인도 읽지 못했다. 그 사이가 이 핸들러다.
+     *
+     * **운영자용 GET .../responses/{formRspnsId}와 경로가 갈리는 자리다.** mine 세그먼트가 하나
+     * 더 있어 애초에 다른 경로이며, /responses/mine(목록)과도 세그먼트 수로 갈린다 — 리터럴이
+     * 경로 변수를 이긴다는 규칙(/draft · /mine)에 기대는 것이 아니라 서로 다른 패턴이다.
+     *
+     * 권한(@RequireAuthority)을 요구하지 않는 것은 이 컨트롤러의 다른 핸들러와 같다. 대신
+     * **응답자 본인의 행만 조회된다**(서비스가 회원까지 걸어 찾는다) — "본인 또는 관리 권한"은
+     * 애노테이션으로 표현되지 않으므로 서비스에서 끊는다(#139 승인 이력 조회의 선례).
+     */
+    @Operation(
+            summary = "내 응답 상세 조회",
+            description =
+                    "응답자 본인이 낸 응답 한 건의 **내용(rspnsCn)과 검토 처리 이력(reviewHistories)**을 함께"
+                            + " 받아 간다. 수정요청을 받은 응답을 다시 낼 때 웹이 이 응답으로 사유를 보여주고 이전 답을"
+                            + " 프리필한다 — 재제출(POST /v1/forms/{formId}/responses)은 전체 본문을 다시 보내는"
+                            + " 방식이라 그 프리필이 없으면 응답자가 처음부터 다시 쳐야 한다. 이력은 처리 일시 오름차순이고"
+                            + " 처리가 없으면 빈 배열이며, **제출(SUBMIT) 행도 함께 실려** 타임라인이 \"제출 → 수정요청 →"
+                            + " 재제출 → 승인\"으로 읽힌다(각 줄의 sbmsnSeq가 몇 회차에 대한 처리였는지 가리킨다)."
+                            + " 대상은 언제나 인증 주체 본인이라 경로에 회원 식별자를 두지 않으며, **본인 응답이 아니면"
+                            + " 없는 응답과 같은 404 FORM_RESPONSE_NOT_FOUND다** — 코드를 나누면 그 번호의 응답이"
+                            + " 존재하는지가 새어 나간다. 운영자용 상세와 달리 인접 응답 식별자(prev·next)와 응답자"
+                            + " 정보는 싣지 않는다(남의 응답 식별자이거나 요청 주체 본인의 값이다)."
+                            + " 작성 중(DRAFT) 응답도 조회되고, 접수가 끝났거나 아직 열지 않은 폼도 409가 아니라 200이다"
+                            + " — 자기가 낸 것을 확인하는 조회라 접수 가능 여부와 무관하며, 수정요청 사유를 읽는 시점은"
+                            + " 대개 접수가 끝난 뒤다. 없는 폼은 404 NOT_FOUND다.")
+    @GetMapping("/{formId}/responses/mine/{formRspnsId}")
+    public ApiResponse<MyFormResponseDetailResponse> getMyFormResponse(
+            @PathVariable Long formId,
+            @PathVariable Long formRspnsId,
+            @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(
+                formResponseService.getMyResponse(formId, formRspnsId, respondent));
     }
 
     /*
@@ -144,13 +267,14 @@ public class PublicFormController {
             summary = "작성 중 응답 저장(자동 저장)",
             description =
                     "본문의 rspnsCn으로 작성 중인 응답을 통째로 대체한다(upsert) — 임시저장 행이 있으면 내용만 갱신하고, 없으면 DRAFT 상태로"
-                        + " 새로 만든다. 회원당 폼당 행은 하나라 몇 번을 불러도 늘지 않는다. **자동 저장은 필수·형식(정규식)·최대 선택 수를"
+                        + " 새로 만든다. **초안은 폼 종류와 무관하게 언제나 최대 1건이라** 몇 번을 불러도 행이 늘지 않는다 (다중 응답 폼에서도"
+                        + " 그렇다 — 초안을 제출해 자리가 빈 뒤에야 새 초안을 시작할 수 있다). **자동 저장은 필수·형식(정규식)·최대 선택 수를"
                         + " 검사하지 않는다** — 작성 중에는 비어 있거나 형식이 맞지 않는 것이 정상이고, 그 검사는 제출 시점의 몫이다. 다만 폼에"
                         + " 없는 문항이 섞이면 400 UNKNOWN_QUESTION_ITEM, 문항 유형과 맞지 않는 값은 400"
                         + " INVALID_ANSWER_VALUE, 응답 내용이 상한을 넘기면 413 RESPONSE_CONTENT_TOO_LARGE다."
-                        + " 이미 제출한 폼은 409 RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409"
-                        + " FORM_NOT_ACCEPTING이며, 첫 저장이 동시에 도착해 부딪히면 409 RESPONSE_SAVE_CONFLICT로"
-                        + " 재시도를 알린다.")
+                        + " 다시 낼 수 없는 폼(mltplRspnsYn = false)에 이미 제출했으면 409"
+                        + " RESPONSE_ALREADY_SUBMITTED, 지금 응답을 받지 않는 폼은 409 FORM_NOT_ACCEPTING이며, 첫"
+                        + " 저장이 동시에 도착해 부딪히면 409 RESPONSE_SAVE_CONFLICT로 재시도를 알린다.")
     @PutMapping("/{formId}/responses/draft")
     public ApiResponse<FormResponseDraftResponse> saveMyDraft(
             @PathVariable Long formId,

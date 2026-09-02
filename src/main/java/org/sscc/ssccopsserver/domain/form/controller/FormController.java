@@ -42,9 +42,10 @@ import lombok.RequiredArgsConstructor;
  * 받은 역할은 셋 모두에 닿고, 필요하면 조회만 떼어 줄 수도 있다 — 클래스에 하나로 걸지 않은
  * 이유가 이것이다. **응답자용 PublicFormController에는 권한 요구가 없다**(인증만).
  *
- * 생성·복제만 @CurrentMember를 받는다. 폼의 생성자를 서버가 채워야 하는 쓰기이기 때문이며,
- * 조회와 수정은 주체를 기록하지 않으므로 회원을 요구하지 않는다 — 수정 이력을 남기게 되면
- * 그때 주체를 받는다.
+ * 조회를 뺀 쓰기는 전부 @CurrentMember를 받는다. 생성·복제는 폼의 생성자를 서버가 채워야 해서고,
+ * 수정은 문항 구성 이력의 변경자를 채워야 해서다(#140 — 그전까지 수정은 남기는 것이 없어 주체를
+ * 요구하지 않았다). 상태 전이만 주체를 서비스로 넘기지 않는데, 폼 상태 이력 테이블이 없어 남길
+ * 자리가 없기 때문이다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -62,10 +63,10 @@ public class FormController {
     @Operation(
             summary = "폼 목록 조회",
             description =
-                    "폼 관리 화면의 카드 목록. statusCode·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다."
-                            + " 응답 건수(responseCount)는 제출 이상(SUBMITTED·ACCEPTED·REJECTED)만 세며"
-                            + " 작성 중인 임시저장 응답은 세지 않는다."
-                            + " 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
+                    "폼 관리 화면의 카드 목록. statusCode·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다. 응답"
+                        + " 건수(responseCount)는 제출"
+                        + " 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 세며 작성 중인 임시저장 응답은 세지"
+                        + " 않는다. 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping
     public ApiResponse<List<FormSummaryResponse>> getForms(
@@ -74,10 +75,18 @@ public class FormController {
         return ApiResponse.success(formService.getForms(statusCode, labelId));
     }
 
+    /*
+     * 상대로 시스템 폼이 요구하는 문항(systemRequiredQitemIds)을 싣는다 (#155). 목록에는 없고
+     * 상세에만 있는 것은 문항 편집이 이 화면에서만 일어나기 때문이다.
+     */
     @Operation(
             summary = "폼 단건 조회",
             description =
                     "폼 상세·편집 화면이 진입 시 호출한다. 문항 구성을 통째로 싣고 있어 편집기가 그대로 초안으로 받아 쓴다."
+                            + " systemRequiredQitemIds는 코드가 이 폼에서 반드시 읽는 qitemId 목록이다 — 편집 화면은 이"
+                            + " 문항들의 삭제를 미리 잠그면 된다. 시스템 폼이 아니거나 요구 문항이 없으면 빈 배열이며 null은"
+                            + " 내려가지 않는다. 미리 잠그는 것은 편의일 뿐이고 지우고 저장하면 서버가 여전히 400"
+                            + " SYSTEM_FORM_CONTRACT_VIOLATION으로 거절한다."
                             + " 없는 폼은 404 FORM_NOT_FOUND로 응답한다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping("/{formId}")
@@ -90,6 +99,9 @@ public class FormController {
             description =
                     "생성자(creatrMbrId)는 인증 주체에서 서버가 채우므로 요청 본문에 넣지 않는다."
                             + " 상태를 지정하지 않으면 DRAFT이며, 편집 화면의 '바로 접수 시작'은 OPEN을 보낸다."
+                            + " mltplRspnsYn을 true로 두면 한 회원이 이 폼에 여러 건을 낼 수 있다(생략은 false ="
+                            + " 회원당 1건). 지원서·설문은 false 그대로 두고, 스터디 제안처럼 한 사람이 두 개를"
+                            + " 내는 것이 정상인 폼에만 켠다."
                             + " 문항 구성이 규칙을 어기면 400 INVALID_QUESTION_COMPOSITION,"
                             + " 접수 종료가 시작보다 빠르면 400 INVALID_RECEIPT_PERIOD로 응답한다.")
     @RequireAuthority(AuthorityCode.FORM_WRITE)
@@ -107,6 +119,10 @@ public class FormController {
      *
      * 본문의 formSttsCd는 무시한다 (#33). 자동 저장이 상세 응답을 그대로 되돌려 보내므로 그 값을
      * 받아 쓰면 타이핑 한 번이 접수 상태를 덮어쓴다 — 상태는 액션 경로에서만 바뀐다.
+     *
+     * @CurrentMember를 받는 것은 #140부터다. 문항 구성이 실제로 바뀐 저장은 form_qitem_hstry에
+     * 한 행을 남기는데 그 변경자가 여기서 온다 — 요청 본문으로 받으면 남의 이름으로 이력을
+     * 쓸 수 있어 이력이 증거가 되지 못한다 (#78이 세운 규칙과 같다).
      */
     @Operation(
             summary = "폼 수정",
@@ -115,12 +131,21 @@ public class FormController {
                             + " 본문에 실려 와도 무시한다 — POST /v1/forms/{formId}/status를 쓴다."
                             + " labelIds를 생략하거나 빈 배열로 보내면 라벨을 모두 뗀다."
                             + " 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 바꾸면 409 QUESTION_ITEM_IN_USE로"
-                            + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다.")
+                            + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다."
+                            + " 시스템 폼(sysYn = true)에서 코드가 요구하는 qitemId를 지우면 400"
+                            + " SYSTEM_FORM_CONTRACT_VIOLATION이며, 문구 수정·문항 추가·순서 변경은 허용한다."
+                            + " 문항 구성이 실제로 바뀐 저장에서만 qitemVer가 1 오르고 그 시점 구성이 이력에 남는다"
+                            + " — 제목·접수 기간만 바꾼 저장에는 버전이 오르지 않는다."
+                            + " **mltplRspnsYn(다중 응답 허용)은 이 API로 바꾼다** — 생략하면 false로 저장되므로"
+                            + " 편집 자동 저장은 상세 응답에 실려 온 값을 그대로 함께 보내야 한다. 접수 중에도 바꿀 수"
+                            + " 있고, 끄더라도 이미 들어온 응답은 지워지지 않는다(지금부터 새로 낼 수 없다는 뜻이다).")
     @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PutMapping("/{formId}")
     public ApiResponse<FormSaveResponse> updateForm(
-            @PathVariable Long formId, @Valid @RequestBody FormSaveRequest request) {
-        return ApiResponse.success(formService.updateForm(formId, request));
+            @PathVariable Long formId,
+            @Valid @RequestBody FormSaveRequest request,
+            @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(formService.updateForm(formId, request, actor));
     }
 
     /*
@@ -132,7 +157,8 @@ public class FormController {
             description =
                     "제목에 '(복사본)'을 붙이고 상태 DRAFT·접수 일시 초기화로 새 폼을 만든다."
                             + " 문항 구성은 깊은 복사라 사본을 고쳐도 원본이 바뀌지 않는다."
-                            + " 응답과 라벨은 승계하지 않으며 생성자는 복제를 수행한 회원이다.")
+                            + " 응답과 라벨은 승계하지 않으며 생성자는 복제를 수행한 회원이다."
+                            + " 다중 응답 허용 여부(mltplRspnsYn)는 승계한다 — 제목·문항 구성과 같은 폼의 설정이다.")
     @RequireAuthority(AuthorityCode.FORM_WRITE)
     @PostMapping("/{formId}/duplicate")
     public ResponseEntity<ApiResponse<FormDuplicateResponse>> duplicateForm(

@@ -51,7 +51,7 @@ public class MeetingAgendaEntity {
     private String agendaName;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "prcs_se_cd", length = 20)
+    @Column(name = "agnd_prcs_se_cd", length = 20)
     private AgendaProcessStatus processStatus;
 
     @Column(name = "agnd_seq")

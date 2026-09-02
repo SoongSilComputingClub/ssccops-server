@@ -34,6 +34,15 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 실재하는가, 정규식이 컴파일되는가)은 필드 단위 제약으로 표현할 수 없어
  * QuestionCompositionValidator 한 곳에서 검사하고 INVALID_QUESTION_COMPOSITION으로 내린다.
  *
+ * mltplRspnsYn(다중 응답 허용, #143)은 생성·수정 양쪽에서 쓰인다. formSttsCd처럼 한쪽에서만
+ * 쓰이는 값이 아닌 것은 이것이 상태가 아니라 폼의 설정이기 때문이다 — 접수 상태와 달리 편집
+ * 자동 저장이 되돌려 보내는 값과 실제 값이 갈릴 일이 없고(상세 응답이 그대로 싣는다), 운영진이
+ * 폼을 연 뒤에 마음을 바꾸는 것도 정상적인 조작이다.
+ *
+ * 생략(null)은 false다. @NotNull을 걸지 않은 것은 이 필드를 모르는 옛 화면·스크립트의 본문이
+ * 통째로 400이 되지 않게 하기 위해서다 — 값을 모른다는 것은 "1건 폼"이라는 뜻이고, 그것이 이
+ * 프로젝트의 기존 동작 전부다.
+ *
  * 일시는 AP-12에 따라 오프셋을 포함한 RFC 3339 문자열로 주고받는다.
  */
 public record FormSaveRequest(
@@ -42,7 +51,13 @@ public record FormSaveRequest(
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
         @NotNull QuestionCompositionContent qitemCpstCn,
+        Boolean mltplRspnsYn,
         List<Long> labelIds) {
+
+    /** 생략은 "1건 폼"이다 — 지금 있는 폼이 전부 그쪽이고, 켜는 것이 명시적인 선택이다 */
+    public boolean multipleResponseAllowed() {
+        return Boolean.TRUE.equals(mltplRspnsYn);
+    }
 
     /*
      * 라벨 미지정과 "라벨을 전부 떼기"를 구분하지 않는다. PUT은 전체 교체이므로 빈 배열이든

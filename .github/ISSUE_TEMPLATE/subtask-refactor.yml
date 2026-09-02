@@ -1,23 +1,89 @@
 name: "🛠 Refactor"
-description: "코드 / 구조 리팩토링"
+description: "동작을 바꾸지 않는 구조 개선"
+title: "[REFACTOR] "
 labels: ["refactor"]
 type: SubTask
 body:
+  - type: markdown
+    attributes:
+      value: |
+        제목 앞 `[REFACTOR]`를 **지우지 마세요.** 이 접두사로 브랜치와 라벨이 자동 생성됩니다.
+
+        **동작이 바뀌면 리팩토링이 아닙니다** — `[FEAT]` 또는 `[FIX]`로 등록하세요.
+
   - type: textarea
+    id: description
     attributes:
       label: 📄 설명
-      description: 리팩토링이 필요한 이유를 설명해주세요.
-      placeholder: 자세히 적을수록 좋습니다!
+      description: |
+        **지금 구조가 무엇을 못 하게 하고 있는지.** "더 깔끔해서"는 이유가 아닙니다 —
+        이 구조 때문에 실제로 무엇이 어려웠는지, 어떤 버그가 났는지를 적습니다.
+      placeholder: |
+        같은 판단 규칙이 검토 화면용 파서와 이관용 파서 두 벌로 나뉘어 있다. 한쪽만 고치면
+        검토자가 승인한 표와 실제로 만들어지는 회차가 달라지는데, 그 사실이 아무 데서도 드러나지 않는다.
     validations:
       required: true
+
   - type: textarea
+    id: work
     attributes:
       label: ✅ 리팩토링 항목
-      description: 할 일을 체크박스 형태로 작성해주세요.
-      placeholder: 최대한 세분화 해서 적어주세요!
+      description: 체크박스로 씁니다.
+      value: |
+        - [ ]
+        - [ ]
+      placeholder: |
+        - [ ] 파서를 한 클래스로 합치고 두 호출부가 같은 것을 부르게 한다
+        - [ ] 기존 테스트가 그대로 통과하는지 확인 (동작이 바뀌면 안 된다)
     validations:
       required: true
+
   - type: textarea
+    id: rejected
     attributes:
-      label: 🙋🏻 고려 사항
-      description: 리팩토링 시 주의해야 할 점이 있다면 작성해주세요
+      label: 🚫 검토했으나 택하지 않은 길
+      description: 다른 구조를 왜 안 골랐는지. 비워 둬도 됩니다.
+      placeholder: |
+        | 후보 | 왜 안 되는가 |
+        |---|---|
+        | 인터페이스로 추상화 | 구현이 하나뿐인데 층만 하나 는다 — 두 번째 구현이 생길 때 하면 된다 |
+    validations:
+      required: false
+
+  - type: textarea
+    id: precheck
+    attributes:
+      label: 🔍 먼저 확인할 것
+      description: |
+        **동작이 안 바뀌는 것을 무엇으로 보장하는가.** 기존 테스트가 그 구간을 덮고 있지 않으면,
+        리팩토링 전에 테스트를 먼저 쓰는 것이 첫 작업입니다.
+      placeholder: |
+        - [ ] 이 구간을 덮는 테스트가 있는가 — 없으면 리팩토링 전에 먼저 쓴다
+        - [ ] 공개 시그니처를 쓰는 곳이 어디인가 (`grep`)
+    validations:
+      required: false
+
+  - type: textarea
+    id: ddl
+    attributes:
+      label: 🗄 배포 전 수동 DDL
+      description: |
+        **테이블·컬럼 리네임은 `ddl-auto: update`가 반영하지 않습니다** — 한쪽만 바뀌면 부팅이 깨집니다.
+        `data.sql`도 `@Table`·`@Column`을 따라오지 않으니 함께 보세요. 해당 없으면 비워 둡니다.
+      render: sql
+      placeholder: |
+        ALTER TABLE academic_program RENAME TO acdm_actv;
+        ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;
+    validations:
+      required: false
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: 🙋🏻 참고 자료
+      description: 상위 이슈, 관련 코드 경로, 이 구조를 만든 원래 이슈.
+      placeholder: |
+        - 이 구조를 만든 이슈: #150
+        - `domain/academicprogram/service/ProposalResponseParser.java`
+    validations:
+      required: false

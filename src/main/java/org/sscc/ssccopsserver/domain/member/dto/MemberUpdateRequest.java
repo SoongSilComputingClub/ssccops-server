@@ -15,11 +15,25 @@ import jakarta.validation.constraints.Size;
  *
  * - mbr_grd_cd · mbr_stts_cd — 변경 이력(mbr_grd_hstry · mbr_stts_hstry)을 함께 남겨야 해
  *   전용 API가 따로 있다(#78). 여기서 열면 이력 없는 변경 경로가 생겨 감사가 끊긴다.
- * - stdnt_no — MemberEntity가 updatable = false로 잠가 두었고, 데이터사전도 '가입 후 변경
- *   불가'로 확정했다(ssccops#74). uk_mbr_student_number가 걸려 있어 조용히 바꿀 수도 없다.
  * - auth_user_id — 인증 주체가 정하는 값이다. 본문으로 받으면 남의 계정을 가져올 수 있다.
- * - join_ymd — 가입 시점의 사실이다. 이관 데이터 정정은 CSV 이관 기능과 함께 다룬다.
+ * - sys_join_ymd — 전산 시스템이 계정을 만든 시각의 기록이다. 사람이 고쳐 쓸 값이 아니며,
+ *   이관 데이터 정정은 CSV 이관 기능과 함께 다룬다.
  * - mdfcn_dt — JPA Auditing이 채운다.
+ *
+ * **stdnt_no는 #226에서 이 목록을 떠났다.** 원래는 위의 두 줄 사이에 "MemberEntity가
+ * updatable = false로 잠가 두었고 데이터사전도 '가입 후 변경 불가'로 확정했다(ssccops#74)"로
+ * 적혀 있었다. 뒤집은 근거는 ssccops#161에 있고 한 줄로는 이렇다 — 오타가 실제로 들어오는데
+ * 고칠 경로가 없었고, 잠금이 지키려던 것은 **변경 이력을 남기는 것**으로도 달성된다
+ * (mbr_chg_hstry · #78의 등급·상태와 같은 방식). 그래서 이 DTO에 studentNumber가 있고,
+ * 바뀌면 이력 한 줄이 남는다.
+ *
+ * **본인 경로(MemberSelfUpdateRequest)에는 여전히 없다.** 학번은 자기소개가 아니라 신원
+ * 식별자이고 계정 연결 판정의 재료다 — 기수·동아리 가입 시기를 본인이 못 고치게 한 것과 같은
+ * 줄기이며, 그쪽에서 열리면 이 목록이 지키는 것이 통째로 무너진다.
+ *
+ * 동아리 가입 연·월(clb_join_yr_no·clb_join_mm_no)은 있는데 sys_join_ymd는 없는 것이 갈리는
+ * 지점이다. 전자는 **운영진이 아는 사실을 채우는 것**이고(명부에는 적혀 있는데 시스템에는 없다),
+ * 후자는 **시스템이 기록한 시각**이라 사람이 고쳐 쓸 값이 아니다.
  *
  * eml은 **운영진 경로에만** 있다. 이관 회원의 잘못 적힌 이메일을 고칠 창구가 필요해서이며,
  * 본인 경로(MemberSelfUpdateRequest)에는 두지 않는다 — 그쪽 값은 Supabase 인증 계정에서
@@ -55,7 +69,26 @@ import jakarta.validation.constraints.Size;
  * 400 VALIDATION_FAILED(ACADEMIC_PROFILE_REQUIRED)다.
  */
 public record MemberUpdateRequest(
+        /*
+         * 학번 (#226). null·빈 문자열은 '비운다'이며 전체 교체 규칙 그대로다 — 다만 재학
+         * 회원은 학번이 필수라 비우면 400이고(AcademicProfilePolicy), 저장은 빈 문자열이
+         * 아니라 NULL로 한다(빈 문자열이면 두 번째 졸업 회원부터 UNIQUE 충돌이 난다).
+         *
+         * 다른 회원이 쓰는 학번이면 409다. 형식(숫자 8자리 등)은 검사하지 않는다 — 이관된
+         * 옛 명부에는 자릿수가 다른 학번이 실제로 있고, 데이터사전도 길이 20의 문자열로만
+         * 정의한다.
+         */
+        @Size(max = 20) String studentNumber,
         @PositiveOrZero Integer generationNumber,
+        /*
+         * 동아리 가입 연·월 (#204). 본인 경로에는 두지 않는다 — 연도가 기수의 근거라 본인이
+         * 고칠 수 있으면 기수를 우회해서 정하는 셈이 된다(MemberSelfUpdateRequest).
+         *
+         * 범위의 하한·상한은 자의적이지만 오타(204 · 20244)를 걸러 낸다. 둘 다 null이 곧
+         * '비운다'이며 위의 전체 교체 규칙을 그대로 따른다 — gen_no처럼 센티널로 바꾸지 않는다.
+         */
+        @Min(1900) @Max(2100) Integer clubJoinYear,
+        @Min(1) @Max(12) Integer clubJoinMonth,
         @NotBlank @Size(max = 50) String name,
         @Size(max = 100) String departmentName,
         @Min(1) @Max(4) Integer academicYear,

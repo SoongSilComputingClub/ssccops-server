@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -10,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -536,6 +538,102 @@ class FormResponseDraftControllerTest {
         assertThat(formResponseHistoryRepository.count()).isEqualTo(1);
     }
 
+    /* ── 초안은 언제나 1건 (#143) ──────────────────────────── */
+
+    /*
+     * **초안 1건 제한의 애플리케이션 판정.** DB의 부분 유니크 인덱스는 PostgreSQL 전용이라
+     * H2에서 도는 이 테스트로는 아무것도 확인할 수 없다 — 그래서 규칙을 서비스에도 두었고,
+     * 여기서 보는 것이 바로 그 판정이다.
+     *
+     * 다중 응답 폼에서 제출로 초안 자리가 비면 새 초안을 만들 수 있고(순번 2), 그 뒤로는 몇 번을
+     * 저장해도 그 행이 갱신될 뿐 세 번째 행이 생기지 않는다.
+     */
+    @Test
+    void multipleResponseFormStillKeepsExactlyOneDraft() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+
+        saveDraft(formId, """
+                  {"q1": "홍"}
+                  """)
+                .andExpect(status().isOk());
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        Long secondDraftId =
+                savedDraftId(
+                        formId,
+                        """
+                        {"q1": "김"}
+                        """);
+        Long sameDraftId =
+                savedDraftId(
+                        formId,
+                        """
+                        {"q1": "김철수"}
+                        """);
+
+        assertThat(sameDraftId).isEqualTo(secondDraftId);
+        assertThat(myResponses())
+                .extracting(
+                        FormResponseHistoryEntity::getResponseSequence,
+                        FormResponseHistoryEntity::getStatus)
+                .containsExactly(
+                        tuple(1, ResponseStatus.SUBMITTED), tuple(2, ResponseStatus.DRAFT));
+    }
+
+    /*
+     * 단일 응답 폼에서는 제출로 초안 자리가 비어도 새 초안을 만들 수 없다 (#143 · 종전 동작 유지).
+     * 만들 수 있게 두면 다시 낼 수 없는 폼에 영영 제출되지 않는 초안이 쌓인다.
+     */
+    @Test
+    void singleResponseFormDoesNotAllowANewDraftAfterSubmit() throws Exception {
+        Long formId = saveForm("단일 응답 폼", FormStatus.OPEN, null, null);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        saveDraft(formId, """
+                  {"q1": "김철수"}
+                  """)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESPONSE_ALREADY_SUBMITTED"));
+
+        assertThat(myResponses()).hasSize(1);
+    }
+
+    /*
+     * 반려된 뒤에는 단일 응답 폼에서도 새 초안을 시작할 수 있다 (#192).
+     *
+     * 위 규칙("제출 뒤에는 초안을 만들지 않는다")이 지키는 것은 **운영진이 심사한 내용과 응답자가
+     * 들고 있는 화면이 갈리지 않는 것**인데, 반려된 응답에는 갈릴 내용이 없다 — 그 응답에 대한
+     * 심사는 끝났고 되돌아올 길도 없다. 그런데도 막고 있어 반려된 신청자는 새 신청서를 쓰기
+     * 시작할 수조차 없었다. 반려된 행은 그대로 두고 다음 순번의 초안이 생긴다.
+     */
+    @Test
+    void singleResponseFormAllowsANewDraftAfterRejection() throws Exception {
+        Long formId = saveForm("단일 응답 폼", FormStatus.OPEN, null, null);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        reject();
+
+        saveDraft(formId, """
+                  {"q1": "김철수"}
+                  """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("DRAFT"));
+
+        assertThat(myResponses())
+                .extracting(
+                        FormResponseHistoryEntity::getResponseSequence,
+                        FormResponseHistoryEntity::getStatus)
+                .containsExactly(tuple(1, ResponseStatus.REJECTED), tuple(2, ResponseStatus.DRAFT));
+    }
+
     /* ── 인증 ─────────────────────────────────────────────── */
 
     // 자동 저장은 응답자 본인의 개인정보를 다루는 경로다. permitAll에 걸리면 안 된다
@@ -593,6 +691,36 @@ class FormResponseDraftControllerTest {
                 .path("data")
                 .path("formRspnsId")
                 .asLong();
+    }
+
+    /*
+     * 검토자의 반려를 흉내 낸다 (#192). 검토 API는 RESPONSE_REVIEW 권한을 가진 검토자의 토큰을
+     * 요구하는데 이 클래스의 인증 주체는 고정된 응답자라, 자동 저장 경로만 보는 여기서는 엔티티로
+     * 직접 옮긴다 — 검토 API 자체는 FormResponseControllerTest가 본다.
+     */
+    private void reject() {
+        FormResponseHistoryEntity response = onlyResponse();
+        response.review(ResponseStatus.REJECTED);
+        formResponseHistoryRepository.saveAndFlush(response);
+    }
+
+    /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */
+    private Long saveMultipleResponseForm(String title) throws Exception {
+        QuestionCompositionContent content =
+                objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
+        return formRepository
+                .saveAndFlush(
+                        FormEntity.create(
+                                respondent, title, content, null, null, FormStatus.OPEN, true))
+                .getId();
+    }
+
+    /** 인증 주체(응답자)의 응답 전부. 순번 오름차순이라 몇 번째 응답인지로 읽을 수 있다 */
+    private List<FormResponseHistoryEntity> myResponses() {
+        return formResponseHistoryRepository.findAll().stream()
+                .filter(response -> response.getMember().getId().equals(respondent.getId()))
+                .sorted(Comparator.comparingInt(FormResponseHistoryEntity::getResponseSequence))
+                .toList();
     }
 
     private FormResponseHistoryEntity onlyResponse() {

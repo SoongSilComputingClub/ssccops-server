@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberGenerationResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberProfileResponse;
@@ -98,7 +99,7 @@ public class MemberController {
     @Operation(
             summary = "회원 목록 조회",
             description =
-                    "이름·학번 부분일치 검색과 등급·상태 필터, 정렬(mbrNm·genNo·joinYmd·mdfcnDt, '-'는 내림차순),"
+                    "이름·학번 부분일치 검색과 등급·상태 필터, 정렬(mbrNm·genNo·sysJoinYmd·mdfcnDt, '-'는 내림차순),"
                             + " 커서 페이징을 지원한다. 등급·상태는 코드와 명칭을 함께 내리며 현재 역할도 함께"
                             + " 싣는다. 기준 코드 밖의 필터 값은 400 INVALID_CODE_VALUE다.")
     @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
@@ -140,6 +141,35 @@ public class MemberController {
     }
 
     /*
+     * 기수 계산 (#205). 운영진의 회원 편집 화면이 연도 입력란에서 부른다.
+     *
+     * **웹이 year - 1982를 스스로 계산하지 않게 하려는 것이다.** 한 줄짜리 뺄셈이라 복제하고
+     * 싶어지지만, 이 저장소에는 판정 규칙이 두 벌이 되어 실제 버그가 난 전례가 있다 — 기준값이
+     * 바뀔 때 고칠 자리가 하나여야 한다.
+     *
+     * 권한은 회원 수정과 같게 건다. 이 값이 쓰이는 자리가 운영진 편집 화면이기 때문이다.
+     *
+     * year를 required = true로 두지 않고 서비스가 판정하는 것은, 그래야 누락도 다른 400과 같은
+     * 응답 봉투로 나가기 때문이다(이관 API의 mapping과 같은 방식).
+     *
+     * 호출은 연도 입력란의 blur·디바운스 시점 한 번이다 — 타이핑마다 부르는 자리가 아니다.
+     */
+    @Operation(
+            summary = "기수 계산",
+            description =
+                    "동아리 가입 연도로 기수를 계산해 돌려준다(기수 = 연도 − 1982, 2018년이 36기)."
+                            + " 계산만 하고 저장하지 않는다 — gen_no에 넣는 것은 운영진이 확인한 뒤이며,"
+                            + " CSV 이관은 이 계산을 쓰지 않는다(BR-M43)."
+                            + " year를 생략하거나 기수가 나오지 않는 연도(1982년 이하)면 400"
+                            + " VALIDATION_FAILED다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @GetMapping("/generation")
+    public ApiResponse<MemberGenerationResponse> calculateGeneration(
+            @RequestParam(required = false) Integer year) {
+        return ApiResponse.success(memberService.calculateGeneration(year));
+    }
+
+    /*
      * 회원 단건 조회 (#76). 프로필·현재 역할·최근 변경 이력 3건을 한 번에 내린다.
      *
      * 없는 회원은 404 MEMBER_NOT_FOUND이며 권한이 없으면 403이다 — 404로 감추지 않는다
@@ -176,6 +206,8 @@ public class MemberController {
                             + " 기수와 이메일은 이 경로로 바꿀 수 없다 — 기수는 운영진이 배정하는 값이고,"
                             + " 이메일은 인증 계정에서 오므로 본인이 바꾸면 로그인 계정과 갈린다."
                             + " 등급·상태·학번도 바꿀 수 없다(요청 본문에 필드 자체가 없다)."
+                            + " 학번은 운영진 경로에서만 열려 있다(#226) — 신원 식별자이고 계정 연결 판정의 재료다."
+                            + " 바뀐 항목은 운영진 경로와 같은 회원 변경 이력에 남으며 그때 변경자는 본인이다."
                             + " 재학 회원이 학과·학년을 비우면 400 VALIDATION_FAILED다."
                             + " 응답은 세션 조회(GET /v1/auth/session)의 member 블록과 같은 모양이라"
                             + " 저장 직후 세션을 다시 조회할 필요가 없다.")
@@ -187,24 +219,37 @@ public class MemberController {
     }
 
     /*
-     * 운영진의 회원 정보 수정 (#77).
+     * 운영진의 회원 정보 수정 (#77 · #226에서 학번이 열렸다).
      *
-     * 바꿀 수 있는 필드는 요청 DTO가 정한다 — 등급·상태(#78)·학번은 애초에 담기지 않으므로
-     * 여기에 걸러내는 코드가 없다. 없는 회원은 404, 재학 회원의 학과·학년 누락은 400이다.
+     * 바꿀 수 있는 필드는 요청 DTO가 정한다 — 등급·상태(#78)는 애초에 담기지 않으므로 여기에
+     * 걸러내는 코드가 없다. 없는 회원은 404, 재학 회원의 학과·학년 누락은 400이다.
+     *
+     * **변경자를 요청 본문으로 받지 않는다.** 등급·상태 변경과 같은 자리이며(#78 규칙),
+     * 바뀐 항목마다 남는 mbr_chg_hstry의 chnrg_mbr_id가 그것으로 채워진다 — 본문으로 받으면
+     * 스스로 적어 넣을 수 있어 이력이 증거가 되지 못한다.
      */
     @Operation(
             summary = "회원 정보 수정",
             description =
-                    "기수·이름·학과·학년·연락처·이메일을 고친다. 등급·상태는 변경 이력을 함께 남겨야 해"
-                            + " 전용 API가 따로 있고, 학번·가입일·계정 식별자는 바꿀 수 없다"
+                    "학번·기수·동아리 가입 연·월·이름·학과·학년·연락처·이메일을 고치고,"
+                            + " 바뀐 항목마다 회원 변경 이력(mbr_chg_hstry)을 한 트랜잭션에서 남긴다."
+                            + " 변경자는 요청 본문이 아니라 토큰에서 가져온다."
+                            + " 등급·상태는 변경 이력을 함께 남겨야 해 전용 API가 따로 있고,"
+                            + " 전산 가입일(sysJoinYmd)·계정 식별자는 바꿀 수 없다"
                             + " (요청 본문에 필드 자체가 없어 넣어도 무시된다)."
                             + " PATCH이지만 본문은 한 벌 전체이며, 생략한 선택 필드는 비우는 것으로 본다."
-                            + " 재학 회원이 학과·학년을 비우면 400 VALIDATION_FAILED, 없는 회원은 404다.")
+                            + " 같은 값으로 다시 저장해도 성공하며 그때는 이력이 남지 않는다."
+                            + " 다른 회원이 쓰는 학번은 409 STUDENT_NUMBER_DUPLICATED,"
+                            + " 재학 회원이 학번·학과·학년을 비우면 400 VALIDATION_FAILED, 없는 회원은 404다."
+                            + " ⚠️ 아직 계정을 연결하지 않은 이관 회원의 학번을 고치면"
+                            + " 옛 학번으로는 더는 계정 연결이 되지 않는다(연결은 학번·회원명·연락처 3종 일치다).")
     @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
     @PatchMapping("/{memberId}")
     public ApiResponse<MemberDetailResponse> updateMember(
-            @PathVariable Long memberId, @Valid @RequestBody MemberUpdateRequest request) {
-        return ApiResponse.success(memberService.updateMember(memberId, request));
+            @PathVariable Long memberId,
+            @Valid @RequestBody MemberUpdateRequest request,
+            @CurrentMember MemberEntity changer) {
+        return ApiResponse.success(memberService.updateMember(memberId, request, changer));
     }
 
     /*

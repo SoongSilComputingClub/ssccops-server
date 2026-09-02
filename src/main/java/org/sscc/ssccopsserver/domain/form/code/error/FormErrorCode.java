@@ -35,6 +35,23 @@ public enum FormErrorCode implements ErrorCode {
             HttpStatus.BAD_REQUEST, "INVALID_RECEIPT_PERIOD", "접수 종료 일시는 시작 일시보다 빠를 수 없습니다."),
 
     /*
+     * 400 — 학술 활동에 연결된 폼의 접수 기간을 폼 편집(PUT /v1/forms/{id})에서 바꾸려 할 때 (#190).
+     *
+     * 저장소는 form.rcpt_bgng_dt/rcpt_end_dt 하나인데 입력 화면이 "모집 관리"와 "폼 편집" 둘이라,
+     * 모집 시작 뒤 폼 편집에서 그 값을 덮어쓰면 두 화면이 같은 값을 두고 경쟁한다. 그래서 학술
+     * 연결 폼의 접수 기간을 쓰는 경로는 START_RECRUITMENT 오케스트레이션(changeReceiptPeriod)
+     * 하나로 좁히고, 폼 편집은 이 방어선으로 막는다.
+     *
+     * 제목·문항 구성·라벨·다중 응답 등 나머지 편집은 막지 않는다 — 학술국장이 편집 화면에서
+     * 문항을 채우는 것은 정상 동선이다(ssccops-web#193). 값이 현재와 같으면(편집 자동 저장이
+     * 상세 응답을 그대로 되돌려 보내는 경우) 통과한다.
+     */
+    ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED(
+            HttpStatus.BAD_REQUEST,
+            "ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED",
+            "학술 활동에 연결된 폼의 접수 기간은 모집 관리에서만 변경할 수 있습니다."),
+
+    /*
      * 400 — 전이표에 없는 상태 전이 (#33). 이미 열린 폼을 또 열거나(OPEN → OPEN), 작성 중인
      * 폼을 마감하려는(DRAFT → CLOSE) 요청이 여기에 걸린다.
      *
@@ -111,9 +128,31 @@ public enum FormErrorCode implements ErrorCode {
      * 둘 다 선조회를 통과하므로 (form_id, mbr_id) UNIQUE 위반도 같은 코드로 옮긴다
      * (#21 학번 중복·#34 라벨 이름 중복과 같은 방식).
      *
-     * 재제출·수정 제출은 이번 범위 밖이라 400(요청이 틀렸다)이 아니라 409(지금 상태에서 할 수 없다)다.
+     * 400(요청이 틀렸다)이 아니라 409(지금 상태에서 할 수 없다)인 것은 응답의 현재 상태가 거절
+     * 이유이기 때문이다. #141부터 이 코드는 "심사를 기다리는 중이거나 이미 승인된 응답"에만
+     * 붙는다 — 수정요청(CHANGES_REQUESTED)은 재제출이 열려 있고, 반려는 아래 코드로 갈렸다.
      */
     RESPONSE_ALREADY_SUBMITTED(HttpStatus.CONFLICT, "RESPONSE_ALREADY_SUBMITTED", "이미 제출한 폼입니다."),
+
+    /*
+     * 409 — 반려된 응답을 응답자가 다시 제출하려 할 때 (#141).
+     *
+     * RESPONSE_ALREADY_SUBMITTED와 코드를 나눈 것은 응답자가 할 수 있는 일이 다르기 때문이다.
+     * "이미 제출했다"는 기다리면 결과가 나온다는 뜻이지만 반려는 그 응답에 대해 **끝났다**는
+     * 뜻이라, 같은 문구를 돌려주면 응답자는 심사를 기다리다 아무 통보도 받지 못한다. 웹도
+     * 두 경우에 다른 안내를 띄워야 한다.
+     *
+     * 검토자에게도 종결이다 (#141 전이표) — 반려를 승인·수정요청으로 되돌리는 길이 없으므로
+     * 이 응답으로 돌아올 방법은 없고, 남은 길은 새 응답뿐이다.
+     *
+     * **#192 이후 제출 경로에서는 나가지 않는다.** 그 "새 응답"의 길이 폼의 종류와 무관하게
+     * 열리면서(ResponseStatus.blockingNewResponse) 반려된 응답만 남은 회원의 제출은 거절이 아니라
+     * 다음 순번의 새 응답이 된다 — 이 코드가 실제로 돌려주던 뜻은 "이 응답은 끝났다"였는데 결과는
+     * "이 폼에 다시는 못 낸다"였다. 코드를 지우지 않는 것은 판정 자리(엔티티의 submit)가 그대로
+     * 남아 있기 때문이다: 응답 식별자를 지목하는 재제출 경로가 열리면 그 요청이 여기로 온다.
+     */
+    RESPONSE_ALREADY_REJECTED(
+            HttpStatus.CONFLICT, "RESPONSE_ALREADY_REJECTED", "반려된 응답은 다시 제출할 수 없습니다."),
 
     /*
      * 409 — 같은 응답 행을 두 요청이 동시에 만들려다 (form_id, mbr_id) UNIQUE에 걸렸을 때 (#36).
@@ -155,6 +194,34 @@ public enum FormErrorCode implements ErrorCode {
             HttpStatus.CONFLICT, "QUESTION_ITEM_IN_USE", "이미 응답이 있는 폼에서는 기존 문항을 삭제하거나 변경할 수 없습니다."),
 
     /*
+     * 409 — 시스템 폼(sys_yn = true)을 지우려 할 때 (#140).
+     *
+     * 코드가 sys_form_cd로 직접 가리키는 폼이라, 지워지는 순간 그 폼을 찾는 기능이 통째로
+     * 무너진다. 화면 조작 한 번으로 도달할 수 있는 손실이므로 DB가 아니라 서버가 막는다
+     * (authrt의 SYSTEM_AUTHORITY_IMMUTABLE과 같은 판단이며 잠금 범위도 같다 — 삭제와 계약
+     * 위반만 막고 제목·접수 기간·라벨·상태 전이는 열어 둔다).
+     *
+     * 400이 아니라 409인 것은 요청 자체는 올바르고 대상 폼의 성격이 거절 이유이기 때문이다.
+     */
+    SYSTEM_FORM_IMMUTABLE(HttpStatus.CONFLICT, "SYSTEM_FORM_IMMUTABLE", "시스템 폼은 삭제할 수 없습니다."),
+
+    /*
+     * 400 — 시스템 폼에서 코드가 요구하는 qitemId를 지우려 할 때 (#140).
+     *
+     * 그 식별자로 값을 읽는 코드가 있다는 뜻이라 사라지면 조용히 빈 값이 읽힌다 — 터지지 않고
+     * 틀리는 종류다. 반대로 문구 수정·문항 추가·순서 변경은 계약을 깨지 않으므로 막지 않는다.
+     *
+     * QUESTION_ITEM_IN_USE(409)와 코드를 나눈 것은 기준도 프론트가 할 일도 다르기 때문이다.
+     * 그쪽은 "이미 받은 답이 끊긴다"라 응답이 없으면 지울 수 있고 되돌릴 방법이 없는 손실이지만,
+     * 이쪽은 응답이 한 건도 없어도 지울 수 없고 대신 지운 문항을 되돌리면 그대로 저장된다 —
+     * 편집기가 "이 문항은 시스템이 요구한다"고 안내하고 되돌리게 하면 되는 상황이다.
+     */
+    SYSTEM_FORM_CONTRACT_VIOLATION(
+            HttpStatus.BAD_REQUEST,
+            "SYSTEM_FORM_CONTRACT_VIOLATION",
+            "시스템 폼이 요구하는 문항은 삭제할 수 없습니다."),
+
+    /*
      * 422 — 저장된 문항 구성(qitem_cpst_cn) JSON을 읽을 수 없을 때.
      *
      * JSONB는 DB가 문법만 보장할 뿐 우리 구조까지 보장하지 않는다. 기준 코드 밖의
@@ -183,10 +250,14 @@ public enum FormErrorCode implements ErrorCode {
     /*
      * 400 — 허용되지 않는 응답 상태 전이 (#37).
      *
-     * SUBMITTED ↔ ACCEPTED ↔ REJECTED는 자유롭게 오간다(심사 번복). 여기에 걸리는 것은 DRAFT가
-     * 얽힌 전이뿐이다 — 작성 중인 응답을 운영자가 승인하면 응답자가 아직 쓰고 있던 내용이 그대로
-     * 심사 결과로 굳고, 반대로 제출된 응답을 DRAFT로 되돌리면 sbmsn_dt가 남아 있는 '미제출'
-     * 응답이 생겨 데이터가 스스로 모순된다. DRAFT → SUBMITTED는 오직 응답자의 제출로만 일어난다.
+     * 전이표는 FormResponseHistoryEntity.changeStatus가 갖는다 (#141에서 좁아졌다). 여기 걸리는
+     * 것은 넷이다 — DRAFT가 얽힌 전이, **결론을 낸 뒤의 번복(ACCEPTED·REJECTED에서 나가는 모든
+     * 전이)**, 검토로 SUBMITTED로 되돌리기, 같은 상태로의 재지정.
+     *
+     * 작성 중인 응답을 운영자가 승인하면 응답자가 아직 쓰고 있던 내용이 그대로 심사 결과로 굳고,
+     * 반대로 제출된 응답을 DRAFT로 되돌리면 sbmsn_dt가 남아 있는 '미제출' 응답이 생겨 데이터가
+     * 스스로 모순된다. SUBMITTED로 가는 길은 응답자의 제출·재제출뿐이다. 승인·반려를 되돌릴 수
+     * 없는 이유(승인 뒤 후속 처리가 이미 시작된다)는 전이표 주석에 있다.
      *
      * 400인 것은 폼 상태 전이(INVALID_FORM_STATUS_TRANSITION)와 같은 이유다 — 웹은 현재 상태를
      * 이미 화면에 들고 있어 보낼 수 있는 값이 정해지므로 "지금 할 수 없는 일"보다 "보내면 안 되는
@@ -194,6 +265,23 @@ public enum FormErrorCode implements ErrorCode {
      */
     INVALID_RESPONSE_STATUS_TRANSITION(
             HttpStatus.BAD_REQUEST, "INVALID_RESPONSE_STATUS_TRANSITION", "허용되지 않는 응답 상태 전이입니다."),
+
+    /*
+     * 400 — 검토 의견 없이 수정요청·반려를 하려 할 때 (#141).
+     *
+     * 두 처리는 응답자에게 "무엇을 해야 하는가"를 알리는 통보라 사유 없이 성립하지 않는다
+     * (하위 업무 반려 sub_work_rjct의 VR-O06과 같은 판단). 승인은 통보할 것이 없으므로 선택이며,
+     * 그 차이를 아는 유일한 자리는 ResponseReviewAction.requiresOpinion이다.
+     *
+     * 공백만 있는 문자열도 여기에 걸린다 — DB의 NOT NULL이 막지 못하는 자리이고, 통과시키면
+     * 이력 행은 남지만 "왜"가 비어 있어 이 이슈가 만들려던 증거가 되지 못한다.
+     *
+     * @NotBlank으로 DTO에서 막지 않는 것은 필수 여부가 함께 온 상태 값에 달려 있기 때문이다.
+     * Bean Validation으로는 필드 간 조건을 표현해도 VALIDATION_FAILED로 뭉개져 웹이 "의견을
+     * 적으라"는 안내를 고를 수 없다 (INVALID_RECEIPT_PERIOD와 같은 이유).
+     */
+    REVIEW_OPINION_REQUIRED(
+            HttpStatus.BAD_REQUEST, "REVIEW_OPINION_REQUIRED", "수정요청·반려는 검토 의견을 반드시 입력해야 합니다."),
 
     // 404 — 존재하지 않는 라벨. 비활성 라벨은 여기에 걸리지 않는다 (지워지지 않고 살아 있다)
     FORM_LABEL_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_LABEL_NOT_FOUND", "폼 라벨을 찾을 수 없습니다."),
@@ -216,7 +304,29 @@ public enum FormErrorCode implements ErrorCode {
      * 라벨만 이 규칙으로 검사한다.
      */
     FORM_LABEL_NOT_USABLE(
-            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다.");
+            HttpStatus.BAD_REQUEST, "FORM_LABEL_NOT_USABLE", "비활성 라벨은 새로 지정할 수 없습니다."),
+
+    /*
+     * 404 — 존재하지 않는 폼 템플릿 (#142). 비활성(use_yn = false) 템플릿은 여기에 걸리지
+     * 않는다 — 지워지지 않고 살아 있으며 조회·수정도 된다 (FORM_LABEL_NOT_FOUND와 같은 갈래).
+     *
+     * 폼의 404가 공통 NOT_FOUND를 쓰는 것과 달리 전용 코드를 두는 것은
+     * POST /v1/form-templates/{id}/forms·POST /v1/forms/{formId}/templates처럼 한 요청에
+     * 폼과 템플릿이 함께 등장하는 경로가 있기 때문이다. 코드가 같으면 프론트는 무엇을
+     * 찾지 못한 것인지 알 수 없다.
+     */
+    FORM_TEMPLATE_NOT_FOUND(HttpStatus.NOT_FOUND, "FORM_TEMPLATE_NOT_FOUND", "폼 템플릿을 찾을 수 없습니다."),
+
+    /*
+     * 400 — 비활성(use_yn = false) 템플릿으로 새 폼을 만들려 할 때 (#142).
+     *
+     * FORM_LABEL_NOT_USABLE과 같은 규칙이다 — 비활성은 "새로 고를 수 없다"는 뜻이지
+     * "이미 만들어진 것을 되돌려라"는 뜻이 아니다. 그래서 이 템플릿으로 이미 만들어 둔 폼은
+     * 아무 영향도 받지 않고, 템플릿 자체의 조회·수정도 막지 않는다(내려놓은 템플릿의 오타를
+     * 고친 뒤 다시 켜는 것이 정상 경로다). 막는 것은 '여기서 새 폼을 시작하는 것' 하나다.
+     */
+    FORM_TEMPLATE_NOT_USABLE(
+            HttpStatus.BAD_REQUEST, "FORM_TEMPLATE_NOT_USABLE", "비활성 템플릿으로는 새 폼을 만들 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

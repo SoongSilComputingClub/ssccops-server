@@ -62,6 +62,23 @@ public class FilePresigner {
         return VIEW_URL_TTL.toSeconds();
     }
 
+    /*
+     * 서명된 읽기 URL로 **리다이렉트하는 응답**을 캐시해도 되는 시간(초). ssccops ADR-0010.
+     *
+     * **반드시 VIEW_URL_TTL보다 짧아야 한다.** 302를 돌려주는 엔드포인트의 주소는 만료되지
+     * 않지만 그 Location에 실린 서명은 만료되므로, 캐시가 302를 서명보다 오래 들고 있으면
+     * 이미 죽은 서명을 가리키는 리다이렉트가 재생돼 이미지가 깨진다. 캐시된 응답은 저장된
+     * 직후부터 max-age 동안 재사용되는데 그 시작점이 서명이 만들어진 시점이므로, 여유를
+     * 남겨 두면 그 구간이 통째로 서명 유효기간 안에 들어온다.
+     *
+     * **여기서 파생시키는 것이 요점이다.** 컨트롤러에 초를 박아 두면 VIEW_URL_TTL을 줄이는
+     * 날 조용히 어긋나고, 그 어긋남은 배포가 아니라 며칠 뒤 깨진 이미지로 드러난다 —
+     * 두 값이 한 파일에 있으면 한쪽만 고칠 수 없다.
+     */
+    public long viewRedirectCacheMaxAgeSeconds() {
+        return VIEW_URL_TTL.multipliedBy(2).dividedBy(3).toSeconds();
+    }
+
     /** 업로드 URL의 유효기간(초) */
     public long uploadUrlTtlSeconds() {
         return UPLOAD_URL_TTL.toSeconds();

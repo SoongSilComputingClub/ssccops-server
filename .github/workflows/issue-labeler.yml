@@ -33,17 +33,17 @@ jobs:
           TAG=$(printf '%s' "$ISSUE_TITLE" | grep -oE '^\[[A-Za-z]+\]' | tr -d '[]' \
                 | tr '[:upper:]' '[:lower:]' || true)
 
-          # 템플릿이 주는 네 가지가 정본이고, 나머지는 손으로 칠 때를 위한 별칭이다.
-          # 세부 종류(docs·test·cicd)는 원칙적으로 라벨로 가르지만, 접두어로 들어와도
-          # 조용히 feat이 되지 않도록 여기서 받는다.
+          # **유형은 템플릿이 주는 네 가지가 전부다** — feat·fix·refactor·chore (#238).
+          # 나머지(cicd·docs·test·style·…)는 chore로 받는다. 유형을 늘리면 이 표와
+          # issue-branch-creator·pr-labeler·pr-guard 네 곳이 함께 갈리고, 실제로 그렇게
+          # 갈려 있던 동안 라벨이 이슈에는 없고 PR에만 붙는 상태가 쌓였다.
+          # 별칭으로 받되 조용히 feat이 되지 않게 하는 것이 이 case의 목적이다.
           case "$TAG" in
-            feat)          LABEL="feat" ;;
-            fix|bug)       LABEL="fix" ;;
-            refactor)      LABEL="refactor" ;;
-            chore)         LABEL="chore" ;;
-            docs)          LABEL="docs" ;;
-            test)          LABEL="test" ;;
-            cicd)          LABEL="cicd" ;;
+            feat)                 LABEL="feat" ;;
+            fix|bug)              LABEL="fix" ;;
+            refactor)             LABEL="refactor" ;;
+            chore|cicd|docs|test|style|design|init|rename|remove|hotfix)
+                                  LABEL="chore" ;;
             *)
               # 태그가 없으면 feat으로 떨어진다. 조용히 넘기지 않는 것이 요점이다 —
               # 이 조용한 기본값 때문에 결함 수정 이슈에 feat 라벨이 붙어 왔다.

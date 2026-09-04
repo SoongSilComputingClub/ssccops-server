@@ -1,0 +1,98 @@
+name: PR Guard
+
+# PR 제목·브랜치명·이슈 연결이 컨벤션을 지키는지 검사한다 (#238).
+#
+# 이 저장소는 **Squash and merge만** 쓰므로 PR 제목이 그대로 커밋 제목이 된다. 즉 여기서
+# 놓친 위반은 문서상의 실수로 끝나지 않고 develop의 `git log`에 영구히 박히며, 되돌리려면
+# 배포 브랜치를 강제 푸시해야 한다 — #235가 실제로 그렇게 됐고 그래서 이 워크플로가 생겼다.
+#
+# pr-labeler.yml는 이슈가 연결되지 않은 PR을 **조용히 지나간다**(타입 라벨만 안 붙인다).
+# 그 조용함이 값을 치렀으므로 같은 사실을 여기서는 실패로 받는다. 두 워크플로의 역할이
+# 갈리는 지점이다 — 저쪽은 붙이는 일, 이쪽은 막는 일.
+#
+# 여기서 검사하는 TYPES는 **이슈 유형**이다 — 브랜치 접두어가 이슈에서 나오기 때문이다.
+# 이슈 유형은 feat·fix·refactor·chore 네 가지가 전부이며(#238) 이슈 템플릿이 주는 것과 같고,
+# issue-labeler.yml·issue-branch-creator.yml·pr-labeler.yml의 표와도 같아야 한다 —
+# 네 곳 중 하나만 고치면 이슈에는 없고 PR에만 붙는 라벨이 생긴다. 실제로 그래 왔다.
+#
+# **커밋 메시지의 타입은 이것과 다른 어휘다.** 그쪽은 docs·test·cicd를 포함해 열셋이며
+# AGENTS.md에 있다. 커밋에 `docs(agents):`라고 적으면서 이슈는 `[CHORE]`인 것이 정상이다.
+
+on:
+  pull_request:
+    # edited가 필요하다. 제목은 PR을 연 뒤에도 바뀌며, 그때 다시 보지 않으면
+    # 열 때만 맞춰 두고 고쳐 놓는 것을 막지 못한다.
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: pr-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+
+    # develop -> main 릴리스 PR은 이슈 번호가 없는 것이 정상이다. dependabot도 제 이름으로
+    # 브랜치를 만들므로 규칙을 적용할 수 없다.
+    if: >-
+      github.event.pull_request.head.ref != 'develop' &&
+      !startsWith(github.event.pull_request.head.ref, 'dependabot/')
+
+    permissions:
+      issues: read
+      pull-requests: read
+
+    steps:
+      - name: Check title, branch and linked issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -uo pipefail
+
+          # set -e를 쓰지 않는다. 검사를 하나 어겼다고 멈추면 나머지 위반은 다음 실행에서야
+          # 드러나고, 작성자는 고칠 때마다 CI를 다시 돌려 하나씩 알게 된다.
+          FAILED=0
+          fail() { echo "::error::$1"; FAILED=1; }
+
+          TYPES='feat|fix|refactor|chore'
+
+          # ── PR 제목: [#123] 총 작업 내용 ─────────────────────────────────────
+          TITLE_NO=$(printf '%s' "$PR_TITLE" | grep -oE '^\[#[0-9]+\] +\S' | grep -oE '[0-9]+' || true)
+          if [ -z "$TITLE_NO" ]; then
+            fail "PR 제목이 '[#이슈번호] 총 작업 내용' 형식이 아닙니다: '${PR_TITLE}'
+          Squash merge라 이 제목이 그대로 커밋 제목이 됩니다. 예: '[#238] PR 제목·브랜치명·이슈 연결을 CI에서 강제한다'"
+          fi
+
+          # ── 브랜치명: {유형}/#123-슬러그 ─────────────────────────────────────
+          BRANCH_NO=$(printf '%s' "$HEAD_REF" | grep -oE "^(${TYPES})/#[0-9]+-" | grep -oE '[0-9]+' || true)
+          if [ -z "$BRANCH_NO" ]; then
+            fail "브랜치명이 '{유형}/#{이슈번호}-{슬러그}' 형식이 아닙니다: '${HEAD_REF}'
+          유형은 ${TYPES} 중 하나입니다. 이슈를 열면 issue-branch-creator가 이 형식으로 만들어 줍니다."
+          fi
+
+          # ── 두 번호가 같은가 ────────────────────────────────────────────────
+          # 다르면 둘 중 하나는 다른 작업의 것이다. #235는 남의 작업 브랜치 위에서 갈라져
+          # 나오는 바람에 그 브랜치의 변경까지 함께 머지됐다.
+          if [ -n "$TITLE_NO" ] && [ -n "$BRANCH_NO" ] && [ "$TITLE_NO" != "$BRANCH_NO" ]; then
+            fail "제목의 이슈 번호(#${TITLE_NO})와 브랜치의 이슈 번호(#${BRANCH_NO})가 다릅니다.
+          다른 작업의 브랜치에서 갈라져 나왔는지 확인하십시오 — 그 경우 이 PR은 남의 변경까지 함께 담고 있습니다."
+          fi
+
+          # ── 그 번호가 실재하는 이슈인가 ─────────────────────────────────────
+          # 번호만 맞춰 적는 것을 막는다. 삭제된 이슈(#8이 그랬다)도 여기서 걸린다.
+          NO="${TITLE_NO:-$BRANCH_NO}"
+          if [ -n "$NO" ]; then
+            if ! gh issue view "$NO" --repo "$REPO" --json number >/dev/null 2>&1; then
+              fail "#${NO} 은 이 저장소에 없는 이슈입니다. 번호를 확인하거나 이슈를 먼저 여십시오."
+            fi
+          fi
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "컨벤션은 AGENTS.md의 '커밋 · 브랜치 · PR 컨벤션' 절에 있습니다."
+            exit 1
+          fi
+
+          echo "✅ 제목 '${PR_TITLE}' · 브랜치 '${HEAD_REF}' · 이슈 #${NO}"

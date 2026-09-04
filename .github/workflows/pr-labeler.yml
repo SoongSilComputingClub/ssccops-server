@@ -37,16 +37,14 @@ jobs:
               { name: 'size/L',  max: 500,      color: 'FFA500' },
               { name: 'size/XL', max: Infinity, color: 'D93F0B' }
             ];
+            // 유형은 네 가지가 전부다 (#238). issue-labeler.yml의 표와 같아야 한다.
+            // 목록 밖 라벨은 건드리지 않는다. 옛 유형 라벨(docs·test·style·cicd·rename·remove)은
+            // 저장소에서 지웠으므로 여기 다시 적지 않는 한 만들어지지 않는다.
             const TYPES = {
               feat:     { color: '0E8A16', description: '새로운 기능' },
               fix:      { color: 'D93F0B', description: '버그 수정' },
               refactor: { color: '1D76DB', description: '리팩토링' },
-              chore:    { color: 'D4C5F9', description: '기타 변경사항' },
-              design:   { color: 'F9D0C4', description: 'UI/디자인 변경' },
-              style:    { color: 'FEF2C0', description: '코드 스타일 변경' },
-              docs:     { color: '0075CA', description: '문서 수정' },
-              test:     { color: 'BFD4F2', description: '테스트 코드' },
-              cicd:     { color: 'FBCA04', description: 'CI/CD 관련' }
+              chore:    { color: 'D4C5F9', description: '기타 변경사항' }
             };
 
             const ensure = async (name, color, description) => {

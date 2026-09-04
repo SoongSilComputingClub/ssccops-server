@@ -41,6 +41,16 @@ public class FilePresigner {
     private static final Duration UPLOAD_URL_TTL = Duration.ofMinutes(10);
 
     /*
+     * 업로드 크기 상한 (ssccops#188). **서명하는 쪽이 갖는다** — 상한을 강제하는 유일한 지점이
+     * presignPut이기 때문이다. 그전에는 이 숫자가 EventImageServiceImpl에만 있었고 학술 쪽에는
+     * 아예 없어, 인증사진은 안내조차 없이 아무 크기나 올라갔다.
+     *
+     * 판정을 두 곳에서 하는 것은 뜻이 달라서다: 부르는 쪽의 413은 **올리기 전에 알려 주는
+     * 안내**이고(요청이 신고한 크기라 거짓일 수 있다), 여기 서명은 **강제**다.
+     */
+    private static final long MAX_UPLOAD_SIZE_BYTES = 10L * 1024 * 1024;
+
+    /*
      * 서명된 읽기 URL의 유효기간. 업로드보다 조금 길다 — 열어 둔 화면이 이미지를 다시 그리는
      * 데 쓰이고, 만료되면 그 화면이 상세를 다시 부르면 된다(그래서 남은 시간을 응답에 싣는다).
      *
@@ -84,18 +94,41 @@ public class FilePresigner {
         return UPLOAD_URL_TTL.toSeconds();
     }
 
+    /**
+     * 업로드 크기 상한(바이트). 부르는 쪽이 발급 전에 안내용 413을 던지는 데 쓴다 — 실제 강제는 {@link #presignPut}이 서명에 넣는
+     * Content-Length다.
+     */
+    public long maxUploadSizeBytes() {
+        return MAX_UPLOAD_SIZE_BYTES;
+    }
+
     /*
      * 업로드 허가. **contentType까지 서명에 넣으므로 웹은 같은 Content-Type 헤더로 PUT 해야
      * 한다** — 서명에서 빼면 허가받은 URL로 아무 형식이나 올릴 수 있어 확장자 검사가
      * 무의미해진다. 그래서 부르는 쪽은 서명에 쓴 값을 그대로 응답에 실어 주고, 웹은 파일에서
      * 다시 읽지 않는다(브라우저의 File.type은 비거나 비표준일 수 있다 · ssccops#157).
+     *
+     * **contentLength도 같은 이유로 서명에 들어간다** (ssccops#188). 크기 상한을 강제할 수
+     * 있는 지점이 여기뿐이다 — PUT은 서버를 거치지 않으므로 발급 시점에 조건을 걸지 않으면
+     * 강제할 자리가 아예 없고, 부르는 쪽의 413은 **요청이 신고한 크기**에 대한 판정이라
+     * 100바이트라고 신고하고 200MB를 올리는 것을 막지 못했다.
+     *
+     * 서명 헤더에 실제로 들어가는 것은 실측으로 확인했다 —
+     * `X-Amz-SignedHeaders=content-length;content-type;host`. 브라우저는 Content-Length를
+     * 직접 설정할 수 없고 본문 크기에서 자동으로 채우므로, **신고한 크기와 실제 파일이 다르면
+     * 서명이 맞지 않아 R2가 거절한다.** 그것이 이 서명이 노리는 것이다.
+     *
+     * `isBrowserExecutable`이 false로 내려오지만 그것은 **contentLength를 넣기 전에도 마찬가지**
+     * 였다(content-type 하나만으로도 false다). host 밖의 서명 헤더가 있으면 붙는 표시일 뿐이라
+     * 업로드 가능 여부의 신호가 아니다 — 그 상태로 dev 업로드가 계속 돌고 있었다.
      */
-    public String presignPut(String objectKey, String contentType) {
+    public String presignPut(String objectKey, String contentType, long contentLength) {
         PutObjectRequest putObjectRequest =
                 PutObjectRequest.builder()
                         .bucket(bucketName)
                         .key(objectKey)
                         .contentType(contentType)
+                        .contentLength(contentLength)
                         .build();
 
         return r2Presigner

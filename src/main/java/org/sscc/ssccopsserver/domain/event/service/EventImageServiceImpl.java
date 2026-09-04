@@ -31,15 +31,6 @@ import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
 @Transactional(readOnly = true)
 public class EventImageServiceImpl implements EventImageService {
 
-    /*
-     * 이미지 한 장의 크기 상한(10MB). 행사 본문에 붙는 삽화·포스터를 기준으로 잡았다.
-     *
-     * **서버가 바이트를 보지 않으므로 이것은 요청이 신고한 크기에 대한 판정이다** — 거짓으로
-     * 신고하면 그대로 통과한다. 실제 강제는 버킷/도메인 정책의 몫이며, 여기서 끊는 이유는
-     * 업로드를 시작하기 전에 화면이 안내할 수 있게 하기 위해서다.
-     */
-    private static final long MAX_IMAGE_SIZE_BYTES = 10L * 1024 * 1024;
-
     private final EventRepository eventRepository;
 
     /*
@@ -86,7 +77,18 @@ public class EventImageServiceImpl implements EventImageService {
         }
 
         ImageFileType imageType = resolveImageType(request);
-        if (request.fileSize() > MAX_IMAGE_SIZE_BYTES) {
+
+        /*
+         * 크기 상한(10MB). **서버가 바이트를 보지 않으므로 이것은 요청이 신고한 크기에 대한
+         * 판정이다** — 거짓으로 신고하면 이 검사는 통과한다. 여기서 끊는 이유는 업로드를
+         * 시작하기 전에 화면이 안내할 수 있게 하기 위해서다.
+         *
+         * **실제 강제는 서명이 한다** (ssccops#188). 신고한 크기가 그대로 Content-Length로
+         * 서명에 들어가므로, 거짓으로 신고하면 발급은 되지만 R2가 그 PUT을 거절한다. 상한 값
+         * 자체를 여기 상수로 들고 있지 않은 것은 그래서다 — 강제하는 값과 안내하는 값이
+         * 갈릴 수 있고, 실제로 학술 인증사진에는 그 상수가 아예 없어 안내조차 없었다.
+         */
+        if (request.fileSize() > filePresigner.maxUploadSizeBytes()) {
             throw new GeneralException(EventErrorCode.IMAGE_TOO_LARGE);
         }
 
@@ -118,8 +120,13 @@ public class EventImageServiceImpl implements EventImageService {
          *
          * 그 '같은 값'을 웹이 짐작하지 않게 응답에도 싣는다 (#210) — 서명에 쓴 것은 이 표의
          * 값이고, 브라우저가 파일에서 읽는 값은 그와 다를 수 있다.
+         *
+         * **크기도 같은 자리에 들어간다** (ssccops#188). 넘기는 값은 위 413이 본 값 그대로여야
+         * 한다 — 여기서 다시 계산하거나 상한값을 넘기면 안내와 강제가 서로 다른 숫자를 보게
+         * 되고, 그 어긋남은 발급까지 성공한 뒤 R2의 403으로만 드러난다.
          */
-        String uploadUrl = filePresigner.presignPut(objectKey, imageType.getContentType());
+        String uploadUrl =
+                filePresigner.presignPut(objectKey, imageType.getContentType(), request.fileSize());
 
         /*
          * 서명에 쓴 contentType을 그대로 돌려준다 (#210). 웹이 파일에서 다시 읽으면

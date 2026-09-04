@@ -5,9 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -16,13 +14,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -30,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 최초 가입자 SUPER 부트스트랩 (#71 · ssccops#71).
@@ -48,7 +42,7 @@ import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepo
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MemberSignupBootstrapTest.MultiUserJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class MemberSignupBootstrapTest {
 
@@ -188,25 +182,5 @@ class MemberSignupBootstrapTest {
                 .header("Authorization", "Bearer " + authUserId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
-    }
-
-    @TestConfiguration
-    static class MultiUserJwtDecoderConfig {
-
-        /** 토큰 문자열을 그대로 주체(sub)로 쓴다 — 한 클래스에서 여러 사용자를 흉내 내기 위해서다 */
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .claim("user_metadata", Map.of("full_name", "테스트"))
-                            .claim("app_metadata", Map.of("provider", "google"))
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

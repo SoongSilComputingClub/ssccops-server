@@ -4,7 +4,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -14,12 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +36,7 @@ import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 운영 통합 조회 API (OPS-001 · ssccops-web#63).
@@ -54,7 +49,7 @@ import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(OperationControllerTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class OperationControllerTest {
 
@@ -129,7 +124,7 @@ class OperationControllerTest {
                         List.of()),
                 actor);
 
-        mockMvc.perform(get("/v1/operations").header("Authorization", "Bearer any-token"))
+        mockMvc.perform(get("/v1/operations").header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.works.length()").value(1))
@@ -147,7 +142,7 @@ class OperationControllerTest {
     // 아무것도 등록되지 않은 환경에서도 404가 아니라 빈 배열 세 개다
     @Test
     void getOperationHubWithNoDataReturnsEmptyArrays() throws Exception {
-        mockMvc.perform(get("/v1/operations").header("Authorization", "Bearer any-token"))
+        mockMvc.perform(get("/v1/operations").header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.works").isEmpty())
                 .andExpect(jsonPath("$.data.subWorks").isEmpty())
@@ -186,27 +181,5 @@ class OperationControllerTest {
                 studentNumber,
                 name,
                 email);
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(resolveSubject(token))
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
-
-        // 기본 액터는 고정 토큰("any-token")을 쓰고, 인가 실패 테스트만 회원의 authUserId를 토큰으로 쓴다
-        private String resolveSubject(String token) {
-            return "any-token".equals(token) ? AUTH_USER_ID.toString() : token;
-        }
     }
 }

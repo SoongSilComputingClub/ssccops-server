@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -24,8 +23,6 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -51,6 +48,7 @@ import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepo
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 회원 등급·상태 변경 API (#78).
@@ -77,7 +75,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MemberChangeControllerTest.ChangeTestConfig.class)
+@Import({TestJwtDecoderConfig.class, MemberChangeControllerTest.ChangeTestConfig.class})
 @Transactional
 class MemberChangeControllerTest {
 
@@ -516,23 +514,6 @@ class MemberChangeControllerTest {
 
     @TestConfiguration
     static class ChangeTestConfig {
-
-        /*
-         * 토큰 문자열을 그대로 sub로 쓴다 — 한 클래스 안에서 권한 있는 회원과 권한 없는 회원을
-         * 번갈아 흉내 내야 하기 때문이다 (MemberQueryControllerTest와 같은 방식).
-         */
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
 
         /*
          * ClockConfig가 정의한 clock 빈과 이름이 겹치지 않게 다른 이름으로 둔다 —

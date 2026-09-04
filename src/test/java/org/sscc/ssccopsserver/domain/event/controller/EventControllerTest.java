@@ -32,8 +32,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -63,6 +61,7 @@ import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepo
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -77,7 +76,7 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(EventControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, EventControllerTest.FixedClockConfig.class})
 @Transactional
 class EventControllerTest {
 
@@ -736,7 +735,7 @@ class EventControllerTest {
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * eventPhase·receiptStatus가 주입된 Clock에서 오는지 확인해야 하므로 시각을 고정한다.
@@ -746,19 +745,6 @@ class EventControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

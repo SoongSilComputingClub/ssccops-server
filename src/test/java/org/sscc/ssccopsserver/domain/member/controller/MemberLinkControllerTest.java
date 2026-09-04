@@ -7,10 +7,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -25,8 +23,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -47,6 +43,7 @@ import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepo
 import org.sscc.ssccopsserver.domain.member.service.MemberLinkAttemptLimiter;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 이관 회원 계정 연결 API (#86). 인증 필터체인을 그대로 태우기 위해 JwtDecoder만 고정 Jwt를
@@ -65,12 +62,12 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MemberLinkControllerTest.LinkTestConfig.class)
+@Import({TestJwtDecoderConfig.class, MemberLinkControllerTest.LinkTestConfig.class})
 @Transactional
 class MemberLinkControllerTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
-    private static final String EMAIL = "newcomer@sscc.org";
+    private static final String EMAIL = AUTH_USER_ID + "@sscc.org";
     private static final LocalDate TODAY = LocalDate.of(2026, 3, 2);
 
     // 명부(CSV 이관)에 이미 들어와 있는 회원. 연락처는 하이픈이 든 표기로 저장돼 있다
@@ -264,7 +261,7 @@ class MemberLinkControllerTest {
     void personOutsideTheRosterStillSignsUpThroughTheSignupPath() throws Exception {
         mockMvc.perform(
                         post("/v1/members/signup")
-                                .header("Authorization", "Bearer any-token")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         """
@@ -321,28 +318,13 @@ class MemberLinkControllerTest {
 
     private static MockHttpServletRequestBuilder link(String body) {
         return post("/v1/members/link")
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
 
     @TestConfiguration
     static class LinkTestConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", EMAIL)
-                            .claim("user_metadata", Map.of("full_name", ROSTER_NAME))
-                            .claim("app_metadata", Map.of("provider", "google"))
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
 
         /*
          * ClockConfig가 정의한 clock 빈과 이름이 겹치지 않게 다른 이름으로 둔다 —

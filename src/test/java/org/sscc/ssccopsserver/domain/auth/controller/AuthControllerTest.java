@@ -4,21 +4,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
 import java.time.LocalDate;
-import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +26,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 실제 JWKS 없이 필터체인 전체를 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
@@ -41,7 +35,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(AuthControllerTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class AuthControllerTest {
 
@@ -64,7 +58,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.signedUp").value(true))
                 .andExpect(jsonPath("$.data.authUser.id").value(AUTH_USER_ID.toString()))
-                .andExpect(jsonPath("$.data.authUser.email").value("test@sscc.org"))
+                .andExpect(jsonPath("$.data.authUser.email").value(AUTH_USER_ID + "@sscc.org"))
                 .andExpect(jsonPath("$.data.member.memberId").value(member.getId()))
                 .andExpect(jsonPath("$.data.member.studentNumber").value("20200001"))
                 .andExpect(jsonPath("$.data.member.name").value("김도현"))
@@ -85,8 +79,8 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.signedUp").value(false))
                 .andExpect(jsonPath("$.data.member").isEmpty())
                 .andExpect(jsonPath("$.data.authUser.id").value(AUTH_USER_ID.toString()))
-                .andExpect(jsonPath("$.data.authUser.email").value("test@sscc.org"))
-                .andExpect(jsonPath("$.data.authUser.name").value("김도현"))
+                .andExpect(jsonPath("$.data.authUser.email").value(AUTH_USER_ID + "@sscc.org"))
+                .andExpect(jsonPath("$.data.authUser.name").value("테스트"))
                 .andExpect(jsonPath("$.data.authUser.provider").value("google"));
     }
 
@@ -124,7 +118,7 @@ class AuthControllerTest {
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder session() {
-        return get("/v1/auth/session").header("Authorization", "Bearer any-token");
+        return get("/v1/auth/session").header("Authorization", "Bearer " + AUTH_USER_ID);
     }
 
     private MemberEntity saveMember() {
@@ -136,24 +130,5 @@ class AuthControllerTest {
                 "20200001",
                 "김도현",
                 "member@sscc.org");
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "test@sscc.org")
-                            .claim("user_metadata", Map.of("full_name", "김도현"))
-                            .claim("app_metadata", Map.of("provider", "google"))
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

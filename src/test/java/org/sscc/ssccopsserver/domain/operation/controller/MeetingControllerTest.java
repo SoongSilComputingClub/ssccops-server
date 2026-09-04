@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -24,8 +23,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -42,6 +39,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -52,7 +50,7 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MeetingControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, MeetingControllerTest.FixedClockConfig.class})
 @Transactional
 class MeetingControllerTest {
 
@@ -633,7 +631,7 @@ class MeetingControllerTest {
                 email);
     }
 
-    // 토큰 문자열을 그대로 sub로 쓰는 스텁 디코더라(AuthorityControllerTest와 같은 방식), 기본 토큰은 registrant의 sub다
+    // 공용 디코더는 토큰 문자열을 그대로 sub로 쓰므로 기본 토큰은 registrant의 sub다
     private static MockHttpServletRequestBuilder authenticated(
             MockHttpServletRequestBuilder builder) {
         return builder.header("Authorization", "Bearer " + AUTH_USER_ID);
@@ -647,7 +645,7 @@ class MeetingControllerTest {
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * 전이 일시(changedAt)를 응답에서 검증하려면 기준 시각이 고정돼야 한다 (#117).
@@ -659,19 +657,6 @@ class MeetingControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(TRANSITION_NOW.toInstant(), KST);
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

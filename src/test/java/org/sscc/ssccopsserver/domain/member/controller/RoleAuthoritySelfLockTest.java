@@ -21,13 +21,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -45,6 +40,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 자기 잠금 방지와 '회수 후 삭제'를 실제 커밋·롤백까지 확인한다 (#65 · VR-M13).
@@ -60,7 +56,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(RoleAuthoritySelfLockTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 class RoleAuthoritySelfLockTest {
 
     private static final String CUSTOM_CODE = "PR_MANAGE";
@@ -224,22 +220,5 @@ class RoleAuthoritySelfLockTest {
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder builder) {
         return builder.header("Authorization", "Bearer " + adminToken)
                 .contentType(MediaType.APPLICATION_JSON);
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -646,6 +647,49 @@ class AcademicProgramAttendanceControllerTest {
                 .andExpect(jsonPath("$.code").value("UNSUPPORTED_IMAGE_TYPE"));
     }
 
+    /*
+     * 상한을 넘긴 크기는 413이고 **서명 자체를 만들지 않는다** (ssccops#188). 그전까지 인증사진에는
+     * 이 판정이 아예 없어 아무 크기나 올라갔다 — 행사 이미지는 처음부터 끊고 있었다.
+     *
+     * 서명을 만들지 않는 것까지 함께 보는 것은 이 레포가 자격·형식 검사에서 지켜 온 순서 그대로다:
+     * 발급은 곧 버킷 쓰기 허가라, 만들어 두고 응답에서 빼는 구조는 한 줄만 어긋나도 새어 나간다.
+     */
+    @Test
+    void oversizedFileReferenceUploadReturns413AndNeverSigns() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+
+        mockMvc.perform(
+                        authorized(post(fileReferencePath(academicProgram, sessionId)), leaderToken)
+                                .content(uploadBody("jpg", 10L * 1024 * 1024 + 1)))
+                .andExpect(status().isPayloadTooLarge())
+                .andExpect(jsonPath("$.code").value("IMAGE_TOO_LARGE"));
+
+        verify(r2Presigner, never()).presignPutObject(any(PutObjectPresignRequest.class));
+    }
+
+    /*
+     * 신고한 크기가 **그대로 서명에 들어간다** (ssccops#188). 이것이 상한을 실제로 강제하는
+     * 지점이다 — PUT은 서버를 거치지 않으므로 서명에 없는 조건은 누구도 검사하지 않는다.
+     *
+     * 상한값이 아니라 요청값을 확인하는 것이 요점이다. 상한을 서명하면 그보다 작은 파일이 전부
+     * 거절되고, 그 실패는 서버 로그가 아니라 브라우저에서만 보인다.
+     */
+    @Test
+    void requestedFileSizeIsSignedAsContentLength() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+        long declaredSize = 4242L;
+
+        mockMvc.perform(
+                        authorized(post(fileReferencePath(academicProgram, sessionId)), leaderToken)
+                                .content(uploadBody("jpg", declaredSize)))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<PutObjectPresignRequest> captor =
+                ArgumentCaptor.forClass(PutObjectPresignRequest.class);
+        verify(r2Presigner).presignPutObject(captor.capture());
+        assertThat(captor.getValue().putObjectRequest().contentLength()).isEqualTo(declaredSize);
+    }
+
     @Test
     void issueFileReferenceUploadUrlWithoutFileExtReturns400() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05");
@@ -654,7 +698,7 @@ class AcademicProgramAttendanceControllerTest {
                         authorized(post(fileReferencePath(academicProgram, sessionId)), leaderToken)
                                 .content(
                                         """
-                                         {"fileExt": " "}
+                                         {"fileExt": " ", "fileSize": 1024}
                                          """))
                 .andExpect(status().isBadRequest());
     }
@@ -764,9 +808,14 @@ class AcademicProgramAttendanceControllerTest {
     }
 
     private static String uploadBody(String fileExt) {
+        return uploadBody(fileExt, 1024L);
+    }
+
+    private static String uploadBody(String fileExt, long fileSize) {
         return """
-               {"fileExt": "%s"}
-               """.formatted(fileExt);
+               {"fileExt": "%s", "fileSize": %d}
+               """
+                .formatted(fileExt, fileSize);
     }
 
     private String sessionsPath(AcademicProgramEntity program) {

@@ -160,6 +160,18 @@ public enum AcademicProgramErrorCode implements ErrorCode {
     UNSUPPORTED_IMAGE_TYPE(HttpStatus.BAD_REQUEST, "UNSUPPORTED_IMAGE_TYPE", "지원하지 않는 이미지 형식입니다."),
 
     /*
+     * 413 — 인증사진이 상한(FilePresigner.maxUploadSizeBytes)을 넘길 때 (ssccops#188). 그전에는
+     * 이 판정 자체가 없어 인증사진만 아무 크기나 올라갔다 — 행사 이미지는 처음부터 끊고 있었다.
+     *
+     * **이것은 요청이 신고한 크기에 대한 안내다.** 거짓으로 신고하면 여기는 통과하지만, 그 값이
+     * 그대로 Content-Length로 서명에 들어가므로 실제 파일이 다르면 R2가 PUT을 거절한다.
+     *
+     * 코드 문자열이 EventErrorCode.IMAGE_TOO_LARGE와 같은 것은 UNSUPPORTED_IMAGE_TYPE과 같은
+     * 이유다 — 화면이 고를 안내가 같고, 상수를 도메인마다 두는 것은 이 레포의 규칙이다.
+     */
+    IMAGE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "IMAGE_TOO_LARGE", "이미지가 너무 큽니다."),
+
+    /*
      * 400 — 승인된 기획안을 학술 활동으로 옮기지 못했을 때 (#150). 커리큘럼 줄 형식이 안내와
      * 다르거나, 필수 문항이 비었거나, 유형 문자열이 acdm_actv_type 기준정보의 어느
      * type_nm과도 맞지 않는 경우가 전부 여기로 온다.

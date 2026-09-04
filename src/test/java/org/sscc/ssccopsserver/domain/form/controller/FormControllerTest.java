@@ -126,7 +126,7 @@ class FormControllerTest {
      * 시험용 시스템 폼 코드 (#140). 실제 선언(SystemFormContract.DECLARED)에는 PROPOSAL이 들어
      * 있지만(#173) 그 계약으로 여기를 검증하지는 않는다 — 시드가 문항을 바꿀 때마다 잠금 배선
      * 테스트가 함께 흔들리고, 그러면 이 테스트가 확인하는 것이 '배선'인지 '기획안 폼의 문항'인지
-     * 갈린다. 그래서 계약을 갈아 끼워(StubJwtDecoderConfig) 컨트롤러 → 서비스 → 엔티티 배선까지
+     * 갈린다. 그래서 계약을 갈아 끼워(FormTestConfig) 컨트롤러 → 서비스 → 엔티티 배선까지
      * 실제 요청으로 확인한다. 판정 자체는 FormSystemLockTest가 엔티티 단위로 본다.
      */
     private static final String SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM";

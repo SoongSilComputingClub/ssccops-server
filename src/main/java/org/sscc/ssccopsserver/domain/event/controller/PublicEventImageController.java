@@ -1,7 +1,9 @@
 package org.sscc.ssccopsserver.domain.event.controller;
 
 import java.net.URI;
+import java.time.Duration;
 
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -52,6 +54,16 @@ public class PublicEventImageController {
     /*
      * 302다(301이 아니다). 목적지가 15분마다 바뀌므로 브라우저나 중간 캐시가 이 주소를 새 주소로
      * **영구히** 기억하면 만료된 서명에 묶인다 — 영구한 것은 이 주소이지 목적지가 아니다.
+     *
+     * 그래서 캐시를 막는 것이 아니라 **서명보다 짧게** 허용한다(ssccops ADR-0010). 캐시가 없으면
+     * 조회 한 번이 곧 서명 한 번인데, 이 주소는 본문 마크다운에 굳어 카카오톡·에브리타임 OG
+     * 크롤러가 반복해서 연다(D7) — 링크 한 번 공유되면 같은 이미지에 서명이 계속 발급된다.
+     * 익명 층에서 캐시를 두는 자리는 여기 하나이며 목록·상세는 캐시하지 않는다: 그쪽은 운영자가
+     * 게시 중에 고친 것이 즉시 보여야 하지만, 이미지는 파일명이 곧 오브젝트 키라 불변이라
+     * 무효화할 것이 없다.
+     *
+     * **404에는 캐시가 붙지 않는다.** 예외가 여기까지 올라오지 않고 핸들러 밖에서 응답이 만들어지기
+     * 때문인데, 결과적으로 맞다 — 게시 직후에 열어 본 사람이 404를 들고 있으면 곤란하다.
      */
     @Operation(
             summary = "행사 이미지 읽기(익명)",
@@ -59,15 +71,21 @@ public class PublicEventImageController {
                     "행사 본문·썸네일 이미지를 서명된 R2 GET URL로 302 리다이렉트한다."
                             + " **인증이 필요 없다.** 이 주소 자체는 만료되지 않으며(본문 마크다운에"
                             + " 저장되는 값이다) 열릴 때마다 유효기간 15분짜리 서명이 새로 만들어진다."
+                            + " 302 응답에는 서명보다 짧은 Cache-Control(public, max-age)이 실린다 —"
+                            + " 같은 이미지를 다시 열 때 서명을 새로 만들지 않기 위해서다."
                             + " 서버는 파일 바이트를 중계하지 않는다 — 브라우저가 R2에서 직접 받는다."
                             + " 게시되지 않은 행사(DRAFT·ARCHIVED)와 없는 행사는 모두 404"
                             + " EVENT_NOT_FOUND이고, 발급한 적 없는 형태의 파일명은 404"
-                            + " EVENT_IMAGE_NOT_FOUND다.")
+                            + " EVENT_IMAGE_NOT_FOUND다(404에는 캐시가 붙지 않는다).")
     @GetMapping("/{eventId}/images/{fileName}")
     public ResponseEntity<Void> redirectToImage(
             @PathVariable Long eventId, @PathVariable String fileName) {
+        String signedUrl = eventImageService.viewUrlOf(eventId, fileName);
+        Duration cacheMaxAge =
+                Duration.ofSeconds(eventImageService.viewRedirectCacheMaxAgeSeconds());
         return ResponseEntity.status(HttpStatus.FOUND)
-                .location(URI.create(eventImageService.viewUrlOf(eventId, fileName)))
+                .cacheControl(CacheControl.maxAge(cacheMaxAge).cachePublic())
+                .location(URI.create(signedUrl))
                 .build();
     }
 }

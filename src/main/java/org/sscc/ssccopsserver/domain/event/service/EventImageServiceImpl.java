@@ -160,6 +160,15 @@ public class EventImageServiceImpl implements EventImageService {
     }
 
     /*
+     * 캐시 수명은 서명 수명에서 파생된다 (ssccops ADR-0010). 여기서 다시 계산하지 않고
+     * 그대로 넘기는 것은 두 값이 어긋날 자리를 만들지 않기 위해서다.
+     */
+    @Override
+    public long viewRedirectCacheMaxAgeSeconds() {
+        return filePresigner.viewRedirectCacheMaxAgeSeconds();
+    }
+
+    /*
      * **확장자 하나로 형식을 정한다** (#210 · ssccops#157). 예전에는 요청이 실어 보낸
      * contentType과 파일명의 확장자를 둘 다 보고 서로 맞아야 통과시켰는데, 그 교차 검증은
      * 지킬 것을 지키지 못하면서 멀쩡한 업로드만 막았다 — 서버는 바이트를 보지 않으므로 어느

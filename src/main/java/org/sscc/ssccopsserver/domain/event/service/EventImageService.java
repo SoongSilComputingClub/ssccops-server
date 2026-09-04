@@ -22,4 +22,16 @@ public interface EventImageService {
      * 미게시 행사·없는 행사·발급한 적 없는 형태의 파일명은 모두 404다.
      */
     String viewUrlOf(Long eventId, String fileName);
+
+    /*
+     * viewUrlOf가 만든 주소로 보내는 302를 캐시해도 되는 시간(초). ssccops ADR-0010.
+     *
+     * 익명 층에서 캐시를 두는 자리가 여기 하나다 — 목록·상세는 캐시하지 않는다. **이미지는
+     * 파일명이 곧 오브젝트 키라 불변**이라 무효화할 것이 없고, 그래서 "게시 중에 고친 것을
+     * 언제 반영하는가"라는 물음이 이쪽에는 성립하지 않는다.
+     *
+     * 값을 서비스가 내주는 것은 이 값이 **서명 유효기간에 매여 있기 때문**이다(그보다 짧아야
+     * 한다). 서명을 만드는 쪽과 캐시 수명을 정하는 쪽이 갈리면 한쪽만 바뀔 수 있다.
+     */
+    long viewRedirectCacheMaxAgeSeconds();
 }

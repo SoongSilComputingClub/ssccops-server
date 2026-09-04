@@ -31,6 +31,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 변경자 회원이 사라진 이력도 500 없이 내려간다 (#82).
@@ -51,7 +52,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MemberHistoryControllerTest.HistoryTestConfig.class)
+@Import({TestJwtDecoderConfig.class, MemberHistoryControllerTest.HistoryTestConfig.class})
 @Sql(
         executionPhase = Sql.ExecutionPhase.AFTER_TEST_METHOD,
         statements = {

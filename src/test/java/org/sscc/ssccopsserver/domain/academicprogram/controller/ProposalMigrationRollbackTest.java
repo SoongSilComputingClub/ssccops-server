@@ -15,13 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
@@ -44,6 +39,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 이관이 실패하면 승인 자체가 없던 일이 되어야 한다 (#150 · ssccops#148 BR).
@@ -67,7 +63,7 @@ import org.sscc.ssccopsserver.support.MemberRoleFixture;
                     + "jdbc:h2:mem:proposal-migration-rollback;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(ProposalMigrationRollbackTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 class ProposalMigrationRollbackTest {
 
     private static final UUID REVIEWER = UUID.randomUUID();
@@ -180,22 +176,5 @@ class ProposalMigrationRollbackTest {
                 studentNumber,
                 name,
                 email);
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

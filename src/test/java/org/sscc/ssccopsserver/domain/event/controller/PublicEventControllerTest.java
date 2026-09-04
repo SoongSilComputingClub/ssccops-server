@@ -19,8 +19,6 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +48,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 공개 행사 조회 API(ssccops#143) 통합 검증.
@@ -67,7 +66,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(PublicEventControllerTest.FixedClockConfig.class)
+@Import({TestJwtDecoderConfig.class, PublicEventControllerTest.FixedClockConfig.class})
 @Transactional
 class PublicEventControllerTest {
 
@@ -450,22 +449,6 @@ class PublicEventControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        /*
-         * 이 테스트는 토큰을 붙이지 않으므로 디코더가 호출될 일이 없지만, 실제 JWKS URI를 향한
-         * 빈이 컨텍스트에 남아 있으면 나중에 인증 요청을 하나 더하는 순간 네트워크를 타게 된다.
-         */
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

@@ -28,8 +28,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -54,6 +52,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -71,7 +70,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(PublicFormControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, PublicFormControllerTest.FixedClockConfig.class})
 @Transactional
 class PublicFormControllerTest {
 
@@ -1573,18 +1572,18 @@ class PublicFormControllerTest {
     }
 
     private MockHttpServletRequestBuilder authenticatedGet(String path) {
-        return get(path).header("Authorization", "Bearer any-token");
+        return get(path).header("Authorization", "Bearer " + AUTH_USER_ID);
     }
 
     private MockHttpServletRequestBuilder authenticatedPost(String path, String body) {
         return post(path)
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * 접수 기간 경계와 제출 일시가 주입된 Clock에서 오는지 확인해야 하므로 시각을 고정한다.
@@ -1594,19 +1593,6 @@ class PublicFormControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

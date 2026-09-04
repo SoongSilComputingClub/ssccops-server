@@ -28,8 +28,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -60,6 +58,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -79,7 +78,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(FormResponseControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, FormResponseControllerTest.FixedClockConfig.class})
 @Transactional
 class FormResponseControllerTest {
 
@@ -941,18 +940,18 @@ class FormResponseControllerTest {
     }
 
     private MockHttpServletRequestBuilder authenticatedGet(String path) {
-        return get(path).header("Authorization", "Bearer any-token");
+        return get(path).header("Authorization", "Bearer " + AUTH_USER_ID);
     }
 
     private MockHttpServletRequestBuilder authenticatedPost(String path, String body) {
         return post(path)
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * 제출 일시가 정렬과 인접 응답 계산의 기준이라 시각을 고정한다. ClockConfig가 정의한
@@ -962,19 +961,6 @@ class FormResponseControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

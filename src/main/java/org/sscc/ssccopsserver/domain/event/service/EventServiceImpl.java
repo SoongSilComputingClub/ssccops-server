@@ -7,6 +7,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -25,6 +26,7 @@ import org.sscc.ssccopsserver.domain.event.repository.EventClassificationReposit
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantCount;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.file.service.FileEraser;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
@@ -64,6 +66,13 @@ public class EventServiceImpl implements EventService {
     private final FormResponseHistoryRepository formResponseHistoryRepository;
     private final EventReceiptPolicy eventReceiptPolicy;
     private final EventPhasePolicy eventPhasePolicy;
+
+    /*
+     * 본문에서 빠진 이미지를 지우는 자리 (ssccops#188). 행사 도메인이 이것을 갖는 것은
+     * 본문이 곧 참조라는 사실을 아는 것이 이쪽뿐이기 때문이다 — file_rfrnc 행이 없어
+     * 파일 도메인은 이 행사에 어떤 오브젝트가 딸려 있는지 알 방법이 없다.
+     */
+    private final FileEraser fileEraser;
 
     /*
      * 행사 목록. 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1로 2회다 — 행사마다
@@ -189,6 +198,14 @@ public class EventServiceImpl implements EventService {
             }
         }
 
+        /*
+         * 본문에서 빠진 이미지를 지우기 위해 **고치기 전 값을 먼저 읽는다** (ssccops#188).
+         * update 뒤에 읽으면 이미 새 값이라 비교할 대상이 없다.
+         */
+        Set<String> referencedBefore =
+                EventImageLocation.fileNamesReferencedIn(
+                        eventId, event.getContentMarkdown(), event.getThumbnailUrlAddress());
+
         event.update(
                 classification,
                 request.eventTtl(),
@@ -199,6 +216,10 @@ public class EventServiceImpl implements EventService {
                 toInstant(request.eventEndDt()),
                 request.plcNm(),
                 request.ptcpLmtCnt());
+
+        fileEraser.eraseAfterCommit(
+                droppedImageKeys(
+                        eventId, referencedBefore, request.mtxtCn(), request.thmbUrlAddr()));
 
         try {
             // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
@@ -240,6 +261,41 @@ public class EventServiceImpl implements EventService {
             throw new GeneralException(EventErrorCode.EVENT_HAS_PARTICIPANT);
         }
         eventRepository.delete(event);
+    }
+
+    /*
+     * 저장으로 본문·썸네일에서 빠진 이미지의 오브젝트 키 (ssccops#188 · ADR-0014).
+     *
+     * **static이고 package-private인 것은 이 규칙만 따로 검증하기 위해서다.** 지우는 실제
+     * 동작은 커밋 뒤에 일어나는데 통합 테스트는 @Transactional이라 그 시점이 오지 않아,
+     * "무엇을 지울 것인가"를 여기서 값으로 확인할 수 있어야 한다.
+     *
+     * **지우는 대상은 이 행사의 오브젝트뿐이다** — 패턴에 행사 번호가 박혀 있어
+     * (EventImageLocation) 남의 행사 주소가 본문에 복사돼 있어도 후보에 들지 않는다.
+     *
+     * **남는 위험이 하나 있다.** 이 행사의 주소를 다른 행사 본문에 손으로 복사해 둔 상태에서
+     * 여기서 그 이미지를 빼면 저쪽이 깨진다. 전 행사 본문을 훑어 참조를 세는 것은 저장마다
+     * 전문 검색이라 택하지 않았고, 그 복사를 만드는 자동 경로가 없다는 것을 확인했다 —
+     * 기획안 이관(#222)은 폼 응답의 텍스트만 옮기고 폼에는 이미지 문항 자체가 없으며, 행사
+     * 복제 기능도 없다.
+     *
+     * **발급만 받고 본문에 넣지 않은 오브젝트는 잡지 못한다.** 저장된 본문끼리 비교하는
+     * 방식이라 저장된 적 없는 것은 비교 대상이 아니다. 그것까지 지우려면 버킷을 훑는 스윕이
+     * 필요한데, 이 저장소는 스케줄러를 두지 않기로 두 번 결정했다(폼 초안 90일 정리·폼 자동
+     * 마감) — 여기서만 예외를 두지 않는다.
+     */
+    static List<String> droppedImageKeys(
+            long eventId, Set<String> referencedBefore, String bodyAfter, String thumbnailAfter) {
+        if (referencedBefore.isEmpty()) {
+            return List.of();
+        }
+        Set<String> referencedAfter =
+                EventImageLocation.fileNamesReferencedIn(eventId, bodyAfter, thumbnailAfter);
+
+        return referencedBefore.stream()
+                .filter(fileName -> !referencedAfter.contains(fileName))
+                .map(fileName -> EventImageLocation.objectKeyOf(eventId, fileName))
+                .toList();
     }
 
     // ------------------------------------------------------------------ 헬퍼

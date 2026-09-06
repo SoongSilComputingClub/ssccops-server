@@ -30,6 +30,13 @@ public class FileReferenceService {
 
     private final FileReferenceRepository fileReferenceRepository;
 
+    /*
+     * 갈아 끼운 옛 오브젝트를 지우는 자리 (ssccops#188). 파일 도메인이 이것을 갖는 것은
+     * 키를 바꾸는 자리가 여기 하나뿐이기 때문이다 — 대상 도메인마다 지우게 하면 대상이 늘 때
+     * 마다 한 곳씩 잊는다.
+     */
+    private final FileEraser fileEraser;
+
     public Optional<FileReferenceEntity> findByTarget(FileTargetType targetType, Long targetId) {
         return fileReferenceRepository.findByTargetTypeAndTargetId(targetType, targetId);
     }
@@ -46,7 +53,20 @@ public class FileReferenceService {
         return findByTarget(targetType, targetId)
                 .map(
                         existing -> {
+                            /*
+                             * **옛 오브젝트를 지운다** (ssccops#188). 키를 갈아 끼우는 순간 옛
+                             * 것은 이미 앱에서 닿을 수 없으므로 — 이 행이 유일한 참조다 —
+                             * 지워도 잃는 것이 없다. 발급만 받고 업로드를 포기해도 마찬가지다:
+                             * 행은 이미 새 키를 가리켜 옛 사진은 어차피 보이지 않는다.
+                             *
+                             * 같은 키로의 재저장은 지나간다. 그것까지 지우면 방금 올린 것을
+                             * 지우는 셈이다.
+                             */
+                            String previousKey = existing.objectKey();
                             existing.changeFileUrl(objectKey);
+                            if (!objectKey.equals(previousKey)) {
+                                fileEraser.eraseAfterCommit(previousKey);
+                            }
                             return existing;
                         })
                 .orElseGet(

@@ -52,10 +52,15 @@ jobs:
                   -H "Content-Type: application/json" -d "$PAYLOAD" 2>/dev/null \
                   | jq -r '.translatedText // empty' || true)
             # 영문자가 있고 · 한글이 남지 않았고 · 짧고 · 보일러플레이트가 아니면 준비된 것이다
-            if [ -n "$OUT" ] && printf '%s' "$OUT" | grep -q '[A-Za-z]' \
+            # **뜻이 맞는지까지 본다** (#211). 예전 조건은 "영문자가 있고 · 한글이 없고 ·
+            # 짧고 · 보일러플레이트가 아니면"이었는데, 모델이 덜 올라온 상태의 응답인
+            # `테스트 → T/T`가 그 넷을 전부 만족해 준비 완료로 통과했다. 그 뒤 본 번역이
+            # 망가진 결과를 내고, 아래 가드가 그것을 거부해 한글 원문이 슬러그로 갔다.
+            # `테스트`의 영어는 `test`다 — 그 낱말이 나오는지가 모델이 실제로 올라왔다는
+            # 유일한 증거다.
+            if [ -n "$OUT" ] && printf '%s' "$OUT" | grep -qi 'test' \
                && ! printf '%s' "$OUT" | grep -qP '[\x{AC00}-\x{D7AF}]' \
-               && [ "$(printf '%s' "$OUT" | wc -m)" -le 20 ] \
-               && ! printf '%s' "$OUT" | grep -qiE 'cookie|browsing|consent|privacy'; then
+               && [ "$(printf '%s' "$OUT" | wc -m)" -le 20 ]; then
               echo "LibreTranslate 준비 완료 (프로브: 테스트 → $OUT)"
               echo "ready=true" >> "$GITHUB_OUTPUT"
               exit 0
@@ -180,13 +185,19 @@ jobs:
                  | sed 's/[^a-z0-9 -]//g; s/ /-/g; s/--*/-/g; s/^-//; s/-$//' \
                  | cut -c1-50 | sed 's/-$//')
 
-          if [ -n "$SLUG" ]; then
+          # 라틴 글자가 세 자 미만이면 슬러그로 쓸 수 없다 (#211). 번역이 거부되면 한글
+          # 원문이 그대로 오는데 위 규칙이 한글을 지우므로 찌꺼기만 남는다 —
+          # "…대기 3일" → `3`, "…/s/{token} 착지 화면" → `stoken`. 비어 있지 않다는 것만
+          # 보면 그 찌꺼기가 브랜치 이름이 되고, 브랜치 목록에서 무슨 작업인지 알 수 없다.
+          SLUG_LETTERS=$(printf '%s' "$SLUG" | tr -cd 'a-z' | wc -c)
+
+          if [ -n "$SLUG" ] && [ "$SLUG_LETTERS" -ge 3 ]; then
             BRANCH_NAME="${PREFIX}/#${ISSUE_NUMBER}-${SLUG}"
           else
             # 번역이 거부됐거나 원문이 전부 한글이면 슬러그가 빈다. `{type}/#N`으로 떨어지면
             # pr-guard가 요구하는 `{type}/#N-…` 형식에 어긋나 PR이 실패하므로 번호로 슬러그를 채운다.
             BRANCH_NAME="${PREFIX}/#${ISSUE_NUMBER}-issue-${ISSUE_NUMBER}"
-            echo "::warning::영문 슬러그를 만들지 못해 ${BRANCH_NAME} 으로 만듭니다 — 필요하면 브랜치를 지우고 직접 만드세요"
+            echo "::warning::쓸 만한 영문 슬러그를 만들지 못해(슬러그: '${SLUG}') ${BRANCH_NAME} 으로 만듭니다 — 필요하면 브랜치를 지우고 직접 만드세요"
           fi
 
           # 이미 있으면 만들지 않는다. 이슈를 닫았다 다시 열거나 워크플로를 재실행하면

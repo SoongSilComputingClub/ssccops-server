@@ -37,6 +37,14 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
     Optional<FormEntity> findByIdAndStatus(Long id, FormStatus status);
 
     /*
+     * 익명 미리보기용 단건 조회(ssccops#201). "접수를 연 적 있는" 폼만 찾는다 — 상태 집합을
+     * 조건에 넣어 DRAFT는 findByIdAndStatus와 같은 태도로 "없는 것"이 된다. 호출부가 집합을
+     * 넘기는 것은 목록(findAllByStatusIn)과 같은 이유이며, 무엇이 "연 적 있는" 상태인지는
+     * PublicFormMetaServiceImpl 한 곳이 정한다.
+     */
+    Optional<FormEntity> findByIdAndStatusIn(Long id, Collection<FormStatus> statuses);
+
+    /*
      * 시스템 폼 조회 (#140). **코드가 폼을 찾는 유일한 경로다.**
      *
      * form_id로 찾는 코드를 두지 않는 것이 이 메서드의 존재 이유다 — form_id는 IDENTITY라

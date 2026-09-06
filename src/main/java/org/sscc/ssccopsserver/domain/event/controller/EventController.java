@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
@@ -131,6 +132,31 @@ public class EventController {
     public ApiResponse<EventDetailResponse> changeEventStatus(
             @PathVariable Long eventId, @Valid @RequestBody EventStatusChangeRequest request) {
         return ApiResponse.success(eventService.changeStatus(eventId, request));
+    }
+
+    /*
+     * 행사 복제 (ssccops#198). 상태를 PUT으로 쓰는 대신 행위 경로를 두는 것과 같은 이유로
+     * /duplicate를 쓴다 (AP-03 · 폼 /duplicate 선례). 새 행사가 생기므로 201 + Location이다.
+     * 권한은 클래스 레벨 EVENT_MANAGE 그대로다 — 생성과 같은 문이다.
+     */
+    @Operation(
+            summary = "행사 복제",
+            description =
+                    "기존 행사를 본떠 새 행사를 DRAFT로 만든다. 본문·분류·장소·정원·대표 이미지는"
+                            + " 승계하고, 제목에는 ' (복사본)'이 붙으며 행사 기간은 비운다."
+                            + " 참가자 명단은 따라오지 않는다."
+                            + " 원본에 폼이 연결돼 있으면 **폼도 함께 복제해 사본을 연결한다**"
+                            + " (두 행사가 같은 신청서를 공유하지 않는다) — 응답의 formId가 그 새 폼이다."
+                            + " 본문·대표 이미지가 이 행사의 이미지를 가리키면 오브젝트를 사본의 키로"
+                            + " 복사하고 주소를 옮겨 적는다(원본을 보관해도 사본이 깨지지 않는다)."
+                            + " 없는 행사는 404 EVENT_NOT_FOUND, 이미지 복사에 실패하면"
+                            + " 502 EVENT_IMAGE_COPY_FAILED이며 그때는 아무것도 만들어지지 않는다.")
+    @PostMapping("/{eventId}/duplicate")
+    public ResponseEntity<ApiResponse<EventDuplicateResponse>> duplicateEvent(
+            @PathVariable Long eventId, @CurrentMember MemberEntity creator) {
+        EventDuplicateResponse response = eventService.duplicateEvent(eventId, creator);
+        URI location = URI.create("/v1/events/" + response.eventId());
+        return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 
     /*

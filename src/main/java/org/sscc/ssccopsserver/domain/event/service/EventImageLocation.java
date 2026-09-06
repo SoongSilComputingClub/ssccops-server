@@ -113,6 +113,39 @@ public final class EventImageLocation {
         return fileNames;
     }
 
+    /*
+     * 글에 박힌 한 행사의 이미지 주소를 다른 행사의 주소로 옮겨 적는다 (ssccops#198 · 행사 복제).
+     *
+     * 파일명은 그대로 두고 행사 번호만 바꾼다 — 사본의 오브젝트 키가 `events/{사본}/{같은 파일명}`이라
+     * 그 자리에 복사해 두면 주소와 오브젝트가 다시 맞는다. fileNamesReferencedIn과 **같은 패턴**으로
+     * 찾으므로 그쪽이 "이 행사의 것"으로 세는 참조와 여기서 옮기는 참조가 정확히 같은 집합이다 —
+     * 남의 행사 주소는 그대로 남는다(그 오브젝트는 이 행사의 소유가 아니라 복사하지도 않는다).
+     *
+     * 호스트를 보지 않는 것도 같다 — 환경마다 다른 app.public-base-url이 본문에 굳어 있어도
+     * 경로만으로 알아본다.
+     */
+    public static String relocateReferences(long fromEventId, long toEventId, String text) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        Pattern pattern =
+                Pattern.compile(
+                        Pattern.quote(PUBLIC_PATH_FORMAT.formatted(fromEventId, ""))
+                                + "([0-9a-f-]+[.][a-z0-9]+)");
+        Matcher matcher = pattern.matcher(text);
+        StringBuilder relocated = new StringBuilder();
+        while (matcher.find()) {
+            String candidate = matcher.group(1);
+            String replacement =
+                    isValidFileName(candidate)
+                            ? PUBLIC_PATH_FORMAT.formatted(toEventId, candidate)
+                            : matcher.group();
+            matcher.appendReplacement(relocated, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(relocated);
+        return relocated.toString();
+    }
+
     private static String requireIssuedFileName(String fileName) {
         if (!isValidFileName(fileName)) {
             throw new IllegalArgumentException("행사 이미지 파일명 형태가 아닙니다: " + fileName);

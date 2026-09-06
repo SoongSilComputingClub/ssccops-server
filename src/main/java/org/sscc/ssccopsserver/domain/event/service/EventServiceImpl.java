@@ -17,6 +17,7 @@ import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSummaryResponse;
@@ -26,14 +27,18 @@ import org.sscc.ssccopsserver.domain.event.repository.EventClassificationReposit
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantCount;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.file.service.FileCopier;
 import org.sscc.ssccopsserver.domain.file.service.FileEraser;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+
+import software.amazon.awssdk.core.exception.SdkException;
 
 import lombok.RequiredArgsConstructor;
 
@@ -63,6 +68,9 @@ public class EventServiceImpl implements EventService {
      */
     private static final int MAX_CONTENT_LENGTH = 100_000;
 
+    /** 복제본 제목 접미. 폼 복제(FormServiceImpl.COPY_SUFFIX)와 같은 표기라야 두 사본이 같은 모양으로 읽힌다 */
+    private static final String COPY_SUFFIX = " (복사본)";
+
     private final EventRepository eventRepository;
     private final EventClassificationRepository eventClassificationRepository;
     private final EventParticipantRepository eventParticipantRepository;
@@ -77,6 +85,15 @@ public class EventServiceImpl implements EventService {
      * 파일 도메인은 이 행사에 어떤 오브젝트가 딸려 있는지 알 방법이 없다.
      */
     private final FileEraser fileEraser;
+
+    /*
+     * 행사 복제(ssccops#198)가 쓰는 둘. 폼은 **서비스**를 부른다 — 사본 규칙(제목·DRAFT·문항 깊은
+     * 복사·응답 미승계·구성 이력)의 주인이 FormServiceImpl.duplicateForm이라, 여기서 FormEntity를
+     * 직접 만들면 그 규칙이 두 벌이 된다. 이미지 복사는 지우기(FileEraser)와 같은 이유로 행사
+     * 도메인이 갖는다 — 본문이 곧 참조라는 사실을 아는 것이 이쪽뿐이다.
+     */
+    private final FormService formService;
+    private final FileCopier fileCopier;
 
     /*
      * 행사 목록. 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1로 2회다 — 행사마다
@@ -250,6 +267,94 @@ public class EventServiceImpl implements EventService {
         eventRepository.flush();
 
         return toDetail(event);
+    }
+
+    /*
+     * 행사 복제 (ssccops#198). 폼 복제(FormServiceImpl.duplicateForm)가 세운 축을 그대로 따른다 —
+     * 승계하는 것은 **회차가 바뀌어도 같은 것**이고, 초기화하는 것은 **회차마다 반드시 새로
+     * 정하는 것**이다.
+     *
+     * | 승계 | 본문 · 분류 · 장소 · 정원 · 대표 이미지 |
+     * | 초기화 | 제목 `(복사본)` · 상태 DRAFT · 행사 기간 |
+     * | 승계하지 않음 | 참가자 명단 — (event_id, mbr_id) UNIQUE이고, 신청한 적 없는 행사에 참가자가 달린다 |
+     *
+     * 생성자는 원본 생성자가 아니라 복제한 회원이다 — 사본을 만든 사람이 사본의 주인이다.
+     *
+     * **[결정 1] 폼도 함께 복제해 사본을 연결한다.** 그대로 승계하면 두 행사가 같은 신청서를
+     * 공유해 3주차·4주차 신청이 한 응답 목록에 섞인다(uk_event_form이 애초에 막는다). 비워 두고
+     * 운영자가 다시 연결하게 하는 안은 복제의 목적(손대는 항목 줄이기)이 절반만 달성돼 기각.
+     *
+     * **[결정 2] 본문 이미지를 사본의 키로 복사한다.** 주소에 행사 번호가 박혀 있어(EventImageLocation)
+     * 그대로 두면 사본의 본문이 원본 행사의 이미지를 가리키고, 원본을 보관하는 날
+     * requirePublishedEvent가 404를 낸다 — 복제 직후에는 멀쩡하고 원본을 정리하는 날 조용히
+     * 깨지는 종류다. "원본을 보관하지 않는다"는 운영 규칙에 기대는 안과 이미지를 떼고 복제하는
+     * 안은 기각.
+     *
+     * **한 트랜잭션이다.** 폼 사본 → 행사 사본(식별자 확보) → 오브젝트 복사 → 주소 치환 순서이며
+     * 어느 단계가 실패해도 앞 단계가 함께 되돌아간다 — 폼만 복제된 채 행사가 없거나, 이미지 없는
+     * 사본이 남는 조합을 만들지 않는다. 오브젝트 복사가 커밋 뒤가 아니라 안에서 일어나는 이유는
+     * FileCopier 주석에 있다.
+     */
+    @Override
+    @Transactional
+    public EventDuplicateResponse duplicateEvent(Long eventId, MemberEntity creator) {
+        EventEntity source = findEvent(eventId);
+
+        FormEntity formCopy = null;
+        if (source.getForm() != null) {
+            Long formCopyId = formService.duplicateForm(source.getForm().getId(), creator).formId();
+            formCopy = formRepository.getReferenceById(formCopyId);
+        }
+
+        EventEntity copy =
+                EventEntity.create(
+                        source.getClassification(),
+                        creator,
+                        source.getTitle() + COPY_SUFFIX,
+                        source.getContentMarkdown(),
+                        source.getThumbnailUrlAddress(),
+                        formCopy,
+                        null,
+                        null,
+                        source.getPlaceName(),
+                        source.getParticipantLimitCount());
+        // 오브젝트 키에 사본의 번호가 들어가므로 먼저 흘려보내 식별자를 받는다
+        eventRepository.saveAndFlush(copy);
+
+        copyImages(source, copy);
+
+        return EventDuplicateResponse.of(copy, source.getId());
+    }
+
+    /*
+     * 원본 본문·대표 이미지가 가리키는 **이 행사의** 오브젝트를 사본의 키로 복사하고 주소를
+     * 옮겨 적는다. 남의 행사 주소가 본문에 복사돼 있으면 건드리지 않는다 — 그 오브젝트는 원본의
+     * 소유도 아니라서 복사할 근거가 없고, fileNamesReferencedIn이 애초에 세지 않는다.
+     */
+    private void copyImages(EventEntity source, EventEntity copy) {
+        Set<String> fileNames =
+                EventImageLocation.fileNamesReferencedIn(
+                        source.getId(),
+                        source.getContentMarkdown(),
+                        source.getThumbnailUrlAddress());
+        if (fileNames.isEmpty()) {
+            return;
+        }
+        for (String fileName : fileNames) {
+            try {
+                fileCopier.copy(
+                        EventImageLocation.objectKeyOf(source.getId(), fileName),
+                        EventImageLocation.objectKeyOf(copy.getId(), fileName));
+            } catch (SdkException ex) {
+                // 트랜잭션 안이라 이 예외로 폼 사본·행사 사본이 함께 되돌아간다
+                throw new GeneralException(EventErrorCode.EVENT_IMAGE_COPY_FAILED);
+            }
+        }
+        copy.relocateImages(
+                EventImageLocation.relocateReferences(
+                        source.getId(), copy.getId(), source.getContentMarkdown()),
+                EventImageLocation.relocateReferences(
+                        source.getId(), copy.getId(), source.getThumbnailUrlAddress()));
     }
 
     /*

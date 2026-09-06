@@ -44,7 +44,7 @@ import lombok.NoArgsConstructor;
  * 줄 안다. 대신 운영자가 명시적으로 "공유 중지"를 누르는 폐기만 둔다(의도된 행동이라 그 결과도
  * 의도된 것이다).
  *
- * 대상을 (`trgt_se_cd`, `trgt_id`) 두 값으로 둔 근거와 FK를 걸지 않는 근거는
+ * 대상을 (`shr_trgt_se_cd`, `trgt_id`) 두 값으로 둔 근거와 FK를 걸지 않는 근거는
  * {@link ShareTargetType} 주석에 있다.
  */
 @Entity
@@ -72,12 +72,15 @@ public class ShareLinkEntity {
      *
      * updatable = false로 잠근다 — 토큰을 바꾸는 것은 이 행을 고치는 일이 아니라 폐기하고 새로
      * 발급하는 일이다.
+     *
+     * 길이 50은 데이터사전의 `코드V50`이다(ssccops#212). 32바이트를 URL-safe Base64로 적으면
+     * 43자로 확정이라 64자 도메인을 따로 만들 이유가 없었다.
      */
-    @Column(name = "shr_tkn", nullable = false, length = 64, updatable = false)
+    @Column(name = "shr_tkn", nullable = false, length = 50, updatable = false)
     private String token;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "trgt_se_cd", nullable = false, length = 20, updatable = false)
+    @Column(name = "shr_trgt_se_cd", nullable = false, length = 20, updatable = false)
     private ShareTargetType targetType;
 
     @Column(name = "trgt_id", nullable = false, updatable = false)

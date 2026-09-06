@@ -7,7 +7,6 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -132,21 +131,6 @@ public class EventController {
     public ApiResponse<EventDetailResponse> changeEventStatus(
             @PathVariable Long eventId, @Valid @RequestBody EventStatusChangeRequest request) {
         return ApiResponse.success(eventService.changeStatus(eventId, request));
-    }
-
-    /*
-     * 행사 삭제. 204가 아니라 data가 null인 200인 것은 모든 응답이 ApiResponse 봉투를 쓰기
-     * 때문이다 (#36·#65·#80과 같은 판단).
-     */
-    @Operation(
-            summary = "행사 삭제",
-            description =
-                    "참가자가 하나도 없을 때만 지워진다(D9). 참가자가 있으면 409 EVENT_HAS_PARTICIPANT이며"
-                            + " — 명단은 활동 이력으로 영구 보존되므로(D16) 그 경우 보관(ARCHIVE)이 경로다.")
-    @DeleteMapping("/{eventId}")
-    public ApiResponse<Void> deleteEvent(@PathVariable Long eventId) {
-        eventService.deleteEvent(eventId);
-        return ApiResponse.successWithNoData();
     }
 
     /*

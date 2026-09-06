@@ -79,6 +79,16 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     runtimeOnly 'com.h2database:h2'
 
+    // Flyway (ssccops#213). 스키마 변경을 버전 관리된 마이그레이션으로 내보내, ddl-auto: update가
+    // 리네임을 '조용한 컬럼 추가'로 처리하는 경로를 없앤다 — prod에서 승인이 통째로 막혔던
+    // ssccops#209가 그 경로였다.
+    //
+    // **아직 켜져 있지 않다.** spring.flyway.enabled가 모든 프로필에서 false다. baseline
+    // (V1__baseline.sql)이 prod pg_dump 결과로 교체되기 전에 켜면 부팅이 깨진다.
+    // Flyway 10부터 PostgreSQL 지원이 별도 모듈이라 두 개를 함께 넣는다.
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
     // Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
 

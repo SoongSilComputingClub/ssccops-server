@@ -38,6 +38,9 @@ public record ApprovalInboxSearchCondition(
                 false,
                 null,
                 now,
+                false,
+                false,
+                null,
                 size == null ? SubWorkSearchCondition.DEFAULT_SIZE : size,
                 SubWorkSortOrder.DEFAULT,
                 SubWorkCursor.decode(cursor, SubWorkSortOrder.DEFAULT));

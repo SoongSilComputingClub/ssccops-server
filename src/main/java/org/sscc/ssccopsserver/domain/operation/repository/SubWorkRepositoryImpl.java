@@ -130,6 +130,39 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
             parameters.put("dueBefore", query.dueBefore());
             parameters.put("doneStatus", WorkStatus.DONE);
         }
+        /*
+         * 정체 ① — 완료 점검을 다 채웠는데 검토요청 전인 건 (ssccops#196). 조건은
+         * SubWorkEntity.isReadyForReview와 같아야 한다. 항목이 하나라도 있어야 하고(없으면
+         * '전부 체크'가 공허하게 참이다) 미완료 항목이 없어야 한다. 체크리스트는 페이징과
+         * 함께 fetch join 하지 못하므로(DB-14) 상관 서브쿼리로 묻는다.
+         */
+        if (query.readyForReviewOnly()) {
+            conditions.append(
+                    " and s.workStatus in :preReviewStatuses"
+                            + " and exists (select 1 from SubWorkChecklistItemEntity i"
+                            + " where i.subWork = s)"
+                            + " and not exists (select 1 from SubWorkChecklistItemEntity u"
+                            + " where u.subWork = s and u.completed = false)");
+            parameters.put(
+                    "preReviewStatuses", List.of(WorkStatus.PLANNING, WorkStatus.IN_PROGRESS));
+        }
+        /*
+         * 정체 ② — 검토요청이 경계 시각보다 앞인데 아직 검토 상태인 건 (ssccops#196). 조건은
+         * SubWorkEntity.isReviewStaleBefore와 같아야 한다. 요청 시각은 이력의 마지막 검토
+         * 진입(sub_work_stts_hstry.aftr_work_stts_cd = REVIEW)이다 — 승인함 카드의 '요청 …'과
+         * 같은 값이라(SubWorkStatusHistoryRepository.findReviewRequestsBySubWorkIds) 두
+         * 화면이 다른 시각을 말하지 않는다. 경계는 오늘 0시 기준의 일자 판정이다
+         * (DeadlinePolicy.reviewStaleBefore).
+         */
+        if (query.reviewStaleOnly()) {
+            conditions.append(
+                    " and s.workStatus = :reviewStatus"
+                            + " and (select max(h.changedAt) from SubWorkStatusHistoryEntity h"
+                            + " where h.subWork = s and h.nextWorkStatus = :reviewStatus)"
+                            + " < :reviewStaleBefore");
+            parameters.put("reviewStatus", WorkStatus.REVIEW);
+            parameters.put("reviewStaleBefore", query.reviewStaleBefore());
+        }
         return conditions.toString();
     }
 

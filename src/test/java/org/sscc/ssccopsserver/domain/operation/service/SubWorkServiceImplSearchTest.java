@@ -11,6 +11,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -51,6 +52,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
@@ -60,6 +62,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRep
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkReviewRequest;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
@@ -99,6 +102,10 @@ class SubWorkServiceImplSearchTest {
     // 마감일은 오늘인데 마감 시각은 이미 지난 건. 두 칩의 경계가 갈리는 자리다 (#121)
     private static final OffsetDateTime DUE_TODAY = NOW.minusHours(3);
 
+    // 검토요청 시각 — 3일 전은 정체, 2일 전은 아직 아니다 (ssccops#196, 경계는 8/18 0시)
+    private static final OffsetDateTime THREE_DAYS_AGO = NOW.minusDays(3);
+    private static final OffsetDateTime TWO_DAYS_AGO = NOW.minusDays(2);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -133,6 +140,9 @@ class SubWorkServiceImplSearchTest {
      */
     private Long approvalNeededTypeId;
     private Long approvalFreeTypeId;
+
+    // 완료 점검 항목이 하나도 없는 유형 — 시드에는 없어 테스트에서 직접 만든다 (ssccops#196)
+    private Long noChecklistTypeId;
 
     @BeforeEach
     void setUp() {
@@ -193,6 +203,13 @@ class SubWorkServiceImplSearchTest {
                 registrant,
                 MemberRoleFixture.TREASURER);
         ownerId = saveMember("20200002", "이서연", "owner@sscc.org").getId();
+
+        noChecklistTypeId =
+                subWorkTypeRepository
+                        .save(
+                                SubWorkTypeEntity.create(
+                                        "점검 없는 유형", false, null, false, null, List.of()))
+                        .getId();
 
         // 상위 업무를 둘 둬 목록이 상위 업무를 가로지르는지 확인한다
         springMtWorkId = createWork(workService, "봄MT");
@@ -458,6 +475,132 @@ class SubWorkServiceImplSearchTest {
         assertThat(response.page().overallCount()).isEqualTo(1);
     }
 
+    /*
+     * 정체 ① 칩 — 완료 점검을 다 채웠는데 아직 검토요청 전인 건만 (ssccops#196).
+     * 다음에 누를 사람이 담당자인 건들이다.
+     */
+    @Test
+    void readyForReviewChipReturnsOnlyFullyCheckedAndNotYetRequested() {
+        Long ready = createSubWork(springMtWorkId, "점검 다 됐는데 요청 전", SOON);
+        completeChecklist(ready);
+        Long halfway = createSubWork(springMtWorkId, "점검이 남은 건", SOON);
+        checkFirstChecklistItem(halfway);
+        Long requested = createSubWork(springMtWorkId, "이미 검토요청한 건", SOON);
+        completeChecklist(requested);
+        requestReview(requested);
+        Long finished = createSubWork(springMtWorkId, "완료된 건", SOON);
+        complete(finished);
+
+        assertThat(idsOf(search(condition().isReadyForReview(true).build())))
+                .containsExactly(ready);
+    }
+
+    /*
+     * 점검 항목이 없는 유형은 칩에 잡히지 않는다 — 0 == 0이라 '전부 체크'가 공허하게 참이
+     * 되면 그 유형의 모든 건이 등록 직후부터 정체로 뜬다.
+     */
+    @Test
+    void typeWithoutChecklistNeverAppearsInReadyForReviewChip() {
+        createSubWork(springMtWorkId, "점검 항목이 없는 유형", noChecklistTypeId, SOON);
+
+        assertThat(search(condition().isReadyForReview(true).build()).subWorks()).isEmpty();
+    }
+
+    /*
+     * 정체 ② 칩 — 검토요청 후 3일이 지났는데 아직 검토 상태인 건만 (ssccops#196).
+     * 다음에 누를 사람이 승인자인 건들이다. 2일째는 아직 아니다.
+     */
+    @Test
+    void reviewStaleChipReturnsOnlyRequestsOlderThanThreeDays() {
+        Long stale = subWorkRequestedAt(THREE_DAYS_AGO, "3일 전에 올라온 건");
+        subWorkRequestedAt(TWO_DAYS_AGO, "2일 전에 올라온 건");
+        createSubWork(springMtWorkId, "아직 요청 전인 건", SOON);
+
+        assertThat(idsOf(search(condition().isReviewStale(true).build()))).containsExactly(stale);
+    }
+
+    // 반려돼 진행으로 돌아간 건은 옛 요청 시각이 이력에 남지만 대기 중인 요청이 아니다
+    @Test
+    void rejectedSubWorkLeavesTheReviewStaleChip() {
+        Long rejected = subWorkRequestedAt(THREE_DAYS_AGO, "3일 전에 올라왔다 반려된 건");
+        transition(rejected, TransitionAction.REJECT, "예산 근거가 부족합니다");
+
+        assertThat(search(condition().isReviewStale(true).build()).subWorks()).isEmpty();
+    }
+
+    /*
+     * 단건 판정(엔티티)과 목록 필터(SQL)가 모든 경우에 같은 답을 내는지. 규칙이 두 벌로
+     * 적혀 있어 한쪽만 고치면 갈리며, 지연 판정이 실제로 그렇게 두 번 갈렸다 (#121 · #194).
+     */
+    @Test
+    void stallJudgementAndFiltersAgreeOnEveryCase() {
+        Long ready = createSubWork(springMtWorkId, "점검 다 됐는데 요청 전", SOON);
+        completeChecklist(ready);
+        Long halfway = createSubWork(springMtWorkId, "점검이 남은 건", SOON);
+        checkFirstChecklistItem(halfway);
+        Long noChecklist = createSubWork(springMtWorkId, "점검 없는 유형", noChecklistTypeId, SOON);
+        Long stale = subWorkRequestedAt(THREE_DAYS_AGO, "3일 전에 올라온 건");
+        Long fresh = subWorkRequestedAt(TWO_DAYS_AGO, "2일 전에 올라온 건");
+        Long finished = createSubWork(springMtWorkId, "완료된 건", SOON);
+        complete(finished);
+        Instant reviewStaleBefore = new DeadlinePolicy(FIXED_CLOCK).reviewStaleBefore();
+
+        // 엔티티에게 직접 묻는다
+        assertThat(readyForReview(ready)).isTrue();
+        assertThat(readyForReview(halfway)).isFalse();
+        assertThat(readyForReview(noChecklist)).isFalse();
+        assertThat(readyForReview(finished)).isFalse();
+        assertThat(reviewStale(stale, reviewStaleBefore)).isTrue();
+        assertThat(reviewStale(fresh, reviewStaleBefore)).isFalse();
+        assertThat(reviewStale(finished, reviewStaleBefore)).isFalse();
+
+        // 목록 필터가 같은 집합을 돌려준다
+        assertThat(idsOf(search(condition().isReadyForReview(true).build())))
+                .containsExactly(ready);
+        assertThat(idsOf(search(condition().isReviewStale(true).build()))).containsExactly(stale);
+
+        // 필터를 뗀 목록의 응답 플래그도 같은 답이다
+        List<SubWorkSummaryResponse> rows = search(condition().build()).subWorks();
+        assertThat(idsWhere(rows, SubWorkSummaryResponse::isReadyForReview)).containsExactly(ready);
+        assertThat(idsWhere(rows, SubWorkSummaryResponse::isReviewStale)).containsExactly(stale);
+    }
+
+    // true만 필터다 — false·생략은 '정체가 아닌 것만'이 아니라 필터 없음이다 (isOverdue와 같다)
+    @Test
+    void stallFiltersSetToFalseAreTreatedAsNoFilter() {
+        createSubWork(springMtWorkId, "하위 업무 1", SOON);
+        createSubWork(springMtWorkId, "하위 업무 2", LATER);
+
+        assertThat(search(condition().isReadyForReview(false).build()).subWorks()).hasSize(2);
+        assertThat(search(condition().isReviewStale(false).build()).subWorks()).hasSize(2);
+    }
+
+    /*
+     * 검토 중인 건이 섞인 페이지는 검토요청 시각 집계가 하나 더 붙어 다섯 번이다
+     * (ssccops#196). 행이 몇 건이든 이 수는 그대로다 — 카드마다 이력을 물으면 N+1이다.
+     */
+    @Test
+    void searchRunsFiveQueriesWhenRowsIncludeReviewRegardlessOfRowCount() {
+        for (int index = 0; index < 5; index++) {
+            subWorkRequestedAt(THREE_DAYS_AGO, "검토 중인 건 " + index);
+        }
+        entityManager.flush();
+        entityManager.clear();
+
+        Statistics statistics =
+                entityManager
+                        .getEntityManager()
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build());
+
+        assertThat(response.subWorks()).hasSize(5);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(5);
+    }
+
     // 건수는 두 갈래다 — 걸러진 건수(화면 '8건')와 필터를 뗀 전체 건수(화면 '전체 8건')
     @Test
     void pageCarriesFilteredCountAndOverallCount() {
@@ -676,6 +819,75 @@ class SubWorkServiceImplSearchTest {
         return subWorkRepository.findById(subWorkId).orElseThrow().isDelayedBefore(overdueBefore);
     }
 
+    private boolean readyForReview(Long subWorkId) {
+        entityManager.flush();
+        entityManager.clear();
+        SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
+        long total =
+                subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork).size();
+        long completed =
+                subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork).stream()
+                        .filter(SubWorkChecklistItemEntity::isCompleted)
+                        .count();
+        return subWork.isReadyForReview(completed, total);
+    }
+
+    private boolean reviewStale(Long subWorkId, Instant reviewStaleBefore) {
+        entityManager.flush();
+        entityManager.clear();
+        SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
+        Instant requestedAt =
+                subWorkStatusHistoryRepository
+                        .findReviewRequestsBySubWorkIds(List.of(subWorkId), WorkStatus.REVIEW)
+                        .stream()
+                        .findFirst()
+                        .map(SubWorkReviewRequest::getLastRequestedAt)
+                        .orElse(null);
+        return subWork.isReviewStaleBefore(requestedAt, reviewStaleBefore);
+    }
+
+    /*
+     * 검토요청이 과거에 올라온 건을 만든다. 서비스는 고정 Clock을 쓰므로 요청 시각을
+     * 뒤로 미는 방법은 기록된 이력의 시각을 바꾸는 것뿐이다 — 상태는 정상 전이로 만들고
+     * 시각만 갈아 끼운다.
+     */
+    private Long subWorkRequestedAt(OffsetDateTime requestedAt, String title) {
+        Long subWorkId = createSubWork(springMtWorkId, title, SOON);
+        transition(subWorkId, TransitionAction.START, null);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null);
+        entityManager.flush();
+        entityManager.clear();
+        entityManager
+                .getEntityManager()
+                .createQuery(
+                        "update SubWorkStatusHistoryEntity h set h.changedAt = :changedAt"
+                                + " where h.subWork.id = :subWorkId"
+                                + " and h.nextWorkStatus = :reviewStatus")
+                .setParameter("changedAt", requestedAt.toInstant())
+                .setParameter("subWorkId", subWorkId)
+                .setParameter("reviewStatus", WorkStatus.REVIEW)
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkId;
+    }
+
+    private void completeChecklist(Long subWorkId) {
+        for (Long itemId : checklistItemIds(subWorkId)) {
+            checkItem(subWorkId, itemId);
+        }
+    }
+
+    private void requestReview(Long subWorkId) {
+        transition(subWorkId, TransitionAction.START, null);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null);
+    }
+
+    private static List<Long> idsWhere(
+            List<SubWorkSummaryResponse> rows, Predicate<SubWorkSummaryResponse> matches) {
+        return rows.stream().filter(matches).map(SubWorkSummaryResponse::subWorkId).toList();
+    }
+
     private static List<Long> idsOf(SubWorkSearchResponse response) {
         return response.subWorks().stream().map(SubWorkSummaryResponse::subWorkId).toList();
     }
@@ -711,6 +923,8 @@ class SubWorkServiceImplSearchTest {
         private List<String> approvalStatus;
         private Boolean isOverdue;
         private OffsetDateTime dueBefore;
+        private Boolean isReadyForReview;
+        private Boolean isReviewStale;
         private Integer size;
         private String cursor;
         private String sort;
@@ -735,6 +949,16 @@ class SubWorkServiceImplSearchTest {
             return this;
         }
 
+        private ConditionBuilder isReadyForReview(Boolean value) {
+            this.isReadyForReview = value;
+            return this;
+        }
+
+        private ConditionBuilder isReviewStale(Boolean value) {
+            this.isReviewStale = value;
+            return this;
+        }
+
         private ConditionBuilder size(Integer value) {
             this.size = value;
             return this;
@@ -752,7 +976,15 @@ class SubWorkServiceImplSearchTest {
 
         private SubWorkSearchCondition build() {
             return new SubWorkSearchCondition(
-                    workStatus, approvalStatus, isOverdue, dueBefore, size, cursor, sort);
+                    workStatus,
+                    approvalStatus,
+                    isOverdue,
+                    dueBefore,
+                    isReadyForReview,
+                    isReviewStale,
+                    size,
+                    cursor,
+                    sort);
         }
     }
 }

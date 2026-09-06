@@ -64,6 +64,9 @@ public class ApprovalServiceImpl implements ApprovalService {
     // 승인자 결재 권한의 표시명(authrt_nm)을 카드에 싣는다 (#123, AR-07 경유)
     private final AuthorityNameFinder authorityNameFinder;
 
+    // 검토 정체(요청 후 3일) 경계는 목록(OPS-008)과 한 곳에서 나온다 (ssccops#196)
+    private final DeadlinePolicy deadlinePolicy;
+
     private final Clock clock;
 
     @Override
@@ -77,7 +80,8 @@ public class ApprovalServiceImpl implements ApprovalService {
         boolean hasNext = fetched.size() > query.size();
         List<SubWorkEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
-        List<ApprovalInboxItemResponse> approvals = toItems(rows, viewer);
+        List<ApprovalInboxItemResponse> approvals =
+                toItems(rows, viewer, deadlinePolicy.reviewStaleBefore());
         PageResponse page =
                 new PageResponse(
                         query.size(),
@@ -95,7 +99,8 @@ public class ApprovalServiceImpl implements ApprovalService {
      * 카드에 실을 파생 값을 한꺼번에 모아 붙인다. 빈 목록이면 IN () 이 되는 쿼리를 태우지 않고
      * 곧장 빈 결과로 답한다.
      */
-    private List<ApprovalInboxItemResponse> toItems(List<SubWorkEntity> rows, MemberEntity viewer) {
+    private List<ApprovalInboxItemResponse> toItems(
+            List<SubWorkEntity> rows, MemberEntity viewer, Instant reviewStaleBefore) {
         if (rows.isEmpty()) {
             return List.of();
         }
@@ -182,7 +187,8 @@ public class ApprovalServiceImpl implements ApprovalService {
                                         myVotes.get(subWork.getId()),
                                         latestRejections.get(subWork.getId()),
                                         decidable.test(subWork),
-                                        authorizerNames))
+                                        authorizerNames,
+                                        reviewStaleBefore))
                 .toList();
     }
 
@@ -194,7 +200,8 @@ public class ApprovalServiceImpl implements ApprovalService {
             SubWorkApprovalVoteEntity myVote,
             SubWorkLatestRejection latestRejection,
             boolean canDecide,
-            Map<String, String> authorizerNames) {
+            Map<String, String> authorizerNames,
+            Instant reviewStaleBefore) {
         /*
          * 회차는 검토 진입 횟수다. 검토요청을 한 번도 하지 않은 건은 이력이 없어 0인데,
          * 대기 탭은 검토 상태만 담으므로 실제로는 승인·반려 탭에서만 그런 행이 나올 수 있다.
@@ -223,6 +230,7 @@ public class ApprovalServiceImpl implements ApprovalService {
                 canDecide,
                 authorizerAuthorityCode == null
                         ? null
-                        : authorizerNames.get(authorizerAuthorityCode));
+                        : authorizerNames.get(authorizerAuthorityCode),
+                subWork.isReviewStaleBefore(requestedAt, reviewStaleBefore));
     }
 }

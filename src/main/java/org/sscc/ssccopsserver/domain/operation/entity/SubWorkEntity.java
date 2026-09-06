@@ -360,4 +360,34 @@ public class SubWorkEntity {
     public boolean isDelayedBefore(Instant overdueBefore) {
         return dueAt != null && workStatus != WorkStatus.DONE && dueAt.isBefore(overdueBefore);
     }
+
+    /*
+     * 정체 ① — 완료 점검을 다 채웠는데 아직 검토요청(TR-02)을 누르지 않았는지 (ssccops#196).
+     * 다음 행동은 담당자의 것이다. 목록 필터(SubWorkRepositoryImpl)가 같은 조건을 SQL로
+     * 옮겨 쓰므로 규칙을 바꾸면 두 곳을 함께 고친다.
+     *
+     * 점검 항목이 하나도 없는 유형은 해당하지 않는다 — "전부 체크"가 공허하게 참이 되어
+     * 등록 직후부터 정체로 찍힌다. 검토·완료 상태는 이미 요청을 누른 뒤라 해당하지 않는다.
+     */
+    public boolean isReadyForReview(long completedItems, long totalItems) {
+        return (workStatus == WorkStatus.PLANNING || workStatus == WorkStatus.IN_PROGRESS)
+                && totalItems > 0
+                && completedItems == totalItems;
+    }
+
+    /*
+     * 정체 ② — 검토요청이 올라간 지 오래됐는데 아직 승인·반려가 없는지 (ssccops#196).
+     * 다음 행동은 승인자의 것이다. 인자는 '지금'이 아니라 **정체 경계 시각**
+     * (DeadlinePolicy.reviewStaleBefore — 요청일 + 3일 ≤ 오늘인 경계)이며, 이름을
+     * isDelayedBefore와 같은 꼴로 둔 이유도 같다.
+     *
+     * lastRequestedAt은 이력(sub_work_stts_hstry)에서 센 마지막 검토 진입 시각이다 — 검토
+     * 상태인 건은 그 뒤로 전이가 없었으므로 그것이 곧 지금 대기 중인 요청의 시각이다.
+     * 승인이 필요 없는 유형도 검토에서 누군가 완료를 눌러야 하므로 승인 상태는 보지 않는다.
+     */
+    public boolean isReviewStaleBefore(Instant lastRequestedAt, Instant reviewStaleBefore) {
+        return workStatus == WorkStatus.REVIEW
+                && lastRequestedAt != null
+                && lastRequestedAt.isBefore(reviewStaleBefore);
+    }
 }

@@ -18,6 +18,9 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * #121), 지연 칩과 마감임박 칩이 같은 값을 경계로 써야 두 칩이 겹치지도 사이에 건을
  * 빠뜨리지도 않는다. 한 번만 읽어 목록·건수 쿼리가 모두 같은 경계를 쓰게 한다 — 쿼리마다
  * 다시 계산하면 경계에 걸친 건이 목록에는 있고 건수에는 없는 상태가 생긴다.
+ *
+ * reviewStaleBefore도 같은 이유로 들고 있다 (ssccops#196) — 검토 정체 필터와 응답의
+ * isReviewStale이 같은 경계(DeadlinePolicy.reviewStaleBefore)를 봐야 한다.
  */
 public record SubWorkSearchQuery(
         WorkStatus workStatus,
@@ -25,6 +28,9 @@ public record SubWorkSearchQuery(
         boolean overdueOnly,
         Instant dueBefore,
         Instant overdueBefore,
+        boolean readyForReviewOnly,
+        boolean reviewStaleOnly,
+        Instant reviewStaleBefore,
         int size,
         SubWorkSortOrder sort,
         SubWorkCursor cursor) {

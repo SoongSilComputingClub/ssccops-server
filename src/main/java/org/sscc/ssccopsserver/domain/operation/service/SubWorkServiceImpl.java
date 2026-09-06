@@ -56,6 +56,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRe
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkReviewRequest;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
@@ -279,10 +280,14 @@ public class SubWorkServiceImpl implements SubWorkService {
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         int approvalSequence = subWorkType.requiresQuorum() ? currentApprovalSequence(subWork) : 0;
 
+        // 검토 정체 판정 재료 — 검토 상태가 아니면 이력을 묻지 않는다 (ssccops#196)
+        Instant lastRequestedAt = lastReviewRequestsOf(List.of(subWork)).get(subWork.getId());
+
         return SubWorkDetailResponse.of(
                 subWork,
                 checklist,
                 subWork.isDelayedBefore(deadlinePolicy.overdueBefore()),
+                subWork.isReviewStaleBefore(lastRequestedAt, deadlinePolicy.reviewStaleBefore()),
                 quorumOf(subWork, approvalSequence),
                 myVoteOn(subWork, viewer, approvalSequence),
                 SubWorkRejectionResponse.from(
@@ -354,28 +359,27 @@ public class SubWorkServiceImpl implements SubWorkService {
     /*
      * 목록 조회(OPS-008). 화면의 필터 칩 하나가 이 호출 하나다.
      *
-     * 쿼리는 네 번이다 — 목록 · 체크리스트 진행률 집계 · 필터 건수 · 전체 건수. 하위 업무가
-     * 몇 건이든 이 수는 변하지 않는다 (DB-13). 진행률 집계는 이번 페이지에 실린 건에 대해서만
-     * 돌리며, 목록이 비면 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라 문법 오류다.
+     * 쿼리는 네 번이다 — 목록 · 체크리스트 진행률 집계 · 필터 건수 · 전체 건수 — 이번 페이지에
+     * 검토 상태인 건이 하나라도 있으면 검토요청 시각 집계가 하나 더 붙어 다섯 번이다
+     * (ssccops#196). 하위 업무가 몇 건이든 이 수는 변하지 않는다 (DB-13). 집계는 이번 페이지에
+     * 실린 건에 대해서만 돌리며, 대상이 비면 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면
+     * DB에 따라 문법 오류다.
      *
-     * 지연·마감임박 판정 경계는 한 번만 읽어 목록·건수·응답의 isDelayed가 모두 같은 값을
-     * 보게 한다. 그 값은 '지금'이 아니라 오늘 0시다 (DeadlinePolicy, #121).
+     * 지연·마감임박·검토 정체 판정 경계는 한 번만 읽어 목록·건수·응답의 isDelayed·isReviewStale이
+     * 모두 같은 값을 보게 한다. 그 값은 '지금'이 아니라 오늘 0시 기준이다 (DeadlinePolicy, #121).
      */
     @Override
     public SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition) {
         Instant overdueBefore = deadlinePolicy.overdueBefore();
-        SubWorkSearchQuery query = condition.toQuery(overdueBefore);
+        Instant reviewStaleBefore = deadlinePolicy.reviewStaleBefore();
+        SubWorkSearchQuery query = condition.toQuery(overdueBefore, reviewStaleBefore);
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<SubWorkEntity> fetched = subWorkRepository.search(query);
         boolean hasNext = fetched.size() > query.size();
         List<SubWorkEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
-        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        List<SubWorkSummaryResponse> subWorks =
-                rows.stream()
-                        .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
-                        .toList();
+        List<SubWorkSummaryResponse> subWorks = toSummaries(rows, overdueBefore, reviewStaleBefore);
 
         PageResponse page =
                 new PageResponse(
@@ -410,15 +414,58 @@ public class SubWorkServiceImpl implements SubWorkService {
                                 SubWorkChecklistProgress::getSubWorkId, progress -> progress));
     }
 
-    private SubWorkSummaryResponse toSummary(
-            SubWorkEntity subWork,
-            Map<Long, SubWorkChecklistProgress> progressBySubWorkId,
-            Instant overdueBefore) {
-        SubWorkChecklistProgress progress = progressBySubWorkId.get(subWork.getId());
-        long completedItems = progress == null ? 0L : progress.getCompletedCount();
-        long totalItems = progress == null ? 0L : progress.getTotalCount();
-        return SubWorkSummaryResponse.of(
-                subWork, completedItems, totalItems, subWork.isDelayedBefore(overdueBefore));
+    /*
+     * 검토 상태인 하위 업무들의 마지막 검토요청 시각 (ssccops#196). 승인함 카드가 '요청 …'에
+     * 쓰는 것과 같은 집계(SubWorkStatusHistoryRepository.findReviewRequestsBySubWorkIds)라
+     * 두 화면이 다른 시각을 말하지 않는다. 행마다 이력을 물으면 그대로 N+1이라 한 번에 센다
+     * (DB-13). 검토 상태가 아닌 건은 정체 판정 대상이 아니므로 애초에 묻지 않는다 — 그래서
+     * 검토 중인 건이 없는 페이지에서는 이 쿼리가 아예 돌지 않는다.
+     */
+    private Map<Long, Instant> lastReviewRequestsOf(List<SubWorkEntity> rows) {
+        List<Long> inReview =
+                rows.stream()
+                        .filter(subWork -> subWork.getWorkStatus() == WorkStatus.REVIEW)
+                        .map(SubWorkEntity::getId)
+                        .toList();
+        if (inReview.isEmpty()) {
+            return Map.of();
+        }
+        return subWorkStatusHistoryRepository
+                .findReviewRequestsBySubWorkIds(inReview, WorkStatus.REVIEW)
+                .stream()
+                .collect(
+                        Collectors.toMap(
+                                SubWorkReviewRequest::getSubWorkId,
+                                SubWorkReviewRequest::getLastRequestedAt));
+    }
+
+    /*
+     * 목록 한 페이지를 요약 응답으로. 진행률·지연·정체 판정 재료를 페이지 단위로 한 번씩
+     * 집계해 행마다 붙인다 — 대시보드·운영 통합·목록 조회가 전부 이 하나를 쓰므로 어느
+     * 화면도 같은 건을 다르게 판정하지 않는다.
+     */
+    private List<SubWorkSummaryResponse> toSummaries(
+            List<SubWorkEntity> rows, Instant overdueBefore, Instant reviewStaleBefore) {
+        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
+        Map<Long, Instant> lastRequestedAtBySubWorkId = lastReviewRequestsOf(rows);
+        return rows.stream()
+                .map(
+                        subWork -> {
+                            SubWorkChecklistProgress progress =
+                                    progressBySubWorkId.get(subWork.getId());
+                            long completedItems =
+                                    progress == null ? 0L : progress.getCompletedCount();
+                            long totalItems = progress == null ? 0L : progress.getTotalCount();
+                            return SubWorkSummaryResponse.of(
+                                    subWork,
+                                    completedItems,
+                                    totalItems,
+                                    subWork.isDelayedBefore(overdueBefore),
+                                    subWork.isReviewStaleBefore(
+                                            lastRequestedAtBySubWorkId.get(subWork.getId()),
+                                            reviewStaleBefore));
+                        })
+                .toList();
     }
 
     /*
@@ -618,12 +665,9 @@ public class SubWorkServiceImpl implements SubWorkService {
      */
     @Override
     public List<SubWorkSummaryResponse> findMyTasks(MemberEntity owner) {
-        Instant overdueBefore = deadlinePolicy.overdueBefore();
         List<SubWorkEntity> rows = subWorkRepository.findAllByOwnerId(owner.getId());
-        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        return rows.stream()
-                .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
-                .toList();
+        return toSummaries(
+                rows, deadlinePolicy.overdueBefore(), deadlinePolicy.reviewStaleBefore());
     }
 
     /*
@@ -644,11 +688,8 @@ public class SubWorkServiceImpl implements SubWorkService {
                                 from, to, WorkStatus.DONE)
                         : subWorkRepository.findAllDueBetweenExcludingStatusAndOwnerId(
                                 from, to, WorkStatus.DONE, ownerId);
-        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        Instant overdueBefore = deadlinePolicy.overdueBefore();
-        return rows.stream()
-                .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
-                .toList();
+        return toSummaries(
+                rows, deadlinePolicy.overdueBefore(), deadlinePolicy.reviewStaleBefore());
     }
 
     /*
@@ -658,12 +699,9 @@ public class SubWorkServiceImpl implements SubWorkService {
      */
     @Override
     public List<SubWorkSummaryResponse> listSubWorks() {
-        Instant overdueBefore = deadlinePolicy.overdueBefore();
         List<SubWorkEntity> rows = subWorkRepository.findAllAlive();
-        Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
-        return rows.stream()
-                .map(subWork -> toSummary(subWork, progressBySubWorkId, overdueBefore))
-                .toList();
+        return toSummaries(
+                rows, deadlinePolicy.overdueBefore(), deadlinePolicy.reviewStaleBefore());
     }
 
     /*

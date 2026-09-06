@@ -42,4 +42,24 @@ public class DeadlinePolicy {
     public Instant overdueBefore() {
         return LocalDate.now(clock).atStartOfDay(clock.getZone()).toInstant();
     }
+
+    /*
+     * 검토 정체 판정의 경계 시각 (ssccops#196). 검토요청이 이 시각보다 앞이면 "승인 요청 후
+     * 3일 경과"다.
+     *
+     * 3일은 주 1회 회의 주기보다 짧아 회의 전에 드러나라고 정한 값이다(2026-09-06 확정).
+     * 지연과 같은 이유로 시각이 아니라 **일자**로 잰다 — 요청일이 월요일이면 몇 시에 올렸든
+     * 목요일(요청일 + 3일)부터 정체이고, 수요일까지는 아니다. 즉 요청일 + 3일 ≤ 오늘
+     * ⟺ 요청 시각 < (오늘 − 3일 + 1일) 0시. 서버 판정(SubWorkEntity.isReviewStaleBefore)과
+     * 목록 필터(SubWorkRepositoryImpl)가 같은 값을 받으므로 경계를 만드는 코드는 여기 하나다.
+     */
+    public Instant reviewStaleBefore() {
+        return LocalDate.now(clock)
+                .minusDays(REVIEW_STALE_DAYS - 1)
+                .atStartOfDay(clock.getZone())
+                .toInstant();
+    }
+
+    // 검토요청 후 며칠이 지나면 정체로 보는가. 화면은 이 값을 모른다 — 서버가 판정만 내린다
+    public static final int REVIEW_STALE_DAYS = 3;
 }

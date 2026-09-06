@@ -75,6 +75,8 @@ public record SubWorkDetailResponse(
         String completionCriteria,
         String externalLink,
         boolean isDelayed,
+        boolean isReadyForReview,
+        boolean isReviewStale,
         OffsetDateTime completedAt,
         List<SubWorkChecklistItemResponse> checklist,
         SubWorkChecklistSummaryResponse checklistSummary,
@@ -99,6 +101,10 @@ public record SubWorkDetailResponse(
      * delayed는 엔티티의 dly_yn 컬럼이 아니라 조회 시점에 판정한 값이다 (SubWorkEntity.isDelayedBefore).
      * 조회가 컬럼을 갱신하지는 않으므로(AP-07) 저장된 값과 어긋날 수 있다.
      *
+     * reviewStale(검토요청 후 3일 경과)도 같은 종류의 조회 시점 판정이며 목록(OPS-008)과
+     * 같은 규칙을 쓴다 (ssccops#196). isReadyForReview는 이 응답이 이미 들고 있는 체크리스트로
+     * 여기서 센다 — 목록이 집계로 얻는 것과 같은 수다.
+     *
      * canDecide 하나로 canApprove·canReject를 함께 채운다 — 승인과 반려의 권한 규칙이 지금은
      * 같기 때문이다(둘 다 유형이 지정한 승인자). 그럼에도 응답 필드를 둘로 나눠 두는 것은
      * 자가 승인 차단(O-04)이 확정되면 승인만 false가 되기 때문이며, 그때 프론트가 버튼 하나의
@@ -108,6 +114,7 @@ public record SubWorkDetailResponse(
             SubWorkEntity subWork,
             List<SubWorkChecklistItemEntity> checklist,
             boolean delayed,
+            boolean reviewStale,
             ApprovalQuorumResponse quorum,
             VoteChoice myVote,
             SubWorkRejectionResponse latestRejection,
@@ -117,6 +124,8 @@ public record SubWorkDetailResponse(
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         List<SubWorkChecklistItemResponse> checklistItems =
                 checklist.stream().map(SubWorkChecklistItemResponse::from).toList();
+        long completedItems =
+                checklist.stream().filter(SubWorkChecklistItemEntity::isCompleted).count();
 
         return new SubWorkDetailResponse(
                 subWork.getId(),
@@ -143,6 +152,8 @@ public record SubWorkDetailResponse(
                 subWork.getCompletionCriteria(),
                 subWork.getExternalLink(),
                 delayed,
+                subWork.isReadyForReview(completedItems, checklist.size()),
+                reviewStale,
                 toOffsetDateTime(subWork.getCompletedAt()),
                 checklistItems,
                 SubWorkChecklistSummaryResponse.from(checklistItems),

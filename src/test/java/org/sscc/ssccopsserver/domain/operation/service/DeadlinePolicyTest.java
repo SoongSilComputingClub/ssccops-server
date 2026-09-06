@@ -61,4 +61,36 @@ class DeadlinePolicyTest {
 
         assertThat(policy.overdueBefore()).isEqualTo(Instant.parse("2026-08-20T00:00:00Z"));
     }
+
+    /*
+     * 검토 정체 경계 (ssccops#196). 오늘이 8/20이면 경계는 8/18 0시다 — 8/18에 올린 요청이
+     * 오늘로 3일째이므로 정체이고, 8/19에 올린 요청은 2일째라 아니다.
+     *
+     * 임계값이 여기 한 곳에만 있어야 목록 필터와 응답 판정이 같은 날을 말한다. 이 값을
+     * 화면이나 쿼리 파라미터로 옮기면 대시보드와 목록이 같은 건을 다르게 센다.
+     */
+    @Test
+    void reviewStaleBeforeIsThreeDaysBackInServiceZone() {
+        DeadlinePolicy policy = new DeadlinePolicy(Clock.fixed(NOON_KST, KST));
+
+        assertThat(policy.reviewStaleBefore()).isEqualTo(MIDNIGHT_KST.minusSeconds(2 * 86_400));
+    }
+
+    /*
+     * 지연과 같은 이유로 시각이 아니라 일자로 잰다 — 정오에 물어도 자정에 물어도 그날의
+     * 경계는 같다. 초 단위로 재면 "오전에는 아직 아니고 오후에는 정체"인 건이 생긴다.
+     */
+    @Test
+    void reviewStaleBeforeDoesNotMoveWithinTheSameDay() {
+        Instant boundary = new DeadlinePolicy(Clock.fixed(NOON_KST, KST)).reviewStaleBefore();
+
+        assertThat(new DeadlinePolicy(Clock.fixed(MIDNIGHT_KST, KST)).reviewStaleBefore())
+                .isEqualTo(boundary);
+    }
+
+    // 며칠을 정체로 볼지는 서버 상수 하나다. 값이 바뀌면 이 테스트가 먼저 알린다
+    @Test
+    void reviewStaleThresholdIsThreeDays() {
+        assertThat(DeadlinePolicy.REVIEW_STALE_DAYS).isEqualTo(3);
+    }
 }

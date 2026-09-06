@@ -22,6 +22,11 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * 상태 칸은 시안에서 배지 하나('승인 대기' 또는 '진행')지만 서버는 업무 상태와 승인 상태를
  * 각각 내린다. 둘은 별개 축이고(OPS-009도 같다), 어느 쪽을 배지로 보여줄지는 화면의 몫이다.
  *
+ * isReadyForReview·isReviewStale은 정체 표시다 (ssccops#196) — 앞은 완료 점검을 다 채웠는데
+ * 검토요청 전(담당자가 누를 것), 뒤는 검토요청 후 3일이 지났는데 아직 대기(승인자가 누를
+ * 것). isDelayed처럼 저장하지 않고 조회 시점에 서버가 판정한다. 화면이 진행률·상태로 다시
+ * 계산하지 않는 것은 지연 판정이 화면과 갈렸던 전례(#121·#194) 때문이다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record SubWorkSummaryResponse(
@@ -35,7 +40,9 @@ public record SubWorkSummaryResponse(
         ApprovalStatus approvalStatus,
         BigDecimal progressRate,
         OffsetDateTime dueAt,
-        boolean isDelayed) {
+        boolean isDelayed,
+        boolean isReadyForReview,
+        boolean isReviewStale) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -47,7 +54,11 @@ public record SubWorkSummaryResponse(
      * 뒤 갱신하는 주체가 없다. 조회가 컬럼을 채우지는 않는다 (AP-07).
      */
     public static SubWorkSummaryResponse of(
-            SubWorkEntity subWork, long completedItems, long totalItems, boolean delayed) {
+            SubWorkEntity subWork,
+            long completedItems,
+            long totalItems,
+            boolean delayed,
+            boolean reviewStale) {
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         return new SubWorkSummaryResponse(
                 subWork.getId(),
@@ -60,7 +71,9 @@ public record SubWorkSummaryResponse(
                 subWork.getApprovalStatus(),
                 subWork.progressRate(completedItems, totalItems),
                 toOffsetDateTime(subWork.getDueAt()),
-                delayed);
+                delayed,
+                subWork.isReadyForReview(completedItems, totalItems),
+                reviewStale);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

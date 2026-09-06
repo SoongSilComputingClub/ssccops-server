@@ -28,12 +28,18 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * 승인 상태만 복수 값을 받는다. 화면의 '승인대기' 칩이 대기(PENDING)와 재승인필요
  * (REAPPROVAL_REQUIRED) 두 상태를 함께 보여줘야 하기 때문이다 — 반려 후 다시 올라온 건도
  * 승인자 입장에서는 처리해야 할 건이다.
+ *
+ * isReadyForReview·isReviewStale은 정체 칩 둘이다 (ssccops#196). isOverdue와 같은 꼴로
+ * true만 필터이고 false·생략은 필터 없음이다. 둘을 한 칩으로 뭉치지 않는 것은 다음 행동을
+ * 할 사람이 다르기 때문이다 — 앞은 담당자가 검토요청을, 뒤는 승인자가 승인·반려를 누른다.
  */
 public record SubWorkSearchCondition(
         String workStatus,
         List<String> approvalStatus,
         Boolean isOverdue,
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime dueBefore,
+        Boolean isReadyForReview,
+        Boolean isReviewStale,
         @Min(value = 1, message = "size는 1 이상이어야 합니다.")
                 @Max(
                         value = SubWorkSearchCondition.MAX_SIZE,
@@ -50,7 +56,7 @@ public record SubWorkSearchCondition(
      * 문자열을 해석해 조회용 조건으로 바꾼다. 기준 코드 위반·커서 해독 실패는 여기서 걸러
      * Repository까지 내려가지 않게 한다.
      */
-    public SubWorkSearchQuery toQuery(Instant overdueBefore) {
+    public SubWorkSearchQuery toQuery(Instant overdueBefore, Instant reviewStaleBefore) {
         SubWorkSortOrder sortOrder = SubWorkSortOrder.from(sort);
         return new SubWorkSearchQuery(
                 toWorkStatus(),
@@ -58,6 +64,9 @@ public record SubWorkSearchCondition(
                 Boolean.TRUE.equals(isOverdue),
                 dueBefore == null ? null : dueBefore.toInstant(),
                 overdueBefore,
+                Boolean.TRUE.equals(isReadyForReview),
+                Boolean.TRUE.equals(isReviewStale),
+                reviewStaleBefore,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 SubWorkCursor.decode(cursor, sortOrder));

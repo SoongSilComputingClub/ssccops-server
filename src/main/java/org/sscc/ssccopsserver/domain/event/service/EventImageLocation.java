@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.event.service;
 
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -74,6 +75,42 @@ public final class EventImageLocation {
     /** 행사 본문 마크다운에 굳는 영구 주소의 경로 부분. 호스트는 AppPublicBaseUrl이 붙인다 */
     public static String publicPathOf(long eventId, String fileName) {
         return PUBLIC_PATH_FORMAT.formatted(eventId, requireIssuedFileName(fileName));
+    }
+
+    /*
+     * 글에 박힌 이 행사의 이미지 주소에서 파일명을 긁어낸다 (ssccops#188).
+     *
+     * **마크다운을 파싱하지 않는다.** 우리가 조립한 주소의 모양을 그대로 되읽을 뿐이라
+     * `![](...)`든 `<img>`든 맨 URL이든 상관이 없고, 편집기가 문법을 바꿔도 따라오지 않아도
+     * 된다. 조립하는 자리(publicPathOf)와 되읽는 자리를 같은 클래스에 두는 것이 요점이며,
+     * 갈라지면 지워야 할 것을 못 찾거나 엉뚱한 것을 지운다.
+     *
+     * **행사 번호를 패턴에 박아 이 행사의 것만 찾는다.** 남의 행사 주소가 본문에 복사돼 있어도
+     * (운영자가 손으로 옮긴 경우) 그것은 이 행사의 소유가 아니므로 후보에 들지 않는다.
+     *
+     * 호스트는 보지 않는다 — app.public-base-url이 환경마다 다르고 바뀌기도 하는데, 그 값이
+     * 달라졌다고 이미 본문에 굳은 주소를 못 알아보면 그 순간부터 정리가 멈춘다.
+     */
+    public static Set<String> fileNamesReferencedIn(long eventId, String... texts) {
+        Set<String> fileNames = new LinkedHashSet<>();
+        Pattern pattern =
+                Pattern.compile(
+                        Pattern.quote(PUBLIC_PATH_FORMAT.formatted(eventId, ""))
+                                + "([0-9a-f-]+[.][a-z0-9]+)");
+        for (String text : texts) {
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            Matcher matcher = pattern.matcher(text);
+            while (matcher.find()) {
+                String candidate = matcher.group(1);
+                // 우리가 발급한 형태만 남긴다 — 아니면 우리 오브젝트가 아니다
+                if (isValidFileName(candidate)) {
+                    fileNames.add(candidate);
+                }
+            }
+        }
+        return fileNames;
     }
 
     private static String requireIssuedFileName(String fileName) {

@@ -21,6 +21,11 @@ spring:
       # 반영하지 않는다** — 그런 변경은 prod DB에 수동 ALTER가 여전히 필요하다.
       # 데이터가 있는 DB라 dev(#83)처럼 "드리프트가 쌓이면 통째로 재생성"이라는
       # 탈출구가 없다. 정식 버전 시점에 Flyway/Liquibase를 넣고 none으로 되돌린다.
+      #
+      # 그 작업이 ssccops#213이며 Flyway 의존성·마이그레이션은 이미 들어와 있다.
+      # **여기는 아직 update다.** V1__baseline.sql이 prod 덤프로 교체되어야 validate가
+      # 성립한다 — 엔티티 기준 DDL로 baseline을 잡으면 prod에 남은 고아 컬럼과 어긋나
+      # 첫 검증에서 터진다.
       ddl-auto: update
 
   h2:

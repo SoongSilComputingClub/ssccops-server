@@ -38,6 +38,55 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
 
 **주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — 지금은 `prod`도 `update`라 두 환경의 제약이 같다. 리네임·삭제가 필요한 변경을 만들면 dev DB에도 수동 `ALTER`가 필요할 수 있다(지금은 개발 단계라 드리프트가 쌓이면 통째로 재생성해도 되지만, 늘어날수록 이 트레이드오프가 부담이 된다 — Flyway/Liquibase 도입을 그때 검토한다). **`ddl-auto: update`로도 근본 원인은 해결되지 않았다** — 실제로는 부팅 중 Hibernate가 EntityManagerFactory(당시 엔티티 26종 메타모델)를 만드는 도중 컨테이너가 OOM으로 죽고 있었다(`exit 137`, ssccops-server#107). 그때는 `Dockerfile`의 `ENTRYPOINT`에 JVM 메모리 플래그를 명시해 막았지만, **배포가 Render 무료 티어(512MB)에서 Coolify(13.6GB)로 옮겨오며 그 제약이 사라져 플래그도 걷어냈다**(#202). 지금은 JVM 기본값에 맡긴다 — 엔티티는 39종으로 늘었지만 메모리 여유가 그보다 훨씬 크다. **나중에 컨테이너 메모리를 좁게 제한하게 되면 이 절을 다시 볼 것** (`exit 137`이 재발하면 힙 밖 메모리부터 의심한다).
 
+## 스키마 변경 — Flyway로 옮기는 중이다 (ssccops#213)
+
+**지금은 과도기다.** Flyway 의존성과 마이그레이션(`src/main/resources/db/migration/`)은 들어와 있지만
+**모든 프로필에서 꺼져 있고**(`spring.flyway.enabled: false`), 스키마는 여전히 `ddl-auto: update`가
+만들고 시드는 `data.sql`이 넣는다. 그래서 **지금 새 컬럼을 만드는 사람이 할 일은 종전과 같다** —
+엔티티만 고치면 `update`가 추가분을 반영하고, 삭제·리네임·타입 변경은 여전히 수동 `ALTER`다.
+
+### 왜 꺼져 있나
+
+`V1__baseline.sql`이 아직 플레이스홀더다. baseline은 **prod의 현재 스키마 덤프**여야 하는데, 그 덤프는
+DB 접근 권한이 있는 사람이 떠야 한다.
+
+```bash
+pg_dump --schema-only --no-owner --no-privileges -d "<prod 접속 문자열>" > V1__baseline.sql
+```
+
+엔티티에서 생성한 DDL을 baseline으로 쓰면 안 된다. prod는 `update`로 자라난 DB라 엔티티에 없는
+고아 컬럼이 남아 있고(`sub_work_type.autzr_role_cd` — ssccops#209 · #241), 엔티티 기준으로 잡으면
+첫 `validate`가 바로 터진다. 대조용 DDL(엔티티가 말하는 스키마)은 아래로 뽑는다 — **덤프와 diff 하는 용도이며 baseline이 아니다.**
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=local   --spring.jpa.properties.jakarta.persistence.schema-generation.scripts.action=create   --spring.jpa.properties.jakarta.persistence.schema-generation.scripts.create-target=build/entity-schema.sql   --spring.jpa.properties.jakarta.persistence.schema-generation.create-source=metadata'
+```
+
+그리고 **먼저 켜면 dev가 깨진다.** Coolify가 `develop` 푸시를 dev로 자동 배포하므로(#202),
+플레이스홀더인 채로 `enabled: true`나 `validate`를 머지하면 그 순간 부팅이 실패한다.
+
+### 켜는 순서
+
+1. prod 덤프로 `V1__baseline.sql`을 통째 교체한다. **dev도 따로 떠서 prod와 diff** — 두 환경이 다른
+   경로로 자랐다면 baseline 하나로 둘 다 덮을 수 없다(#241에서 prod만 확인했다)
+2. `spring.flyway.enabled: true`
+3. `ddl-auto`를 `dev`·`prod`에서 `validate`로 내린다 (`local`은 `update` 유지 — ssccops#213 결정)
+4. `data.sql`을 지우고 `spring.sql.init`·`defer-datasource-initialization`을 걷는다 —
+   시드는 `V2__seed_reference_data.sql`이 대신한다. **둘을 동시에 두지 말 것**
+5. `test` 프로필은 별도 결정이 남아 있다 — 테스트가 H2에서 도는데 baseline은 PostgreSQL 덤프라
+   그대로는 실행되지 않는다 (`ssccops-server#262`의 '열린 결정')
+
+### 켠 뒤의 규칙
+
+- **스키마를 바꾸면 마이그레이션 파일을 함께 쓴다.** `V{다음 번호}__{무엇을 하는지}.sql`. 엔티티만
+  고치고 파일을 빠뜨리면 `validate`가 dev 배포에서 막는다 — 그것이 이 도구를 들인 이유다
+- **이미 적용된 마이그레이션 파일을 고치지 않는다.** Flyway가 체크섬으로 검증해 부팅이 실패한다.
+  잘못된 것은 새 마이그레이션으로 되돌린다
+- **기준 코드값을 더할 때도 마이그레이션이다.** `data.sql`처럼 매 기동 반영되던 편의는 사라지지만,
+  무엇이 언제 들어갔는지가 남는다 — `#241`이 터진 자리가 그 이력의 부재였다
+- 운영진이 화면에서 고친 값을 배포가 되돌리지 않아야 하므로 **시드는 `UPDATE`로 덮어쓰지 않는다**
+
+
 ## 결정 기록 (ADR)
 
 되돌리기 어려운 결정 — 여러 컴포넌트에 걸치거나 운영·보안에 영향을 주는 것 — 은 기획 저장소의

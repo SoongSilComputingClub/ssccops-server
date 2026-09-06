@@ -20,6 +20,12 @@ spring:
       # 파괴 시점이 하나 줄어든다(뜰 때 지우는 것은 create-drop도 똑같이 한다).
       # 인메모리라 남은 스키마는 JVM이 끝나면 함께 사라진다.
       ddl-auto: create
+      # ssccops#213은 '테스트도 Flyway로 스키마를 만든다'로 정했지만 **여기는 아직 create다.**
+      # 테스트는 H2 인메모리에서 도는데(아래 H2Dialect) baseline은 prod pg_dump 결과라
+      # SET·OWNER TO·jsonb·시퀀스 문법이 H2에서 실행되지 않는다. 옮기려면 테스트를 PostgreSQL
+      # (Testcontainers) 위로 올리거나 H2용 마이그레이션을 따로 두어야 하는데, 앞은 로컬에도
+      # Docker를 요구하고 뒤는 스키마 정의가 두 벌이 된다 — 정해지지 않았다
+      # (ssccops-server#262의 '열린 결정').
     database-platform: org.hibernate.dialect.H2Dialect
 
 # 관측성 내보내기는 테스트에서 전부 끈다.

@@ -19,6 +19,10 @@ spring:
       # update는 추가만 반영하고 컬럼 삭제·타입 변경은 반영하지 않는다 — dev 환경 한정으로
       # 감수하는 트레이드오프다. 드리프트가 실제 문제가 되면 수동 ALTER로 정리하거나
       # Flyway/Liquibase 도입을 검토한다.
+      #
+      # 그 검토가 ssccops#213이고 Flyway 의존성·마이그레이션은 이미 들어와 있다. 다만
+      # **여기는 아직 update다.** validate로 내리는 것은 V1__baseline.sql이 prod 덤프로
+      # 교체된 뒤이며, 그 전에 내리면 Coolify 자동 배포(#202)의 첫 부팅에서 곧바로 깨진다.
       ddl-auto: update
 
   h2:

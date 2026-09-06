@@ -20,6 +20,4 @@ public interface EventService {
     EventDetailResponse updateEvent(Long eventId, EventSaveRequest request);
 
     EventDetailResponse changeStatus(Long eventId, EventStatusChangeRequest request);
-
-    void deleteEvent(Long eventId);
 }

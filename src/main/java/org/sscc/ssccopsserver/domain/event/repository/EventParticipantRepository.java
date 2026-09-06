@@ -16,9 +16,11 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 public interface EventParticipantRepository extends JpaRepository<EventParticipantEntity, Long> {
 
     /*
-     * 행사 삭제 가드(D9 · EVENT_HAS_PARTICIPANT)와 폼 연결 변경 가드(D11 · EVENT_FORM_IN_USE)의
-     * 판단 근거. 상태를 가리지 않는다 — 취소(CANCELLED)된 참가자도 명단에 영구 보존되는
-     * 이력(D16)이라, 취소만 남은 행사라고 지워도 되는 것은 아니다.
+     * 폼 연결 변경 가드(D11 · EVENT_FORM_IN_USE)의 판단 근거. 상태를 가리지 않는다 —
+     * 취소(CANCELLED)된 참가자도 명단에 영구 보존되는 이력(D16)이라, 취소만 남았다고 연결을
+     * 옮겨도 되는 것은 아니다.
+     *
+     * 행사 삭제 가드(D9)도 이것을 썼지만 삭제 자체가 없어졌다(ssccops ADR-0014).
      */
     boolean existsByEvent(EventEntity event);
 

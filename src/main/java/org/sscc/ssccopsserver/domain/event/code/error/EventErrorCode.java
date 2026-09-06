@@ -51,14 +51,6 @@ public enum EventErrorCode implements ErrorCode {
      */
     FORM_ALREADY_LINKED(HttpStatus.CONFLICT, "FORM_ALREADY_LINKED", "이미 다른 행사에 연결된 폼입니다."),
 
-    /*
-     * 409 — 참가자가 있는 행사를 삭제하려 할 때 (D9).
-     *
-     * 참가자 명단은 활동 이력으로 영구 보존한다(D16). 행사를 지우면 명단이 갈 곳을 잃으므로,
-     * 잘못 만든 행사는 참가자가 생기기 전에만 지울 수 있고 그 뒤에는 보관(ARCHIVE)이 경로다.
-     */
-    EVENT_HAS_PARTICIPANT(HttpStatus.CONFLICT, "EVENT_HAS_PARTICIPANT", "참가자가 있는 행사는 삭제할 수 없습니다."),
-
     // 409 — 그 분류를 쓰는 행사가 있을 때. 행사를 다른 분류로 먼저 옮겨야 한다 (역할 분류 ROLE_CLASSIFICATION_IN_USE 선례)
     EVENT_CLASSIFICATION_IN_USE(
             HttpStatus.CONFLICT, "EVENT_CLASSIFICATION_IN_USE", "행사가 사용 중인 분류는 삭제할 수 없습니다."),

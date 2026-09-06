@@ -40,9 +40,13 @@ import lombok.RequiredArgsConstructor;
 /*
  * 행사 CRUD·게시 전이의 구현 (ssccops#139).
  *
- * 지키는 것은 셋이다 — 폼은 최대 한 행사에만 전속된다(D11 · FORM_ALREADY_LINKED), 신청이
- * 발생한 연결은 움직이지 않는다(D11 · EVENT_FORM_IN_USE), 참가자가 있는 행사는 지우지
- * 않는다(D9 · EVENT_HAS_PARTICIPANT).
+ * 지키는 것은 둘이다 — 폼은 최대 한 행사에만 전속되고(D11 · FORM_ALREADY_LINKED), 신청이
+ * 발생한 연결은 움직이지 않는다(D11 · EVENT_FORM_IN_USE).
+ *
+ * **행사를 지우는 경로는 없다** (ssccops ADR-0014). 예전에는 참가자가 없을 때만 하드 삭제를
+ * 허용했는데(D9), 그 규칙이 지키려던 것("행사를 지우면 명단이 갈 곳을 잃는다" · D16)을
+ * 보관(ARCHIVE)이 이미 지킨다 — 지우지 않으면 명단도 R2 오브젝트도 갈 곳을 잃지 않는다.
+ * 그래서 D9와 EVENT_HAS_PARTICIPANT가 함께 사라졌다.
  *
  * 모집 판정(receiptStatus)은 EventReceiptPolicy(그 안에서 FormReceiptPolicy)를, 진행 단계
  * (eventPhase)는 EventPhasePolicy를 호출만 한다 — 판정을 여기 복제하면 폼 화면과 행사 화면이
@@ -246,21 +250,6 @@ public class EventServiceImpl implements EventService {
         eventRepository.flush();
 
         return toDetail(event);
-    }
-
-    /*
-     * 행사 삭제 (D9). 참가자가 한 명이라도 있으면 지우지 않는다 — 명단은 활동 이력으로 영구
-     * 보존(D16)이라 행사를 지우면 명단이 갈 곳을 잃는다. 잘못 만든 행사는 참가자가 생기기
-     * 전에만 지울 수 있고 그 뒤에는 보관(ARCHIVE)이 경로다.
-     */
-    @Override
-    @Transactional
-    public void deleteEvent(Long eventId) {
-        EventEntity event = findEvent(eventId);
-        if (eventParticipantRepository.existsByEvent(event)) {
-            throw new GeneralException(EventErrorCode.EVENT_HAS_PARTICIPANT);
-        }
-        eventRepository.delete(event);
     }
 
     /*

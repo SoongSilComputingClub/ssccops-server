@@ -172,7 +172,18 @@ public enum EventErrorCode implements ErrorCode {
      * 모두 404 EVENT_NOT_FOUND인 자리에서 형태만 상태 코드가 갈리면, 그 차이가 곧 "그 파일명은
      * 형태는 맞다"는 정보가 된다.
      */
-    EVENT_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_IMAGE_NOT_FOUND", "행사 이미지를 찾을 수 없습니다.");
+    EVENT_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_IMAGE_NOT_FOUND", "행사 이미지를 찾을 수 없습니다."),
+
+    /*
+     * 502 — 행사 복제 중 본문 이미지를 R2에서 복사하지 못했을 때 (ssccops#198 · 결정 2).
+     *
+     * 복사는 트랜잭션 안에서 하므로 이 오류가 나면 행사 사본·폼 사본이 함께 롤백된다 — 이미지가
+     * 없는 사본을 남기지 않는다. 원본 오브젝트가 **없는** 경우는 여기 걸리지 않는다(FileCopier 주석:
+     * 원본에서 이미 깨진 참조가 복제를 막지 않는다). 502인 것은 우리 서버가 아니라 뒤의 저장소가
+     * 답하지 않은 것이라서다.
+     */
+    EVENT_IMAGE_COPY_FAILED(
+            HttpStatus.BAD_GATEWAY, "EVENT_IMAGE_COPY_FAILED", "행사 이미지를 복사하지 못했습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

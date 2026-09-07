@@ -1286,7 +1286,55 @@ class PublicFormControllerTest {
         mockMvc.perform(myResponse(formId, onlyResponse().getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.rspnsSttsCd").value("CHANGES_REQUESTED"))
-                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2));
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2))
+                /*
+                 * **마감된 폼에서도 문항이 온다** (ssccops#221). 이 자리가 그 필드를 실은 이유
+                 * 그 자체다 — GET /{formId}/public은 여기서 409로 끊기므로, 문항이 이 응답에
+                 * 없으면 마감 후 수정요청을 받은 응답자는 재제출 폼을 그릴 재료가 없다.
+                 */
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemId").value("q1"));
+    }
+
+    /*
+     * 본인 응답에는 문항 구성이 함께 온다 (ssccops#221). 답과 문항이 한 응답으로 오므로 화면이
+     * 둘을 따로 부르지 않는다 — 나누면 두 응답 사이에 폼이 편집됐을 때 답과 문항이 서로 다른
+     * 시점을 가리킨다(#141이 검토 이력을 나누지 않은 근거와 같은 자리).
+     */
+    @Test
+    void getMyResponseCarriesQuestionComposition() throws Exception {
+        Long formId = saveForm("문항 동봉 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("홍길동"))
+                .andExpect(jsonPath("$.data.qitemCpstCn.pages.length()").value(2))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemLblNm").value("이름"));
+    }
+
+    /*
+     * 문항을 실어도 **남의 응답은 여전히 404다.** 이 필드가 새 조회 경로를 만드는 것이 아니라는
+     * 회귀다 — 응답 자체가 본인 행만 내려가므로(findByIdAndFormAndMember) 문항도 그 응답자가
+     * 이미 답한 폼의 것이다.
+     */
+    @Test
+    void getMyResponseStillHidesAnotherMembersResponseAfterCarryingComposition() throws Exception {
+        Long formId = saveForm("문항 동봉 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260004", "최지우", "other3@sscc.org");
+        FormResponseHistoryEntity others =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                form, other, ResponseContent.of(Map.of("q1", "최지우")), NOW));
+
+        mockMvc.perform(myResponse(formId, others.getId()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
     }
 
     /* ── 마감된 폼의 재제출 (#177) ─────────────────────────── */

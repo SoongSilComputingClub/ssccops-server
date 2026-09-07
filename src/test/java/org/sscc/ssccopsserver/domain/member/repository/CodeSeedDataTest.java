@@ -11,8 +11,6 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
@@ -21,6 +19,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
+import org.sscc.ssccopsserver.support.SeedScript;
 
 /*
  * data.sql이 넣는 기준 코드·기준 데이터 검증.
@@ -251,7 +250,7 @@ class CodeSeedDataTest {
         long subWorkTypes = subWorkTypeRepository.count();
         long academicProgramTypes = academicProgramTypeRepository.count();
 
-        new ResourceDatabasePopulator(new ClassPathResource("data.sql")).execute(dataSource);
+        SeedScript.populator().execute(dataSource);
 
         assertThat(memberGradeRepository.count()).isEqualTo(grades);
         assertThat(memberStatusRepository.count()).isEqualTo(statuses);

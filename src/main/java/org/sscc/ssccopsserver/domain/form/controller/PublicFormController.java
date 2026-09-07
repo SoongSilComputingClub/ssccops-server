@@ -18,6 +18,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseOverviewResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
@@ -186,6 +187,39 @@ public class PublicFormController {
     }
 
     /*
+     * 폼을 가로지르는 내 응답 목록 (ssccops#221).
+     *
+     * **다른 응답 조회는 전부 /{formId} 아래에 있어 폼을 이미 알아야 부를 수 있다.** 수정요청을
+     * 받은 응답자는 정확히 그 폼 링크를 잃어버린 사람이라 그 경로들에 닿지 못했고, 1건만 받는
+     * 폼이면 화면이 '이미 제출한 폼입니다'로 갈려 폼 페이지에서도 보이지 않았다 — #141이 만든
+     * 재제출 흐름이 응답자 쪽에서 끊겨 있던 자리가 여기다.
+     *
+     * **경로가 /{formId}/...와 충돌하지 않는다.** /v1/forms 뒤 세그먼트가 둘(responses·mine)이고
+     * /{formId}/responses/mine은 셋이라 애초에 다른 패턴이다. 세그먼트가 둘인 패턴은
+     * /{formId}/public뿐이고 리터럴 public ≠ mine이라 갈린다 — /draft·/mine이 기대는 "리터럴이
+     * 경로 변수를 이긴다"에 의존하지 않아도 되는 자리라 그 사실을 적어 둔다.
+     *
+     * 경로에 mbrId를 두지 않는 것은 자동 저장(#36)·내 응답 목록(#143)이 세운 규칙 그대로다.
+     */
+    @Operation(
+            summary = "내 응답 목록 조회 (폼 전체)",
+            description =
+                    "인증 주체 본인이 낸 폼 응답을 **폼을 가리지 않고** 내려준다. 폼을 모르는 채로 시작하는 유일한 응답 조회이며, 수정요청 사유를"
+                        + " 확인하러 들어오는 경로다. 항목마다 폼 제목과 **폼 라벨**이 실려 화면이 라벨로 거를 수 있다. **행사 신청은 빠진다**"
+                        + " — GET /v1/events/my-applications가 그것을 답하고, 두 목록이 같은 화면에 놓이므로 거르지 않으면 같은"
+                        + " 응답이 두 줄로 보인다. **작성 중(DRAFT) 응답도 포함한다**(sbmsnDt가 null이다) — 폼별 내 응답 목록과"
+                        + " 같은 기준이며, 내 것을 나에게 숨길 이유가 없다. 행사 신청 조회가 DRAFT를 빼는 것과 갈리는데 그쪽은 '제출 전 초안은"
+                        + " 신청이 아니다'라는 신청의 정의 문제다. 응답 내용(rspnsCn)은 싣지 않되 **대표 문항의"
+                        + " 답(responseTitle)** 한 줄은 싣는다 — 내용과 검토 이력은 GET"
+                        + " /v1/forms/{formId}/responses/mine/{formRspnsId}가 답한다. 정렬은 마지막으로 움직인"
+                        + " 순(제출 일시, 작성 중은 수정 일시)이고, 한 건도 없으면 빈 배열이다.")
+    @GetMapping("/responses/mine")
+    public ApiResponse<List<MyFormResponseOverviewResponse>> getMyResponsesAcrossForms(
+            @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(formResponseService.getMyResponsesAcrossForms(respondent));
+    }
+
+    /*
      * 내 응답 상세 (#177). 수정요청 사유를 읽고 이전 답을 불러오는 경로다.
      *
      * #141이 검토 처리 이력과 재제출 흐름을 만들었지만 제출자 쪽 화면 경로는 열지 않았다 —
@@ -209,6 +243,9 @@ public class PublicFormController {
                             + " 방식이라 그 프리필이 없으면 응답자가 처음부터 다시 쳐야 한다. 이력은 처리 일시 오름차순이고"
                             + " 처리가 없으면 빈 배열이며, **제출(SUBMIT) 행도 함께 실려** 타임라인이 \"제출 → 수정요청 →"
                             + " 재제출 → 승인\"으로 읽힌다(각 줄의 sbmsnSeq가 몇 회차에 대한 처리였는지 가리킨다)."
+                            + " **문항 구성(qitemCpstCn)도 함께 싣는다**(ssccops#221) — 답만으로는 재제출 폼을 그릴 수"
+                            + " 없고, 응답자가 문항을 따로 받을 길이 없기 때문이다(GET /{formId}/public은 마감된 폼을"
+                            + " 409로 끊는데 재제출의 실제 쓰임이 마감 뒤에 있다)."
                             + " 대상은 언제나 인증 주체 본인이라 경로에 회원 식별자를 두지 않으며, **본인 응답이 아니면"
                             + " 없는 응답과 같은 404 FORM_RESPONSE_NOT_FOUND다** — 코드를 나누면 그 번호의 응답이"
                             + " 존재하는지가 새어 나간다. 운영자용 상세와 달리 인접 응답 식별자(prev·next)와 응답자"

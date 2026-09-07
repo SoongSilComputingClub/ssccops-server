@@ -9,19 +9,17 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -44,6 +42,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -58,7 +57,7 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(AcademicProgramControllerTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class AcademicProgramControllerTest {
 
@@ -75,10 +74,12 @@ class AcademicProgramControllerTest {
     @Autowired private CurriculumItemRepository curriculumItemRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormRepository formRepository;
+    @PersistenceContext private EntityManager entityManager;
 
     private UUID proposerToken;
     private MemberEntity proposer;
     private UUID otherToken;
+    private MemberEntity other;
 
     @BeforeEach
     void setUp() {
@@ -86,7 +87,7 @@ class AcademicProgramControllerTest {
         proposer = saveMember(proposerToken, "20260401", "제출자");
 
         otherToken = UUID.randomUUID();
-        saveMember(otherToken, "20260402", "다른회원");
+        other = saveMember(otherToken, "20260402", "다른회원");
     }
 
     // ------------------------------------------------------------------ 단건 조회
@@ -222,6 +223,80 @@ class AcademicProgramControllerTest {
         mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "true"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    /*
+     * mine=leader는 스터디장 본인의 활동만 본다 (#215). 응답의 isLeader와 **같은 기준**이라
+     * 결과가 비어 있는지로 "이 사람이 스터디장인가"를 판정해도 어긋나지 않는다 — mine=true로는
+     * 그 판정을 할 수 없다(바로 아래 테스트가 그 이유다).
+     */
+    @Test
+    void searchWithMineLeaderExcludesProgramsLedByOthers() throws Exception {
+        AcademicProgramEntity handedOver = createAcademicProgram("STUDY", "넘겨준 스터디", "1주차");
+        createAcademicProgram("STUDY", "내가 맡은 스터디", "1주차");
+        handOverLeadership(handedOver, other);
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("mine", "leader"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].title").value("내가 맡은 스터디"))
+                .andExpect(jsonPath("$.data[0].isLeader").value(true))
+                .andExpect(jsonPath("$.page.totalCount").value(1));
+    }
+
+    /*
+     * 함정의 회귀 방지 (#215). mine=true는 리더가 아닌 **제출자**도 통과시키며 그 행의 isLeader는
+     * false다 — 이 조합이 "mine 결과가 비어 있지 않으면 스터디장"이라는 판정을 깨뜨린다.
+     * mine=true의 뜻은 어드민·lms가 이미 쓰고 있어 그대로 둔다.
+     */
+    @Test
+    void searchWithMineTrueStillIncludesProgramsProposedButNotLed() throws Exception {
+        AcademicProgramEntity handedOver = createAcademicProgram("STUDY", "넘겨준 스터디", "1주차");
+        handOverLeadership(handedOver, other);
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("mine", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].title").value("넘겨준 스터디"))
+                .andExpect(jsonPath("$.data[0].isLeader").value(false));
+    }
+
+    // mine=proposer는 반대편이다 — 리더 자리를 넘겨도 제출자에게 남고, 넘겨받은 쪽에는 리더로만 보인다
+    @Test
+    void searchWithMineProposerFollowsProposerNotLeader() throws Exception {
+        AcademicProgramEntity handedOver = createAcademicProgram("STUDY", "넘겨준 스터디", "1주차");
+        handOverLeadership(handedOver, other);
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("mine", "proposer"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)));
+
+        mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "proposer"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+
+        mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "leader"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].isLeader").value(true));
+    }
+
+    // Boolean 바인딩 시절 mine=false는 "필터 없음"이었다 — 역할 표기가 된 뒤에도 그 뜻을 유지한다
+    @Test
+    void searchWithMineFalseAppliesNoFilter() throws Exception {
+        createAcademicProgram("STUDY", "남의 스터디", "1주차");
+
+        mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)));
+    }
+
+    // 알 수 없는 표기는 조용히 기본값으로 떨어뜨리지 않는다(sttsCd·sort와 같은 판단)
+    @Test
+    void searchWithUnknownMineRoleReturnsInvalidCodeValue() throws Exception {
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("mine", "무효"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
     }
 
     @Test
@@ -449,6 +524,26 @@ class AcademicProgramControllerTest {
         return form;
     }
 
+    /*
+     * 리더 자리를 다른 회원에게 넘긴다 — 제출자 ≠ 스터디장인 활동을 만드는 자리다 (#215).
+     * 앱에는 아직 리더를 바꾸는 경로가 없어(AcademicProgramEntity.create가 언제나 제출자를
+     * 리더로 세운다) 이 상태를 HTTP로는 만들 수 없지만, leadr_mbr_id는 updatable이고 위임이
+     * 생기면 그때 실제로 나타난다 — mine 필터가 두 역할을 가르는지는 그 전에 못 박아 둔다.
+     *
+     * 벌크 update는 영속성 컨텍스트를 지나치므로 앞뒤로 flush·clear가 필요하다. clear가 테스트
+     * 필드의 엔티티를 준영속으로 만들기 때문에 활동은 넘기기 **전에** 다 만들어 둔다.
+     */
+    private void handOverLeadership(AcademicProgramEntity academicProgram, MemberEntity leader) {
+        entityManager.flush();
+        entityManager
+                .createQuery(
+                        "update AcademicProgramEntity a set a.leader = :leader where a.id = :id")
+                .setParameter("leader", leader)
+                .setParameter("id", academicProgram.getId())
+                .executeUpdate();
+        entityManager.clear();
+    }
+
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {
         return MemberFixture.save(
                 memberRepository,
@@ -464,22 +559,5 @@ class AcademicProgramControllerTest {
             MockHttpServletRequestBuilder builder, UUID authUserId) {
         return builder.header("Authorization", "Bearer " + authUserId)
                 .contentType(MediaType.APPLICATION_JSON);
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

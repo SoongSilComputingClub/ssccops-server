@@ -101,8 +101,11 @@ public class FormResponseController {
                             + " 내려, 그 폼에 그 번호가 있는지 없는지도 알려주지 않는다.")
     @GetMapping("/{formRspnsId}")
     public ApiResponse<FormResponseDetailResponse> getFormResponse(
-            @PathVariable Long formId, @PathVariable Long formRspnsId) {
-        return ApiResponse.success(formResponseService.getResponse(formId, formRspnsId));
+            @PathVariable Long formId,
+            @PathVariable Long formRspnsId,
+            @CurrentMember MemberEntity requester) {
+        // 요청자를 넘기는 것은 연락처를 담을지 가르기 위해서다 (#277)
+        return ApiResponse.success(formResponseService.getResponse(formId, formRspnsId, requester));
     }
 
     /*

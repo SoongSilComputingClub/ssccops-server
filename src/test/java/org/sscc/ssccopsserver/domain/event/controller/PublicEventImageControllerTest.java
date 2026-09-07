@@ -22,12 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -42,6 +37,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import software.amazon.awssdk.http.SdkHttpMethod;
 import software.amazon.awssdk.http.SdkHttpRequest;
@@ -64,7 +60,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequ
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(PublicEventImageControllerTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class PublicEventImageControllerTest {
 
@@ -134,6 +130,62 @@ class PublicEventImageControllerTest {
                 .isEqualTo("events/" + eventId + "/" + fileName);
         // 학술 인증사진(SessionFileReferenceViewer)과 같은 15분이다
         assertThat(presignRequest.signatureDuration().toMinutes()).isEqualTo(15);
+    }
+
+    /*
+     * 302에 캐시가 붙고, 그 수명이 **서명보다 짧다** (ssccops ADR-0010).
+     *
+     * 두 단언을 한자리에 두는 것이 요점이다 — 확인하려는 것은 "캐시가 붙었다"가 아니라 "캐시가
+     * 서명보다 짧다"이고, 그 관계가 깨지면 캐시된 302가 이미 죽은 서명을 가리켜 이미지가
+     * 깨진다. 값을 상수로 못 박지 않고 **실제 서명 유효기간과 비교**하는 것은 그래서다: 나중에
+     * FilePresigner의 VIEW_URL_TTL이 줄어도 이 테스트가 관계를 계속 지킨다(둘 중 하나만 고치면
+     * 여기서 걸린다).
+     */
+    @Test
+    void redirectIsCacheableForLessThanTheSignatureLifetime() throws Exception {
+        Long eventId = saveEvent("게시된 모집", true);
+
+        var response =
+                mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId + "/images/" + fileName))
+                        .andExpect(status().isFound())
+                        .andExpect(header().exists("Cache-Control"))
+                        .andReturn()
+                        .getResponse();
+
+        String cacheControl = response.getHeader("Cache-Control");
+        assertThat(cacheControl).contains("public").contains("max-age=");
+
+        long maxAge = Long.parseLong(cacheControl.replaceAll(".*max-age=(\\d+).*", "$1"));
+        assertThat(maxAge).isPositive();
+
+        ArgumentCaptor<GetObjectPresignRequest> captor =
+                ArgumentCaptor.forClass(GetObjectPresignRequest.class);
+        verify(r2Presigner).presignGetObject(captor.capture());
+        long signatureSeconds = captor.getValue().signatureDuration().toSeconds();
+        assertThat(maxAge).isLessThan(signatureSeconds);
+    }
+
+    /*
+     * 404는 캐시되지 않는다. 게시 직전에 열어 본 사람이 404를 들고 있으면 게시한 뒤에도 한동안
+     * 이미지가 안 보인다 — 캐시를 여는 결정이 성공 응답 하나에만 걸려 있다는 것을 못 박아 둔다.
+     *
+     * 헤더가 아예 없는 것을 요구하지 않는 것은 시큐리티가 기본으로 `no-store, max-age=0`을
+     * 써 넣기 때문이다. 확인하려는 것은 그 유무가 아니라 **0보다 큰 max-age가 없다**는 것이다.
+     */
+    @Test
+    void notFoundResponsesAreNotCacheable() throws Exception {
+        Long draft = saveEvent("작성 중 모집", false);
+
+        var response =
+                mockMvc.perform(get(PUBLIC_EVENTS + "/" + draft + "/images/" + fileName))
+                        .andExpect(status().isNotFound())
+                        .andReturn()
+                        .getResponse();
+
+        String cacheControl = response.getHeader("Cache-Control");
+        if (cacheControl != null) {
+            assertThat(cacheControl).doesNotContainPattern("max-age=[1-9]");
+        }
     }
 
     /*
@@ -271,25 +323,5 @@ class PublicEventImageControllerTest {
                 .signedHeaders(Map.of("host", List.of("test-account.r2.cloudflarestorage.com")))
                 .httpRequest(SdkHttpRequest.builder().method(SdkHttpMethod.GET).uri(uri).build())
                 .build();
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        /*
-         * 이 테스트는 토큰을 붙이지 않으므로 디코더가 호출될 일이 없지만, 실제 JWKS URI를 향한
-         * 빈이 컨텍스트에 남아 있으면 나중에 인증 요청을 하나 더하는 순간 네트워크를 타게 된다.
-         */
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

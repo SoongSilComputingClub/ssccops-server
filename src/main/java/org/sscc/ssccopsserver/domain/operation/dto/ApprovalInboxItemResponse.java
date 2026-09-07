@@ -36,6 +36,10 @@ import org.sscc.ssccopsserver.domain.operation.entity.VoteChoice;
  * 버튼을 그릴 근거가 없어 운영진 전원에게 그리게 되고, 승인자가 아닌 사람은 누른 뒤에야 403을
  * 본다. 지금은 두 값이 항상 같지만(승인·반려의 권한 규칙이 하나다) 필드를 하나로 합치지 않는
  * 것은 상세가 이미 둘로 나가 있어서다.
+ *
+ * isReviewStale은 이 요청이 올라온 지 3일이 지났는데 아직 처리되지 않았다는 서버 판정이다
+ * (ssccops#196). 대시보드의 승인 대기 카드가 이 값으로 눈에 띄게 그린다 — requestedAt에서
+ * 화면이 다시 세지 않는 것은 하위 업무 목록의 isReviewStale과 같은 경계를 써야 해서다.
  */
 public record ApprovalInboxItemResponse(
         Long subWorkId,
@@ -52,7 +56,8 @@ public record ApprovalInboxItemResponse(
         VoteChoice myVote,
         String latestRejectionReason,
         boolean canApprove,
-        boolean canReject) {
+        boolean canReject,
+        boolean isReviewStale) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -65,7 +70,8 @@ public record ApprovalInboxItemResponse(
             VoteChoice myVote,
             String latestRejectionReason,
             boolean canDecide,
-            String authorizerAuthorityName) {
+            String authorizerAuthorityName,
+            boolean reviewStale) {
         MemberEntity registrant = subWork.getOperation().getRegistrant();
         return new ApprovalInboxItemResponse(
                 subWork.getId(),
@@ -83,7 +89,8 @@ public record ApprovalInboxItemResponse(
                 latestRejectionReason,
                 // 승인과 반려의 권한 규칙이 하나라 canDecide 하나로 두 값을 채운다 (상세와 같다)
                 canDecide,
-                canDecide);
+                canDecide,
+                reviewStale);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

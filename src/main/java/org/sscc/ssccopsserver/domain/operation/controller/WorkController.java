@@ -96,13 +96,18 @@ public class WorkController {
      * 시그니처가 자라는 것을 막는다. 값 해석(기준 코드·커서)은 DTO와 서비스가 맡으므로
      * 여기서 분기하지 않는다 (LY-02).
      *
+     * 주체를 함께 받는 것은 mine(담당자 필터) 때문이다 (ssccops#225). 대상 회원을 쿼리
+     * 파라미터로 받지 않으므로 '내'가 누구인지는 여기서만 정해진다 — condition에는 필터를
+     * 켤지 여부만 들어 있다.
+     *
      * 목록이므로 응답은 data 배열과 page 봉투 두 갈래다 (AP-11).
      */
     @RequireAuthority(AuthorityCode.WORK_READ)
     @GetMapping
     public ApiResponse<List<WorkListItemResponse>> searchWorks(
-            @Valid @ModelAttribute WorkSearchCondition condition) {
-        WorkSearchResponse result = workService.searchWorks(condition);
+            @Valid @ModelAttribute WorkSearchCondition condition,
+            @CurrentMember MemberEntity viewer) {
+        WorkSearchResponse result = workService.searchWorks(condition, viewer);
         return ApiResponse.success(result.works(), result.page());
     }
 

@@ -10,6 +10,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCursor;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMineRole;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchQuery;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSortOrder;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
@@ -48,6 +49,16 @@ public class AcademicProgramRepositoryImpl implements AcademicProgramRepositoryC
                     + " join a.event e"
                     + " join a.type t"
                     + " left join a.leader l";
+
+    /*
+     * mine 필터의 두 역할(#215). 이 둘을 or로 묶은 것이 mine=true이며, 그 표기 하나에 두 역할이
+     * 들어 있는 것이 함정의 출처다(AcademicProgramMineRole 주석) — 응답의 isLeader는 리더
+     * 본인만 참이라 mine=true 결과의 길이로 "스터디장인가"를 판정하면 제출자까지 통과한다.
+     * 조각을 여기 두는 것은 JPQL 별칭(l·a)에 매인 문자열이라 dto가 알 값이 아니기 때문이다
+     * (AcademicProgramSortOrder가 정렬 키만 갖고 경로는 이 클래스가 정하는 것과 같다).
+     */
+    private static final String LEADER_IS_MINE = "l.id = :mineId";
+    private static final String PROPOSER_IS_MINE = "a.proposer.id = :mineId";
 
     private static final String CREATED_AT_PATH = "a.createdAt";
     private static final String EVENT_BGNG_DT_PATH = "e.beginAt";
@@ -105,13 +116,22 @@ public class AcademicProgramRepositoryImpl implements AcademicProgramRepositoryC
             parameters.put("keyword", likePattern(query.keyword()));
         }
         if (query.hasMineFilter()) {
-            conditions.add("(l.id = :mineId or a.proposer.id = :mineId)");
+            conditions.add(mineCondition(query.mineRole()));
             parameters.put("mineId", query.mine().getId());
         }
         if (withCursor && query.hasCursor()) {
             conditions.add(cursorCondition(query, parameters));
         }
         return conditions;
+    }
+
+    // 역할별 조건절. ANY는 지금까지의 동작(스터디장 OR 제출자)이며 mine=true가 그것이다
+    private String mineCondition(AcademicProgramMineRole role) {
+        return switch (role) {
+            case LEADER -> LEADER_IS_MINE;
+            case PROPOSER -> PROPOSER_IS_MINE;
+            case ANY -> "(" + LEADER_IS_MINE + " or " + PROPOSER_IS_MINE + ")";
+        };
     }
 
     /*

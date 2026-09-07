@@ -14,7 +14,13 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
  * 하는 조건이 상위 업무에는 없어서다 — 마감 컬럼 자체가 work에 없다.
  */
 public record WorkSearchQuery(
-        WorkStatus workStatus, WorkType workType, int size, WorkSortOrder sort, WorkCursor cursor) {
+        WorkStatus workStatus,
+        WorkType workType,
+        String keyword,
+        Long personInChargeId,
+        int size,
+        WorkSortOrder sort,
+        WorkCursor cursor) {
 
     public boolean hasWorkStatusFilter() {
         return workStatus != null;
@@ -22,6 +28,24 @@ public record WorkSearchQuery(
 
     public boolean hasWorkTypeFilter() {
         return workType != null;
+    }
+
+    /*
+     * 공백만인 검색어는 이미 조건 없음(null)으로 떨어져 있다 (KeywordSearch.normalize) —
+     * Repository는 그 판정을 다시 하지 않고 이 값만 본다 (LY-02).
+     */
+    public boolean hasKeywordFilter() {
+        return keyword != null;
+    }
+
+    /*
+     * 담당자 필터 (ssccops#225). mine이 꺼져 있으면 요청 단계에서 이미 null로 떨어져 있다
+     * (WorkSearchCondition.toQuery) — Repository는 그 판정을 다시 하지 않고 이 값만 본다
+     * (LY-02). 값이 조회자 자신인지도 여기서는 묻지 않는다: 그 결정은 인증 주체에서 값을
+     * 채우는 자리 하나뿐이라 이 아래로 내려올 수 없다.
+     */
+    public boolean hasPersonInChargeFilter() {
+        return personInChargeId != null;
     }
 
     public boolean hasCursor() {

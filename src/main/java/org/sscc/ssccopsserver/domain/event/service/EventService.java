@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSummaryResponse;
@@ -21,5 +22,5 @@ public interface EventService {
 
     EventDetailResponse changeStatus(Long eventId, EventStatusChangeRequest request);
 
-    void deleteEvent(Long eventId);
+    EventDuplicateResponse duplicateEvent(Long eventId, MemberEntity creator);
 }

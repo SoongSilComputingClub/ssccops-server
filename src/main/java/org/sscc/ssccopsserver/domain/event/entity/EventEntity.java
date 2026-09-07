@@ -206,6 +206,18 @@ public class EventEntity {
     }
 
     /*
+     * 본문·대표 이미지의 주소만 바꿔 쓴다 (ssccops#198 · 행사 복제 결정 2).
+     *
+     * 사본은 식별자를 받은 뒤에야 자기 오브젝트 키를 알 수 있어, 원본 주소로 먼저 저장하고 나서
+     * 그 주소를 사본의 것으로 옮겨 적는다. update()로도 되지만 그쪽은 아홉 값을 전부 다시 받으므로
+     * "주소 말고는 아무것도 바뀌지 않는다"는 사실이 호출부에서 보이지 않는다.
+     */
+    public void relocateImages(String contentMarkdown, String thumbnailUrlAddress) {
+        this.contentMarkdown = contentMarkdown;
+        this.thumbnailUrlAddress = thumbnailUrlAddress;
+    }
+
+    /*
      * 연결 폼 지정 (#133 학술 활동 승인 후속 처리 전용). 학술 활동은 승인(=생성) 시점에
      * Event만 먼저 만들고, 같은 트랜잭션에서 모집용 빈 폼을 만든 뒤 이 메서드로 연결한다 —
      * create() 팩토리 하나로 두 순서를 다 감당하려 하면 "폼을 만들기 전에는 Event를 못 만든다"

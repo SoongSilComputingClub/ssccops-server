@@ -74,6 +74,16 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
                 sessionCorrectionPolicy.requireCorrectable(academicProgramId, sessionId, requester);
         ImageFileType imageType = resolveImageType(request);
 
+        /*
+         * 크기 안내 (ssccops#188). 형식 검사 뒤에 두는 것은 위 주석의 순서 규칙을 그대로
+         * 따르는 것이고 — 남의 활동에 값을 바꿔 가며 불러 회차의 존재를 알아낼 수 없어야 한다 —
+         * 상한을 여기 상수로 두지 않는 것은 **강제하는 값과 안내하는 값이 갈리지 않게** 하기
+         * 위해서다(그 값은 서명하는 FilePresigner가 갖는다).
+         */
+        if (request.fileSize() > filePresigner.maxUploadSizeBytes()) {
+            throw new GeneralException(AcademicProgramErrorCode.IMAGE_TOO_LARGE);
+        }
+
         String objectKey =
                 FileTargetType.SESSION.getObjectKeyPrefix()
                         + "%d/sessions/%d/%s.%s"
@@ -85,7 +95,9 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
 
         // 저장하는 값은 **키**다 (#200) — 읽기가 그 키로 서명한다
         FileReferenceEntity fileReference = upsert(session, objectKey);
-        String uploadUrl = filePresigner.presignPut(objectKey, imageType.getContentType());
+        // 서명에 넘기는 크기는 위 413이 본 값 그대로다 — 안내와 강제가 같은 숫자를 봐야 한다
+        String uploadUrl =
+                filePresigner.presignPut(objectKey, imageType.getContentType(), request.fileSize());
 
         return new FileReferenceUploadResponse(
                 fileReference.getId(),

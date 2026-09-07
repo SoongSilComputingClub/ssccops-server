@@ -28,8 +28,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -60,6 +58,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -79,7 +78,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(FormResponseControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, FormResponseControllerTest.FixedClockConfig.class})
 @Transactional
 class FormResponseControllerTest {
 
@@ -402,6 +401,10 @@ class FormResponseControllerTest {
 
     /* ── 상세 ─────────────────────────────────────────────── */
 
+    /*
+     * 기수·학년은 실리고 연락처는 실리지 않는다 — 이 테스트의 operator가 국장이기 때문이다(#277).
+     * 국장은 RESPONSE_REVIEW로 이 화면에 닿지만 MEMBER_MANAGE는 EXECUTIVE 직속이라 갖지 못한다.
+     */
     @Test
     void getResponseReturnsContentMemberDetailAndNeighbours() throws Exception {
         mockMvc.perform(authenticatedGet(responsePath(acceptedId)))
@@ -412,10 +415,45 @@ class FormResponseControllerTest {
                 .andExpect(jsonPath("$.data.member.mbrNm").value("박민수"))
                 .andExpect(jsonPath("$.data.member.genNo").value(21))
                 .andExpect(jsonPath("$.data.member.scyrNo").value(2))
-                .andExpect(jsonPath("$.data.member.telno").value("010-1234-5678"))
+                .andExpect(jsonPath("$.data.member.telno").doesNotExist())
                 // 목록 순서가 rejected → accepted → submitted이므로 이웃도 그 순서다
                 .andExpect(jsonPath("$.data.prevFormRspnsId").value(rejectedId))
                 .andExpect(jsonPath("$.data.nextFormRspnsId").value(submittedId));
+    }
+
+    /*
+     * 연락처는 MEMBER_MANAGE의 값이다 (#277).
+     *
+     * 그전에는 이 엔드포인트를 지키는 RESPONSE_REVIEW만 있으면 연락처가 응답에 실려 나갔다 —
+     * 화면이 감추고 CSV에서 열을 빼도(ssccops#223) 그것은 표시를 고른 것이지 값을 막은 것이
+     * 아니라, 개발자 도구를 열면 그대로 보였다. 회원 목록·상세는 이미 MEMBER_MANAGE로 막혀
+     * 있어 **같은 값이 심사 경로로만 새어 나가던 자리**다.
+     *
+     * 두 주체로 같은 응답을 부르는 것이 이 테스트의 요점이다. 한쪽만 보면 "값이 없는 회원"과
+     * 구별되지 않는다.
+     */
+    @Test
+    void getResponseIncludesContactOnlyForMemberManageHolder() throws Exception {
+        UUID executiveAuthUserId = UUID.randomUUID();
+        MemberEntity executive =
+                saveMember(executiveAuthUserId, "20200002", "정임원", "exec@sscc.org");
+        // 회장은 EXECUTIVE라 MEMBER_MANAGE를 포함한다. 국장(OPERATOR)은 거기 닿지 않는다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                executive,
+                MemberRoleFixture.PRESIDENT);
+
+        mockMvc.perform(authenticatedGet(responsePath(acceptedId), executiveAuthUserId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.member.telno").value("010-1234-5678"));
+
+        // 같은 응답인데 국장에게는 비어 있다 — 회원 자체에 값이 없어서가 아니다
+        mockMvc.perform(authenticatedGet(responsePath(acceptedId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.member.mbrNm").value("박민수"))
+                .andExpect(jsonPath("$.data.member.telno").doesNotExist());
     }
 
     // 목록의 양 끝. 이웃이 없으면 null이고 웹은 그 값으로 이동 버튼을 비활성화한다
@@ -512,10 +550,17 @@ class FormResponseControllerTest {
     /*
      * N+1 회귀 방지 (#141). 처리 이력은 줄마다 처리자_명을 그리는데 이름을 이력에 복사하지 않고
      * mbr에서 조인하기로 했으므로, 그 대가가 N+1이면 복사하지 않기로 한 결정이 무너진다.
-     * 폼 1 + 응답 1 + 인접 식별자 1 + 이력 1로 네 번이고 이력이 몇 줄이든 그대로다.
+     *
+     * **지키는 것은 절대값이 아니라 "이력이 몇 줄이든 그대로"다.** 그래서 4줄과 8줄을 각각 재어
+     * 같은지 본다 — 예전에는 4로 못 박았는데, 상세에 권한 조회가 붙자(#277 · 연락처를 담을지
+     * 가른다) 7이 되어 **결정과 무관한 변경이 이 테스트를 깨뜨렸다.** 절대값은 조회가 하나
+     * 늘 때마다 고쳐야 하고, 그때마다 "몇이 맞는 수인가"를 다시 판단하게 된다.
+     *
+     * 참고로 지금 내역은 폼 1 + 응답 1 + 인접 식별자 1 + 이력 1 + 권한 3(유효 역할 · 부여된
+     * 권한 코드 · 트리 펼침)이다.
      */
     @Test
-    void getResponseRunsFourQueriesRegardlessOfTimelineLength() {
+    void getResponseQueryCountDoesNotGrowWithTimelineLength() {
         /*
          * 이력 행은 API가 아니라 리포지토리로 직접 만든다. 전이표(#141)가 번복을 막아 한 응답에
          * 검토 요청을 여러 번 보낼 수 없고, 재제출은 응답자의 토큰이 필요해 이 테스트의 고정
@@ -536,6 +581,27 @@ class FormResponseControllerTest {
         entityManager.flush();
         entityManager.clear();
 
+        long withFour = countQueriesOfGetResponse();
+        assertThat(withFour).isGreaterThan(0);
+
+        // 같은 응답에 이력을 네 줄 더 얹는다 — 여덟 줄이 되어도 쿼리 수가 같아야 한다
+        for (int index = 4; index < 8; index++) {
+            formResponseReviewHistoryRepository.save(
+                    FormResponseReviewHistoryEntity.record(
+                            response,
+                            ResponseReviewAction.REQUEST_CHANGES,
+                            operator,
+                            "다시 봐주세요 " + index,
+                            NOW.plusSeconds(index)));
+        }
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(countQueriesOfGetResponse()).isEqualTo(withFour);
+    }
+
+    /** 상세를 한 번 부르며 나간 쿼리 수. 처리자 이름이 실제로 채워졌는지도 함께 본다 */
+    private long countQueriesOfGetResponse() {
         Statistics statistics =
                 entityManager
                         .getEntityManagerFactory()
@@ -544,13 +610,13 @@ class FormResponseControllerTest {
         statistics.clear();
 
         FormResponseDetailResponse detail =
-                formResponseService.getResponse(form.getId(), submittedId);
+                formResponseService.getResponse(form.getId(), submittedId, operator);
 
-        assertThat(detail.reviewHistories()).hasSize(4);
-        // 처리자 이름이 실제로 채워졌는지까지 함께 본다 — 비어 있으면 조인 없이도 쿼리 4회다
+        // 비어 있으면 조인 없이도 쿼리 수가 줄어 이 테스트가 통과해 버린다
         assertThat(detail.reviewHistories())
+                .isNotEmpty()
                 .allSatisfy(history -> assertThat(history.prcsMbrNm()).isNotBlank());
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
+        return statistics.getPrepareStatementCount();
     }
 
     /* ── 검토 처리 ─────────────────────────────────────────── */
@@ -941,18 +1007,23 @@ class FormResponseControllerTest {
     }
 
     private MockHttpServletRequestBuilder authenticatedGet(String path) {
-        return get(path).header("Authorization", "Bearer any-token");
+        return authenticatedGet(path, AUTH_USER_ID);
+    }
+
+    /** 다른 주체로 부를 때. Bearer 토큰이 곧 auth_user_id다 (ADR-0009) */
+    private MockHttpServletRequestBuilder authenticatedGet(String path, UUID authUserId) {
+        return get(path).header("Authorization", "Bearer " + authUserId);
     }
 
     private MockHttpServletRequestBuilder authenticatedPost(String path, String body) {
         return post(path)
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * 제출 일시가 정렬과 인접 응답 계산의 기준이라 시각을 고정한다. ClockConfig가 정의한
@@ -962,19 +1033,6 @@ class FormResponseControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

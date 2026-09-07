@@ -20,7 +20,11 @@ FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
-COPY --from=builder /app/build/libs/*-SNAPSHOT.jar app.jar
+# 이름이 고정돼 있다 — build.gradle 의 bootJar.archiveFileName 이 'app.jar' 로 못 박는다.
+# 예전에는 `*-SNAPSHOT.jar` 글롭이었는데, 그러면 버전에서 -SNAPSHOT 을 떼는 순간 맞는 파일이
+# 없어 이 줄에서 빌드가 죽는다. 버전은 /actuator/info 와 git 태그가 말하므로 파일명이 그것을
+# 또 말할 이유가 없다.
+COPY --from=builder /app/build/libs/app.jar app.jar
 
 EXPOSE 8080
 

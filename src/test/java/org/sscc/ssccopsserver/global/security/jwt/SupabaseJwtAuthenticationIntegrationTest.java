@@ -5,23 +5,18 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 실제 JWKS 없이도 필터체인 전체(디코딩 -> SupabaseJwtAuthenticationConverter -> MemberService)를
@@ -31,13 +26,13 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(SupabaseJwtAuthenticationIntegrationTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class SupabaseJwtAuthenticationIntegrationTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
 
-    // 이 토큰 값일 때만 스텁 디코더가 sub를 UUID가 아닌 값으로 내려준다
+    // 공용 디코더가 토큰을 그대로 sub로 쓰므로 이 값이 UUID 변환 실패를 만든다
     private static final String NON_UUID_SUBJECT_TOKEN = "non-uuid-subject";
 
     @Autowired private MockMvc mockMvc;
@@ -82,30 +77,10 @@ class SupabaseJwtAuthenticationIntegrationTest {
      */
     @Test
     void validTokenAuthenticatesWithoutCreatingMember() throws Exception {
-        mockMvc.perform(get("/examples/1").header("Authorization", "Bearer any-token"))
+        mockMvc.perform(get("/examples/1").header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isNotFound());
 
         assertThat(memberRepository.findByAuthUserId(AUTH_USER_ID)).isEmpty();
         assertThat(memberRepository.count()).isZero();
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(
-                                    NON_UUID_SUBJECT_TOKEN.equals(token)
-                                            ? "not-a-uuid"
-                                            : AUTH_USER_ID.toString())
-                            .claim("email", "test@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

@@ -8,6 +8,7 @@ import java.util.List;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
+import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 
 /*
@@ -39,6 +40,22 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
  * 누를 버튼이 없어 지금 쓰는 곳이 없고, 미리 실으면 쓰지 않는 계약이 먼저 굳는다 — 내 응답
  * 목록이 rspnsCn을 미뤘던 것과 같은 판단이며, 필요해지면 그 화면과 함께 더한다.
  *
+ * ── 문항 구성(qitemCpstCn)을 함께 싣는다 (ssccops#221) ──
+ * 답만으로는 재제출 폼을 그릴 수 없다 — 그 답을 어느 문항에 붙일지를 모르기 때문이다. 그리고
+ * 응답자가 문항을 따로 받을 길이 없다: GET /{formId}/public은 findAcceptingForm이 **마감된 폼을
+ * 409로 끊는데** 재제출의 실제 쓰임이 마감 뒤에 있고(기획안은 접수를 마감한 뒤 검토한다),
+ * GET /forms/system/{sysFormCd}는 시스템 폼 전용이다. 그래서 재제출 API는 그 응답을 받아 주는데
+ * 화면이 그것을 그릴 수 없는 상태였다.
+ *
+ * **마감 409를 푸는 대신 여기에 실었다.** 그쪽을 풀면 "접수 중인 폼을 새로 낸다"는 그 경로의
+ * 뜻이 흐려진다 — 재제출은 이미 마감 판정을 타지 않는 예외를 갖고 있으므로(#177) 조회에도 같은
+ * 예외가 대칭으로 생기는 편이 맞다. 전용 조회를 새로 열지 않은 것은 이력을 통째로 싣는 것과
+ * 같은 이유다: 화면이 상세와 문항을 언제나 함께 그리므로 나누면 두 응답 사이에 폼이 편집됐을 때
+ * 답과 문항이 서로 다른 시점을 가리킨다.
+ *
+ * **새로 새는 것이 없다.** 이 응답은 본인 행만 내려간다(findByIdAndFormAndMember — 남의 것은
+ * 없는 응답과 같은 404다). 문항 구성은 그 응답자가 이미 답한 폼의 것이다.
+ *
  * rspnsSeq(응답 순번)와 sbmsnSeq(제출 회차)는 **다른 값이다** — 앞은 이 응답자의 몇 번째 응답인가
  * 이고 뒤는 그 응답을 몇 번 냈는가다. 이력의 각 줄이 몇 회차에 대한 처리였는지 읽으려면
  * "지금 몇 회차인가"라는 기준점이 필요해 후자를 함께 싣는다.
@@ -53,6 +70,7 @@ public record MyFormResponseDetailResponse(
         OffsetDateTime sbmsnDt,
         OffsetDateTime mdfcnDt,
         ResponseContent rspnsCn,
+        QuestionCompositionContent qitemCpstCn,
         List<FormResponseReviewHistoryResponse> reviewHistories) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
@@ -68,6 +86,7 @@ public record MyFormResponseDetailResponse(
                 toOffsetDateTime(response.getSubmittedAt()),
                 toOffsetDateTime(response.getUpdatedAt()),
                 response.getContent(),
+                response.getForm().getQuestionComposition(),
                 reviewHistories.stream().map(FormResponseReviewHistoryResponse::from).toList());
     }
 

@@ -7,7 +7,6 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventImageUploadResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
@@ -135,18 +135,28 @@ public class EventController {
     }
 
     /*
-     * 행사 삭제. 204가 아니라 data가 null인 200인 것은 모든 응답이 ApiResponse 봉투를 쓰기
-     * 때문이다 (#36·#65·#80과 같은 판단).
+     * 행사 복제 (ssccops#198). 상태를 PUT으로 쓰는 대신 행위 경로를 두는 것과 같은 이유로
+     * /duplicate를 쓴다 (AP-03 · 폼 /duplicate 선례). 새 행사가 생기므로 201 + Location이다.
+     * 권한은 클래스 레벨 EVENT_MANAGE 그대로다 — 생성과 같은 문이다.
      */
     @Operation(
-            summary = "행사 삭제",
+            summary = "행사 복제",
             description =
-                    "참가자가 하나도 없을 때만 지워진다(D9). 참가자가 있으면 409 EVENT_HAS_PARTICIPANT이며"
-                            + " — 명단은 활동 이력으로 영구 보존되므로(D16) 그 경우 보관(ARCHIVE)이 경로다.")
-    @DeleteMapping("/{eventId}")
-    public ApiResponse<Void> deleteEvent(@PathVariable Long eventId) {
-        eventService.deleteEvent(eventId);
-        return ApiResponse.successWithNoData();
+                    "기존 행사를 본떠 새 행사를 DRAFT로 만든다. 본문·분류·장소·정원·대표 이미지는"
+                            + " 승계하고, 제목에는 ' (복사본)'이 붙으며 행사 기간은 비운다."
+                            + " 참가자 명단은 따라오지 않는다."
+                            + " 원본에 폼이 연결돼 있으면 **폼도 함께 복제해 사본을 연결한다**"
+                            + " (두 행사가 같은 신청서를 공유하지 않는다) — 응답의 formId가 그 새 폼이다."
+                            + " 본문·대표 이미지가 이 행사의 이미지를 가리키면 오브젝트를 사본의 키로"
+                            + " 복사하고 주소를 옮겨 적는다(원본을 보관해도 사본이 깨지지 않는다)."
+                            + " 없는 행사는 404 EVENT_NOT_FOUND, 이미지 복사에 실패하면"
+                            + " 502 EVENT_IMAGE_COPY_FAILED이며 그때는 아무것도 만들어지지 않는다.")
+    @PostMapping("/{eventId}/duplicate")
+    public ResponseEntity<ApiResponse<EventDuplicateResponse>> duplicateEvent(
+            @PathVariable Long eventId, @CurrentMember MemberEntity creator) {
+        EventDuplicateResponse response = eventService.duplicateEvent(eventId, creator);
+        URI location = URI.create("/v1/events/" + response.eventId());
+        return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 
     /*

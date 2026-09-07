@@ -28,22 +28,28 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.event.entity.EventClassificationEntity;
+import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
+import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
+import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormLabelEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormLabelRelationEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
+import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
@@ -54,6 +60,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -71,7 +78,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(PublicFormControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, PublicFormControllerTest.FixedClockConfig.class})
 @Transactional
 class PublicFormControllerTest {
 
@@ -170,6 +177,10 @@ class PublicFormControllerTest {
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormResponseReviewHistoryRepository formResponseReviewHistoryRepository;
+    @Autowired private FormLabelRepository formLabelRepository;
+    @Autowired private FormLabelRelationRepository formLabelRelationRepository;
+    @Autowired private EventRepository eventRepository;
+    @Autowired private EventClassificationRepository eventClassificationRepository;
 
     private MemberEntity respondent;
 
@@ -1275,7 +1286,55 @@ class PublicFormControllerTest {
         mockMvc.perform(myResponse(formId, onlyResponse().getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.rspnsSttsCd").value("CHANGES_REQUESTED"))
-                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2));
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2))
+                /*
+                 * **마감된 폼에서도 문항이 온다** (ssccops#221). 이 자리가 그 필드를 실은 이유
+                 * 그 자체다 — GET /{formId}/public은 여기서 409로 끊기므로, 문항이 이 응답에
+                 * 없으면 마감 후 수정요청을 받은 응답자는 재제출 폼을 그릴 재료가 없다.
+                 */
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemId").value("q1"));
+    }
+
+    /*
+     * 본인 응답에는 문항 구성이 함께 온다 (ssccops#221). 답과 문항이 한 응답으로 오므로 화면이
+     * 둘을 따로 부르지 않는다 — 나누면 두 응답 사이에 폼이 편집됐을 때 답과 문항이 서로 다른
+     * 시점을 가리킨다(#141이 검토 이력을 나누지 않은 근거와 같은 자리).
+     */
+    @Test
+    void getMyResponseCarriesQuestionComposition() throws Exception {
+        Long formId = saveForm("문항 동봉 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("홍길동"))
+                .andExpect(jsonPath("$.data.qitemCpstCn.pages.length()").value(2))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemLblNm").value("이름"));
+    }
+
+    /*
+     * 문항을 실어도 **남의 응답은 여전히 404다.** 이 필드가 새 조회 경로를 만드는 것이 아니라는
+     * 회귀다 — 응답 자체가 본인 행만 내려가므로(findByIdAndFormAndMember) 문항도 그 응답자가
+     * 이미 답한 폼의 것이다.
+     */
+    @Test
+    void getMyResponseStillHidesAnotherMembersResponseAfterCarryingComposition() throws Exception {
+        Long formId = saveForm("문항 동봉 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260004", "최지우", "other3@sscc.org");
+        FormResponseHistoryEntity others =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                form, other, ResponseContent.of(Map.of("q1", "최지우")), NOW));
+
+        mockMvc.perform(myResponse(formId, others.getId()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
     }
 
     /* ── 마감된 폼의 재제출 (#177) ─────────────────────────── */
@@ -1463,6 +1522,168 @@ class PublicFormControllerTest {
     }
 
     /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */
+    /* ── 폼을 가로지르는 내 응답 목록 (ssccops#221) ────────── */
+
+    /*
+     * 폼을 지목하지 않아도 내가 낸 응답이 전부 온다. 이 목록의 존재 이유가 그것이다 — 수정요청을
+     * 받은 응답자는 정확히 그 폼 링크를 잃어버린 사람이라 /{formId} 아래 경로에 닿지 못한다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsReturnsResponsesFromEveryForm() throws Exception {
+        Long first = saveMultipleResponseForm("스터디 제안서");
+        Long second = saveMultipleResponseForm("신입 모집 지원서");
+        submit(first, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        submit(second, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(
+                        jsonPath("$.data[*].formId")
+                                .value(
+                                        Matchers.containsInAnyOrder(
+                                                first.intValue(), second.intValue())))
+                .andExpect(
+                        jsonPath("$.data[*].formTtlNm")
+                                .value(Matchers.containsInAnyOrder("스터디 제안서", "신입 모집 지원서")))
+                // 내용은 싣지 않는다 — 그것은 상세(#177)가 답한다
+                .andExpect(jsonPath("$.data[0].rspnsCn").doesNotExist());
+    }
+
+    /*
+     * 폼 라벨이 함께 온다. 화면이 라벨로 거를 수 있어야 하기 때문이며, 이 목록이 **폼 라벨을
+     * 응답자에게 내려주는 첫 자리다** — 그전까지 form_lbl은 운영진 내부 분류였다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsCarriesFormLabels() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        attachLabel(formId, "기획안");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].labels.length()").value(1))
+                .andExpect(jsonPath("$.data[0].labels[0].lblNm").value("기획안"));
+    }
+
+    /*
+     * **행사에 붙은 폼의 응답은 오지 않는다.** 그쪽은 GET /v1/events/my-applications가 답하고,
+     * 두 목록이 '내 신청' 한 화면에 함께 놓이므로 거르지 않으면 같은 응답이 두 줄로 보인다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsExcludesEventApplications() throws Exception {
+        Long eventFormId = saveMultipleResponseForm("행사 신청서");
+        Long ordinaryFormId = saveMultipleResponseForm("스터디 제안서");
+        attachToEvent(eventFormId, "개강총회");
+        submit(eventFormId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        submit(ordinaryFormId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].formId").value(ordinaryFormId));
+    }
+
+    /*
+     * 작성 중(DRAFT)도 온다. 폼별 내 응답 목록과 같은 기준이며, 이어서 쓸 것이 있다는 사실이
+     * 이 화면에서 사라지면 초안을 시작한 폼을 다시 찾을 길이 없다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsIncludesDraft() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(form, respondent, null));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].rspnsSttsCd").value("DRAFT"))
+                .andExpect(jsonPath("$.data[0].sbmsnDt").value(Matchers.nullValue()));
+    }
+
+    // 남의 응답은 섞이지 않는다. 대상은 언제나 인증 주체 본인이며 지목할 자리조차 없다
+    @Test
+    void getMyResponsesAcrossFormsDoesNotReturnAnotherMembersResponse() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260003", "박민수", "other2@sscc.org");
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        form, other, ResponseContent.of(Map.of("q1", "박민수")), NOW));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    // 한 건도 없으면 빈 배열이다 (라벨 조회를 건너뛰는 경로이기도 하다)
+    @Test
+    void getMyResponsesAcrossFormsReturnsEmptyArrayWhenNothingSubmitted() throws Exception {
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    /*
+     * 리터럴 responses 세그먼트가 /{formId}/public을 가로채지 않는다. 세그먼트 수가 달라 애초에
+     * 다른 패턴이지만, 두 경로가 같은 접두사를 쓰므로 회귀로 못 박아 둔다.
+     */
+    @Test
+    void myResponsesAcrossFormsPathDoesNotShadowPublicFormPath() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/public"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formTtlNm").value("스터디 제안서"));
+    }
+
+    /** 폼에 라벨을 붙인다 (ssccops#221 — 이 목록이 라벨을 내려주는지 보기 위해) */
+    private void attachLabel(Long formId, String labelName) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        FormLabelEntity label = formLabelRepository.saveAndFlush(FormLabelEntity.create(labelName));
+        formLabelRelationRepository.saveAndFlush(FormLabelRelationEntity.create(form, label));
+    }
+
+    /*
+     * 폼을 행사에 붙인다 (ssccops#221). 행사 신청이 이 목록에서 빠지는지 보려면 실제로 event 행이
+     * 있어야 한다 — 거르는 조건이 exists 서브쿼리라 연결만 만들면 되고 행사 상태는 보지 않는다.
+     */
+    private void attachToEvent(Long formId, String title) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        EventClassificationEntity classification =
+                eventClassificationRepository.findAll().stream()
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException("행사 분류 시드가 없다"));
+        eventRepository.saveAndFlush(
+                EventEntity.create(
+                        classification,
+                        respondent,
+                        title,
+                        "# 안내",
+                        null,
+                        form,
+                        NOW,
+                        NOW,
+                        "학생회관",
+                        null));
+    }
+
     private Long saveMultipleResponseForm(String title) throws Exception {
         QuestionCompositionContent content =
                 objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);
@@ -1573,18 +1794,18 @@ class PublicFormControllerTest {
     }
 
     private MockHttpServletRequestBuilder authenticatedGet(String path) {
-        return get(path).header("Authorization", "Bearer any-token");
+        return get(path).header("Authorization", "Bearer " + AUTH_USER_ID);
     }
 
     private MockHttpServletRequestBuilder authenticatedPost(String path, String body) {
         return post(path)
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * 접수 기간 경계와 제출 일시가 주입된 Clock에서 오는지 확인해야 하므로 시각을 고정한다.
@@ -1594,19 +1815,6 @@ class PublicFormControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

@@ -179,6 +179,7 @@ class ApprovalServiceImplTest {
                         subWorkRejectionRepository,
                         new ApprovalAuthorityPolicy(authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK);
 
         registrant = saveMember("20200001", "김도현", null);

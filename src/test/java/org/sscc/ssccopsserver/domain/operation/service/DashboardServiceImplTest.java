@@ -156,6 +156,7 @@ class DashboardServiceImplTest {
                         subWorkRejectionRepository,
                         approvalAuthorityPolicy,
                         new AuthorityNameFinder(authorityRepository),
+                        new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK);
         dashboardService =
                 new DashboardServiceImpl(approvalService, subWorkService, authorityPolicy);

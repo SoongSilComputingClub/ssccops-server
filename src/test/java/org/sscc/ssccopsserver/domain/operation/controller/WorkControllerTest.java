@@ -8,7 +8,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -16,13 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +29,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -46,7 +41,7 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(WorkControllerTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 @Transactional
 class WorkControllerTest {
 
@@ -225,7 +220,7 @@ class WorkControllerTest {
 
         mockMvc.perform(
                         get("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.workId").value(workId))
@@ -249,7 +244,7 @@ class WorkControllerTest {
     void getUnknownWorkReturns404() throws Exception {
         mockMvc.perform(
                         get("/v1/works/{workId}", 999_999L)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
@@ -283,7 +278,7 @@ class WorkControllerTest {
 
         mockMvc.perform(
                         patch("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(body))
                 .andExpect(status().isOk())
@@ -318,7 +313,7 @@ class WorkControllerTest {
 
         mockMvc.perform(
                         patch("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(body))
                 .andExpect(status().isOk())
@@ -340,7 +335,7 @@ class WorkControllerTest {
 
         mockMvc.perform(
                         patch("/v1/works/{workId}", 999_999L)
-                                .header("Authorization", "Bearer any-token")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(body))
                 .andExpect(status().isNotFound())
@@ -364,7 +359,7 @@ class WorkControllerTest {
     void searchWorksReturns200WithListEnvelope() throws Exception {
         Long workId = createWork();
 
-        mockMvc.perform(get("/v1/works").header("Authorization", "Bearer any-token"))
+        mockMvc.perform(get("/v1/works").header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").isArray())
@@ -393,7 +388,7 @@ class WorkControllerTest {
         mockMvc.perform(
                         get("/v1/works")
                                 .param("workType", "ROUTINE")
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.data").isEmpty())
@@ -406,7 +401,7 @@ class WorkControllerTest {
         mockMvc.perform(
                         get("/v1/works")
                                 .param("workStatus", "기획")
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
     }
@@ -417,7 +412,7 @@ class WorkControllerTest {
         mockMvc.perform(
                         get("/v1/works")
                                 .param("size", "101")
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
@@ -427,7 +422,7 @@ class WorkControllerTest {
         mockMvc.perform(
                         get("/v1/works")
                                 .param("cursor", "!!not-a-cursor!!")
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
@@ -445,13 +440,13 @@ class WorkControllerTest {
 
         mockMvc.perform(
                         delete("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 
         mockMvc.perform(
                         get("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
@@ -460,7 +455,7 @@ class WorkControllerTest {
     void deleteUnknownWorkReturns404() throws Exception {
         mockMvc.perform(
                         delete("/v1/works/{workId}", 999_999L)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
@@ -470,12 +465,12 @@ class WorkControllerTest {
         Long workId = createWork();
         mockMvc.perform(
                         delete("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isOk());
 
         mockMvc.perform(
                         delete("/v1/works/{workId}", workId)
-                                .header("Authorization", "Bearer any-token"))
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ALREADY_DELETED"));
     }
@@ -510,25 +505,8 @@ class WorkControllerTest {
     private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
             authenticated(String body) {
         return post("/v1/works")
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

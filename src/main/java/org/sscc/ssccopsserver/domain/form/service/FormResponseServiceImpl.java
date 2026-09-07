@@ -5,7 +5,10 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -13,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
+import org.sscc.ssccopsserver.domain.form.dto.FormLabelSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDraftResponse;
@@ -21,6 +25,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseOverviewResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
@@ -28,10 +33,13 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
+import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.RequiredArgsConstructor;
@@ -43,6 +51,12 @@ public class FormResponseServiceImpl implements FormResponseService {
 
     private final FormRepository formRepository;
     private final FormResponseHistoryRepository formResponseHistoryRepository;
+
+    /*
+     * 폼 라벨 (ssccops#221). 폼을 가로지르는 내 응답 목록이 라벨을 함께 내려주기 위해 쓴다 —
+     * 폼에 라벨 컬렉션 연관이 없어 조인으로 끌어올 수 없고, 응답마다 조회하면 그대로 N+1이다.
+     */
+    private final FormLabelRelationRepository formLabelRelationRepository;
 
     /*
      * 검토 처리 이력 (#141). 상태를 바꾸는 트랜잭션 안에서 함께 쓰기 때문에 별도 서비스로
@@ -70,6 +84,12 @@ public class FormResponseServiceImpl implements FormResponseService {
      * 지키므로, 대표 문항이 지워진 폼은 애초에 저장되지 않는다.
      */
     private final SystemFormContract systemFormContract;
+
+    /*
+     * 연락처를 담을지 묻는 데만 쓴다 (#277). 판정 규칙을 여기 적지 않고 이 정책에 묻는 것은
+     * 인가 규칙이 두 벌이 되지 않게 하기 위해서다 — AuthorityPolicy가 유일한 구현이다.
+     */
+    private final AuthorityPolicy authorityPolicy;
 
     /** 제출 일시의 기준 시각. 접수 마감 판정(FormReceiptPolicy)과 같은 시계를 쓴다 */
     private final Clock clock;
@@ -132,6 +152,54 @@ public class FormResponseServiceImpl implements FormResponseService {
                         response ->
                                 MyFormResponseSummaryResponse.of(
                                         response, responseTitleOf(response)))
+                .toList();
+    }
+
+    /*
+     * 폼을 가로지르는 내 응답 목록 (ssccops#221 · GET /v1/forms/responses/mine).
+     *
+     * **폼을 모르는 채로 시작하는 유일한 응답 조회다.** 다른 조회는 전부 /{formId} 아래에 있어
+     * 폼을 이미 아는 화면이 부르는데, 수정요청을 받은 응답자는 정확히 그 폼 링크를 잃어버린
+     * 사람이다 — #141이 만든 재제출 흐름이 응답자 쪽에서 끊겨 있던 자리가 여기다.
+     *
+     * **행사 신청은 오지 않는다**(리포지토리가 거른다). 두 목록이 '내 신청' 한 화면에 함께
+     * 놓이므로, 거르지 않으면 같은 응답이 두 줄로 보인다.
+     *
+     * 쿼리는 응답 1 + 라벨 1로 두 번이며 응답이 몇 건이든 그대로다. 응답이 없을 때 라벨 조회를
+     * 건너뛰는 것은 빈 컬렉션을 in 절에 넣으면 구현에 따라 문법 오류가 되기 때문이고, 어차피
+     * 나눠 줄 곳도 없다.
+     */
+    @Override
+    public List<MyFormResponseOverviewResponse> getMyResponsesAcrossForms(MemberEntity respondent) {
+        List<FormResponseHistoryEntity> responses =
+                formResponseHistoryRepository.findNonEventResponsesByMember(respondent);
+        if (responses.isEmpty()) {
+            return List.of();
+        }
+
+        Set<Long> formIds =
+                responses.stream()
+                        .map(response -> response.getForm().getId())
+                        .collect(Collectors.toSet());
+        Map<Long, List<FormLabelSummaryResponse>> labelsByFormId =
+                formLabelRelationRepository.findAllByFormIdIn(formIds).stream()
+                        .collect(
+                                Collectors.groupingBy(
+                                        relation -> relation.getForm().getId(),
+                                        Collectors.mapping(
+                                                relation ->
+                                                        FormLabelSummaryResponse.from(
+                                                                relation.getLabel()),
+                                                Collectors.toList())));
+
+        return responses.stream()
+                .map(
+                        response ->
+                                MyFormResponseOverviewResponse.of(
+                                        response,
+                                        labelsByFormId.getOrDefault(
+                                                response.getForm().getId(), List.of()),
+                                        responseTitleOf(response)))
                 .toList();
     }
 
@@ -449,7 +517,15 @@ public class FormResponseServiceImpl implements FormResponseService {
      * "DRAFT는 심사 대상이 아니다"가 목록에서만 지켜지는 규칙이 된다.
      */
     @Override
-    public FormResponseDetailResponse getResponse(Long formId, Long formResponseId) {
+    public FormResponseDetailResponse getResponse(
+            Long formId, Long formResponseId, MemberEntity requester) {
+        /*
+         * 이 엔드포인트를 지키는 것은 RESPONSE_REVIEW인데 연락처는 MEMBER_MANAGE의 값이다.
+         * 그래서 자격을 여기서 한 번 더 묻고 **조립 시점에 굳혀** 내린다 — 화면이 받아서 감추는
+         * 구조로 두면 값은 이미 브라우저에 도착해 있다(#277이 고치는 것이 정확히 그것이다).
+         */
+        boolean canSeeContact =
+                authorityPolicy.hasAuthority(requester.getId(), AuthorityCode.MEMBER_MANAGE);
         FormEntity form = findForm(formId);
         FormResponseHistoryEntity response = findResponse(form, formResponseId);
 
@@ -471,7 +547,7 @@ public class FormResponseServiceImpl implements FormResponseService {
 
         if (response.getStatus() == ResponseStatus.DRAFT) {
             return FormResponseDetailResponse.of(
-                    response, reviewHistories, null, null, approvalPreview);
+                    response, reviewHistories, null, null, approvalPreview, canSeeContact);
         }
 
         List<Long> orderedIds =
@@ -483,7 +559,7 @@ public class FormResponseServiceImpl implements FormResponseService {
                 index >= 0 && index < orderedIds.size() - 1 ? orderedIds.get(index + 1) : null;
 
         return FormResponseDetailResponse.of(
-                response, reviewHistories, previousId, nextId, approvalPreview);
+                response, reviewHistories, previousId, nextId, approvalPreview, canSeeContact);
     }
 
     /*

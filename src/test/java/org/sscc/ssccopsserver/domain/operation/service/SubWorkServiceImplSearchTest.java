@@ -11,6 +11,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
@@ -51,6 +52,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
@@ -60,6 +62,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRep
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkReviewRequest;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
@@ -99,6 +102,10 @@ class SubWorkServiceImplSearchTest {
     // 마감일은 오늘인데 마감 시각은 이미 지난 건. 두 칩의 경계가 갈리는 자리다 (#121)
     private static final OffsetDateTime DUE_TODAY = NOW.minusHours(3);
 
+    // 검토요청 시각 — 3일 전은 정체, 2일 전은 아직 아니다 (ssccops#196, 경계는 8/18 0시)
+    private static final OffsetDateTime THREE_DAYS_AGO = NOW.minusDays(3);
+    private static final OffsetDateTime TWO_DAYS_AGO = NOW.minusDays(2);
+
     @Autowired private OperationRepository operationRepository;
     @Autowired private WorkRepository workRepository;
     @Autowired private SubWorkRepository subWorkRepository;
@@ -123,6 +130,7 @@ class SubWorkServiceImplSearchTest {
 
     private SubWorkService subWorkService;
     private MemberEntity registrant;
+    private MemberEntity owner;
     private Long ownerId;
     private Long springMtWorkId;
     private Long expoWorkId;
@@ -133,6 +141,9 @@ class SubWorkServiceImplSearchTest {
      */
     private Long approvalNeededTypeId;
     private Long approvalFreeTypeId;
+
+    // 완료 점검 항목이 하나도 없는 유형 — 시드에는 없어 테스트에서 직접 만든다 (ssccops#196)
+    private Long noChecklistTypeId;
 
     @BeforeEach
     void setUp() {
@@ -192,7 +203,15 @@ class SubWorkServiceImplSearchTest {
                 memberRoleAssignmentRepository,
                 registrant,
                 MemberRoleFixture.TREASURER);
-        ownerId = saveMember("20200002", "이서연", "owner@sscc.org").getId();
+        owner = saveMember("20200002", "이서연", "owner@sscc.org");
+        ownerId = owner.getId();
+
+        noChecklistTypeId =
+                subWorkTypeRepository
+                        .save(
+                                SubWorkTypeEntity.create(
+                                        "점검 없는 유형", false, null, false, null, List.of()))
+                        .getId();
 
         // 상위 업무를 둘 둬 목록이 상위 업무를 가로지르는지 확인한다
         springMtWorkId = createWork(workService, "봄MT");
@@ -260,6 +279,218 @@ class SubWorkServiceImplSearchTest {
 
         assertThat(idsOf(search(condition().workStatus("IN_PROGRESS").build())))
                 .containsExactly(inProgress);
+    }
+
+    /*
+     * 제목 부분 일치 (ssccops#216). 업무 쪽(WorkServiceImplSearchTest)과 **같은 규칙**이어야
+     * 한다 — 두 목록이 회의 안건 추가 화면에 나란히 놓이므로 한쪽만 대소문자를 가리거나 한쪽만
+     * '%'를 특수문자로 다루면 같은 검색어가 종류를 바꾼 순간 다른 결과를 낸다.
+     */
+    @Test
+    void keywordFilterMatchesPartOfTitle() {
+        Long poster = createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        assertThat(idsOf(search(condition().keyword("포스터").build()))).containsExactly(poster);
+        assertThat(idsOf(search(condition().keyword("없는제목").build()))).isEmpty();
+    }
+
+    @Test
+    void keywordFilterIgnoresCase() {
+        Long subWorkId = createSubWork(springMtWorkId, "SSCC 부스 운영", SOON);
+
+        assertThat(idsOf(search(condition().keyword("sscc").build()))).containsExactly(subWorkId);
+    }
+
+    // 공백만인 검색어는 조건 없음이다 (KeywordSearch.normalize)
+    @Test
+    void blankKeywordIsTreatedAsNoFilter() {
+        createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        assertThat(idsOf(search(condition().keyword("   ").build()))).hasSize(2);
+    }
+
+    // 와일드카드는 리터럴이다 — 업무 쪽과 같은 규칙
+    @Test
+    void wildcardCharactersAreMatchedLiterally() {
+        Long discount = createSubWork(springMtWorkId, "할인 50% 협상", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        assertThat(idsOf(search(condition().keyword("%").build()))).containsExactly(discount);
+        assertThat(idsOf(search(condition().keyword("_").build()))).isEmpty();
+    }
+
+    /*
+     * **이 작업의 핵심이다** — 커서 페이징 20건이라 화면이 받아 둔 배열을 거르면 첫 페이지
+     * 안의 건만 찾아진다.
+     */
+    @Test
+    void keywordFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createSubWork(springMtWorkId, "채우기 " + i, SOON);
+        }
+        Long needle = createSubWork(springMtWorkId, "숨어 있는 하위 업무", SOON);
+
+        assertThat(idsOf(search(condition().size(20).build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().keyword("숨어").build()))).containsExactly(needle);
+    }
+
+    // ── mine: 담당자 필터 (ssccops#225) ───────────────────────────────────────
+
+    // 담당자가 나인 건만 남는다. 등록자가 나인 건은 남지 않는다 — '내 업무'는 담당이다
+    @Test
+    void mineKeepsOnlyRowsWhereViewerIsPersonInCharge() {
+        Long mine = createSubWorkOwnedBy("내가 담당", owner);
+        Long othersButIRegistered = createSubWorkOwnedBy("남이 담당", registrant);
+
+        List<Long> ids = idsOf(search(condition().mine(true).build()));
+
+        assertThat(ids).containsExactly(mine).doesNotContain(othersButIRegistered);
+    }
+
+    /*
+     * 이 필터의 존재 이유 — 첫 페이지 밖의 건이 찾아진다. 화면에서 배열을 걸렀다면 25건을
+     * 채운 뒤의 이 하위 업무는 어떤 조작으로도 나오지 않는다.
+     */
+    @Test
+    void mineFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createSubWorkOwnedBy("남의 하위 업무 " + i, registrant);
+        }
+        Long needle = createSubWorkOwnedBy("내 하위 업무", owner);
+        entityManager.flush();
+        entityManager
+                .getEntityManager()
+                .createQuery(
+                        "update OperationEntity o set o.createdAt = :createdAt"
+                                + " where o.id in (select s.operation.id from SubWorkEntity s"
+                                + " where s.id = :id)")
+                .setParameter("createdAt", NOW.minusDays(30).toInstant())
+                .setParameter("id", needle)
+                .executeUpdate();
+        entityManager.clear();
+
+        assertThat(idsOf(search(condition().build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().mine(true).build()))).containsExactly(needle);
+    }
+
+    // 건수도 필터 결과를 말한다 — filterConditions를 목록·건수 쿼리가 공유한다
+    @Test
+    void mineIsAppliedToCountsAsWell() {
+        createSubWorkOwnedBy("내가 담당 1", owner);
+        createSubWorkOwnedBy("내가 담당 2", owner);
+        createSubWorkOwnedBy("남이 담당", registrant);
+
+        SubWorkSearchResponse response = search(condition().mine(true).build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 다른 필터와 겹쳐 걸린다 — 조건이 서로를 지우지 않는다
+    @Test
+    void mineCombinesWithOtherFilters() {
+        Long target = createSubWorkOwnedBy("내 진행 건", owner);
+        transition(target, TransitionAction.START, null);
+        createSubWorkOwnedBy("내 기획 건", owner);
+        Long othersStarted = createSubWorkOwnedBy("남의 진행 건", registrant);
+        transition(othersStarted, TransitionAction.START, null);
+
+        List<Long> ids =
+                idsOf(
+                        search(
+                                condition()
+                                        .mine(true)
+                                        .workStatus(WorkStatus.IN_PROGRESS.name())
+                                        .build()));
+
+        assertThat(ids).containsExactly(target);
+    }
+
+    /*
+     * 조회자가 바뀌면 결과도 바뀐다. 대상 회원을 파라미터로 받지 않으므로 '나'를 정하는 자리는
+     * 인증 주체 하나뿐이며, 그 사실을 여기서 못 박는다.
+     */
+    @Test
+    void mineFollowsTheViewerNotAParameter() {
+        Long ownersSubWork = createSubWorkOwnedBy("담당자의 하위 업무", owner);
+        Long registrantsSubWork = createSubWorkOwnedBy("등록자의 하위 업무", registrant);
+
+        assertThat(idsOf(searchAs(condition().mine(true).build(), owner)))
+                .containsExactly(ownersSubWork);
+        assertThat(idsOf(searchAs(condition().mine(true).build(), registrant)))
+                .containsExactly(registrantsSubWork);
+    }
+
+    // 끄면(생략·false) 필터가 걸리지 않는다 — Boolean 이웃들과 같은 꼴이다
+    @Test
+    void mineDisabledLeavesEveryRow() {
+        createSubWorkOwnedBy("내가 담당", owner);
+        createSubWorkOwnedBy("남이 담당", registrant);
+
+        assertThat(idsOf(search(condition().build()))).hasSize(2);
+        assertThat(idsOf(search(condition().mine(false).build()))).hasSize(2);
+    }
+
+    // 담당한 건이 없으면 빈 목록이다 — 화면이 '비어 있음'을 문구로 알릴 근거다
+    @Test
+    void mineReturnsEmptyWhenViewerOwnsNothing() {
+        createSubWorkOwnedBy("남이 담당", registrant);
+
+        SubWorkSearchResponse response = search(condition().mine(true).build());
+
+        assertThat(response.subWorks()).isEmpty();
+        assertThat(response.page().totalCount()).isZero();
+        assertThat(response.page().hasNext()).isFalse();
+    }
+
+    // 화면 우상단의 '8건'도 검색 결과 건수를 말한다
+    @Test
+    void keywordIsAppliedToCountsAsWell() {
+        createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        createSubWork(springMtWorkId, "포스터 인쇄", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        SubWorkSearchResponse response = search(condition().keyword("포스터").build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 검색어와 기존 필터가 함께 걸린다
+    @Test
+    void keywordCombinesWithStatusFilter() {
+        Long started = createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        transition(started, TransitionAction.START, null);
+        createSubWork(springMtWorkId, "포스터 인쇄", SOON);
+
+        assertThat(idsOf(search(condition().keyword("포스터").workStatus("IN_PROGRESS").build())))
+                .containsExactly(started);
+    }
+
+    // 검색어를 건 채 커서로 이어 받아도 같은 조건의 페이지가 이어진다
+    @Test
+    void cursorPagingKeepsKeywordCondition() {
+        for (int i = 0; i < 3; i++) {
+            createSubWork(springMtWorkId, "포스터 작업 " + i, SOON);
+        }
+        createSubWork(springMtWorkId, "무관한 건", SOON);
+
+        SubWorkSearchResponse first = search(condition().keyword("포스터").size(2).build());
+        assertThat(first.subWorks()).hasSize(2);
+        assertThat(first.page().hasNext()).isTrue();
+
+        SubWorkSearchResponse second =
+                search(
+                        condition()
+                                .keyword("포스터")
+                                .size(2)
+                                .cursor(first.page().nextCursor())
+                                .build());
+
+        assertThat(second.subWorks()).hasSize(1);
+        assertThat(second.page().hasNext()).isFalse();
     }
 
     /*
@@ -458,6 +689,132 @@ class SubWorkServiceImplSearchTest {
         assertThat(response.page().overallCount()).isEqualTo(1);
     }
 
+    /*
+     * 정체 ① 칩 — 완료 점검을 다 채웠는데 아직 검토요청 전인 건만 (ssccops#196).
+     * 다음에 누를 사람이 담당자인 건들이다.
+     */
+    @Test
+    void readyForReviewChipReturnsOnlyFullyCheckedAndNotYetRequested() {
+        Long ready = createSubWork(springMtWorkId, "점검 다 됐는데 요청 전", SOON);
+        completeChecklist(ready);
+        Long halfway = createSubWork(springMtWorkId, "점검이 남은 건", SOON);
+        checkFirstChecklistItem(halfway);
+        Long requested = createSubWork(springMtWorkId, "이미 검토요청한 건", SOON);
+        completeChecklist(requested);
+        requestReview(requested);
+        Long finished = createSubWork(springMtWorkId, "완료된 건", SOON);
+        complete(finished);
+
+        assertThat(idsOf(search(condition().isReadyForReview(true).build())))
+                .containsExactly(ready);
+    }
+
+    /*
+     * 점검 항목이 없는 유형은 칩에 잡히지 않는다 — 0 == 0이라 '전부 체크'가 공허하게 참이
+     * 되면 그 유형의 모든 건이 등록 직후부터 정체로 뜬다.
+     */
+    @Test
+    void typeWithoutChecklistNeverAppearsInReadyForReviewChip() {
+        createSubWork(springMtWorkId, "점검 항목이 없는 유형", noChecklistTypeId, SOON);
+
+        assertThat(search(condition().isReadyForReview(true).build()).subWorks()).isEmpty();
+    }
+
+    /*
+     * 정체 ② 칩 — 검토요청 후 3일이 지났는데 아직 검토 상태인 건만 (ssccops#196).
+     * 다음에 누를 사람이 승인자인 건들이다. 2일째는 아직 아니다.
+     */
+    @Test
+    void reviewStaleChipReturnsOnlyRequestsOlderThanThreeDays() {
+        Long stale = subWorkRequestedAt(THREE_DAYS_AGO, "3일 전에 올라온 건");
+        subWorkRequestedAt(TWO_DAYS_AGO, "2일 전에 올라온 건");
+        createSubWork(springMtWorkId, "아직 요청 전인 건", SOON);
+
+        assertThat(idsOf(search(condition().isReviewStale(true).build()))).containsExactly(stale);
+    }
+
+    // 반려돼 진행으로 돌아간 건은 옛 요청 시각이 이력에 남지만 대기 중인 요청이 아니다
+    @Test
+    void rejectedSubWorkLeavesTheReviewStaleChip() {
+        Long rejected = subWorkRequestedAt(THREE_DAYS_AGO, "3일 전에 올라왔다 반려된 건");
+        transition(rejected, TransitionAction.REJECT, "예산 근거가 부족합니다");
+
+        assertThat(search(condition().isReviewStale(true).build()).subWorks()).isEmpty();
+    }
+
+    /*
+     * 단건 판정(엔티티)과 목록 필터(SQL)가 모든 경우에 같은 답을 내는지. 규칙이 두 벌로
+     * 적혀 있어 한쪽만 고치면 갈리며, 지연 판정이 실제로 그렇게 두 번 갈렸다 (#121 · #194).
+     */
+    @Test
+    void stallJudgementAndFiltersAgreeOnEveryCase() {
+        Long ready = createSubWork(springMtWorkId, "점검 다 됐는데 요청 전", SOON);
+        completeChecklist(ready);
+        Long halfway = createSubWork(springMtWorkId, "점검이 남은 건", SOON);
+        checkFirstChecklistItem(halfway);
+        Long noChecklist = createSubWork(springMtWorkId, "점검 없는 유형", noChecklistTypeId, SOON);
+        Long stale = subWorkRequestedAt(THREE_DAYS_AGO, "3일 전에 올라온 건");
+        Long fresh = subWorkRequestedAt(TWO_DAYS_AGO, "2일 전에 올라온 건");
+        Long finished = createSubWork(springMtWorkId, "완료된 건", SOON);
+        complete(finished);
+        Instant reviewStaleBefore = new DeadlinePolicy(FIXED_CLOCK).reviewStaleBefore();
+
+        // 엔티티에게 직접 묻는다
+        assertThat(readyForReview(ready)).isTrue();
+        assertThat(readyForReview(halfway)).isFalse();
+        assertThat(readyForReview(noChecklist)).isFalse();
+        assertThat(readyForReview(finished)).isFalse();
+        assertThat(reviewStale(stale, reviewStaleBefore)).isTrue();
+        assertThat(reviewStale(fresh, reviewStaleBefore)).isFalse();
+        assertThat(reviewStale(finished, reviewStaleBefore)).isFalse();
+
+        // 목록 필터가 같은 집합을 돌려준다
+        assertThat(idsOf(search(condition().isReadyForReview(true).build())))
+                .containsExactly(ready);
+        assertThat(idsOf(search(condition().isReviewStale(true).build()))).containsExactly(stale);
+
+        // 필터를 뗀 목록의 응답 플래그도 같은 답이다
+        List<SubWorkSummaryResponse> rows = search(condition().build()).subWorks();
+        assertThat(idsWhere(rows, SubWorkSummaryResponse::isReadyForReview)).containsExactly(ready);
+        assertThat(idsWhere(rows, SubWorkSummaryResponse::isReviewStale)).containsExactly(stale);
+    }
+
+    // true만 필터다 — false·생략은 '정체가 아닌 것만'이 아니라 필터 없음이다 (isOverdue와 같다)
+    @Test
+    void stallFiltersSetToFalseAreTreatedAsNoFilter() {
+        createSubWork(springMtWorkId, "하위 업무 1", SOON);
+        createSubWork(springMtWorkId, "하위 업무 2", LATER);
+
+        assertThat(search(condition().isReadyForReview(false).build()).subWorks()).hasSize(2);
+        assertThat(search(condition().isReviewStale(false).build()).subWorks()).hasSize(2);
+    }
+
+    /*
+     * 검토 중인 건이 섞인 페이지는 검토요청 시각 집계가 하나 더 붙어 다섯 번이다
+     * (ssccops#196). 행이 몇 건이든 이 수는 그대로다 — 카드마다 이력을 물으면 N+1이다.
+     */
+    @Test
+    void searchRunsFiveQueriesWhenRowsIncludeReviewRegardlessOfRowCount() {
+        for (int index = 0; index < 5; index++) {
+            subWorkRequestedAt(THREE_DAYS_AGO, "검토 중인 건 " + index);
+        }
+        entityManager.flush();
+        entityManager.clear();
+
+        Statistics statistics =
+                entityManager
+                        .getEntityManager()
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build(), owner);
+
+        assertThat(response.subWorks()).hasSize(5);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(5);
+    }
+
     // 건수는 두 갈래다 — 걸러진 건수(화면 '8건')와 필터를 뗀 전체 건수(화면 '전체 8건')
     @Test
     void pageCarriesFilteredCountAndOverallCount() {
@@ -582,7 +939,7 @@ class SubWorkServiceImplSearchTest {
                         .getStatistics();
         statistics.clear();
 
-        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build());
+        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build(), owner);
 
         assertThat(response.subWorks()).hasSize(5);
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
@@ -628,6 +985,25 @@ class SubWorkServiceImplSearchTest {
                 workId, title, typeId, ownerId, null, null, dueAt, null, null, null);
     }
 
+    // 담당자를 지정해 만드는 하위 업무. mine이 담당자로 가르는지 보려면 남의 건이 필요하다
+    private Long createSubWorkOwnedBy(String title, MemberEntity personInCharge) {
+        return subWorkService
+                .createSubWork(
+                        new SubWorkCreateRequest(
+                                springMtWorkId,
+                                title,
+                                approvalFreeTypeId,
+                                personInCharge.getId(),
+                                null,
+                                null,
+                                SOON,
+                                null,
+                                null,
+                                null),
+                        registrant)
+                .subWorkId();
+    }
+
     // 정상 경로로 완료까지 올린다 (TR-01 → TR-02 → 체크리스트 충족 → TR-03)
     private void complete(Long subWorkId) {
         transition(subWorkId, TransitionAction.START, null);
@@ -665,15 +1041,92 @@ class SubWorkServiceImplSearchTest {
                 subWorkId, new SubWorkTransitionRequest(action, reason), registrant);
     }
 
+    /*
+     * 조회자는 담당자(owner)다. mine 필터가 '내가 담당인 건'을 뜻하므로, 기본 조회자를
+     * 담당자로 두면 mine을 켠 조회가 픽스처의 하위 업무를 그대로 돌려준다.
+     */
     private SubWorkSearchResponse search(SubWorkSearchCondition condition) {
+        return searchAs(condition, owner);
+    }
+
+    private SubWorkSearchResponse searchAs(SubWorkSearchCondition condition, MemberEntity viewer) {
         entityManager.flush();
         entityManager.clear();
-        return subWorkService.searchSubWorks(condition);
+        return subWorkService.searchSubWorks(condition, viewer);
     }
 
     // 목록이 아니라 엔티티에게 직접 묻는다 — 목록 필터와 답이 갈리는지 보려면 두 경로가 필요하다
     private boolean delayedBefore(Long subWorkId, Instant overdueBefore) {
         return subWorkRepository.findById(subWorkId).orElseThrow().isDelayedBefore(overdueBefore);
+    }
+
+    private boolean readyForReview(Long subWorkId) {
+        entityManager.flush();
+        entityManager.clear();
+        SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
+        long total =
+                subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork).size();
+        long completed =
+                subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork).stream()
+                        .filter(SubWorkChecklistItemEntity::isCompleted)
+                        .count();
+        return subWork.isReadyForReview(completed, total);
+    }
+
+    private boolean reviewStale(Long subWorkId, Instant reviewStaleBefore) {
+        entityManager.flush();
+        entityManager.clear();
+        SubWorkEntity subWork = subWorkRepository.findById(subWorkId).orElseThrow();
+        Instant requestedAt =
+                subWorkStatusHistoryRepository
+                        .findReviewRequestsBySubWorkIds(List.of(subWorkId), WorkStatus.REVIEW)
+                        .stream()
+                        .findFirst()
+                        .map(SubWorkReviewRequest::getLastRequestedAt)
+                        .orElse(null);
+        return subWork.isReviewStaleBefore(requestedAt, reviewStaleBefore);
+    }
+
+    /*
+     * 검토요청이 과거에 올라온 건을 만든다. 서비스는 고정 Clock을 쓰므로 요청 시각을
+     * 뒤로 미는 방법은 기록된 이력의 시각을 바꾸는 것뿐이다 — 상태는 정상 전이로 만들고
+     * 시각만 갈아 끼운다.
+     */
+    private Long subWorkRequestedAt(OffsetDateTime requestedAt, String title) {
+        Long subWorkId = createSubWork(springMtWorkId, title, SOON);
+        transition(subWorkId, TransitionAction.START, null);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null);
+        entityManager.flush();
+        entityManager.clear();
+        entityManager
+                .getEntityManager()
+                .createQuery(
+                        "update SubWorkStatusHistoryEntity h set h.changedAt = :changedAt"
+                                + " where h.subWork.id = :subWorkId"
+                                + " and h.nextWorkStatus = :reviewStatus")
+                .setParameter("changedAt", requestedAt.toInstant())
+                .setParameter("subWorkId", subWorkId)
+                .setParameter("reviewStatus", WorkStatus.REVIEW)
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkId;
+    }
+
+    private void completeChecklist(Long subWorkId) {
+        for (Long itemId : checklistItemIds(subWorkId)) {
+            checkItem(subWorkId, itemId);
+        }
+    }
+
+    private void requestReview(Long subWorkId) {
+        transition(subWorkId, TransitionAction.START, null);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null);
+    }
+
+    private static List<Long> idsWhere(
+            List<SubWorkSummaryResponse> rows, Predicate<SubWorkSummaryResponse> matches) {
+        return rows.stream().filter(matches).map(SubWorkSummaryResponse::subWorkId).toList();
     }
 
     private static List<Long> idsOf(SubWorkSearchResponse response) {
@@ -711,6 +1164,10 @@ class SubWorkServiceImplSearchTest {
         private List<String> approvalStatus;
         private Boolean isOverdue;
         private OffsetDateTime dueBefore;
+        private Boolean isReadyForReview;
+        private Boolean isReviewStale;
+        private String keyword;
+        private Boolean mine;
         private Integer size;
         private String cursor;
         private String sort;
@@ -735,8 +1192,28 @@ class SubWorkServiceImplSearchTest {
             return this;
         }
 
+        private ConditionBuilder isReadyForReview(Boolean value) {
+            this.isReadyForReview = value;
+            return this;
+        }
+
+        private ConditionBuilder isReviewStale(Boolean value) {
+            this.isReviewStale = value;
+            return this;
+        }
+
+        private ConditionBuilder keyword(String value) {
+            this.keyword = value;
+            return this;
+        }
+
         private ConditionBuilder size(Integer value) {
             this.size = value;
+            return this;
+        }
+
+        private ConditionBuilder mine(Boolean value) {
+            this.mine = value;
             return this;
         }
 
@@ -752,7 +1229,17 @@ class SubWorkServiceImplSearchTest {
 
         private SubWorkSearchCondition build() {
             return new SubWorkSearchCondition(
-                    workStatus, approvalStatus, isOverdue, dueBefore, size, cursor, sort);
+                    workStatus,
+                    approvalStatus,
+                    isOverdue,
+                    dueBefore,
+                    isReadyForReview,
+                    isReviewStale,
+                    keyword,
+                    mine,
+                    size,
+                    cursor,
+                    sort);
         }
     }
 }

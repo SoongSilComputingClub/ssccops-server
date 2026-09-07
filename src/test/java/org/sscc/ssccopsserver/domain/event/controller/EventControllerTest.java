@@ -32,8 +32,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -63,6 +61,7 @@ import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepo
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -77,7 +76,7 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(EventControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, EventControllerTest.FixedClockConfig.class})
 @Transactional
 class EventControllerTest {
 
@@ -388,8 +387,8 @@ class EventControllerTest {
         changeStatus(archivedEvent, "ARCHIVE").andExpect(status().isOk());
 
         assertTransitionRejected(draftEvent, "RETRACT"); // 게시된 적이 없어 철회할 것이 없다
-        assertTransitionRejected(draftEvent, "ARCHIVE"); // 게시를 거치지 않고는 보관할 수 없다
         assertTransitionRejected(draftEvent, "REPUBLISH"); // 보관된 적이 없다
+        // DRAFT→ARCHIVE는 이제 허용된다 (ssccops ADR-0014) — draftEventCanBeArchived가 본다
         assertTransitionRejected(publishedEvent, "PUBLISH"); // 이미 게시됨
         assertTransitionRejected(publishedEvent, "REPUBLISH"); // 재공개는 보관에서만
         assertTransitionRejected(archivedEvent, "ARCHIVE"); // 이미 보관됨
@@ -516,30 +515,62 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.code").value("EVENT_NOT_FOUND"));
     }
 
-    /* ── 삭제 (D9) ───────────────────────────────────────── */
+    /* ── 보관이 삭제를 대신한다 (ssccops ADR-0014) ────────── */
 
+    /*
+     * **작성 중인 행사도 보관된다.** 삭제를 걷어낸 뒤로 잘못 만든 행사를 치우는 유일한 길이라,
+     * 이 칸이 막히면 DRAFT 행사가 목록에 영원히 쌓인다.
+     */
     @Test
-    void deleteEventWithoutParticipantSucceeds() throws Exception {
-        Long eventId = createEvent("EVENT", "지울 행사");
+    void draftEventCanBeArchived() throws Exception {
+        Long eventId = createEvent("EVENT", "잘못 만든 행사");
 
-        mockMvc.perform(authorized(delete(EVENTS + "/" + eventId), managerToken))
+        changeStatus(eventId, "ARCHIVE")
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
-
-        mockMvc.perform(authorized(get(EVENTS + "/" + eventId), managerToken))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value("EVENT_NOT_FOUND"));
+                .andExpect(jsonPath("$.data.eventSttsCd").value("ARCHIVED"));
     }
 
-    // 명단은 활동 이력으로 영구 보존된다(D16) — 참가자가 생긴 행사는 삭제가 아니라 보관이 경로다
+    /*
+     * **참가자가 있어도 보관된다.** 예전 삭제가 이 경우를 409로 막았던 것은 "행사를 지우면
+     * 명단이 갈 곳을 잃는다"(D16)였는데, 보관은 지우지 않으므로 그 근거가 성립하지 않는다.
+     * D9와 EVENT_HAS_PARTICIPANT가 함께 사라진 자리다.
+     */
     @Test
-    void deleteEventWithParticipantReturns409() throws Exception {
+    void eventWithParticipantCanBeArchived() throws Exception {
         Long eventId = createEvent("EVENT", "참가자 있는 행사");
         saveParticipant(eventId, "20260051", EventParticipantStatus.CANCELLED);
+        changeStatus(eventId, "PUBLISH").andExpect(status().isOk());
+
+        changeStatus(eventId, "ARCHIVE")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.eventSttsCd").value("ARCHIVED"));
+    }
+
+    /*
+     * **보관해도 행이 남는다** — 그래서 재공개로 되돌아온다. 삭제와 갈리는 지점이며, R2
+     * 오브젝트를 보관 시점에 지우지 않는 근거이기도 하다(지우면 재공개한 행사의 이미지가 깨진다).
+     */
+    @Test
+    void archivedEventIsStillReadableAndCanComeBack() throws Exception {
+        Long eventId = createEvent("EVENT", "보관했다 되살릴 행사");
+        changeStatus(eventId, "ARCHIVE").andExpect(status().isOk());
+
+        mockMvc.perform(authorized(get(EVENTS + "/" + eventId), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.eventSttsCd").value("ARCHIVED"));
+
+        changeStatus(eventId, "REPUBLISH")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.eventSttsCd").value("PUBLISHED"));
+    }
+
+    /** 삭제 경로가 사라졌다 — 남아 있으면 학술 활동이 딸린 행사에서 FK 위반 500이 난다 */
+    @Test
+    void deleteEndpointIsGone() throws Exception {
+        Long eventId = createEvent("EVENT", "지울 수 없는 행사");
 
         mockMvc.perform(authorized(delete(EVENTS + "/" + eventId), managerToken))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("EVENT_HAS_PARTICIPANT"));
+                .andExpect(status().isMethodNotAllowed());
     }
 
     /* ── 인증·인가 ───────────────────────────────────────── */
@@ -736,7 +767,7 @@ class EventControllerTest {
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FixedClockConfig {
 
         /*
          * eventPhase·receiptStatus가 주입된 Clock에서 오는지 확인해야 하므로 시각을 고정한다.
@@ -746,19 +777,6 @@ class EventControllerTest {
         @Primary
         Clock fixedClock() {
             return Clock.fixed(NOW, ZoneId.of("Asia/Seoul"));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(token)
-                            .claim("email", token + "@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

@@ -32,8 +32,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -68,6 +66,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.jayway.jsonpath.JsonPath;
 
@@ -82,7 +81,7 @@ import com.jayway.jsonpath.JsonPath;
 @SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(FormControllerTest.StubJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, FormControllerTest.FormTestConfig.class})
 @Transactional
 class FormControllerTest {
 
@@ -127,7 +126,7 @@ class FormControllerTest {
      * 시험용 시스템 폼 코드 (#140). 실제 선언(SystemFormContract.DECLARED)에는 PROPOSAL이 들어
      * 있지만(#173) 그 계약으로 여기를 검증하지는 않는다 — 시드가 문항을 바꿀 때마다 잠금 배선
      * 테스트가 함께 흔들리고, 그러면 이 테스트가 확인하는 것이 '배선'인지 '기획안 폼의 문항'인지
-     * 갈린다. 그래서 계약을 갈아 끼워(StubJwtDecoderConfig) 컨트롤러 → 서비스 → 엔티티 배선까지
+     * 갈린다. 그래서 계약을 갈아 끼워(FormTestConfig) 컨트롤러 → 서비스 → 엔티티 배선까지
      * 실제 요청으로 확인한다. 판정 자체는 FormSystemLockTest가 엔티티 단위로 본다.
      */
     private static final String SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM";
@@ -1578,12 +1577,12 @@ class FormControllerTest {
     }
 
     private MockHttpServletRequestBuilder authenticatedGet(String path) {
-        return get(path).header("Authorization", "Bearer any-token");
+        return get(path).header("Authorization", "Bearer " + AUTH_USER_ID);
     }
 
     private MockHttpServletRequestBuilder authenticatedPost(String path, String body) {
         MockHttpServletRequestBuilder request =
-                post(path).header("Authorization", "Bearer any-token");
+                post(path).header("Authorization", "Bearer " + AUTH_USER_ID);
         return body == null
                 ? request
                 : request.contentType(MediaType.APPLICATION_JSON).content(body);
@@ -1591,13 +1590,13 @@ class FormControllerTest {
 
     private MockHttpServletRequestBuilder authenticatedPut(String path, String body) {
         return put(path)
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
 
     @TestConfiguration
-    static class StubJwtDecoderConfig {
+    static class FormTestConfig {
 
         /*
          * 접수 상태 표시(receiptStatus)가 주입된 Clock에서 오는지 확인해야 하므로 시각도 고정한다.
@@ -1625,19 +1624,6 @@ class FormControllerTest {
                             Set.of("q1"),
                             TWO_QUESTION_SYSTEM_FORM_CODE,
                             Set.of("q1", "q2")));
-        }
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "actor@sscc.org")
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
         }
     }
 }

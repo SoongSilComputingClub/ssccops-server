@@ -9,8 +9,16 @@ plugins {
 }
 
 group = 'org.sscc'
-version = '0.0.1-SNAPSHOT'
-description = 'Demo project for Spring Boot'
+
+// 릴리스 버전. **git 태그(v0.2.1)와 같은 값을 유지한다** — 릴리스할 때 여기를 함께 올린다
+// (AGENTS.md '릴리스' 절). v0.2.0까지 세 번의 릴리스 동안 이 값이 초기값 그대로였던 탓에
+// 태그는 v0.2.0인데 산출물은 0.0.1-SNAPSHOT이었다.
+//
+// **-SNAPSHOT을 붙이지 않는다.** 이 저장소는 스냅숏을 배포하고 나중에 릴리스로 굳히는
+// 사이클을 돌리지 않는다 — develop이 dev로, main이 prod로 그대로 나가고 릴리스는 태그다.
+// 붙여 두면 어느 산출물도 릴리스가 아니게 되고, 지금 고치는 문제가 이름만 바뀌어 남는다.
+version = '0.2.1'
+description = 'SSCC 운영관리 백엔드'
 
 // ============================================================================
 // Coverage Exclusion Patterns (공통 제외 패턴)
@@ -34,6 +42,25 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
     }
+}
+
+// META-INF/build-info.properties 를 산출물에 넣는다 → /actuator/info 가 group·artifact·name·
+// version·time 을 돌려준다. 그 엔드포인트는 이미 노출 목록(include: health,info,...)에 있고
+// SecurityConfig 가 permitAll 로 열어 두었는데, 이 파일이 없어 그동안 빈 {} 였다 —
+// **배포된 것이 어느 버전인지 물을 자리가 없었다.**
+//
+// 값을 여기서 손으로 적지 않는다(management.info.env 로 버전을 따로 쓰는 방법도 있다).
+// 그러면 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다.
+springBoot {
+    buildInfo()
+}
+
+// 산출물 이름에서 버전을 뺀다. Dockerfile 이 이 파일을 이름으로 집어 오므로, 고정해 두지
+// 않으면 **버전을 올릴 때마다 Dockerfile 의 COPY 글롭이 함께 깨진다** — 실제로 -SNAPSHOT 을
+// 떼는 이번 변경이 `COPY .../*-SNAPSHOT.jar` 를 무효로 만든다. 버전은 build-info 와 태그가
+// 말하므로 파일명이 그것을 또 말할 이유가 없다.
+tasks.named('bootJar') {
+    archiveFileName = 'app.jar'
 }
 
 configurations {
@@ -79,6 +106,16 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     runtimeOnly 'com.h2database:h2'
 
+    // Flyway (ssccops#213). 스키마 변경을 버전 관리된 마이그레이션으로 내보내, ddl-auto: update가
+    // 리네임을 '조용한 컬럼 추가'로 처리하는 경로를 없앤다 — prod에서 승인이 통째로 막혔던
+    // ssccops#209가 그 경로였다.
+    //
+    // **아직 켜져 있지 않다.** spring.flyway.enabled가 모든 프로필에서 false다. baseline
+    // (V1__baseline.sql)이 prod pg_dump 결과로 교체되기 전에 켜면 부팅이 깨진다.
+    // Flyway 10부터 PostgreSQL 지원이 별도 모듈이라 두 개를 함께 넣는다.
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
     // Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
 
@@ -98,6 +135,17 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testRuntimeOnly 'com.h2database:h2'
+
+    // Testcontainers — FlywayMigrationValidateTest 하나만 쓴다 (ssccops#213).
+    //
+    // 일반 테스트는 H2에 남는다. 전면 전환은 #103이 컨텍스트를 58→25로 줄인 이득을 반납하고,
+    // 이 테스트들이 공용 testdb 하나를 공유하며 'mbr이 비어 있다'(최초 가입자 부트스트랩 #71)
+    // 같은 전제를 ddl-auto: create의 매 컨텍스트 재생성에 기대고 있어 공유 PostgreSQL로는
+    // 성립하지 않는다. 마이그레이션 검증만 실제 PostgreSQL이 필요하다 —
+    // baseline이 pg_dump 결과라 H2에서 아예 실행되지 않기 때문이다.
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
 }
 
 // ============================================================================
@@ -153,17 +201,19 @@ tasks.register('r2Check', JavaExec) {
 tasks.named('test') {
     useJUnitPlatform()
 
-    // 테스트 JVM 힙. Gradle 기본값(512MB)으로는 부족해 컨텍스트 로딩이 OutOfMemoryError로
-    // 실패하며, 어느 테스트가 깨지는지는 실행 순서에 따라 매번 달라진다.
+    // 테스트 JVM 힙. Gradle 기본값(512MB)으로는 부족해 GC가 계속 돌기만 하고 테스트가
+    // 사실상 진행되지 않는다 — #103에서 실측했다. 스텁 통합으로 컨텍스트가 58개에서 25개로
+    // 줄어든 뒤에도 512MB에서는 21분 동안 테스트 클래스 하나도 끝나지 않았다(워커 CPU 시간
+    // 6,327초 — 벽시계의 다섯 배이며, 전부 GC다). 같은 트리가 1g에서는 checkstyle·spotless·
+    // jacoco까지 포함해 3분 27초에 끝난다.
     //
-    // 이 레포는 테스트 클래스마다 자기 몫의 @TestConfiguration(StubJwtDecoderConfig)을 두므로
-    // ApplicationContext가 클래스 수만큼 생긴다. #81이 공용 H2 스키마가 지워지는 것을 막으려
-    // spring.test.context.cache.maxSize를 32에서 64로 올리면서 동시에 살아 있는 컨텍스트도
-    // 두 배가 됐다. 캐시를 되돌리면 이번엔 컨텍스트 교체가 잦아져 스키마 문제가 돌아온다.
+    // 2g가 아니라 1g인 것은 컨텍스트 수가 절반 아래로 내려갔기 때문이다. 2g는 클래스마다
+    // @TestConfiguration을 두어 컨텍스트가 클래스 수만큼 생기던 시절의 값이다.
     //
-    // 근본 해법은 스텁 설정을 한 곳으로 모아 컨텍스트 수 자체를 줄이는 것이고(별도 이슈),
-    // 그때까지는 힙을 늘려 둔다.
-    maxHeapSize = '2g'
+    // 컨텍스트를 더 늘리는 테스트(고정 Clock·독립 DB·@MockitoBean)를 더할 때 이 값이 다시
+    // 빠듯해질 수 있다. 그때 올리기 전에 그 격리가 정말 필요한지부터 볼 것 — 힙을 올리는 것은
+    // 컨텍스트가 늘어난 사실을 가리는 쪽이고, #103이 걷어낸 것이 그 종류의 처치다.
+    maxHeapSize = '1g'
 
     // 테스트 JVM의 기본 시간대를 서비스 표준 시간대에 맞춘다.
     //

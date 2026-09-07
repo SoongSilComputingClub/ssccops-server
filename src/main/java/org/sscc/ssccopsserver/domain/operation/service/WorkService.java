@@ -36,7 +36,7 @@ public interface WorkService {
      * 상위 업무 목록을 조건에 따라 조회한다 (OPS-020). '운영 통합 › 업무' 화면의 카드 그리드가
      * 이 결과로 채워지며, 소프트 삭제된 업무는 목록에도 건수에도 없다 (AGG-03).
      */
-    WorkSearchResponse searchWorks(WorkSearchCondition condition);
+    WorkSearchResponse searchWorks(WorkSearchCondition condition, MemberEntity viewer);
 
     /*
      * 운영 통합(OPS-001)의 업무 전량 목록. 목록 조회(OPS-020)와 같은 카드 요약이지만

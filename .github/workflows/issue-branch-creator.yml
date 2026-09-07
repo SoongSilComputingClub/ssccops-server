@@ -22,7 +22,9 @@ jobs:
       # 한글 제목을 영문 슬러그로 옮기기 위한 것이다. 이미지가 크고 모델 로딩에 시간이 걸려
       # 이 워크플로에서 가장 비싼 부분인데, 실패해도 원본 제목으로 진행하므로 치명적이지는 않다.
       libretranslate:
-        image: libretranslate/libretranslate:latest
+        # 태그를 고정한다 (#208). `latest`는 매번 새로 받아 어제 되던 것이 오늘 안 될 수 있다 —
+        # 넉 달 잘 돌던 워크플로가 어느 날 쿠키 정책 문구를 브랜치 이름으로 만들었다.
+        image: libretranslate/libretranslate:v1.9.6
         ports:
           - 5000:5000
         env:
@@ -35,16 +37,38 @@ jobs:
           token: ${{ github.token }}
 
       - name: Wait for LibreTranslate to be ready
+        id: ready
         run: |
+          set -uo pipefail
+
+          # `GET /languages`가 200이어도 번역 모델은 아직 올라오지 않았을 수 있다 — 그 상태에서
+          # 번역을 쏘면 쿠키 정책 같은 엉뚱한 문장이 돌아온다 (#208). 그래서 준비 판정은 실제
+          # 번역 프로브로 한다: 짧은 한글을 보내 그럴듯한 영문이 오는지 본다.
+          PAYLOAD=$(jq -n '{q: "테스트", source: "ko", target: "en", format: "text"}')
+
           echo "LibreTranslate 모델 로딩 대기 중..."
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:5000/languages > /dev/null 2>&1; then
-              echo "LibreTranslate 준비 완료"
+            OUT=$(curl -sf --max-time 15 -X POST http://localhost:5000/translate \
+                  -H "Content-Type: application/json" -d "$PAYLOAD" 2>/dev/null \
+                  | jq -r '.translatedText // empty' || true)
+            # 영문자가 있고 · 한글이 남지 않았고 · 짧고 · 보일러플레이트가 아니면 준비된 것이다
+            # **뜻이 맞는지까지 본다** (#211). 예전 조건은 "영문자가 있고 · 한글이 없고 ·
+            # 짧고 · 보일러플레이트가 아니면"이었는데, 모델이 덜 올라온 상태의 응답인
+            # `테스트 → T/T`가 그 넷을 전부 만족해 준비 완료로 통과했다. 그 뒤 본 번역이
+            # 망가진 결과를 내고, 아래 가드가 그것을 거부해 한글 원문이 슬러그로 갔다.
+            # `테스트`의 영어는 `test`다 — 그 낱말이 나오는지가 모델이 실제로 올라왔다는
+            # 유일한 증거다.
+            if [ -n "$OUT" ] && printf '%s' "$OUT" | grep -qi 'test' \
+               && ! printf '%s' "$OUT" | grep -qP '[\x{AC00}-\x{D7AF}]' \
+               && [ "$(printf '%s' "$OUT" | wc -m)" -le 20 ]; then
+              echo "LibreTranslate 준비 완료 (프로브: 테스트 → $OUT)"
+              echo "ready=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             sleep 5
           done
-          echo "::warning::LibreTranslate 시작 시간 초과 — 번역 없이 진행합니다"
+          echo "::warning::LibreTranslate 준비 시간 초과 — 번역 없이 진행합니다"
+          echo "ready=false" >> "$GITHUB_OUTPUT"
 
       - name: Parse title and determine prefix
         id: parse
@@ -60,14 +84,13 @@ jobs:
 
           # 템플릿이 주는 네 가지가 정본이고, 나머지는 손으로 칠 때를 위한 별칭이다.
           TAG_KNOWN=true
+          # 유형은 네 가지가 전부다 (#238). issue-labeler.yml의 표와 같아야 한다.
           case "$TAG" in
-            feat)          PREFIX="feat" ;;
-            fix|bug)       PREFIX="fix" ;;
-            refactor)      PREFIX="refactor" ;;
-            chore)         PREFIX="chore" ;;
-            docs)          PREFIX="docs" ;;
-            test)          PREFIX="test" ;;
-            cicd)          PREFIX="cicd" ;;
+            feat)                 PREFIX="feat" ;;
+            fix|bug)              PREFIX="fix" ;;
+            refactor)             PREFIX="refactor" ;;
+            chore|cicd|docs|test|style|design|init|rename|remove|hotfix)
+                                  PREFIX="chore" ;;
             *)
               # 태그가 없으면 feat으로 떨어진다. 브랜치를 아예 안 만드는 쪽은 택하지 않았다 —
               # 이 워크플로는 opened에만 돌아서, 제목을 고쳐도 다시 만들어 주지 않는다.
@@ -95,10 +118,17 @@ jobs:
         id: translate
         env:
           CLEAN_TITLE: ${{ steps.parse.outputs.clean_title }}
+          READY: ${{ steps.ready.outputs.ready }}
         run: |
           set -uo pipefail
 
-          if printf '%s' "$CLEAN_TITLE" | grep -qP '[\x{AC00}-\x{D7AF}]'; then
+          if ! printf '%s' "$CLEAN_TITLE" | grep -qP '[\x{AC00}-\x{D7AF}]'; then
+            echo "영문 제목 — 번역 불필요"
+            TRANSLATED="$CLEAN_TITLE"
+          elif [ "$READY" != "true" ]; then
+            echo "::warning::번역기가 준비되지 않아 원본 제목을 사용합니다"
+            TRANSLATED="$CLEAN_TITLE"
+          else
             echo "한글 감지 — LibreTranslate로 번역 시도"
 
             # 페이로드를 jq로 만든다. 문자열 연결로 만들면 제목의 따옴표 하나에 JSON이
@@ -110,15 +140,28 @@ jobs:
               -H "Content-Type: application/json" -d "$PAYLOAD" \
               | jq -r '.translatedText // empty')
 
-            if [ -n "$TRANSLATED" ]; then
-              echo "번역 결과: $TRANSLATED"
-            else
-              echo "::warning::번역 실패 — 원본 제목을 사용합니다"
+            # 비어 있지만 않으면 받던 것이 #208의 두 번째 원인이다 — 제목 40자에 200자짜리
+            # 쿠키 정책이 와도 그대로 슬러그가 됐다. 결과가 번역으로 보일 때만 받는다:
+            # 원문의 3배(최소 20자·최대 80자) 안이고 · 한글이 남지 않았고 · 보일러플레이트가 아니다.
+            SRC_LEN=$(printf '%s' "$CLEAN_TITLE" | wc -m)
+            OUT_LEN=$(printf '%s' "$TRANSLATED" | wc -m)
+            LIMIT=$(( SRC_LEN * 3 )); [ "$LIMIT" -lt 20 ] && LIMIT=20; [ "$LIMIT" -gt 80 ] && LIMIT=80
+
+            if [ -z "$TRANSLATED" ]; then
+              echo "::warning::번역 실패(빈 응답) — 원본 제목을 사용합니다"
               TRANSLATED="$CLEAN_TITLE"
+            elif [ "$OUT_LEN" -gt "$LIMIT" ]; then
+              echo "::warning::번역 결과가 원문에 비해 지나치게 깁니다(${OUT_LEN}자 > ${LIMIT}자) — 원본 제목을 사용합니다: $TRANSLATED"
+              TRANSLATED="$CLEAN_TITLE"
+            elif printf '%s' "$TRANSLATED" | grep -qiE 'cookie|browsing experience|consent|privacy policy|terms of service'; then
+              echo "::warning::번역 결과가 보일러플레이트입니다 — 원본 제목을 사용합니다: $TRANSLATED"
+              TRANSLATED="$CLEAN_TITLE"
+            elif printf '%s' "$TRANSLATED" | grep -qP '[\x{AC00}-\x{D7AF}]'; then
+              echo "::warning::번역 결과에 한글이 남아 있습니다 — 원본 제목을 사용합니다: $TRANSLATED"
+              TRANSLATED="$CLEAN_TITLE"
+            else
+              echo "번역 결과: $TRANSLATED"
             fi
-          else
-            echo "영문 제목 — 번역 불필요"
-            TRANSLATED="$CLEAN_TITLE"
           fi
 
           {
@@ -142,10 +185,19 @@ jobs:
                  | sed 's/[^a-z0-9 -]//g; s/ /-/g; s/--*/-/g; s/^-//; s/-$//' \
                  | cut -c1-50 | sed 's/-$//')
 
-          if [ -n "$SLUG" ]; then
+          # 라틴 글자가 세 자 미만이면 슬러그로 쓸 수 없다 (#211). 번역이 거부되면 한글
+          # 원문이 그대로 오는데 위 규칙이 한글을 지우므로 찌꺼기만 남는다 —
+          # "…대기 3일" → `3`, "…/s/{token} 착지 화면" → `stoken`. 비어 있지 않다는 것만
+          # 보면 그 찌꺼기가 브랜치 이름이 되고, 브랜치 목록에서 무슨 작업인지 알 수 없다.
+          SLUG_LETTERS=$(printf '%s' "$SLUG" | tr -cd 'a-z' | wc -c)
+
+          if [ -n "$SLUG" ] && [ "$SLUG_LETTERS" -ge 3 ]; then
             BRANCH_NAME="${PREFIX}/#${ISSUE_NUMBER}-${SLUG}"
           else
-            BRANCH_NAME="${PREFIX}/#${ISSUE_NUMBER}"
+            # 번역이 거부됐거나 원문이 전부 한글이면 슬러그가 빈다. `{type}/#N`으로 떨어지면
+            # pr-guard가 요구하는 `{type}/#N-…` 형식에 어긋나 PR이 실패하므로 번호로 슬러그를 채운다.
+            BRANCH_NAME="${PREFIX}/#${ISSUE_NUMBER}-issue-${ISSUE_NUMBER}"
+            echo "::warning::쓸 만한 영문 슬러그를 만들지 못해(슬러그: '${SLUG}') ${BRANCH_NAME} 으로 만듭니다 — 필요하면 브랜치를 지우고 직접 만드세요"
           fi
 
           # 이미 있으면 만들지 않는다. 이슈를 닫았다 다시 열거나 워크플로를 재실행하면

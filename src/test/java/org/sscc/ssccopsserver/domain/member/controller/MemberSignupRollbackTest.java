@@ -6,27 +6,21 @@ import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
-import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 가입이 도중에 실패하면 mbr과 이력이 함께 사라져야 한다는 것만 확인한다.
@@ -38,7 +32,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryReposi
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MemberSignupRollbackTest.StubJwtDecoderConfig.class)
+@Import(TestJwtDecoderConfig.class)
 class MemberSignupRollbackTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
@@ -56,7 +50,7 @@ class MemberSignupRollbackTest {
 
         mockMvc.perform(
                         post("/v1/members/signup")
-                                .header("Authorization", "Bearer any-token")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID)
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(
                                         """
@@ -74,24 +68,5 @@ class MemberSignupRollbackTest {
         assertThat(memberRepository.findByAuthUserId(AUTH_USER_ID)).isEmpty();
         assertThat(memberRepository.count()).isZero();
         assertThat(memberGradeHistoryRepository.count()).isZero();
-    }
-
-    @TestConfiguration
-    static class StubJwtDecoderConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", "test@sscc.org")
-                            .claim("user_metadata", Map.of("full_name", "김도현"))
-                            .claim("app_metadata", Map.of("provider", "google"))
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
     }
 }

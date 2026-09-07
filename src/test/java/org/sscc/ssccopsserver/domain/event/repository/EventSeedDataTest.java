@@ -8,11 +8,10 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.event.entity.EventClassificationEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
+import org.sscc.ssccopsserver.support.SeedScript;
 
 /*
  * data.sql이 넣는 행사 기준 데이터 검증 (ssccops#134 · CodeSeedDataTest와 같은 태도).
@@ -63,7 +62,7 @@ class EventSeedDataTest {
         long classifications = eventClassificationRepository.count();
         long authorities = authorityRepository.count();
 
-        new ResourceDatabasePopulator(new ClassPathResource("data.sql")).execute(dataSource);
+        SeedScript.populator().execute(dataSource);
 
         assertThat(eventClassificationRepository.count()).isEqualTo(classifications);
         assertThat(authorityRepository.count()).isEqualTo(authorities);

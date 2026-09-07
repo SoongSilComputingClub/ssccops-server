@@ -16,27 +16,101 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
   **주의**: `.env`와 `docker-compose.yml`의 변수 이름에 하이픈(`-`)을 쓰지 않는다. Compose의 변수 치환은 셸 파라미터 확장 문법을 따르므로 `${db-username}`은 이름이 아니라 "`db`가 없으면 문자열 `username`"으로 읽힌다 — 실제로 이 때문에 `.env` 값이 통째로 무시된 채 `POSTGRES_USER=username`·`POSTGRES_DB=name:-ssccops_server_db`로 DB가 만들어지고 앱이 인증 실패로 죽는 일이 있었다(#59). Spring 프로퍼티 키(`db-username`)를 환경변수 이름으로 그대로 쓸 수 없다.
 
-  **로컬은 기동마다 데이터가 사라진다**(`ddl-auto: create-drop`). 그래서 회원도 매번 새로 가입해야 하고, 첫 가입자가 최고관리자가 된다(#71). 기획안 시스템 폼(`PROPOSAL`)은 명의로 쓸 회원이 있어야 세워지므로 **가입하기 전에는 없는 것이 정상**이며, 가입하는 순간 세워진다(#184). 기동 로그에 `회원이 없어 기획안 시스템 폼(PROPOSAL) 시드를 건너뛴다`가 보이면 고장이 아니라 아직 아무도 가입하지 않은 상태다. 가입한 뒤에도 폼이 없다면 그때가 진짜 문제이니 `ProposalFormSeeder`의 `log.error`를 찾을 것.
-- 프로필: `local`(PostgreSQL, OTel 비활성, ddl-auto create-drop) / `dev`(ddl-auto update — 이유는 아래) / `prod`(env 변수 주입, ddl-auto update — 정식 버전 전까지 한시적, 이유는 아래, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create — 테스트 실행 시 자동 적용). **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 모든 테스트 컨텍스트가 `testdb` 하나를 공유하는데 `create-drop`은 컨텍스트가 닫힐 때 스키마를 지워, 테스트 컨텍스트 캐시가 evict 하는 순간 남은 테스트가 "Table MBR not found"로 떨어진다.
+  **로컬은 `ddl-auto: update`이고 Flyway가 함께 돈다**(ssccops#213 — 이 줄은 `create-drop`이라고 적혀 있었으나 `application-local.yaml`은 오래전부터 `update`다). 그래서 DB를 새로 만들 때만 회원이 비고, 그때 첫 가입자가 최고관리자가 된다(#71). 기획안 시스템 폼(`PROPOSAL`)은 명의로 쓸 회원이 있어야 세워지므로 **가입하기 전에는 없는 것이 정상**이며, 가입하는 순간 세워진다(#184). 기동 로그에 `회원이 없어 기획안 시스템 폼(PROPOSAL) 시드를 건너뛴다`가 보이면 고장이 아니라 아직 아무도 가입하지 않은 상태다. 가입한 뒤에도 폼이 없다면 그때가 진짜 문제이니 `ProposalFormSeeder`의 `log.error`를 찾을 것.
+- 프로필: `local`(PostgreSQL, OTel 비활성, **Flyway + ddl-auto update** — 이유는 아래) / `dev`(**Flyway + ddl-auto validate**) / `prod`(env 변수 주입, **Flyway + ddl-auto validate**, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create, **Flyway 꺼짐** — 이유는 아래). 테스트 인증은 [ADR-0009](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0009-standardize-test-jwt-decoder-and-share-context.md)의 공용 JWT 규약을 쓴다. **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 고정 Clock·독립 DB·`@MockitoBean`으로 갈린 컨텍스트도 `testdb`를 공유하므로, 하나가 닫힐 때 스키마를 지우면 남은 테스트가 "Table MBR not found"로 떨어질 수 있다.
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.
 
 **주의**: checkstyle의 `ImportOrder`는 `java, javax, jakarta, org, net, com, *, lombok` 그룹 순서를 엄격히 검사한다. import를 추가/이동한 뒤 checkstyle이 실패하면 순서를 수동으로 고치지 말고 `./gradlew spotlessApply`로 자동 정렬할 것 (Spotless의 `importOrder` 설정이 checkstyle 규칙과 동일하게 맞춰져 있음).
 
-**주의**: `prod`는 `ddl-auto: none`이 **아니라 `update`다** — 정식 버전 전까지의 한시적 결정이다. `none`이던 동안에는 엔티티가 늘 때마다 배포 전에 `CREATE TABLE`·`CREATE INDEX`를 사람이 먼저 실행해야 했고, 빠뜨리면 배포가 아니라 첫 요청에서 터졌다. 스키마가 아직 이슈마다 바뀌는 단계라 그 수동 단계 자체가 실질적인 배포 실패 원인이었다.
+**주의**: `dev`·`prod`는 이제 **`ddl-auto: validate`**이며 스키마는 Flyway가 만든다(ssccops#213 · 아래 절). `validate`인 것은 엔티티와 실제 스키마가 어긋나면 **부팅을 실패시키기 위해서**다 — ssccops#209는 값이 든 옛 컬럼 옆에서 빈 새 컬럼을 읽으며 정상 부팅했고 그래서 아무도 몰랐다. 그전의 `update`는 "추가만 자동, 삭제·리네임·타입 변경은 수동 `ALTER`"였는데 그 수동 단계를 아무도 강제하지 않아 세 번 터졌다(ssccops#209 승인 마비 · ssccops#212 공유 링크 · #224 회의 안건 — 셋 다 리네임이 '새 컬럼 추가'로 처리된 경우다).
 
-그래서 **추가는 자동이 됐지만 나머지는 그대로 수동이다** — `update`는 새 테이블·컬럼·인덱스만 반영하고 **컬럼 삭제·이름 변경·타입 변경·널 허용 변경은 반영하지 않는다**. 그런 변경은 여전히 배포 전에 직접 실행해야 한다: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`, `mbr.stdnt_no`를 nullable로 바꿨다면(#21, 졸업 회원 가입) `ALTER TABLE mbr ALTER COLUMN stdnt_no DROP NOT NULL;`. **`prod`에는 dev의 탈출구가 없다** — dev는 드리프트가 쌓이면 DB를 통째로 재생성하면 되지만 prod에는 데이터가 있다. 마이그레이션 도구(Flyway/Liquibase)는 정식 버전 시점에 넣고 그때 `none`으로 되돌린다.
+**이제 이슈 본문에 `ALTER`를 적어 두는 관행은 없다.** 스키마를 바꾸면 마이그레이션 파일을 함께 쓴다 — 빠뜨리면 dev 배포가 `validate`에서 막히고, 그것이 의도한 동작이다. 예전에 대기 중이던 `ALTER`(#224의 `mtg_dtl`·`form_rspns_rvw_hstry` 리네임)는 2026-09-07에 dev·prod 양쪽에 적용했고, 그 정리 뒤에 뜬 덤프가 baseline이다.
 
-**배포 전 실행 대기 중인 `ALTER`** (#224 · ssccops#159 · `dev`·`prod` 각각에서, 배포보다 **먼저**):
+**주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — 지금은 `prod`도 `update`라 두 환경의 제약이 같다. **그 트레이드오프는 이제 없다** — Flyway가 들어와 `dev`·`prod` 모두 `validate`이며(ssccops#213) 리네임·삭제도 마이그레이션 파일로 나간다. 아래 문단은 `update`이던 시절의 기록이다. **`ddl-auto: update`로도 근본 원인은 해결되지 않았다** — 실제로는 부팅 중 Hibernate가 EntityManagerFactory(당시 엔티티 26종 메타모델)를 만드는 도중 컨테이너가 OOM으로 죽고 있었다(`exit 137`, ssccops-server#107). 그때는 `Dockerfile`의 `ENTRYPOINT`에 JVM 메모리 플래그를 명시해 막았지만, **배포가 Render 무료 티어(512MB)에서 Coolify(13.6GB)로 옮겨오며 그 제약이 사라져 플래그도 걷어냈다**(#202). 지금은 JVM 기본값에 맡긴다 — 엔티티는 39종으로 늘었지만 메모리 여유가 그보다 훨씬 크다. **나중에 컨테이너 메모리를 좁게 제한하게 되면 이 절을 다시 볼 것** (`exit 137`이 재발하면 힙 밖 메모리부터 의심한다).
 
-```sql
-ALTER TABLE mtg_dtl RENAME COLUMN prcs_se_cd TO agnd_prcs_se_cd;
-ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
+## 스키마 변경 — Flyway가 한다 (ssccops#213)
+
+**스키마를 바꾸면 마이그레이션 파일을 함께 쓴다.** `src/main/resources/db/migration/`에
+`V{다음 번호}__{무엇을 하는지}.sql`로 더한다. 엔티티만 고치고 파일을 빠뜨리면 `dev` 배포가
+`ddl-auto: validate`에서 막힌다 — **그것이 이 도구를 들인 이유다.**
+
+그전에는 "추가는 `ddl-auto: update`가 자동, 삭제·리네임·타입 변경은 이슈 본문에 적어 둔 수동
+`ALTER`"였고, 그 `ALTER`를 아무도 실행을 강제하지 않아 세 번 터졌다.
+
+| | 무엇이 |
+|---|---|
+| ssccops#209 | prod에서 승인 필요 하위 업무를 **아무도** 승인·반려 못 함 (SUPER도) |
+| ssccops#212 | 공유 링크 대상 구분 컬럼 |
+| #224 | 회의 안건 처리 상태 — prod에서 **조용히 빈 값이었다** |
+
+셋 다 같은 경로다. `update`는 리네임을 **새 컬럼 추가**로 처리해 값이 든 옛 컬럼 옆에 빈 새
+컬럼을 남기고, 앱은 새 컬럼만 읽는다. 발현이 머지가 아니라 **배포**라 리뷰에서 잡히지 않았다.
+
+### 프로필별로 다른 이유
+
+| 프로필 | Flyway | `ddl-auto` | 왜 |
+|---|---|---|---|
+| `dev`·`prod` | 켜짐 | **`validate`** | 어긋나면 부팅을 실패시킨다. ssccops#209가 정상 부팅했던 것이 문제였다 |
+| `local` | 켜짐 | `update` | 개발 편의. 대신 로컬과 배포본이 다르게 자랄 수 있어, 마이그레이션을 빠뜨리면 dev에서 걸린다 |
+| `test` | **꺼짐** | `create` | 아래 |
+
+**`test`가 예외인 이유**는 테스트가 H2 인메모리에서 돌고 baseline이 prod `pg_dump` 결과라
+H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestamp with time zone` · 따옴표 식별자).
+전면 Testcontainers로 옮기는 안은 기각했다 — #103이 스프링 컨텍스트를 58개에서 25개로 줄여 놓은
+이득을 반납하고, 무엇보다 이 테스트들이 공용 `testdb` 하나를 공유하며 '`mbr`이 비어 있다'
+(최초 가입자 부트스트랩 #71) 같은 전제를 `ddl-auto: create`의 매 컨텍스트 스키마 재생성에
+기대고 있어 공유 PostgreSQL로는 성립하지 않는다.
+
+대신 **마이그레이션 자체는 `FlywayMigrationValidateTest`가 Testcontainers PostgreSQL에서
+검증한다** — 빈 DB에 V1부터 전부 적용하고 엔티티 62종에 대해 `validate`가 통과하는지 본다.
+이 이슈가 막으려는 것(마이그레이션이 dev 배포에서 처음 검증되는 것)은 그 테스트가 막는다.
+**로컬에서 `./gradlew test`를 돌리려면 Docker가 필요하다** — 그 한 클래스 때문이다.
+
+### 시드는 마이그레이션 파일 한 벌이다
+
+옛 `data.sql`은 **삭제됐고** `V3__seed_reference_data.sql`이 그것을 그대로 옮겨 담았다
+(`spring.sql.init`도 함께 걷어냈다 — 두 벌이 동시에 도는 상태를 만들지 않는다).
+
+- `dev`·`prod`·`local`: Flyway가 넣는다.
+- `test`: Flyway가 꺼져 있으므로 `spring.sql.init.data-locations`가 **같은 파일을** 가리킨다.
+  사본을 테스트 리소스에 두지 않은 것은 시드가 두 벌이 되어 갈리기 때문이다.
+
+`WHERE NOT EXISTS` 멱등성은 그대로다. 버전 마이그레이션이라 한 번만 돌지만 **baseline이 이미
+시드된 prod 덤프라 이 파일이 처음 도는 DB에도 행이 이미 있다** — 가드가 없으면 중복 키로 깨진다.
+가드의 원래 뜻(운영진이 화면에서 고친 값을 배포가 되돌리지 않는다)도 함께 산다:
+**값을 고칠 때 `UPDATE`로 덮어쓰지 말 것.** 기준 코드를 더할 때도 새 마이그레이션 파일이다 —
+매 기동 반영되던 편의는 사라지지만 무엇이 언제 들어갔는지가 남고, #241이 터진 자리가 그 부재였다.
+
+기획안 시스템 폼(`sys_form_cd = 'PROPOSAL'`, #173)은 여기 없다 — 자바(`ProposalFormSeeder`)가
+세운다. 문항 구성이 JSONB라 한 벌의 SQL로 H2·PostgreSQL을 함께 만족시킬 수 없고, `qitemId`가
+`SystemFormContract`·이관과 공유하는 계약이라 SQL 문자열로 두면 선언과 시드가 두 벌이 된다.
+
+### 마이그레이션 파일
+
+| | |
+|---|---|
+| `V1__baseline.sql` | prod 현재 스키마(2026-09-07). `pg_dump --schema-only`를 걸러 담았다 — 무엇을 왜 뺐는지는 파일 상단에 있다 |
+| `V2__create_share_link.sql` | `shr_lnk`. prod에는 없고 dev에는 있어 **두 환경에서 결과가 달라야 하는 유일한 마이그레이션**이다 |
+| `V3__seed_reference_data.sql` | 기준 코드·기준 데이터 |
+| `V4__drop_orphan_columns.sql` | `update`가 남긴 고아 컬럼 넷. dev·prod에서는 이미 정리돼 아무 일도 안 하며, 몇 달 자란 **로컬 DB**를 위해 남는다 |
+
+**baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
+스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=local   --spring.jpa.properties.jakarta.persistence.schema-generation.scripts.action=create   --spring.jpa.properties.jakarta.persistence.schema-generation.scripts.create-target=build/entity-schema.sql   --spring.jpa.properties.jakarta.persistence.schema-generation.create-source=metadata'
 ```
 
-두 테이블이 `prcs_se_cd`라는 **같은 컬럼명을 다른 값 집합으로** 쓰고 있었다(회의 안건은 `PENDING`·`HOLD`·`CLOSED`, 폼 응답 검토는 `SUBMIT`·`ACCEPT`·`REQUEST_CHANGES`·`REJECT`). 데이터사전의 표준코드는 **코드그룹ID = 컬럼ID**로 묶이므로 한 그룹에 두 어휘가 섞이고, 실제로 폼 검토 쪽 4종은 넣을 그룹이 없어 등재되지 못한 채 남아 있었다(#126이 그 항목만 넘기고 닫힌 이유다). **한쪽만 고치지 않은 것이 요점이다** — 폼 쪽에만 한정어를 붙이면 일반명 `prcs_se_cd`를 회의 안건이 계속 점유해, 다음에 '처리 구분'이 필요한 테이블에서 같은 충돌이 그대로 반복된다. 이제 `prcs_se_cd`는 어느 테이블의 것도 아니다. **값 집합은 바뀌지 않았고**, API 계약이 움직인 것은 폼 검토 이력 응답의 `prcsSeCd` → `rvwPrcsSeCd` 하나뿐이다(회의 안건 응답은 원래 `processStatus`라 컬럼명과 무관하다 — 그래서 웹과 동시 배포가 필요한 것도 폼 쪽 하나다).
+### 규칙
 
-**주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — 지금은 `prod`도 `update`라 두 환경의 제약이 같다. 리네임·삭제가 필요한 변경을 만들면 dev DB에도 수동 `ALTER`가 필요할 수 있다(지금은 개발 단계라 드리프트가 쌓이면 통째로 재생성해도 되지만, 늘어날수록 이 트레이드오프가 부담이 된다 — Flyway/Liquibase 도입을 그때 검토한다). **`ddl-auto: update`로도 근본 원인은 해결되지 않았다** — 실제로는 부팅 중 Hibernate가 EntityManagerFactory(당시 엔티티 26종 메타모델)를 만드는 도중 컨테이너가 OOM으로 죽고 있었다(`exit 137`, ssccops-server#107). 그때는 `Dockerfile`의 `ENTRYPOINT`에 JVM 메모리 플래그를 명시해 막았지만, **배포가 Render 무료 티어(512MB)에서 Coolify(13.6GB)로 옮겨오며 그 제약이 사라져 플래그도 걷어냈다**(#202). 지금은 JVM 기본값에 맡긴다 — 엔티티는 39종으로 늘었지만 메모리 여유가 그보다 훨씬 크다. **나중에 컨테이너 메모리를 좁게 제한하게 되면 이 절을 다시 볼 것** (`exit 137`이 재발하면 힙 밖 메모리부터 의심한다).
+- **이미 적용된 마이그레이션 파일을 고치지 않는다.** Flyway가 체크섬으로 검증해 부팅이 실패한다.
+  잘못된 것은 새 마이그레이션으로 되돌린다.
+- **`baseline-on-migrate: true`**는 이미 테이블이 있는 DB(dev·prod)에 Flyway를 처음 붙이기
+  위한 것이다. `baseline-version: 1`이 V1을 '적용됨'으로 표시해 V2부터 돌게 한다 — V1의 내용이
+  곧 그 DB의 현재 모습이므로 맞다. 빈 DB에서는 개입하지 않고 V1부터 전부 돈다.
+- **머지는 곧 dev 배포다**(Coolify가 `develop` 푸시를 자동 배포한다, #202). 마이그레이션이
+  깨지면 dev가 즉시 죽으므로 `FlywayMigrationValidateTest`를 통과시키고 머지한다.
 
 ## 결정 기록 (ADR)
 
@@ -58,7 +132,8 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
 - `domain/example` — 위 6계층 구조를 보여주는 참고용 템플릿 도메인(실제 기능 아님). 새 도메인을 추가할 때 이 구조를 복사해서 시작하면 된다.
 - `global/config/R2Config` — Cloudflare R2(S3 호환 오브젝트 스토리지, ssccops#113) 연결용 `S3Client` 빈. R2 전용 SDK가 없어 AWS SDK v2의 S3 모듈을 그대로 쓰되, 리전은 R2가 요구하는 고정값 `"auto"`이고 `forcePathStyle(true)`가 필요하다(꺼져 있으면 R2가 모르는 가상 호스트 이름으로 요청이 나가 연결 자체가 실패한다). 같은 설정으로 `S3Presigner` 빈도 함께 만든다(#161 — 프리사이너에는 `forcePathStyle` 단축 설정이 없어 `S3Configuration.pathStyleAccessEnabled(true)`로 켠다). 두 빈의 엔드포인트·리전이 갈리면 서명은 성공하는데 R2가 거절하는 URL이 나가고, 그 실패는 서버 로그가 아니라 브라우저에서만 보인다.
   - **첫 사용처는 행사 본문 이미지 업로드(`POST /v1/events/{eventId}/images`, #161 · wave2 D6)이며 서버는 파일 바이트를 다루지 않는다** — presigned PUT URL(유효기간 10분)을 발급하고 운영 웹이 R2로 직접 PUT 한다. 멀티파트 업로드 엔드포인트를 만들지 말 것: 서버가 파일 바이트를 받아 버퍼링하면 동시 업로드가 몰릴 때 메모리가 요청 수에 비례해 늘고, 그 비용은 컨테이너를 키운다고 사라지지 않는다(예전 512MB 시절에는 이미지 몇 장으로도 죽었다 · #107). presigned URL은 그 부담 자체를 R2로 넘긴다. 키는 `events/{eventId}/{uuid}.{ext}`이고 확장자는 원본 파일명이 아니라 허용 목록(`ImageFileType`(`domain/file/code`) — png·jpeg·webp·gif, SVG는 스크립트를 담을 수 있어 뺐다)의 값으로 붙인다. **요청이 신고하는 것은 확장자(`fileExt`)와 크기(`fileSize`)뿐이고 형식은 서버가 정한다**(#210 · 학술 인증사진 #137과 같은 계약). 앞의 점·대소문자·앞뒤 공백은 서버가 정규화하므로 `jpg`·`.JPG`·`jpeg`가 모두 같은 형식이고, 허용 목록 밖이면 400 `UNSUPPORTED_IMAGE_TYPE`이다 — 그 코드의 뜻은 이제 "확장자를 모른다" 하나다. **`contentType`을 요청으로 받지 않는다**: 예전에는 웹이 브라우저의 `File.type`을 실어 보내고 서버가 확장자와 교차 검증했는데, 그 값은 브라우저·OS·파일에 따라 비거나(`""`) 비표준(`image/jpg`)이라 멀쩡한 업로드가 통째로 실패했다(ssccops#157). 서버가 바이트를 보지 않는 이상 두 값 모두 파일의 정체가 아니라 요청이 한 신고라 그 교차 검증은 애초에 지킬 것을 지키지도 못했다 — 판정에 쓰는 값이 하나뿐이면 어긋날 수 없다. 대신 **서명에 넣은 `contentType`을 응답에 실어 주고 웹은 그것을 그대로 PUT 헤더에 쓴다**(파일에서 다시 읽으면 서명과 어긋나고, 그 실패는 브라우저에서만 보인다). 크기 상한 10MB(413 `IMAGE_TOO_LARGE`)는 **요청이 신고한 크기**에 대한 판정이라 방어선이 아니라 안내이며 실제 강제는 버킷 정책의 몫이다. **읽기는 우리 도메인의 영구 리다이렉트 주소다**(#208 · `GET /public/v1/events/{eventId}/images/{fileName}` → 302 + 서명된 R2 GET URL, TTL 15분). 버킷은 비공개이며 그래야 하는 이유는 같은 버킷에 학술 출석 인증사진이 들어 있기 때문이다(ssccops#156 — R2의 공개 접근은 버킷 단위라 접두사로 가를 수 없어, 공개하는 순간 얼굴이 찍힌 사진이 URL만 알면 열린다). **서명 URL을 저장하지 않는 것이 이 구조의 요점이다** — 본문 마크다운에는 URL이 문자열로 굳는데 서명은 만료되므로, 저장하면 시간이 지난 본문이 깨지고 편집 화면이 만료된 주소를 다시 저장한다. 발급 응답의 `imageUrl`(옛 `publicUrl`)이 그 영구 주소이고, 조립에 쓰는 값은 버킷의 도메인이 아니라 **API 자신의 주소**(`app.public-base-url` · `global/config/AppPublicBaseUrl`)이며 **없거나 스킴이 빠지면 부팅이 실패한다**(#216). 처음에는 조립 시점에 거절하고 부팅은 시켰는데(`R2PublicBaseUrl`에서 물려받은 판단이다 — 그 값은 한 기능만 쓰므로 부팅을 세우면 관계없는 기능까지 죽었다), 이 값은 **배포 그 자체의 속성**이라 비어 있을 정당한 이유가 어느 환경에도 없다. 실제로 dev에 값을 넣지 않은 채 배포돼 몇 시간 뒤 발급 500으로 발견됐고(ssccops#157), 던진 `IllegalStateException`은 전용 핸들러가 없어 `INTERNAL_SERVER_ERROR`로만 보여 화면에서는 설정 문제라는 사실이 닿지 않았다. dev·prod 설정에 빈 기본값을 두지 않는 것도 같은 이유다(`${DEV_APP_PUBLIC_BASE_URL}` — 환경변수가 아예 없으면 스프링이 그 이름을 짚는다). **리다이렉트일 뿐 프록시가 아니다**: 바이트는 R2에서 브라우저로 직접 가고 서버는 `Location`만 내준다. 이 핸들러에 스트림 중계를 더하면 업로드 멀티파트를 만들지 않은 이유(#107)가 읽기 쪽에서 그대로 되살아난다. 파일명은 **우리가 발급한 형태(`{소문자 uuid}.{ext}`)만** 통과하고 키 조립(`events/{eventId}/{fileName}`)은 발급 쪽과 `EventImageLocation` 한 곳을 함께 쓴다 — 같은 버킷에 인증사진이 있으므로 `../`가 낀 파일명이 키가 되면 그것이 곧 남의 얼굴 사진이다. 게시 여부는 `PublicEventService.requirePublishedEvent`가 공개 상세와 **같은 판정**으로 보고, 미게시 행사·없는 행사는 둘 다 404다. **이미 본문에 박힌 옛 공개도메인 URL은 되살리지 않는다**(#208 §5) — 그 도메인은 애초에 동작한 적이 없어 지금도 깨진 링크이고, 운영진이 이미지를 다시 올리는 것이 경로다. **DB에 아무것도 남기지 않으므로 서버는 실제로 올라왔는지 모른다**(PUT이 서버를 거치지 않는다) — 고아 오브젝트 정리는 범위 밖이다.
-- `domain/file` — **파일이 버킷의 어디에 있는가**를 아는 유일한 도메인 (#220). 여기 있는 것은 셋뿐이다: `file_rfrnc` 행(`entity/FileReferenceEntity` · `service/FileReferenceService`), 서명(`service/FilePresigner`), 업로드 허용 형식(`code/ImageFileType`).
+- `domain/file` — **파일이 버킷의 어디에 있는가**를 아는 유일한 도메인 (#220). 여기 있는 것은 다섯뿐이다: `file_rfrnc` 행(`entity/FileReferenceEntity` · `service/FileReferenceService`), 서명(`service/FilePresigner`), 업로드 허용 형식(`code/ImageFileType`), 삭제(`service/FileEraser` · #234), 복사(`service/FileCopier` · ssccops#198).
+  - **`FileEraser`는 커밋 뒤에 지우고 `FileCopier`는 트랜잭션 안에서 복사한다.** 방향이 반대로 보이지만 같은 규칙이다 — **잘못된 데이터보다 고아가 낫다.** 삭제는 되돌릴 수 없어 롤백된 변경 뒤에 "DB는 옛 상태인데 파일만 없는" 조합을 남기면 안 되고, 복사는 실패했을 때 그대로 롤백돼야 "본문이 없는 오브젝트를 가리키는 사본"이 커밋되지 않는다(성공한 뒤 DB가 롤백되면 남는 것은 아무도 참조하지 않는 오브젝트, 즉 비용뿐이다). 복사는 **서버 측 `CopyObject`**이며 바이트가 서버를 거치지 않는다 — 내려받아 다시 올리면 멀티파트를 두지 않은 이유(#107)가 복제 경로에서 되살아난다. **원본이 없는 것은 실패가 아니다**(`false` 반환): 서버는 PUT을 관측하지 않아 본문의 참조가 실물을 가리킨다는 보장이 애초에 없고, 원본에서 이미 깨진 이미지가 행사 복제를 통째로 막으면 운영자는 그것을 본문에서 찾아 지우기 전까지 아무것도 못 한다.
   - **`file_rfrnc`는 학술 전용이 아니다.** #137이 회차 출석 인증사진용으로 만들었고 `sesn_id` NOT NULL + UNIQUE가 도메인을 가르고 있었는데, 파일이 붙는 자리가 늘 때마다 테이블을 새로 만들지 않으려고 소유자를 **`trgt_se_cd`(대상_구분_코드) + `trgt_id`(대상_ID)** 두 값으로 열었다. 전제는 #200이 이미 깔아 두었다 — 저장 값이 조립된 URL이 아니라 **오브젝트 키**라 도메인 중립이다. 대상을 늘리는 일은 `FileTargetType`에 한 줄과 표준코드 시트에 한 줄이며, 지금 코드값은 `SESSION` 하나다.
   - **FK를 걸지 않는다.** 대상 테이블이 여럿이라 걸 수 없고, 배타적 FK(`sesn_id`·`event_id`·… + CHECK)로 가면 대상이 하나 늘 때마다 스키마와 데이터사전이 바뀐다(`ddl-auto: update`가 nullable 전환을 반영하지 않아 그때마다 dev·prod 수동 ALTER가 붙는다). 대가는 고아 행이고 **정리는 각 도메인의 책임**이다 — 애초에 이 행은 실물을 가리킨다는 보장이 없다(서버가 PUT을 관측하지 않는다).
   - **올라오지 않는 것이 이 도메인의 요점이다.** ① **접근 제어** — "누가 볼 수 있는가"는 도메인마다 다르다(학술 인증사진은 팀원·리더·`ACADEMIC_PROGRAM_MANAGE` · 행사 이미지는 게시된 행사면 익명). `FileReferenceService`에 대상별 분기표를 만들면 그것이 곧 인가 규칙 두 번째 벌이 되고, 두 번째 벌은 화면과 갈린 채로 자란다. ② **읽기 주소 조립** — 학술은 서명 URL을 응답에 직접 싣고 행사는 우리 도메인의 영구 리다이렉트 주소를 본문에 굳힌다. ③ **대상당 몇 건인가** — 회차당 1장은 학술의 규칙이다.
@@ -150,7 +225,8 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
   - 폼 목록(`GET /v1/forms`)은 `qitemCpstCn`을 싣지 않는다(상세·목록 모두 `sysFormCd`·`sysYn`·`qitemVer`는 싣는다 — 상세로 들어가기 전에 잠금 배지를 그릴 수 있어야 한다). 라벨은 `FormEntity`에 컬렉션 연관을 열지 않고 `FormLabelRelationRepository.findAllByFormIdIn`으로 한 번에 모아 오며, 응답 건수는 `FormResponseCount` 집계 프로젝션을 쓴다(폼 1 + 라벨 1 + 집계 1, 총 3회). 상태 필터는 NULL 비교 대신 **전체 상태 집합**을 넘긴다 — 열거형 파라미터에 NULL을 넣고 `:status is null`로 분기하면 Hibernate가 타입을 추론하지 못한다.
   - 라벨 지정 교체는 통째로 지우고 다시 넣지 않고 **차집합만** 움직인다. 같은 `(form_id, form_lbl_id)` 쌍을 한 트랜잭션에서 지웠다 넣으면 Hibernate가 INSERT를 DELETE보다 먼저 흘려보내 UNIQUE 제약에 걸린다.
   - 상태(`form_stts_cd`)를 바꾸는 길은 **`POST /v1/forms/{formId}/status` 하나뿐**이다(#33). `PUT /v1/forms/{formId}`는 본문에 `formSttsCd`가 실려 와도 **무시한다** — 편집 자동 저장(ssccops #63)이 상세 응답을 초안으로 받아 그대로 되돌려 보내므로 그 본문에는 늘 현재 상태가 실려 있고, 받아 쓰면 타이핑 한 번이 접수 상태를 덮어쓴다. 거절하지 않고 무시하는 것은 거절하면 자동 저장이 통째로 멈추기 때문이다. `FormSaveRequest.formSttsCd`는 생성(POST)에서만 쓰인다('바로 접수 시작'). `labelIds` 생략은 **전부 떼기**로 갈린다.
-  - 전이표는 `FormStatusAction`(액션 → 대상 상태 + 허용 진입 상태)이 갖고, 전이 가능 여부와 사전 검증은 `FormEntity.changeStatus`가 던진다 — DRAFT→OPEN·OPEN→CLOSED·CLOSED→OPEN(마감 철회)만 허용하고 나머지는 400 `INVALID_FORM_STATUS_TRANSITION`. 문항 0개인 폼을 여는 것은 400 `FORM_HAS_NO_QUESTION`이며, 이 검증은 `FormEntity.create(..., OPEN)`(바로 접수 시작)에도 같이 걸린다 — 같은 결과(열린 폼)에 도달하는 두 경로가 다른 규칙을 쓰면 안 된다. 상태 전이 이력 테이블은 만들지 않는다(데이터사전에 없음, 감사 로그 #8이 확정되면 그쪽에 얹는다).
+  - 전이표는 `FormStatusAction`(액션 → 대상 상태 + 허용 진입 상태)이 갖고, 전이 가능 여부와 사전 검증은 `FormEntity.changeStatus`가 던진다 — DRAFT→OPEN·OPEN→CLOSED·CLOSED→OPEN(마감 철회)만 허용하고 나머지는 400 `INVALID_FORM_STATUS_TRANSITION`. 문항 0개인 폼을 여는 것은 400 `FORM_HAS_NO_QUESTION`이며, 이 검증은 `FormEntity.create(..., OPEN)`(바로 접수 시작)에도 같이 걸린다 — 같은 결과(열린 폼)에 도달하는 두 경로가 다른 규칙을 쓰면 안 된다. 상태 전이 이력 테이블은 만들지 않는다(데이터사전에 없음).
+  - **익명에게 열린 폼 경로는 `GET /public/v1/forms/{formId}/meta` 하나다**(ssccops#201 · `PublicFormMetaController`). 메신저 크롤러가 공개 폼 링크(`/f/{formId}`)의 OG 카드를 만들 때 쓰며, 실리는 것은 **제목과 첫 페이지 안내 문구(`pageDescCn`)뿐**이다 — 접수 기간·접수 상태·문항은 싣지 않는다(메신저가 카드를 한 번 캐싱하면 갱신하지 않아 시간에 따라 변하는 값을 담으면 마감 뒤에도 "모집 중"이라 말하는 카드가 남는다, ssccops#194). **접수를 연 적 있는 폼(OPEN·CLOSED)만** 200이고 DRAFT·없는 폼은 **둘 다 404 `NOT_FOUND`**다 — 전이표에 DRAFT→CLOSED가 없으므로 "DRAFT가 아닌 것"이 곧 "연 적 있는 것"이며, 판정은 `findByIdAndStatusIn`으로 질의 조건에 넣는다(조회 뒤 거르지 않는다 — `PublicEventServiceImpl`과 같은 태도). 응답자용 공개 폼 조회(`GET /v1/forms/{formId}/public`)는 종전대로 인증이 필요하다. 폼은 토큰을 쓰지 않는다(링크를 널리 뿌리는 것이 목적이라 `formId` 그대로 연다) — 운영 건 공유 링크(ssccops#200)와 갈리는 지점이다.
   - **"지금 이 폼이 응답을 받을 수 있는가"의 유일한 구현은 `service/FormReceiptPolicy`다**(#33). `form_stts_cd == OPEN && (rcpt_bgng_dt == null || now >= rcpt_bgng_dt) && (rcpt_end_dt == null || now <= rcpt_end_dt)`이며 경계는 양쪽 모두 포함, NULL은 '제한 없음'이다. `now`는 주입된 `Clock`(`global/config/ClockConfig`)에서 온다. 공개 폼 응답 제출(#35)·응답 자동 저장(#36)은 이 판정을 다시 구현하지 말고 `isAcceptingResponses(form)`만 호출한다.
   - 응답자용 공개 경로는 `GET /v1/forms/{formId}/public`·`POST /v1/forms/{formId}/responses`(#35)이며 운영자용 `FormController`와 컨트롤러·응답 스키마를 **분리한다**(`PublicFormController`·`PublicFormResponse`) — 응답자에게 `creatrMbrId`·응답 집계·`formSttsCd`를 줄 이유가 없고, 한 응답에 합치면 운영자용 필드가 늘 때마다 공개 링크로 새어 나갈 것이 함께 는다. **'공개'는 누구나 링크를 열 수 있다는 뜻이지 익명 제출이 아니다** — 두 경로 모두 인증이 필요하고 등급 제한은 없다(임시회원도 응답한다, ssccops #61). 접수 불가면 문항을 뺀 200이 아니라 **409 `FORM_NOT_ACCEPTING`**으로 끊는다(DRAFT·CLOSED·기간 전·기간 후를 한 코드로 묶는다) — 문항을 실을지 말지를 DTO 조립의 분기 하나에 맡기면 DRAFT 폼의 문항이 링크만으로 새어 나가는 데 그 분기 하나면 충분하다.
   - 제출된 답의 재검증은 `service/ResponseAnswerValidator`가 갖는다(#35, `QuestionCompositionValidator`의 짝). 유형별 어휘(`CHOICE_TYPES`·`TEXT_TYPES`·`BRANCHABLE_TYPES`)는 두 클래스가 나눠 쓰므로 복제하지 말 것. **분기(`branchMap`)로 건너뛴 페이지의 필수 문항은 필수가 아니다** — 제출된 답으로 웹 `nextTarget()`과 같은 이동을 되짚어 도달한 페이지 집합을 재현하고 그 밖은 필수 검사에서 뺀다(이 규칙이 없으면 분기 폼은 어떤 답으로도 제출되지 않는다). 정규식은 `matches()`가 아니라 `find()`로 본다(웹의 `new RegExp().test()`와 같은 뜻이어야 한다). 빈 값(`""`·`[]`)인 key는 저장하지 않고, 폼에 없는 `qitemId`는 조용히 버리지 않고 400이다. 저장 형태는 다중선택만 배열이고 나머지는 문자열이라, 웹이 배열로 보내는 단일선택은 서버가 벗겨 굳힌다.
@@ -220,6 +296,7 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
     - **폼 복제(`POST /v1/forms/{formId}/duplicate`)는 그대로 남는다.** "이 폼과 똑같은 것 하나 더"는 템플릿과 다른 조작이라 `duplicate`에 "원본이 템플릿인 경우" 분기를 넣지 않았다 — 넣으면 폼 복제 로직이 템플릿을 알아야 하고, 그것이 이 이슈가 피하려던 얽힘이다. 제목 규칙도 갈린다: 복제는 원본 제목 + `(복사본)`이지만 템플릿 → 폼은 요청의 `formTtlNm`이거나 생략 시 템플릿명이다(템플릿명은 폼 제목으로 쓰기에 부적절한 것이 정상이다).
     - 템플릿 수정에는 폼의 문항 식별자 보호(409 `QUESTION_ITEM_IN_USE`)가 없다. 그 규칙이 지키는 것은 `rspns_cn`의 key인데 **템플릿에는 응답이 없다** — 테이블을 나눈 덕에 분기를 두지 않아도 되는 자리다.
 - `domain/academicprogram` — 스터디·프로젝트(학술 활동). 활동은 `event`의 1:1 확장이고(`work`가 `oper`를 확장하는 것과 같은 패턴) 모집·팀원 명단은 행사 도메인의 폼·`event_ptcp`를 재사용한다. 행이 생기는 **유일한 경로는 기획안 폼 응답의 승인 이관**(#150)이며 등록 API는 없다 — 폼 도메인은 `SystemFormApprovalHook`으로 그 사실을 모른 채 부르고, 구현체 `ProposalApprovalHook`이 이쪽에 있다.
+  - **목록의 `mine` 필터는 역할을 함께 받는다** (#215 · `dto/AcademicProgramMineRole`). `mine=true`는 처음부터 **스터디장 OR 기획안 제출자**였는데 응답의 `isLeader`는 리더 본인일 때만 참이라(`AcademicProgramSummaryResponse.of`) 두 값의 기준이 다르다 — 기획안을 내서 활동이 만들어졌지만 스터디장으로 지정되지는 않은 회원은 `mine=true`가 1건 이상을 돌려주면서 `isLeader`는 전부 false이고, "결과가 비어 있지 않으면 스터디장"으로 판정하면 그 사람에게 스터디장 화면이 통째로 열린다(`ssccops-web#224` 초안이 실제로 그렇게 적혔다가 이 코드를 읽고 고쳤다). 그래서 이름이 아니라 값으로 가른다: **`mine=leader`**(리더 본인 · `isLeader`가 참인 집합과 같다) · **`mine=proposer`**(제출자 본인) · **`mine=true`는 종전 그대로 둘 다**(어드민 활동 목록과 lms 대시보드가 이미 그 뜻으로 쓰고 있어 여기서 의미를 좁히면 호출부가 조용히 깨진다). 파라미터 없음·빈 값·`mine=false`는 필터를 걸지 않고(Boolean이던 시절과 같은 뜻이다) 그 밖의 표기는 400 `INVALID_CODE_VALUE`다 — `AcademicProgramSortOrder`와 같은 판단으로, 오타 난 필터로 목록을 받으면 클라이언트는 서버가 걸러 준 줄 알고 그대로 그린다. JPQL 조각(`l.id = :mineId` / `a.proposer.id = :mineId`)은 별칭에 매인 값이라 dto가 아니라 `AcademicProgramRepositoryImpl`에 둔다(정렬 키만 dto가 갖고 경로는 리포지토리가 정하는 것과 같다). **지금은 리더를 바꾸는 경로가 없어**(`AcademicProgramEntity.create`가 언제나 제출자를 리더로 세운다) 세 값의 결과가 실제로는 같지만, `leadr_mbr_id`는 `updatable`이라 위임이 생기면 갈린다 — 회귀 테스트(`AcademicProgramControllerTest`)는 벌크 update로 제출자 ≠ 리더 상태를 직접 만들어 확인한다. 컬럼도 테이블도 늘지 않아 `dev`·`prod` DDL이 필요 없다.
   - **테이블 7개가 #178에서 데이터사전에 등재되며 이름이 전부 바뀌었다.** `#130`~`#150` 동안 학술만 미등재였고 그 사이 `academic_program`·`curriculum_item`·`session`처럼 풀 영단어를 써, 다른 도메인이 `mbr`·`aprv`·`stts`를 쓰는 자리와 어휘가 갈려 있었다. 지금 이름은 `acdm_actv`(학술_활동) · `acdm_actv_type` · `acdm_actv_aprv` · `crclm_artcl`(교육과정_항목) · `sesn`(회차) · `atndc`(출석) · `file_rfrnc`(파일_참조)다. **`file_rfrnc`는 #220에서 학술 전용을 벗어나 공통 테이블이 됐다**(사전의 도메인도 `학술` → `공통`) — 엔티티·리포지토리는 `domain/file`에 있고 학술은 대상 구분 `SESSION`으로 그것을 쓴다. 새 컬럼·테이블을 더할 때 표준단어를 거치지 않고 풀 영단어를 쓰면 이 도메인만 다시 갈라진다 — 사전 원본은 `private-workspace/spec/데이터사전+테이블컬럼정의서_학술_업데이트_본.xlsx`다.
   - **엔티티의 자바 필드명은 사전을 따라가지 않는다.** `@Column(name = "schdl_cn") private String scheduleText`처럼 컬럼은 표준 약어, 자바 필드는 읽히는 영단어이며 이 레포의 다른 도메인도 같다(`goal_cn` ↔ `goalContent`). **반대로 DTO 필드명은 컬럼에서 유도한다** — `schdlCn`·`pscpMinCnt`·`planYmd`·`actlYmd`·`prgrsCn`·`ntcCn`·`sesnSttsCd`·`aprvSeCd`·`atndYn`·`fileUrlAddr`. 이미 접두를 줄여 쓰던 관례(`typeCd`·`sttsCd`·`academicProgramId`)는 그대로 두었다 — 사전 이름을 그대로 옮기면 `acdmActvAcdmActvTypeCd` 같은 것이 나온다. 회차 목록의 `sort` 파라미터도 이 어휘를 쓰므로 `actlYmd`/`-actlYmd`다.
   - **`acdm_actv_aprv_se_cd`가 `aprv_pnt_cd`가 아닌 이유**는 표준코드 시트의 코드그룹 ID가 유일해야 하기 때문이다 — `aprv_stts_cd` 그룹이 이미 하위 업무용으로 있고 값 집합이 다르다(`NOT_REQUIRED`·`REAPPROVAL_REQUIRED`를 포함한다). 그래서 학술 쪽 두 코드에 `acdm_actv_aprv` 접두를 붙였고, '지점(`pnt`)'은 표준단어 '구분(`se`)'으로 바꿨다(`tkcg_se_cd`·`mtg_se_cd` 선례). 승인자 컬럼도 `aprvr_mbr_id` → `autzr_mbr_id`다.
@@ -236,6 +313,17 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
   - **모집 선발은 언제든 다시 저장할 수 있다** (#198 · `POST .../recruitment/select`). 선발은 폼 응답 심사(`ACCEPTED`)와 `event_ptcp` 등록을 한 트랜잭션으로 함께 하므로 **확정이든 대기든 응답은 똑같이 `ACCEPTED`**가 된다 — 그래서 신청자 목록(`GET .../recruitment/applications`)이 참가 상태를 함께 싣는다(`RecruitmentApplicationResponse`의 `eventPtcpId`·`ptcpSttsCd`. **아직 선발 전이면 둘 다 `null`**이고 서버가 "미선발" 같은 대체값을 만들지 않는다). 그 값은 **응답이 아니라 회원으로 잇는다** — 명단의 열쇠가 `(event_id, mbr_id)` UNIQUE라 한 사람의 참가 상태는 하나이며, 응답으로 이으면 재선발로 갱신된 자리가 다른 응답 행에 달려 방금 확정한 신청자가 '미선발'로 보인다(같은 회원의 응답이 여러 줄이면 같은 상태가 함께 실리는 것이 그 대가다). 폼 도메인의 `FormResponseSummaryResponse`에 얹지 않은 것은 `event_ptcp`가 폼이 모르는 개념이고, 그 필드가 다른 모든 응답 목록(운영자용·내 응답·검토 처리)에서 언제나 `null`이 되어 어느 화면에서 뜻이 있는 값인지를 DTO가 말해 주지 못하기 때문이다.
     - **열린 자리는 셋이고 판정은 전부 원래 있던 곳에 그대로 있다.** 심사는 이미 `ACCEPTED`면 부르지 않고(`FormResponseService.getResponseStatus` — 재선발은 재심사가 아니다. 걸면 종결 상태라 400이고, 통과시켜도 아무것도 바꾸지 않은 승인이 검토 이력에 쌓인다), 명단 반영은 `EventParticipationService.registerOrUpdateParticipant`(등록이거나 상태 맞추기이며 **같은 값이면 아무 일도 하지 않는다** — 재지정 400을 완화한 것이 아니라 해당하지 않게 둔 것이다), 전이는 `EventParticipantEntity.changeStatus`에 **`CONFIRMED→WAITLISTED`(강등)**를 더한 것이다. 강등은 `PATCH /v1/events/{eventId}/participants/{eventPtcpId}`에도 함께 열린다 — 표가 한 벌이라 그렇다. 선발 서비스에 전이 규칙을 옮겨 적지 않는 것이 요점이며, 적으면 명단을 고치는 두 경로가 다른 표를 본다.
     - **취소(`CANCELLED`)는 그대로 종착점이다**(이 이슈의 범위 밖). 취소된 참가자를 다시 고르면 400 `INVALID_PARTICIPANT_STATUS_TRANSITION`이고 그 판정도 전이표의 것이다. 행사 참가자 등록(`POST /v1/events/{eventId}/participants`)은 **멱등해지지 않았다** — 그쪽에서 중복은 여전히 409이고, 명단을 통째로 덮어쓰는 화면이 없어 멱등할 이유가 없다. **정원 초과는 여전히 참고치**라 승격·강등도 막지 않는다(#138 결정 2). 새 테이블도 새 컬럼도 없으므로 `prod`·`dev` DDL이 필요 없다.
+- `domain/share` — 공유 링크(`shr_lnk`). 운영 콘텐츠를 메신저에 붙였을 때 카드가 펼쳐지도록 **토큰이 박힌 URL**을 만든다 (ssccops#200 · ADR-0016).
+  - **토큰이 주는 것은 미리보기까지다.** 크롤러는 `GET /public/v1/share/{token}`으로 제목·요약을 받아 카드를 만들지만, 사람이 누르면 종전대로 로그인과 권한 검사를 거쳐야 내용을 본다. 열람까지 여는 안을 기각한 근거는 ADR-0016에 있다 — 요구는 "열지 않고도 무엇인지 안다"였지 "권한 없는 사람도 내용을 본다"가 아니었고, 후자는 `@RequireAuthority`가 지키는 것 밖에 읽기 경로를 하나 만든다.
+  - **경로에 대상 식별자가 없는 것이 요점이다.** `/public/v1/sub-works/{id}/meta` 같은 공개 메타 API를 기각한 이유가 식별자가 연속 정수라 1부터 훑으면 업무 제목이 전부 수집되기 때문이다. 토큰은 `SecureRandom` 32바이트(URL-safe Base64 43자)이며 **짧게 줄이지 말 것** — 추측 가능해지는 순간 그 기각 근거가 통째로 사라진다.
+  - **만료를 두지 않는다.** 카드는 굳는데 링크만 죽으면 멀쩡해 보이는 카드를 눌렀을 때 404가 된다. 거두는 길은 운영자가 누르는 **공유 중지**(`DELETE /v1/sub-works/{id}/share`) 하나이며, `rvk_dt`가 NULL이면 살아 있다(별도 `rvk_yn`을 두지 않는 것은 같은 사실이 두 벌이 되기 때문이다 — `OperationEntity.deletedAt`과 같은 모양).
+  - **발급은 멱등이다.** 살아 있는 링크가 있으면 그것을 돌려준다 — 만료가 없으므로 누를 때마다 만들면 죽지 않는 링크가 쌓이고 화면이 무엇을 보여줄지에 답이 없다. 그래서 새 자원이 생기지 않는 호출이 있어 201이 아니라 200이다.
+  - **없는 토큰·폐기된 토큰·대상이 지워진 토큰은 전부 404 `NOT_FOUND`다.** 나누면 어느 토큰이 한때 존재했는지가 드러나 토큰을 무작위로 둔 이유가 절반 무효가 된다.
+  - **이 도메인은 대상이 무엇인지 모른다.** 제목·요약을 꺼내는 것은 `SharePreviewProvider` 구현체이고 그것은 **대상을 소유한 도메인**에 있다(하위 업무 → `domain/operation/service/SubWorkSharePreviewProvider`). 여기에 대상별 분기표를 만들면 대상이 늘 때마다 이 패키지에 남의 도메인 이름이 박힌다 — `SystemFormApprovalHook`과 같은 구조이며, 등록 레지스트리(`SharePreviewProviders`)도 겹침을 기동 시점에 터뜨린다.
+  - **인가는 여기서 하지 않는다.** "공유할 수 있는가"는 "그 자원을 볼 수 있는가"와 같은 질문이라 발급·폐기 엔드포인트가 `SubWorkController`에 있고 `@RequireAuthority(WORK_READ)`가 붙는다(`WORK_MANAGE`가 아닌 것은 토큰이 주는 것이 미리보기까지라 이미 그 화면을 보는 사람이 아는 것을 넘지 않기 때문이다). `domain/file`이 접근 제어를 올려받지 않은 것과 같은 이유다.
+  - **응답은 토큰이고 URL이 아니다.** 링크가 가리키는 곳은 API가 아니라 운영 웹이라, 서버가 주소를 조립하려면 웹의 호스트를 설정으로 들고 있어야 한다 — 이 저장소는 그 종류의 설정에서 두 번 데었다(`R2_PUBLIC_BASE_URL` #208 · `APP_PUBLIC_BASE_URL` #216). 웹이 `{자기 origin}/s/{token}`을 만든다.
+  - **대상은 (`trgt_se_cd`, `trgt_id`) 두 값이고 FK가 없다** — `file_rfrnc`(#220)와 같은 판단이며 근거는 `ShareTargetType` 주석에 있다. 대상이 지워진 뒤 남는 행은 미리보기가 빈 Optional을 돌려줘 폐기된 링크와 같은 404가 된다.
+  - **`shr_lnk`는 새 테이블이라 `ddl-auto: update`가 자동으로 만든다** — `dev`·`prod` 수동 DDL이 필요 없다. 다만 **데이터사전 등재는 별도**이며 등재할 컬럼 표는 ssccops#200에 있다.
 - `domain/auth` — 로그인·로그아웃 자체는 Supabase(클라이언트) 책임이라 서버에 엔드포인트가 없다. 서버가 답하는 것은 "이 토큰이 우리 서비스의 누구인가" 하나뿐이고 그게 `GET /v1/auth/session`이다. **미가입 사용자에게도 200**으로 응답한다(`signedUp: false`, `member: null`) — 가입이 필요하다는 것도 정상적인 세션 상태이지 오류가 아니며, 403으로 끊으면 프론트가 가입 화면으로 갈 근거를 얻지 못한다. 응답의 `member` 블록(`MemberProfileResponse`)은 회원가입 응답과 같은 모양을 쓴다.
 - 관측성: OpenTelemetry(OTLP) + Micrometer(Prometheus/OTLP) + Logstash JSON 로깅(`prod` 프로파일에서만 JSON, 그 외 텍스트 — `logback-spring.xml`)이 이미 연결돼 있다. 로컬에 OTLP collector가 없으면 애플리케이션 종료 시 `Connection refused` 경고가 뜨는데 무해하다.
 
@@ -243,10 +331,50 @@ ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
 
 `.github/workflows/`가 강제하는 것과 사람이 지켜야 하는 규칙이 나뉜다 (자세한 배경은 로컬 전용 `private-workspace/CONTRIBUTING.md` 참고 — git에는 포함되지 않음):
 
-- 브랜치: 이슈 생성 시 `issue-branch-creator.yml`이 제목 앞 태그(`[FEAT]`/`[FIX]`/`[REFACTOR]`)를 읽어 `{type}/#{이슈번호}-{슬러그}` 형식으로 자동 생성. 직접 만들어야 한다면 같은 형식을 따른다.
-- 커밋 메시지: 이슈가 있으면 `#{이슈번호} {type}({scope}): 설명`, 없으면 `{type}({scope}): 설명`. 타입은 `feat`/`fix`/`refactor`/`design`/`style`/`docs`/`test`/`chore`/`init`/`rename`/`remove`/`cicd`/`hotfix`. **PR의 타입 라벨은 연결된 이슈의 라벨에서만 온다**(`pr-labeler.yml`) — 커밋 표기는 라벨에 아무 영향을 주지 않으므로, 표기를 지키는 이유는 `git log`가 읽히기 때문이다. 이슈를 연결하지 않은 PR에는 타입 라벨이 붙지 않는다.
-- PR 제목은 `[#이슈번호] 총 작업 내용` — Squash merge 시 그대로 커밋 제목이 되므로 형식을 반드시 지킨다. 이 레포는 Squash and merge만 사용.
+- 브랜치: 이슈 생성 시 `issue-branch-creator.yml`이 제목 앞 태그(`[FEAT]`/`[FIX]`/`[REFACTOR]`/`[CHORE]`)를 읽어 `{type}/#{이슈번호}-{슬러그}` 형식으로 자동 생성. 직접 만들어야 한다면 같은 형식을 따르며, **남의 작업 브랜치가 아니라 `develop`에서 딴다** — #235가 작업 중이던 다른 브랜치 위에서 갈라져 나오는 바람에 문서 한 줄짜리 PR이 남의 61개 파일을 함께 머지했다.
+- 커밋 메시지: 이슈가 있으면 `#{이슈번호} {type}({scope}): 설명`, 없으면 `{type}({scope}): 설명`. 타입은 `feat`/`fix`/`refactor`/`design`/`style`/`docs`/`test`/`chore`/`init`/`rename`/`remove`/`cicd`/`hotfix`. **커밋 타입과 이슈 유형은 다른 어휘다**(#238) — 커밋 타입은 위 열셋 그대로이고, **이슈 유형은 `feat`·`fix`·`refactor`·`chore` 네 가지가 전부다**(아래). 커밋에는 `docs(agents):`라고 적으면서 그 작업의 이슈는 `[CHORE]`인 것이 정상이다. **PR의 타입 라벨은 연결된 이슈의 라벨에서만 온다**(`pr-labeler.yml`) — 커밋 표기는 라벨에 아무 영향을 주지 않으므로, 표기를 지키는 이유는 `git log`가 읽히기 때문이다. 이슈를 연결하지 않은 PR에는 타입 라벨이 붙지 않는다.
+- **이슈 유형은 `feat`·`fix`·`refactor`·`chore` 네 가지뿐이다**(#238). 이슈 템플릿이 주는 것이 정본이며 라벨과 브랜치 접두어가 여기서 나온다. 문서·테스트·스타일·CI/CD 작업의 이슈는 전부 `[CHORE]`다 — `[CICD]`·`[DOCS]` 같은 옛 태그로 열어도 `issue-labeler`·`issue-branch-creator`가 `chore`로 받는다. 예전에 쓰던 `docs`·`test`·`style`·`cicd`·`rename`·`remove` 라벨은 **저장소에서 지웠다** — 남겨 두면 화면의 라벨 목록에서 고를 수 있어 다시 붙는다. 그 라벨이 붙어 있던 과거 PR에서도 함께 사라지지만, 그 작업의 유형은 커밋 메시지와 연결된 이슈에 그대로 남는다. 넷으로 못 박는 이유는 이 표가 `issue-labeler`·`issue-branch-creator`·`pr-labeler`·`pr-guard` 네 워크플로에 흩어져 있어 한 곳만 고치면 갈라지기 때문이다 — 갈라져 있던 동안 그 라벨들이 이슈에는 하나도 없고 PR에만 붙어 있었다(docs 33건·test 53건).
+- PR 제목은 `[#이슈번호] 총 작업 내용` — Squash merge 시 그대로 커밋 제목이 되므로 형식을 반드시 지킨다. **저장소 설정이 `squash_merge_commit_title = PR_TITLE`이라 커밋이 하나뿐인 PR에서도 PR 제목이 이긴다**(#238) — 기본값(`COMMIT_OR_PR_TITLE`)이던 동안에는 단일 커밋 PR에서 커밋 메시지가 제목이 되어, PR 제목을 통제해도 `git log`에는 다른 것이 박혔다. **`pr-guard.yml`이 제목·브랜치명·이슈 실재 여부를 검사해 어기면 실패시킨다**(#238) — `develop → main` 릴리스 PR과 dependabot만 면제다.
+- **머지 전략은 둘이다.** 기능·수정 PR은 **Squash and merge**로 develop에 한 커밋으로 들어가고, **`develop → main` 릴리스 PR은 일반 merge commit**이다 — 그쪽을 squash 하면 develop 전체가 main에서 커밋 하나로 뭉개져 릴리스에 무엇이 들어갔는지 사라진다. 그래서 `allow_merge_commit`은 켜 둔 것이며 끄지 말 것. 릴리스 PR에 `[#이슈번호]`가 없는 것도 정상이라 `pr-guard`가 면제한다(`head.ref != develop`). 이 가드가 생긴 이유는 어긴 제목이 문서상의 실수로 끝나지 않고 `git log`에 영구히 박히기 때문이다(#235를 되돌리는 데 배포 브랜치 강제 푸시가 필요했다).
 - `main`으로 향하는 PR은 `integrate-prod.yml`이 Spotless → Checkstyle → Test/JaCoCo → SonarQube Quality Gate → `bootJar` 순서로 실행되며, Quality Gate를 통과하지 못하면 머지할 수 없다.
 - **배포는 저장소가 하지 않는다** (#202). Coolify가 GitHub App으로 이 저장소를 직접 보고 있어, `develop` 푸시는 dev로 `main` 푸시는 prod로 **자동 배포**된다. 이미지도 Coolify가 레포의 멀티스테이지 `Dockerfile`로 직접 빌드하므로 GHCR을 거치지 않는다.
   - 따라서 `.github/workflows/`에는 **CI만 있다** — 예전의 `deploy-dev.yml`·`deploy-prod.yml`과 배포 전용 `Dockerfile.deploy`는 걷어냈다.
   - **환경변수의 정본은 Coolify다.** 예전에는 배포마다 Actions가 Coolify API(`envs/bulk`)로 값을 덮어썼는데, 그 구조에서는 대시보드에서 직접 넣은 값(R2 설정 등)이 다음 배포에 날아갔다. 지금은 덮어쓰는 주체가 없으므로 Coolify 대시보드에서 관리한다.
+
+## 릴리스 — 버전은 태그와 코드 양쪽에 남긴다 (ssccops#229)
+
+릴리스는 `develop → main` 일반 merge commit이고, 그 커밋에 붙는 git 태그(`vX.Y.Z`)와 GitHub
+릴리스가 무엇이 나갔는지를 말한다. **그런데 태그만으로는 "지금 떠 있는 것"에 답하지 못한다** —
+배포를 Coolify가 자동으로 하므로(#202) 사람이 누른 것과 실제로 뜬 것 사이에 확인할 자리가 필요하다.
+
+### 올릴 때 고치는 곳
+
+| | |
+|---|---|
+| `build.gradle`의 `version` | 태그와 **같은 값**. `-SNAPSHOT`을 붙이지 않는다 |
+| `ssccops-web` | 루트와 `apps/*`의 `package.json` — **같은 릴리스에 함께 올린다** |
+
+`v0.1.0`·`v0.1.1`·`v0.2.0` 세 번의 릴리스 동안 이 절이 없어 `version`이 초기값
+(`0.0.1-SNAPSHOT`)으로 남아 있었다. 태그는 v0.2.0인데 산출물은 0.0.1-SNAPSHOT이었다.
+
+### 확인하는 곳
+
+```bash
+curl -s https://<배포 주소>/actuator/info
+# {"build":{"artifact":"ssccops-server","name":"ssccops-server","time":"...","version":"0.2.1","group":"org.sscc"}}
+```
+
+`springBoot { buildInfo() }`가 `META-INF/build-info.properties`를 산출물에 넣고, `/actuator/info`가
+그것을 읽는다(이미 `permitAll`이고 노출 목록에도 있다). **부팅 로그에도 한 줄 찍힌다** —
+`BuildVersionLogger`가 같은 `BuildProperties`를 쓰므로 두 값이 갈릴 수 없다. Coolify 배포 로그에서
+바로 보이므로, 배포가 끝났는데 옛 버전이 찍히면 그 자리에서 드러난다.
+
+**버전 문자열을 코드나 설정에 손으로 적지 않는다.** `management.info.env`로 따로 쓰는 방법도
+있지만 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다 — 이 절이 생긴 이유가 그것이다.
+
+### ⚠️ 산출물 이름을 바꾸지 말 것
+
+`bootJar`의 `archiveFileName`이 `app.jar`로 고정돼 있고 `Dockerfile`이 그 이름을 집어 온다.
+예전에는 `COPY .../*-SNAPSHOT.jar` 글롭이었는데, 그러면 **버전에서 `-SNAPSHOT`을 떼는 순간 맞는
+파일이 없어 이미지 빌드가 그 줄에서 죽는다.** 이름을 고정한 덕에 다음 릴리스에는 `version` 한
+줄만 고치면 되고 `Dockerfile`을 다시 볼 일이 없다 — 되돌리려면 두 파일을 함께 봐야 한다.

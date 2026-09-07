@@ -12,6 +12,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseOverviewResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
@@ -69,6 +70,15 @@ public interface FormResponseService {
     List<MyFormResponseSummaryResponse> getMyResponses(Long formId, MemberEntity respondent);
 
     /*
+     * 폼을 가로지르는 내 응답 목록 (ssccops#221). 폼을 모르는 채로 시작하는 유일한 응답 조회이며,
+     * 수정요청을 받은 응답자가 그 폼 링크를 잃어버렸을 때 찾아 들어오는 길이다.
+     *
+     * **행사 신청은 빠진다** — GET /v1/events/my-applications가 그것을 답하고, 두 목록이 같은
+     * 화면에 놓이므로 거르지 않으면 같은 응답이 두 줄로 보인다.
+     */
+    List<MyFormResponseOverviewResponse> getMyResponsesAcrossForms(MemberEntity respondent);
+
+    /*
      * 제출자용 본인 응답 상세 (#177). 내 답 전체(rspnsCn)와 검토 처리 이력을 함께 돌려준다 —
      * 수정요청 사유를 읽고 이전 답을 불러오는 것이 이 조회의 목적이며, 그 둘이 없으면 재제출은
      * 전체 본문을 처음부터 다시 치는 것으로만 된다.
@@ -110,8 +120,14 @@ public interface FormResponseService {
      */
     List<FormResponseSummaryResponse> getResponses(Long formId, ResponseStatus statusCode);
 
-    /** 운영자용 응답 상세 (#37). 다른 폼의 응답 식별자는 없는 응답과 같다 */
-    FormResponseDetailResponse getResponse(Long formId, Long formResponseId);
+    /**
+     * 운영자용 응답 상세 (#37). 다른 폼의 응답 식별자는 없는 응답과 같다.
+     *
+     * <p>요청자를 받는 것은 <b>연락처를 담을지 가르기 위해서다</b>(#277). 이 엔드포인트를 지키는 것은 RESPONSE_REVIEW이고 연락처는
+     * MEMBER_MANAGE의 값이라, 자격을 서비스에서 한 번 더 묻는다.
+     */
+    FormResponseDetailResponse getResponse(
+            Long formId, Long formResponseId, MemberEntity requester);
 
     /*
      * 응답 한 건의 현재 심사 상태 (#198).

@@ -7,6 +7,7 @@ import java.util.Map;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 
+import org.sscc.ssccopsserver.domain.operation.dto.KeywordSearch;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCursor;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSortOrder;
@@ -89,6 +90,38 @@ public class WorkRepositoryImpl implements WorkRepositoryCustom {
         if (query.hasWorkTypeFilter()) {
             conditions.append(" and w.workType = :workType");
             parameters.put("workType", query.workType());
+        }
+        /*
+         * 제목 부분 일치 (ssccops#216). 제목은 work가 아니라 그 oper에 있고, o는 목록·건수
+         * 두 쿼리 모두에서 이미 join된 alias다 — 그래서 countMatching에도 자동으로 걸리며,
+         * 화면의 건수가 검색 결과 건수를 말하게 된다.
+         *
+         * 앞뒤 와일드카드라 idx_oper_crt_dt 같은 b-tree 인덱스는 타지 못한다. 지금 규모
+         * (동아리 운영 건)에서는 순차 스캔이 문제가 되지 않아 인덱스를 두지 않았다 —
+         * 느려지면 pg_trgm GIN 인덱스가 다음 수단이며, 그때는 확장 설치와 마이그레이션
+         * 파일이 함께 필요하다(H2에는 대응물이 없어 테스트는 그대로 순차 스캔이다).
+         */
+        if (query.hasKeywordFilter()) {
+            conditions.append(
+                    " and lower(o.title) like lower(:keyword) escape '"
+                            + KeywordSearch.ESCAPE
+                            + "'");
+            parameters.put("keyword", KeywordSearch.toLikePattern(query.keyword()));
+        }
+        /*
+         * 담당자가 나인 건만 (ssccops#225). 담당자는 sub_work/work가 아니라 그 oper에 있고
+         * (pic_id), o는 목록·건수 두 쿼리 모두에서 이미 join된 alias다 — 그래서
+         * countMatching에도 자동으로 걸리며, 화면의 건수가 필터 결과 건수를 말하게 된다.
+         *
+         * o.personInCharge.id는 FK 컬럼을 그대로 읽는다. o.personInCharge를 통째로 비교하면
+         * Hibernate가 회원 테이블에 join을 하나 더 붙이는데, 필요한 것은 식별자뿐이다.
+         *
+         * 대상이 조회자 자신인지는 여기서 묻지 않는다 — 그 값은 @CurrentMember에서만
+         * 채워지므로(*SearchCondition.toQuery) 다른 사람의 식별자가 여기까지 올 길이 없다.
+         */
+        if (query.hasPersonInChargeFilter()) {
+            conditions.append(" and o.personInCharge.id = :personInChargeId");
+            parameters.put("personInChargeId", query.personInChargeId());
         }
         return conditions.toString();
     }

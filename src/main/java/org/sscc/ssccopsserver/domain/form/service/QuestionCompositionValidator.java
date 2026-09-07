@@ -106,6 +106,7 @@ public class QuestionCompositionValidator {
         return new QuestionItem(
                 qitemId,
                 qitem.qitemLblNm(),
+                normalizeDescription(qitem),
                 type,
                 qitem.reqYn() != null && qitem.reqYn(),
                 pageSeq,
@@ -115,6 +116,23 @@ public class QuestionCompositionValidator {
                 TEXT_TYPES.contains(type) ? qitem.ptrnNm() : null,
                 TEXT_TYPES.contains(type) ? qitem.ptrnMsgCn() : null,
                 normalizeMaxSelectCount(qitem, type, optionList));
+    }
+
+    /*
+     * 문항 설명 (ssccops#222). 안내 문구이지 유형별 속성이 아니라 어떤 유형이든 가질 수 있고,
+     * 그래서 optionList·ptrnCn처럼 유형에 따라 정리하지 않는다.
+     *
+     * **빈 문자열을 NULL로 굳히는 것이 이 메서드의 전부이고, 그것이 요점이다.** 폼 편집기는
+     * 자동 저장(#63)이라 타이핑마다 구성 전체를 PUT 하는데, 설명을 적었다 지우면 웹은 ""를
+     * 보내고 한 번도 적지 않은 문항은 필드 자체가 없다. 두 값을 그대로 두면 뜻이 같은데
+     * record equals가 다르다고 답해 FormEntity.update가 qitem_ver를 올린다 — 아무것도 바꾸지
+     * 않은 저장이 버전을 올리고 form_qitem_hstry에 같은 구성이 한 줄 더 쌓인다.
+     *
+     * 길이는 재지 않는다. qitemLblNm도 재지 않으므로 한쪽만 걸면 어느 쪽이 규칙인지 알 수 없다.
+     */
+    private String normalizeDescription(QuestionItem qitem) {
+        String description = qitem.qitemDescCn();
+        return description == null || description.isBlank() ? null : description;
     }
 
     /*

@@ -6,10 +6,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
-import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -22,8 +20,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -40,6 +36,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
  * 회원가입 API. 인증 필터체인을 그대로 태우기 위해 JwtDecoder만 고정 Jwt를 반환하도록 대체한다.
@@ -53,12 +50,12 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(MemberControllerTest.SignupTestConfig.class)
+@Import({TestJwtDecoderConfig.class, MemberControllerTest.SignupTestConfig.class})
 @Transactional
 class MemberControllerTest {
 
     private static final UUID AUTH_USER_ID = UUID.randomUUID();
-    private static final String EMAIL = "test@sscc.org";
+    private static final String EMAIL = AUTH_USER_ID + "@sscc.org";
     private static final LocalDate TODAY = LocalDate.of(2026, 3, 2);
 
     @Autowired private MockMvc mockMvc;
@@ -363,7 +360,7 @@ class MemberControllerTest {
 
     private static MockHttpServletRequestBuilder signup(String body) {
         return post("/v1/members/signup")
-                .header("Authorization", "Bearer any-token")
+                .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
     }
@@ -378,21 +375,6 @@ class MemberControllerTest {
 
     @TestConfiguration
     static class SignupTestConfig {
-
-        @Bean
-        @Primary
-        JwtDecoder jwtDecoder() {
-            return token ->
-                    Jwt.withTokenValue(token)
-                            .header("alg", "none")
-                            .subject(AUTH_USER_ID.toString())
-                            .claim("email", EMAIL)
-                            .claim("user_metadata", Map.of("full_name", "김도현"))
-                            .claim("app_metadata", Map.of("provider", "google"))
-                            .issuedAt(Instant.now())
-                            .expiresAt(Instant.now().plusSeconds(60))
-                            .build();
-        }
 
         /*
          * ClockConfig가 정의한 clock 빈과 이름이 겹치지 않게 다른 이름으로 둔다 —

@@ -216,8 +216,8 @@ public class WorkServiceImpl implements WorkService {
      * 문법 오류다.
      */
     @Override
-    public WorkSearchResponse searchWorks(WorkSearchCondition condition) {
-        WorkSearchQuery query = condition.toQuery();
+    public WorkSearchResponse searchWorks(WorkSearchCondition condition, MemberEntity viewer) {
+        WorkSearchQuery query = condition.toQuery(viewer.getId());
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<WorkEntity> fetched = workRepository.search(query);

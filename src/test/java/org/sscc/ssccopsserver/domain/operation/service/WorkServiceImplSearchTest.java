@@ -258,6 +258,248 @@ class WorkServiceImplSearchTest {
         assertThat(idsOf(search(condition().workType("EVENT").build()))).containsExactly(event);
     }
 
+    // 제목 부분 일치 (ssccops#216). 회의 안건 추가가 이 조건으로 후보를 좁힌다
+    @Test
+    void keywordFilterMatchesPartOfTitle() {
+        Long fair = createWork("2026 동아리 박람회", WorkType.EVENT, null, null).workId();
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("박람회").build()))).containsExactly(fair);
+        assertThat(idsOf(search(condition().keyword("없는제목").build()))).isEmpty();
+    }
+
+    // 사용자가 기억하는 것은 대소문자가 아니라 단어다
+    @Test
+    void keywordFilterIgnoresCase() {
+        Long workId = createWork("SSCC MT", WorkType.EVENT, null, null).workId();
+
+        assertThat(idsOf(search(condition().keyword("sscc").build()))).containsExactly(workId);
+        assertThat(idsOf(search(condition().keyword("MT").build()))).containsExactly(workId);
+    }
+
+    /*
+     * 공백만인 검색어는 조건 없음이다 (KeywordSearch.normalize). 빈 문자열을 살려 보내면
+     * '%%'가 되어 전체 조회와 결과는 같은데 조건만 붙는다.
+     */
+    @Test
+    void blankKeywordIsTreatedAsNoFilter() {
+        createWork("행사", WorkType.EVENT, null, null);
+        createWork("정례운영", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("   ").build()))).hasSize(2);
+        assertThat(idsOf(search(condition().keyword("").build()))).hasSize(2);
+    }
+
+    // 앞뒤 공백은 검색을 막지 않는다 — 붙여넣기하면 흔히 딸려 온다
+    @Test
+    void keywordIsTrimmedBeforeMatching() {
+        Long workId = createWork("2026 동아리 박람회", WorkType.EVENT, null, null).workId();
+
+        assertThat(idsOf(search(condition().keyword("  박람회  ").build()))).containsExactly(workId);
+    }
+
+    /*
+     * 와일드카드는 이스케이프한다 (ssccops#216). 검색창은 질의 언어가 아니라 제목 입력란이라
+     * '%'를 친 사람이 기대하는 것은 "그 글자가 든 제목"이지 "전부"가 아니다.
+     */
+    @Test
+    void wildcardCharactersAreMatchedLiterally() {
+        Long discount = createWork("할인 50% 협상", WorkType.EVENT, null, null).workId();
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        // '%' 한 글자가 전체 목록이 되지 않는다
+        assertThat(idsOf(search(condition().keyword("%").build()))).containsExactly(discount);
+        assertThat(idsOf(search(condition().keyword("50%").build()))).containsExactly(discount);
+        // '_'도 아무 글자에나 맞지 않는다
+        assertThat(idsOf(search(condition().keyword("_").build()))).isEmpty();
+    }
+
+    // 이스케이프 문자 자신을 친 경우에도 리터럴이다 — 막지 않으면 뒤 글자를 삼킨다
+    @Test
+    void escapeCharacterItselfIsMatchedLiterally() {
+        Long urgent = createWork("긴급! 예산 확정", WorkType.EVENT, null, null).workId();
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("긴급!").build()))).containsExactly(urgent);
+        assertThat(idsOf(search(condition().keyword("!").build()))).containsExactly(urgent);
+    }
+
+    /*
+     * **이 작업의 핵심이다** — 커서 페이징 20건이라 화면이 받아 둔 배열을 거르면 첫 페이지
+     * 안의 건만 찾아진다. 검색이 필요해진 바로 그 상황(목록이 길다)에서 닿아야 한다.
+     */
+    @Test
+    void keywordFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createWork("채우기 업무 " + i, WorkType.ROUTINE, null, null);
+        }
+        Long needle = createWorkRegisteredAt("숨어 있는 제목", NOW.minusDays(30).toInstant());
+
+        // 기본 정렬(등록 최신순)에서 가장 뒤라 첫 페이지에는 없다
+        assertThat(idsOf(search(condition().build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().keyword("숨어").build()))).containsExactly(needle);
+    }
+
+    // ── mine: 담당자 필터 (ssccops#225) ───────────────────────────────────────
+
+    // 담당자가 나인 건만 남는다. 등록자가 나인 건은 남지 않는다 — '내 업무'는 담당이다
+    @Test
+    void mineKeepsOnlyRowsWhereViewerIsPersonInCharge() {
+        Long mine = createWorkOwnedBy("내가 담당", owner);
+        Long othersButIRegistered = createWorkOwnedBy("남이 담당", registrant);
+
+        List<Long> ids = idsOf(search(condition().mine(true).build()));
+
+        assertThat(ids).containsExactly(mine).doesNotContain(othersButIRegistered);
+    }
+
+    /*
+     * 이 필터의 존재 이유 — 첫 페이지 밖의 건이 찾아진다. 화면에서 배열을 걸렀다면 25건을
+     * 채운 뒤의 이 업무는 어떤 조작으로도 나오지 않는다.
+     */
+    @Test
+    void mineFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createWorkOwnedBy("남의 업무 " + i, registrant);
+        }
+        Long needle = createWorkOwnedBy("내 업무", owner);
+        entityManager.flush();
+        entityManager
+                .getEntityManager()
+                .createQuery(
+                        "update OperationEntity o set o.createdAt = :createdAt"
+                                + " where o.id in (select w.operation.id from WorkEntity w"
+                                + " where w.id = :id)")
+                .setParameter("createdAt", NOW.minusDays(30).toInstant())
+                .setParameter("id", needle)
+                .executeUpdate();
+        entityManager.clear();
+
+        assertThat(idsOf(search(condition().build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().mine(true).build()))).containsExactly(needle);
+    }
+
+    // 건수도 필터 결과를 말한다 — filterConditions를 목록·건수 쿼리가 공유한다
+    @Test
+    void mineIsAppliedToCountsAsWell() {
+        createWorkOwnedBy("내가 담당 1", owner);
+        createWorkOwnedBy("내가 담당 2", owner);
+        createWorkOwnedBy("남이 담당", registrant);
+
+        WorkSearchResponse response = search(condition().mine(true).build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 다른 필터와 겹쳐 걸린다 — 조건이 서로를 지우지 않는다
+    @Test
+    void mineCombinesWithOtherFilters() {
+        createWorkOwnedBy("내 정기 업무", owner);
+        Long target =
+                workService
+                        .createWork(
+                                new WorkCreateRequest(
+                                        "내 행사 업무", WorkType.EVENT, ownerId, null, null, null, null),
+                                registrant)
+                        .workId();
+        workService.createWork(
+                new WorkCreateRequest(
+                        "남의 행사 업무", WorkType.EVENT, registrant.getId(), null, null, null, null),
+                registrant);
+
+        List<Long> ids =
+                idsOf(search(condition().mine(true).workType(WorkType.EVENT.name()).build()));
+
+        assertThat(ids).containsExactly(target);
+    }
+
+    /*
+     * 조회자가 바뀌면 결과도 바뀐다. 대상 회원을 파라미터로 받지 않으므로 '나'를 정하는 자리는
+     * 인증 주체 하나뿐이며, 그 사실을 여기서 못 박는다.
+     */
+    @Test
+    void mineFollowsTheViewerNotAParameter() {
+        Long ownersWork = createWorkOwnedBy("담당자의 업무", owner);
+        Long registrantsWork = createWorkOwnedBy("등록자의 업무", registrant);
+
+        assertThat(idsOf(searchAs(condition().mine(true).build(), owner)))
+                .containsExactly(ownersWork);
+        assertThat(idsOf(searchAs(condition().mine(true).build(), registrant)))
+                .containsExactly(registrantsWork);
+    }
+
+    // 끄면(생략·false) 필터가 걸리지 않는다 — Boolean 이웃들과 같은 꼴이다
+    @Test
+    void mineDisabledLeavesEveryRow() {
+        createWorkOwnedBy("내가 담당", owner);
+        createWorkOwnedBy("남이 담당", registrant);
+
+        assertThat(idsOf(search(condition().build()))).hasSize(2);
+        assertThat(idsOf(search(condition().mine(false).build()))).hasSize(2);
+    }
+
+    // 담당한 건이 없으면 빈 목록이다 — 화면이 '비어 있음'을 문구로 알릴 근거다
+    @Test
+    void mineReturnsEmptyWhenViewerOwnsNothing() {
+        createWorkOwnedBy("남이 담당", registrant);
+
+        WorkSearchResponse response = search(condition().mine(true).build());
+
+        assertThat(response.works()).isEmpty();
+        assertThat(response.page().totalCount()).isZero();
+        assertThat(response.page().hasNext()).isFalse();
+    }
+
+    // 화면 우상단의 건수도 검색 결과 건수를 말한다 — filterConditions를 목록·건수가 공유한다
+    @Test
+    void keywordIsAppliedToCountsAsWell() {
+        createWork("2026 동아리 박람회", WorkType.EVENT, null, null);
+        createWork("2025 동아리 박람회", WorkType.EVENT, null, null);
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        WorkSearchResponse response = search(condition().keyword("박람회").build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 검색어와 기존 필터가 함께 걸린다
+    @Test
+    void keywordCombinesWithStatusAndTypeFilters() {
+        Long target = createWork("동아리 박람회", WorkType.EVENT, null, null).workId();
+        createWork("동아리 박람회 정산", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("박람회").workType("EVENT").build())))
+                .containsExactly(target);
+        assertThat(idsOf(search(condition().keyword("박람회").workStatus("DONE").build()))).isEmpty();
+    }
+
+    // 검색어를 건 채 커서로 이어 받아도 같은 조건의 페이지가 이어진다
+    @Test
+    void cursorPagingKeepsKeywordCondition() {
+        for (int i = 0; i < 3; i++) {
+            createWork("박람회 준비 " + i, WorkType.EVENT, null, null);
+        }
+        createWork("무관한 업무", WorkType.ROUTINE, null, null);
+
+        WorkSearchResponse first = search(condition().keyword("박람회").size(2).build());
+        assertThat(first.works()).hasSize(2);
+        assertThat(first.page().hasNext()).isTrue();
+
+        WorkSearchResponse second =
+                search(
+                        condition()
+                                .keyword("박람회")
+                                .size(2)
+                                .cursor(first.page().nextCursor())
+                                .build());
+
+        assertThat(second.works()).hasSize(1);
+        assertThat(second.page().hasNext()).isFalse();
+        assertThat(second.works().get(0).title()).contains("박람회");
+    }
+
     @Test
     void statusAndTypeFiltersAreAppliedTogether() {
         Long eventPlanning = createWork("행사·기획", WorkType.EVENT, null, null).workId();
@@ -500,7 +742,7 @@ class WorkServiceImplSearchTest {
                         .getStatistics();
         statistics.clear();
 
-        WorkSearchResponse response = workService.searchWorks(condition().build());
+        WorkSearchResponse response = workService.searchWorks(condition().build(), owner);
 
         assertThat(response.works()).hasSize(3);
         assertThat(response.works())
@@ -528,6 +770,22 @@ class WorkServiceImplSearchTest {
         return workService.createWork(
                 new WorkCreateRequest(title, workType, ownerId, startAt, endAt, null, null),
                 registrant);
+    }
+
+    // 담당자를 지정해 만드는 업무. mine 필터가 담당자로 가르는지 보려면 남의 건이 필요하다
+    private Long createWorkOwnedBy(String title, MemberEntity personInCharge) {
+        return workService
+                .createWork(
+                        new WorkCreateRequest(
+                                title,
+                                WorkType.ROUTINE,
+                                personInCharge.getId(),
+                                null,
+                                null,
+                                null,
+                                null),
+                        registrant)
+                .workId();
     }
 
     /*
@@ -613,10 +871,18 @@ class WorkServiceImplSearchTest {
                 subWorkId, new SubWorkTransitionRequest(action, null), owner);
     }
 
+    /*
+     * 조회자는 담당자(owner)다. mine 필터가 '내가 담당인 건'을 뜻하므로, 기본 조회자를
+     * 담당자로 두면 mine을 켠 조회가 픽스처의 업무를 그대로 돌려준다.
+     */
     private WorkSearchResponse search(WorkSearchCondition condition) {
+        return searchAs(condition, owner);
+    }
+
+    private WorkSearchResponse searchAs(WorkSearchCondition condition, MemberEntity viewer) {
         entityManager.flush();
         entityManager.clear();
-        return workService.searchWorks(condition);
+        return workService.searchWorks(condition, viewer);
     }
 
     private static List<Long> idsOf(WorkSearchResponse response) {
@@ -628,7 +894,7 @@ class WorkServiceImplSearchTest {
     }
 
     /*
-     * 쿼리 파라미터가 다섯 개라 테스트마다 null을 늘어놓으면 어느 자리가 무엇인지 읽히지 않는다.
+     * 쿼리 파라미터가 여럿이라 테스트마다 null을 늘어놓으면 어느 자리가 무엇인지 읽히지 않는다.
      * 프로덕션 코드에는 빌더를 두지 않는다 — 스프링이 쿼리 파라미터를 그대로 바인딩하므로
      * 필요한 곳이 테스트뿐이다.
      */
@@ -636,6 +902,8 @@ class WorkServiceImplSearchTest {
 
         private String workStatus;
         private String workType;
+        private String keyword;
+        private Boolean mine;
         private Integer size;
         private String cursor;
         private String sort;
@@ -647,6 +915,16 @@ class WorkServiceImplSearchTest {
 
         private ConditionBuilder workType(String value) {
             this.workType = value;
+            return this;
+        }
+
+        private ConditionBuilder keyword(String value) {
+            this.keyword = value;
+            return this;
+        }
+
+        private ConditionBuilder mine(Boolean value) {
+            this.mine = value;
             return this;
         }
 
@@ -666,7 +944,7 @@ class WorkServiceImplSearchTest {
         }
 
         private WorkSearchCondition build() {
-            return new WorkSearchCondition(workStatus, workType, size, cursor, sort);
+            return new WorkSearchCondition(workStatus, workType, keyword, mine, size, cursor, sort);
         }
     }
 }

@@ -95,8 +95,17 @@ QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 # ps 를 500 으로 올리는 것은 답이 아니다 — 상한만 옮기고, 넘어가는 순간 같은 오류가 조용히
 # 돌아오며 넘었다는 사실조차 알 수 없다. facet 은 페이지와 무관하게 전체를 센다.
 # 그래서 ps=1 로 본문을 최소화하고 facets=types 의 count 만 읽는다.
+# 프로젝트 필터는 `components` 다. **`projectKeys` 가 아니다** (ssccops#237).
+#
+# api/issues/search 에 `projectKeys` 라는 파라미터는 없다. SonarQube 는 모르는 파라미터를
+# 오류로 만들지 않고 **조용히 무시하므로**, 필터가 통째로 빠진 채 인스턴스 전체의 이슈가
+# 돌아왔다. 그래서 ssccops-server 리포트에 `typescript:S6759` 235건 같은 것이 섞였다 —
+# 이 저장소에는 .ts 파일이 **한 개도 없다**. 두 프로젝트(server·web)의 숫자가 합쳐져 있었다.
+#
+# 10.2 이전 이름은 `componentKeys` 이고 지금도 동작하지만 deprecated 다.
+# **검증은 간단하다: 서버 리포트에 typescript: 규칙이 나오면 필터가 또 빠진 것이다.**
 ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types,rules")
+  "$SONAR_HOST_URL/api/issues/search?components=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types,rules")
 
 # facet 이 비어 있어도 리포트는 살아야 한다 — 이 파일의 다른 폴백과 같은 태도다.
 issue_count() {

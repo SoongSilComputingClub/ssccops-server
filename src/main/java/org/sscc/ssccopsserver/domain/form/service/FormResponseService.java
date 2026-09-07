@@ -120,8 +120,14 @@ public interface FormResponseService {
      */
     List<FormResponseSummaryResponse> getResponses(Long formId, ResponseStatus statusCode);
 
-    /** 운영자용 응답 상세 (#37). 다른 폼의 응답 식별자는 없는 응답과 같다 */
-    FormResponseDetailResponse getResponse(Long formId, Long formResponseId);
+    /**
+     * 운영자용 응답 상세 (#37). 다른 폼의 응답 식별자는 없는 응답과 같다.
+     *
+     * <p>요청자를 받는 것은 <b>연락처를 담을지 가르기 위해서다</b>(#277). 이 엔드포인트를 지키는 것은 RESPONSE_REVIEW이고 연락처는
+     * MEMBER_MANAGE의 값이라, 자격을 서비스에서 한 번 더 묻는다.
+     */
+    FormResponseDetailResponse getResponse(
+            Long formId, Long formResponseId, MemberEntity requester);
 
     /*
      * 응답 한 건의 현재 심사 상태 (#198).

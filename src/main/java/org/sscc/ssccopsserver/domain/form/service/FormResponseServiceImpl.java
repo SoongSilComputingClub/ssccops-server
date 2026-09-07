@@ -37,7 +37,9 @@ import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.RequiredArgsConstructor;
@@ -82,6 +84,12 @@ public class FormResponseServiceImpl implements FormResponseService {
      * 지키므로, 대표 문항이 지워진 폼은 애초에 저장되지 않는다.
      */
     private final SystemFormContract systemFormContract;
+
+    /*
+     * 연락처를 담을지 묻는 데만 쓴다 (#277). 판정 규칙을 여기 적지 않고 이 정책에 묻는 것은
+     * 인가 규칙이 두 벌이 되지 않게 하기 위해서다 — AuthorityPolicy가 유일한 구현이다.
+     */
+    private final AuthorityPolicy authorityPolicy;
 
     /** 제출 일시의 기준 시각. 접수 마감 판정(FormReceiptPolicy)과 같은 시계를 쓴다 */
     private final Clock clock;
@@ -509,7 +517,15 @@ public class FormResponseServiceImpl implements FormResponseService {
      * "DRAFT는 심사 대상이 아니다"가 목록에서만 지켜지는 규칙이 된다.
      */
     @Override
-    public FormResponseDetailResponse getResponse(Long formId, Long formResponseId) {
+    public FormResponseDetailResponse getResponse(
+            Long formId, Long formResponseId, MemberEntity requester) {
+        /*
+         * 이 엔드포인트를 지키는 것은 RESPONSE_REVIEW인데 연락처는 MEMBER_MANAGE의 값이다.
+         * 그래서 자격을 여기서 한 번 더 묻고 **조립 시점에 굳혀** 내린다 — 화면이 받아서 감추는
+         * 구조로 두면 값은 이미 브라우저에 도착해 있다(#277이 고치는 것이 정확히 그것이다).
+         */
+        boolean canSeeContact =
+                authorityPolicy.hasAuthority(requester.getId(), AuthorityCode.MEMBER_MANAGE);
         FormEntity form = findForm(formId);
         FormResponseHistoryEntity response = findResponse(form, formResponseId);
 
@@ -531,7 +547,7 @@ public class FormResponseServiceImpl implements FormResponseService {
 
         if (response.getStatus() == ResponseStatus.DRAFT) {
             return FormResponseDetailResponse.of(
-                    response, reviewHistories, null, null, approvalPreview);
+                    response, reviewHistories, null, null, approvalPreview, canSeeContact);
         }
 
         List<Long> orderedIds =
@@ -543,7 +559,7 @@ public class FormResponseServiceImpl implements FormResponseService {
                 index >= 0 && index < orderedIds.size() - 1 ? orderedIds.get(index + 1) : null;
 
         return FormResponseDetailResponse.of(
-                response, reviewHistories, previousId, nextId, approvalPreview);
+                response, reviewHistories, previousId, nextId, approvalPreview, canSeeContact);
     }
 
     /*

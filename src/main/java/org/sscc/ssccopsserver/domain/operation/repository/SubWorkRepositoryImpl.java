@@ -7,6 +7,7 @@ import java.util.Map;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.TypedQuery;
 
+import org.sscc.ssccopsserver.domain.operation.dto.KeywordSearch;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCursor;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkSortOrder;
@@ -162,6 +163,23 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
                             + " < :reviewStaleBefore");
             parameters.put("reviewStatus", WorkStatus.REVIEW);
             parameters.put("reviewStaleBefore", query.reviewStaleBefore());
+        }
+        /*
+         * 제목 부분 일치 (ssccops#216). 여기서 찾는 것은 **하위 업무 자신의 제목**이다 —
+         * o는 s.operation이고 상위 업무의 oper는 별칭이 다르다. 상위 제목까지 함께 훑으면
+         * 회의 안건 추가에서 상위 업무 이름만 아는 사람이 하위 업무를 찾을 수 있어 편해 보이지만,
+         * 검색어와 눈에 보이는 제목이 어긋난 행이 결과에 섞여 "왜 이게 나왔나"가 설명되지 않는다.
+         *
+         * 업무 쪽과 같은 규칙을 쓴다(KeywordSearch) — 두 목록이 안건 추가 화면에 나란히 놓이므로
+         * 한쪽만 대소문자를 가리면 종류를 바꾼 순간 같은 검색어가 다른 결과를 낸다.
+         * o는 목록·건수 두 쿼리 모두에서 join된 alias라 countMatching에도 자동으로 걸린다.
+         */
+        if (query.hasKeywordFilter()) {
+            conditions.append(
+                    " and lower(o.title) like lower(:keyword) escape '"
+                            + KeywordSearch.ESCAPE
+                            + "'");
+            parameters.put("keyword", KeywordSearch.toLikePattern(query.keyword()));
         }
         return conditions.toString();
     }

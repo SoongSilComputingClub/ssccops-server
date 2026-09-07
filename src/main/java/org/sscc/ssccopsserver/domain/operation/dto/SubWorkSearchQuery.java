@@ -31,6 +31,7 @@ public record SubWorkSearchQuery(
         boolean readyForReviewOnly,
         boolean reviewStaleOnly,
         Instant reviewStaleBefore,
+        String keyword,
         int size,
         SubWorkSortOrder sort,
         SubWorkCursor cursor) {
@@ -46,6 +47,14 @@ public record SubWorkSearchQuery(
 
     public boolean hasDueBeforeFilter() {
         return dueBefore != null;
+    }
+
+    /*
+     * 공백만인 검색어는 이미 조건 없음(null)으로 떨어져 있다 (KeywordSearch.normalize) —
+     * Repository는 그 판정을 다시 하지 않고 이 값만 본다 (LY-02).
+     */
+    public boolean hasKeywordFilter() {
+        return keyword != null;
     }
 
     public boolean hasCursor() {

@@ -40,6 +40,7 @@ public record SubWorkSearchCondition(
         @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime dueBefore,
         Boolean isReadyForReview,
         Boolean isReviewStale,
+        String keyword,
         @Min(value = 1, message = "size는 1 이상이어야 합니다.")
                 @Max(
                         value = SubWorkSearchCondition.MAX_SIZE,
@@ -67,6 +68,7 @@ public record SubWorkSearchCondition(
                 Boolean.TRUE.equals(isReadyForReview),
                 Boolean.TRUE.equals(isReviewStale),
                 reviewStaleBefore,
+                KeywordSearch.normalize(keyword),
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 SubWorkCursor.decode(cursor, sortOrder));

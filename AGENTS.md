@@ -16,76 +16,101 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
   **주의**: `.env`와 `docker-compose.yml`의 변수 이름에 하이픈(`-`)을 쓰지 않는다. Compose의 변수 치환은 셸 파라미터 확장 문법을 따르므로 `${db-username}`은 이름이 아니라 "`db`가 없으면 문자열 `username`"으로 읽힌다 — 실제로 이 때문에 `.env` 값이 통째로 무시된 채 `POSTGRES_USER=username`·`POSTGRES_DB=name:-ssccops_server_db`로 DB가 만들어지고 앱이 인증 실패로 죽는 일이 있었다(#59). Spring 프로퍼티 키(`db-username`)를 환경변수 이름으로 그대로 쓸 수 없다.
 
-  **로컬은 기동마다 데이터가 사라진다**(`ddl-auto: create-drop`). 그래서 회원도 매번 새로 가입해야 하고, 첫 가입자가 최고관리자가 된다(#71). 기획안 시스템 폼(`PROPOSAL`)은 명의로 쓸 회원이 있어야 세워지므로 **가입하기 전에는 없는 것이 정상**이며, 가입하는 순간 세워진다(#184). 기동 로그에 `회원이 없어 기획안 시스템 폼(PROPOSAL) 시드를 건너뛴다`가 보이면 고장이 아니라 아직 아무도 가입하지 않은 상태다. 가입한 뒤에도 폼이 없다면 그때가 진짜 문제이니 `ProposalFormSeeder`의 `log.error`를 찾을 것.
-- 프로필: `local`(PostgreSQL, OTel 비활성, ddl-auto create-drop) / `dev`(ddl-auto update — 이유는 아래) / `prod`(env 변수 주입, ddl-auto update — 정식 버전 전까지 한시적, 이유는 아래, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create — 테스트 실행 시 자동 적용). 테스트 인증은 [ADR-0009](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0009-standardize-test-jwt-decoder-and-share-context.md)의 공용 JWT 규약을 쓴다. **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 고정 Clock·독립 DB·`@MockitoBean`으로 갈린 컨텍스트도 `testdb`를 공유하므로, 하나가 닫힐 때 스키마를 지우면 남은 테스트가 "Table MBR not found"로 떨어질 수 있다.
+  **로컬은 `ddl-auto: update`이고 Flyway가 함께 돈다**(ssccops#213 — 이 줄은 `create-drop`이라고 적혀 있었으나 `application-local.yaml`은 오래전부터 `update`다). 그래서 DB를 새로 만들 때만 회원이 비고, 그때 첫 가입자가 최고관리자가 된다(#71). 기획안 시스템 폼(`PROPOSAL`)은 명의로 쓸 회원이 있어야 세워지므로 **가입하기 전에는 없는 것이 정상**이며, 가입하는 순간 세워진다(#184). 기동 로그에 `회원이 없어 기획안 시스템 폼(PROPOSAL) 시드를 건너뛴다`가 보이면 고장이 아니라 아직 아무도 가입하지 않은 상태다. 가입한 뒤에도 폼이 없다면 그때가 진짜 문제이니 `ProposalFormSeeder`의 `log.error`를 찾을 것.
+- 프로필: `local`(PostgreSQL, OTel 비활성, **Flyway + ddl-auto update** — 이유는 아래) / `dev`(**Flyway + ddl-auto validate**) / `prod`(env 변수 주입, **Flyway + ddl-auto validate**, Swagger 비활성) / `test`(H2 인메모리, ddl-auto create, **Flyway 꺼짐** — 이유는 아래). 테스트 인증은 [ADR-0009](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0009-standardize-test-jwt-decoder-and-share-context.md)의 공용 JWT 규약을 쓴다. **`create-drop`이 아닌 이유는 `application-test.yaml`의 주석에 있다** — 고정 Clock·독립 DB·`@MockitoBean`으로 갈린 컨텍스트도 `testdb`를 공유하므로, 하나가 닫힐 때 스키마를 지우면 남은 테스트가 "Table MBR not found"로 떨어질 수 있다.
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.
 
 **주의**: checkstyle의 `ImportOrder`는 `java, javax, jakarta, org, net, com, *, lombok` 그룹 순서를 엄격히 검사한다. import를 추가/이동한 뒤 checkstyle이 실패하면 순서를 수동으로 고치지 말고 `./gradlew spotlessApply`로 자동 정렬할 것 (Spotless의 `importOrder` 설정이 checkstyle 규칙과 동일하게 맞춰져 있음).
 
-**주의**: `prod`는 `ddl-auto: none`이 **아니라 `update`다** — 정식 버전 전까지의 한시적 결정이다. `none`이던 동안에는 엔티티가 늘 때마다 배포 전에 `CREATE TABLE`·`CREATE INDEX`를 사람이 먼저 실행해야 했고, 빠뜨리면 배포가 아니라 첫 요청에서 터졌다. 스키마가 아직 이슈마다 바뀌는 단계라 그 수동 단계 자체가 실질적인 배포 실패 원인이었다.
+**주의**: `dev`·`prod`는 이제 **`ddl-auto: validate`**이며 스키마는 Flyway가 만든다(ssccops#213 · 아래 절). `validate`인 것은 엔티티와 실제 스키마가 어긋나면 **부팅을 실패시키기 위해서**다 — ssccops#209는 값이 든 옛 컬럼 옆에서 빈 새 컬럼을 읽으며 정상 부팅했고 그래서 아무도 몰랐다. 그전의 `update`는 "추가만 자동, 삭제·리네임·타입 변경은 수동 `ALTER`"였는데 그 수동 단계를 아무도 강제하지 않아 세 번 터졌다(ssccops#209 승인 마비 · ssccops#212 공유 링크 · #224 회의 안건 — 셋 다 리네임이 '새 컬럼 추가'로 처리된 경우다).
 
-그래서 **추가는 자동이 됐지만 나머지는 그대로 수동이다** — `update`는 새 테이블·컬럼·인덱스만 반영하고 **컬럼 삭제·이름 변경·타입 변경·널 허용 변경은 반영하지 않는다**. 그런 변경은 여전히 배포 전에 직접 실행해야 한다: `MemberEntity.authUserId`(컬럼 `auth_user_id`, 구 `spb_user_id`)처럼 컬럼명을 바꿨다면 `ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;`, `mbr.stdnt_no`를 nullable로 바꿨다면(#21, 졸업 회원 가입) `ALTER TABLE mbr ALTER COLUMN stdnt_no DROP NOT NULL;`. **`prod`에는 dev의 탈출구가 없다** — dev는 드리프트가 쌓이면 DB를 통째로 재생성하면 되지만 prod에는 데이터가 있다. 마이그레이션 도구(Flyway/Liquibase)는 정식 버전 시점에 넣고 그때 `none`으로 되돌린다.
+**이제 이슈 본문에 `ALTER`를 적어 두는 관행은 없다.** 스키마를 바꾸면 마이그레이션 파일을 함께 쓴다 — 빠뜨리면 dev 배포가 `validate`에서 막히고, 그것이 의도한 동작이다. 예전에 대기 중이던 `ALTER`(#224의 `mtg_dtl`·`form_rspns_rvw_hstry` 리네임)는 2026-09-07에 dev·prod 양쪽에 적용했고, 그 정리 뒤에 뜬 덤프가 baseline이다.
 
-**배포 전 실행 대기 중인 `ALTER`** (#224 · ssccops#159 · `dev`·`prod` 각각에서, 배포보다 **먼저**):
+**주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — 지금은 `prod`도 `update`라 두 환경의 제약이 같다. **그 트레이드오프는 이제 없다** — Flyway가 들어와 `dev`·`prod` 모두 `validate`이며(ssccops#213) 리네임·삭제도 마이그레이션 파일로 나간다. 아래 문단은 `update`이던 시절의 기록이다. **`ddl-auto: update`로도 근본 원인은 해결되지 않았다** — 실제로는 부팅 중 Hibernate가 EntityManagerFactory(당시 엔티티 26종 메타모델)를 만드는 도중 컨테이너가 OOM으로 죽고 있었다(`exit 137`, ssccops-server#107). 그때는 `Dockerfile`의 `ENTRYPOINT`에 JVM 메모리 플래그를 명시해 막았지만, **배포가 Render 무료 티어(512MB)에서 Coolify(13.6GB)로 옮겨오며 그 제약이 사라져 플래그도 걷어냈다**(#202). 지금은 JVM 기본값에 맡긴다 — 엔티티는 39종으로 늘었지만 메모리 여유가 그보다 훨씬 크다. **나중에 컨테이너 메모리를 좁게 제한하게 되면 이 절을 다시 볼 것** (`exit 137`이 재발하면 힙 밖 메모리부터 의심한다).
 
-```sql
-ALTER TABLE mtg_dtl RENAME COLUMN prcs_se_cd TO agnd_prcs_se_cd;
-ALTER TABLE form_rspns_rvw_hstry RENAME COLUMN prcs_se_cd TO rvw_prcs_se_cd;
-```
+## 스키마 변경 — Flyway가 한다 (ssccops#213)
 
-두 테이블이 `prcs_se_cd`라는 **같은 컬럼명을 다른 값 집합으로** 쓰고 있었다(회의 안건은 `PENDING`·`HOLD`·`CLOSED`, 폼 응답 검토는 `SUBMIT`·`ACCEPT`·`REQUEST_CHANGES`·`REJECT`). 데이터사전의 표준코드는 **코드그룹ID = 컬럼ID**로 묶이므로 한 그룹에 두 어휘가 섞이고, 실제로 폼 검토 쪽 4종은 넣을 그룹이 없어 등재되지 못한 채 남아 있었다(#126이 그 항목만 넘기고 닫힌 이유다). **한쪽만 고치지 않은 것이 요점이다** — 폼 쪽에만 한정어를 붙이면 일반명 `prcs_se_cd`를 회의 안건이 계속 점유해, 다음에 '처리 구분'이 필요한 테이블에서 같은 충돌이 그대로 반복된다. 이제 `prcs_se_cd`는 어느 테이블의 것도 아니다. **값 집합은 바뀌지 않았고**, API 계약이 움직인 것은 폼 검토 이력 응답의 `prcsSeCd` → `rvwPrcsSeCd` 하나뿐이다(회의 안건 응답은 원래 `processStatus`라 컬럼명과 무관하다 — 그래서 웹과 동시 배포가 필요한 것도 폼 쪽 하나다).
+**스키마를 바꾸면 마이그레이션 파일을 함께 쓴다.** `src/main/resources/db/migration/`에
+`V{다음 번호}__{무엇을 하는지}.sql`로 더한다. 엔티티만 고치고 파일을 빠뜨리면 `dev` 배포가
+`ddl-auto: validate`에서 막힌다 — **그것이 이 도구를 들인 이유다.**
 
-**주의**: `dev`는 `ddl-auto: create-drop`이 **아니라 `update`다**(ssccops#83). Render 무료 티어(512MB, 공유 CPU)에서 재시작(배포·유휴 슬립 해제 포함)마다 스키마 전체를 지우고 다시 만드는 비용이, 회원·역할·CSV 이관·회의 등 테이블이 늘어나며 헬스체크 타임아웃을 넘길 만큼 무거워졌다 — 실제로 부팅 중 `HikariPool housekeeper Thread starvation`이 찍히고 배포가 `update_failed`로 반복 실패했으며, 한 번은 부팅이 "성공"했지만 `mbr_grd` 시드가 일부만 들어간 채로 떠 회원가입이 500을 냈다. `update`는 새 테이블·컬럼은 자동 반영하지만 **컬럼 삭제·이름 변경·타입 변경은 반영하지 않는다** — 지금은 `prod`도 `update`라 두 환경의 제약이 같다. 리네임·삭제가 필요한 변경을 만들면 dev DB에도 수동 `ALTER`가 필요할 수 있다(지금은 개발 단계라 드리프트가 쌓이면 통째로 재생성해도 되지만, 늘어날수록 이 트레이드오프가 부담이 된다 — Flyway/Liquibase 도입을 그때 검토한다). **`ddl-auto: update`로도 근본 원인은 해결되지 않았다** — 실제로는 부팅 중 Hibernate가 EntityManagerFactory(당시 엔티티 26종 메타모델)를 만드는 도중 컨테이너가 OOM으로 죽고 있었다(`exit 137`, ssccops-server#107). 그때는 `Dockerfile`의 `ENTRYPOINT`에 JVM 메모리 플래그를 명시해 막았지만, **배포가 Render 무료 티어(512MB)에서 Coolify(13.6GB)로 옮겨오며 그 제약이 사라져 플래그도 걷어냈다**(#202). 지금은 JVM 기본값에 맡긴다 — 엔티티는 39종으로 늘었지만 메모리 여유가 그보다 훨씬 크다. **나중에 컨테이너 메모리를 좁게 제한하게 되면 이 절을 다시 볼 것** (`exit 137`이 재발하면 힙 밖 메모리부터 의심한다).
+그전에는 "추가는 `ddl-auto: update`가 자동, 삭제·리네임·타입 변경은 이슈 본문에 적어 둔 수동
+`ALTER`"였고, 그 `ALTER`를 아무도 실행을 강제하지 않아 세 번 터졌다.
 
-## 스키마 변경 — Flyway로 옮기는 중이다 (ssccops#213)
+| | 무엇이 |
+|---|---|
+| ssccops#209 | prod에서 승인 필요 하위 업무를 **아무도** 승인·반려 못 함 (SUPER도) |
+| ssccops#212 | 공유 링크 대상 구분 컬럼 |
+| #224 | 회의 안건 처리 상태 — prod에서 **조용히 빈 값이었다** |
 
-**지금은 과도기다.** Flyway 의존성과 마이그레이션(`src/main/resources/db/migration/`)은 들어와 있지만
-**모든 프로필에서 꺼져 있고**(`spring.flyway.enabled: false`), 스키마는 여전히 `ddl-auto: update`가
-만들고 시드는 `data.sql`이 넣는다. 그래서 **지금 새 컬럼을 만드는 사람이 할 일은 종전과 같다** —
-엔티티만 고치면 `update`가 추가분을 반영하고, 삭제·리네임·타입 변경은 여전히 수동 `ALTER`다.
+셋 다 같은 경로다. `update`는 리네임을 **새 컬럼 추가**로 처리해 값이 든 옛 컬럼 옆에 빈 새
+컬럼을 남기고, 앱은 새 컬럼만 읽는다. 발현이 머지가 아니라 **배포**라 리뷰에서 잡히지 않았다.
 
-### 왜 꺼져 있나
+### 프로필별로 다른 이유
 
-`V1__baseline.sql`이 아직 플레이스홀더다. baseline은 **prod의 현재 스키마 덤프**여야 하는데, 그 덤프는
-DB 접근 권한이 있는 사람이 떠야 한다.
+| 프로필 | Flyway | `ddl-auto` | 왜 |
+|---|---|---|---|
+| `dev`·`prod` | 켜짐 | **`validate`** | 어긋나면 부팅을 실패시킨다. ssccops#209가 정상 부팅했던 것이 문제였다 |
+| `local` | 켜짐 | `update` | 개발 편의. 대신 로컬과 배포본이 다르게 자랄 수 있어, 마이그레이션을 빠뜨리면 dev에서 걸린다 |
+| `test` | **꺼짐** | `create` | 아래 |
 
-```bash
-pg_dump --schema-only --no-owner --no-privileges -d "<prod 접속 문자열>" > V1__baseline.sql
-```
+**`test`가 예외인 이유**는 테스트가 H2 인메모리에서 돌고 baseline이 prod `pg_dump` 결과라
+H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestamp with time zone` · 따옴표 식별자).
+전면 Testcontainers로 옮기는 안은 기각했다 — #103이 스프링 컨텍스트를 58개에서 25개로 줄여 놓은
+이득을 반납하고, 무엇보다 이 테스트들이 공용 `testdb` 하나를 공유하며 '`mbr`이 비어 있다'
+(최초 가입자 부트스트랩 #71) 같은 전제를 `ddl-auto: create`의 매 컨텍스트 스키마 재생성에
+기대고 있어 공유 PostgreSQL로는 성립하지 않는다.
 
-엔티티에서 생성한 DDL을 baseline으로 쓰면 안 된다. prod는 `update`로 자라난 DB라 엔티티에 없는
-고아 컬럼이 남아 있고(`sub_work_type.autzr_role_cd` — ssccops#209 · #241), 엔티티 기준으로 잡으면
-첫 `validate`가 바로 터진다. 대조용 DDL(엔티티가 말하는 스키마)은 아래로 뽑는다 — **덤프와 diff 하는 용도이며 baseline이 아니다.**
+대신 **마이그레이션 자체는 `FlywayMigrationValidateTest`가 Testcontainers PostgreSQL에서
+검증한다** — 빈 DB에 V1부터 전부 적용하고 엔티티 62종에 대해 `validate`가 통과하는지 본다.
+이 이슈가 막으려는 것(마이그레이션이 dev 배포에서 처음 검증되는 것)은 그 테스트가 막는다.
+**로컬에서 `./gradlew test`를 돌리려면 Docker가 필요하다** — 그 한 클래스 때문이다.
+
+### 시드는 마이그레이션 파일 한 벌이다
+
+옛 `data.sql`은 **삭제됐고** `V3__seed_reference_data.sql`이 그것을 그대로 옮겨 담았다
+(`spring.sql.init`도 함께 걷어냈다 — 두 벌이 동시에 도는 상태를 만들지 않는다).
+
+- `dev`·`prod`·`local`: Flyway가 넣는다.
+- `test`: Flyway가 꺼져 있으므로 `spring.sql.init.data-locations`가 **같은 파일을** 가리킨다.
+  사본을 테스트 리소스에 두지 않은 것은 시드가 두 벌이 되어 갈리기 때문이다.
+
+`WHERE NOT EXISTS` 멱등성은 그대로다. 버전 마이그레이션이라 한 번만 돌지만 **baseline이 이미
+시드된 prod 덤프라 이 파일이 처음 도는 DB에도 행이 이미 있다** — 가드가 없으면 중복 키로 깨진다.
+가드의 원래 뜻(운영진이 화면에서 고친 값을 배포가 되돌리지 않는다)도 함께 산다:
+**값을 고칠 때 `UPDATE`로 덮어쓰지 말 것.** 기준 코드를 더할 때도 새 마이그레이션 파일이다 —
+매 기동 반영되던 편의는 사라지지만 무엇이 언제 들어갔는지가 남고, #241이 터진 자리가 그 부재였다.
+
+기획안 시스템 폼(`sys_form_cd = 'PROPOSAL'`, #173)은 여기 없다 — 자바(`ProposalFormSeeder`)가
+세운다. 문항 구성이 JSONB라 한 벌의 SQL로 H2·PostgreSQL을 함께 만족시킬 수 없고, `qitemId`가
+`SystemFormContract`·이관과 공유하는 계약이라 SQL 문자열로 두면 선언과 시드가 두 벌이 된다.
+
+### 마이그레이션 파일
+
+| | |
+|---|---|
+| `V1__baseline.sql` | prod 현재 스키마(2026-09-07). `pg_dump --schema-only`를 걸러 담았다 — 무엇을 왜 뺐는지는 파일 상단에 있다 |
+| `V2__create_share_link.sql` | `shr_lnk`. prod에는 없고 dev에는 있어 **두 환경에서 결과가 달라야 하는 유일한 마이그레이션**이다 |
+| `V3__seed_reference_data.sql` | 기준 코드·기준 데이터 |
+| `V4__drop_orphan_columns.sql` | `update`가 남긴 고아 컬럼 넷. dev·prod에서는 이미 정리돼 아무 일도 안 하며, 몇 달 자란 **로컬 DB**를 위해 남는다 |
+
+**baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
+스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**
 
 ```bash
 ./gradlew bootRun --args='--spring.profiles.active=local   --spring.jpa.properties.jakarta.persistence.schema-generation.scripts.action=create   --spring.jpa.properties.jakarta.persistence.schema-generation.scripts.create-target=build/entity-schema.sql   --spring.jpa.properties.jakarta.persistence.schema-generation.create-source=metadata'
 ```
 
-그리고 **먼저 켜면 dev가 깨진다.** Coolify가 `develop` 푸시를 dev로 자동 배포하므로(#202),
-플레이스홀더인 채로 `enabled: true`나 `validate`를 머지하면 그 순간 부팅이 실패한다.
+### 규칙
 
-### 켜는 순서
-
-1. prod 덤프로 `V1__baseline.sql`을 통째 교체한다. **dev도 따로 떠서 prod와 diff** — 두 환경이 다른
-   경로로 자랐다면 baseline 하나로 둘 다 덮을 수 없다(#241에서 prod만 확인했다)
-2. `spring.flyway.enabled: true`
-3. `ddl-auto`를 `dev`·`prod`에서 `validate`로 내린다 (`local`은 `update` 유지 — ssccops#213 결정)
-4. `data.sql`을 지우고 `spring.sql.init`·`defer-datasource-initialization`을 걷는다 —
-   시드는 `V2__seed_reference_data.sql`이 대신한다. **둘을 동시에 두지 말 것**
-5. `test` 프로필은 별도 결정이 남아 있다 — 테스트가 H2에서 도는데 baseline은 PostgreSQL 덤프라
-   그대로는 실행되지 않는다 (`ssccops-server#262`의 '열린 결정')
-
-### 켠 뒤의 규칙
-
-- **스키마를 바꾸면 마이그레이션 파일을 함께 쓴다.** `V{다음 번호}__{무엇을 하는지}.sql`. 엔티티만
-  고치고 파일을 빠뜨리면 `validate`가 dev 배포에서 막는다 — 그것이 이 도구를 들인 이유다
 - **이미 적용된 마이그레이션 파일을 고치지 않는다.** Flyway가 체크섬으로 검증해 부팅이 실패한다.
-  잘못된 것은 새 마이그레이션으로 되돌린다
-- **기준 코드값을 더할 때도 마이그레이션이다.** `data.sql`처럼 매 기동 반영되던 편의는 사라지지만,
-  무엇이 언제 들어갔는지가 남는다 — `#241`이 터진 자리가 그 이력의 부재였다
-- 운영진이 화면에서 고친 값을 배포가 되돌리지 않아야 하므로 **시드는 `UPDATE`로 덮어쓰지 않는다**
-
+  잘못된 것은 새 마이그레이션으로 되돌린다.
+- **`baseline-on-migrate: true`**는 이미 테이블이 있는 DB(dev·prod)에 Flyway를 처음 붙이기
+  위한 것이다. `baseline-version: 1`이 V1을 '적용됨'으로 표시해 V2부터 돌게 한다 — V1의 내용이
+  곧 그 DB의 현재 모습이므로 맞다. 빈 DB에서는 개입하지 않고 V1부터 전부 돈다.
+- **머지는 곧 dev 배포다**(Coolify가 `develop` 푸시를 자동 배포한다, #202). 마이그레이션이
+  깨지면 dev가 즉시 죽으므로 `FlywayMigrationValidateTest`를 통과시키고 머지한다.
 
 ## 결정 기록 (ADR)
 

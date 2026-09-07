@@ -33,15 +33,23 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.event.entity.EventClassificationEntity;
+import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
+import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
+import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormLabelEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormLabelRelationEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
+import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormLabelRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseReviewHistoryRepository;
@@ -169,6 +177,10 @@ class PublicFormControllerTest {
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormResponseReviewHistoryRepository formResponseReviewHistoryRepository;
+    @Autowired private FormLabelRepository formLabelRepository;
+    @Autowired private FormLabelRelationRepository formLabelRelationRepository;
+    @Autowired private EventRepository eventRepository;
+    @Autowired private EventClassificationRepository eventClassificationRepository;
 
     private MemberEntity respondent;
 
@@ -1462,6 +1474,168 @@ class PublicFormControllerTest {
     }
 
     /** 다중 응답을 허용하는 표본 폼 (#143). 그 밖의 조건은 saveForm과 같다 */
+    /* ── 폼을 가로지르는 내 응답 목록 (ssccops#221) ────────── */
+
+    /*
+     * 폼을 지목하지 않아도 내가 낸 응답이 전부 온다. 이 목록의 존재 이유가 그것이다 — 수정요청을
+     * 받은 응답자는 정확히 그 폼 링크를 잃어버린 사람이라 /{formId} 아래 경로에 닿지 못한다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsReturnsResponsesFromEveryForm() throws Exception {
+        Long first = saveMultipleResponseForm("스터디 제안서");
+        Long second = saveMultipleResponseForm("신입 모집 지원서");
+        submit(first, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        submit(second, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(
+                        jsonPath("$.data[*].formId")
+                                .value(
+                                        Matchers.containsInAnyOrder(
+                                                first.intValue(), second.intValue())))
+                .andExpect(
+                        jsonPath("$.data[*].formTtlNm")
+                                .value(Matchers.containsInAnyOrder("스터디 제안서", "신입 모집 지원서")))
+                // 내용은 싣지 않는다 — 그것은 상세(#177)가 답한다
+                .andExpect(jsonPath("$.data[0].rspnsCn").doesNotExist());
+    }
+
+    /*
+     * 폼 라벨이 함께 온다. 화면이 라벨로 거를 수 있어야 하기 때문이며, 이 목록이 **폼 라벨을
+     * 응답자에게 내려주는 첫 자리다** — 그전까지 form_lbl은 운영진 내부 분류였다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsCarriesFormLabels() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        attachLabel(formId, "기획안");
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].labels.length()").value(1))
+                .andExpect(jsonPath("$.data[0].labels[0].lblNm").value("기획안"));
+    }
+
+    /*
+     * **행사에 붙은 폼의 응답은 오지 않는다.** 그쪽은 GET /v1/events/my-applications가 답하고,
+     * 두 목록이 '내 신청' 한 화면에 함께 놓이므로 거르지 않으면 같은 응답이 두 줄로 보인다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsExcludesEventApplications() throws Exception {
+        Long eventFormId = saveMultipleResponseForm("행사 신청서");
+        Long ordinaryFormId = saveMultipleResponseForm("스터디 제안서");
+        attachToEvent(eventFormId, "개강총회");
+        submit(eventFormId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        submit(ordinaryFormId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].formId").value(ordinaryFormId));
+    }
+
+    /*
+     * 작성 중(DRAFT)도 온다. 폼별 내 응답 목록과 같은 기준이며, 이어서 쓸 것이 있다는 사실이
+     * 이 화면에서 사라지면 초안을 시작한 폼을 다시 찾을 길이 없다.
+     */
+    @Test
+    void getMyResponsesAcrossFormsIncludesDraft() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(form, respondent, null));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].rspnsSttsCd").value("DRAFT"))
+                .andExpect(jsonPath("$.data[0].sbmsnDt").value(Matchers.nullValue()));
+    }
+
+    // 남의 응답은 섞이지 않는다. 대상은 언제나 인증 주체 본인이며 지목할 자리조차 없다
+    @Test
+    void getMyResponsesAcrossFormsDoesNotReturnAnotherMembersResponse() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260003", "박민수", "other2@sscc.org");
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        form, other, ResponseContent.of(Map.of("q1", "박민수")), NOW));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    // 한 건도 없으면 빈 배열이다 (라벨 조회를 건너뛰는 경로이기도 하다)
+    @Test
+    void getMyResponsesAcrossFormsReturnsEmptyArrayWhenNothingSubmitted() throws Exception {
+        mockMvc.perform(authenticatedGet("/v1/forms/responses/mine"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(0));
+    }
+
+    /*
+     * 리터럴 responses 세그먼트가 /{formId}/public을 가로채지 않는다. 세그먼트 수가 달라 애초에
+     * 다른 패턴이지만, 두 경로가 같은 접두사를 쓰므로 회귀로 못 박아 둔다.
+     */
+    @Test
+    void myResponsesAcrossFormsPathDoesNotShadowPublicFormPath() throws Exception {
+        Long formId = saveMultipleResponseForm("스터디 제안서");
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/public"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formTtlNm").value("스터디 제안서"));
+    }
+
+    /** 폼에 라벨을 붙인다 (ssccops#221 — 이 목록이 라벨을 내려주는지 보기 위해) */
+    private void attachLabel(Long formId, String labelName) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        FormLabelEntity label = formLabelRepository.saveAndFlush(FormLabelEntity.create(labelName));
+        formLabelRelationRepository.saveAndFlush(FormLabelRelationEntity.create(form, label));
+    }
+
+    /*
+     * 폼을 행사에 붙인다 (ssccops#221). 행사 신청이 이 목록에서 빠지는지 보려면 실제로 event 행이
+     * 있어야 한다 — 거르는 조건이 exists 서브쿼리라 연결만 만들면 되고 행사 상태는 보지 않는다.
+     */
+    private void attachToEvent(Long formId, String title) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        EventClassificationEntity classification =
+                eventClassificationRepository.findAll().stream()
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException("행사 분류 시드가 없다"));
+        eventRepository.saveAndFlush(
+                EventEntity.create(
+                        classification,
+                        respondent,
+                        title,
+                        "# 안내",
+                        null,
+                        form,
+                        NOW,
+                        NOW,
+                        "학생회관",
+                        null));
+    }
+
     private Long saveMultipleResponseForm(String title) throws Exception {
         QuestionCompositionContent content =
                 objectMapper.readValue(SAMPLE_COMPOSITION, QuestionCompositionContent.class);

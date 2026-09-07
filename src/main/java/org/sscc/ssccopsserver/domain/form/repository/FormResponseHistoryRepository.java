@@ -96,6 +96,36 @@ public interface FormResponseHistoryRepository
             @Param("statuses") Collection<ResponseStatus> statuses);
 
     /*
+     * "내가 폼에 낸 응답" 전부 (ssccops#221 · GET /v1/forms/responses/mine).
+     *
+     * **행사에 붙은 폼을 뺀다.** 조건이 findEventApplicationsByMember의 정확히 반대이고, 그
+     * 이유는 두 목록이 같은 화면에 함께 놓이기 때문이다 — 행사 신청도 폼 응답이라 거르지 않으면
+     * 같은 응답이 '내 신청'에 두 줄로 보인다. 웹이 formRspnsId로 걸러 낼 수는 있지만 그러면
+     * "무엇이 신청이고 무엇이 폼 응답인가"의 판정이 화면에 한 벌 더 생긴다.
+     *
+     * **상태를 가리지 않아 DRAFT도 온다.** 폼별 내 응답 목록(#143)과 같은 기준이며 근거도 같다 —
+     * 운영자 목록이 DRAFT를 빼는 규칙은 "남의 제출 전 답안이 심사 목록에 섞이지 않게"이고, 내
+     * 것을 나에게 숨길 이유는 없다. 행사 신청 조회가 상태 집합을 받아 DRAFT를 빼는 것과 갈리는데
+     * 그쪽은 "제출 전 초안은 신청이 아니다"라는 신청의 정의 문제이고, 이쪽은 "이어서 쓸 것이
+     * 있다"를 응답자에게 보여 주는 자리다.
+     *
+     * 폼을 함께 페치하는 것은 호출부가 폼 제목과 sys_form_cd(대표 문항 판정)를 읽기 때문이다.
+     * 라벨은 여기서 끌어오지 않는다 — 폼에 라벨 컬렉션 연관이 없어 별도 조회(findAllByFormIdIn)로
+     * 한 번에 모은다.
+     *
+     * 정렬은 '마지막으로 움직인 순'이다. DRAFT가 섞여 sbmsn_dt가 NULL일 수 있으므로 mdfcn_dt로
+     * 폴백한다 — NULL을 그대로 태우면 DB에 따라 맨 앞이나 맨 뒤로 몰려 방금 저장한 초안이 어디
+     * 있는지 알 수 없다 (findAllForOperatorList와 같은 자리).
+     */
+    @Query(
+            "select r from FormResponseHistoryEntity r join fetch r.form f"
+                    + " where r.member = :member"
+                    + " and not exists (select e.id from EventEntity e where e.form = f)"
+                    + " order by coalesce(r.submittedAt, r.updatedAt) desc, r.id desc")
+    List<FormResponseHistoryEntity> findNonEventResponsesByMember(
+            @Param("member") MemberEntity member);
+
+    /*
      * 문항 식별자 보호(#32 수정)의 판단 근거. 상태를 가리지 않고 한 건이라도 있으면 참이다 —
      * 임시저장(DRAFT) 응답의 rspns_cn도 key가 qitemId라, 제출 전이라고 해서 문항을 지워도
      * 되는 것은 아니다. 목록의 responseCount가 DRAFT를 빼는 것과는 판단 기준이 다르다.

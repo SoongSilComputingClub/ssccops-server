@@ -369,10 +369,12 @@ public class SubWorkServiceImpl implements SubWorkService {
      * 모두 같은 값을 보게 한다. 그 값은 '지금'이 아니라 오늘 0시 기준이다 (DeadlinePolicy, #121).
      */
     @Override
-    public SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition) {
+    public SubWorkSearchResponse searchSubWorks(
+            SubWorkSearchCondition condition, MemberEntity viewer) {
         Instant overdueBefore = deadlinePolicy.overdueBefore();
         Instant reviewStaleBefore = deadlinePolicy.reviewStaleBefore();
-        SubWorkSearchQuery query = condition.toQuery(overdueBefore, reviewStaleBefore);
+        SubWorkSearchQuery query =
+                condition.toQuery(overdueBefore, reviewStaleBefore, viewer.getId());
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<SubWorkEntity> fetched = subWorkRepository.search(query);

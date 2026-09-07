@@ -44,6 +44,9 @@ public record ApprovalInboxSearchCondition(
                 // 제목 검색도 열지 않는다 (ssccops#216) — 위와 같은 이유이며, 승인함은 처리할
                 // 건이 쌓이는 화면이 아니라 비워 내는 화면이라 훑어 찾을 대상이 애초에 적다
                 null,
+                // 담당자 필터도 마찬가지다 (ssccops#225). 승인함은 승인 자격으로 이미 좁혀진
+                // 화면이고, 승인자와 담당자는 대개 다른 사람이라 이 축이 뜻을 갖지 않는다
+                null,
                 size == null ? SubWorkSearchCondition.DEFAULT_SIZE : size,
                 SubWorkSortOrder.DEFAULT,
                 SubWorkCursor.decode(cursor, SubWorkSortOrder.DEFAULT));

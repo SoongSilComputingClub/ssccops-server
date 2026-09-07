@@ -54,7 +54,7 @@ public interface SubWorkService {
      *
      * 지연·마감임박 판정은 조회 시점을 기준으로 하며 어떤 상태도 바꾸지 않는다 (AP-07).
      */
-    SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition);
+    SubWorkSearchResponse searchSubWorks(SubWorkSearchCondition condition, MemberEntity viewer);
 
     /*
      * 하위 업무의 상태를 전이시킨다 (OPS-010). 전이표(TR-01~TR-04)에 있는 조합만 통과하며,

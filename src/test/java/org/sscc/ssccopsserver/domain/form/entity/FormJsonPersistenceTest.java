@@ -161,6 +161,63 @@ class FormJsonPersistenceTest {
     }
 
     /*
+     * 문항 설명(qitemDescCn)의 왕복 (ssccops#222).
+     *
+     * **QuestionItem에 생성자가 둘이라 이 테스트가 필요하다.** 정규 생성자(12개)와 옛 시그니처를
+     * 살려 둔 편의 생성자(11개)가 함께 있는데, Jackson이 편의 생성자를 골라 쓰면 설명이 언제나
+     * NULL로 돌아온다 — 저장은 성공하고 화면만 조용히 비는 형태라 왕복을 직접 본다.
+     *
+     * 위의 sampleComposition()이 11개짜리를 그대로 쓰고 있는 것도 함께 확인되는 사실이다.
+     * 옛 호출부가 고쳐지지 않아도 계속 컴파일된다.
+     */
+    @Test
+    void keepsQuestionItemDescriptionAcrossPersistence() {
+        QuestionCompositionContent described =
+                new QuestionCompositionContent(
+                        List.of(new QuestionCompositionContent.Page("한 장", null)),
+                        List.of(
+                                new QuestionCompositionContent.QuestionItem(
+                                        "q1",
+                                        "학번",
+                                        "**하이픈 없이** 8자리로 적어주세요",
+                                        QuestionItemType.SHORT_TEXT,
+                                        true,
+                                        0,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null)));
+
+        FormEntity saved =
+                formRepository.saveAndFlush(
+                        FormEntity.create(member("20260010"), "설명이 있는 폼", described, null, null));
+        entityManager.clear();
+
+        QuestionCompositionContent reloaded =
+                formRepository.findById(saved.getId()).orElseThrow().getQuestionComposition();
+
+        assertThat(reloaded.qitems().get(0).qitemDescCn()).isEqualTo("**하이픈 없이** 8자리로 적어주세요");
+        assertThat(reloaded).isEqualTo(described);
+    }
+
+    /*
+     * 지금 저장된 모든 폼이 이 모양이다 — JSON에 qitemDescCn 키가 아예 없다.
+     * 읽지 못하면 돌고 있는 폼이 전부 열리지 않는다.
+     */
+    @Test
+    void readsStoredCompositionWithoutDescriptionKey() {
+        FormEntity saved = saveForm(member("20260011"));
+        entityManager.clear();
+
+        QuestionCompositionContent reloaded =
+                formRepository.findById(saved.getId()).orElseThrow().getQuestionComposition();
+
+        assertThat(reloaded.qitems()).allSatisfy(qitem -> assertThat(qitem.qitemDescCn()).isNull());
+    }
+
+    /*
      * 컬럼에 실제로 들어간 값이 JSON 문서인지 확인한다. 매핑이 조용히 문자열 직렬화로
      * 떨어져도 왕복 테스트는 통과해 버리므로, 원문에 JSON 키가 보이는지까지 본다.
      * H2의 JSON 타입은 드라이버가 byte[]로 돌려주기도 해서 두 경우를 모두 받는다.

@@ -285,4 +285,98 @@ class QuestionCompositionValidatorTest {
     void rejectsQuestionItemWithoutType() {
         assertRejected(composition(1, item("q1", null, 0, List.of())));
     }
+
+    /*
+     * 문항 설명 (ssccops#222).
+     *
+     * 아래 셋이 확인하는 것은 하나다 — **"설명이 없다"의 표기가 하나로 굳는가.** 편집기가
+     * 자동 저장이라 설명을 적었다 지운 문항은 ""를, 한 번도 적지 않은 문항은 필드 자체를
+     * 보내지 않는데, 두 값이 그대로 남으면 뜻이 같은데 record equals가 다르다고 답해
+     * qitem_ver가 헛돈다(FormEntity.update).
+     */
+
+    private QuestionItem describedItem(String description) {
+        return new QuestionItem(
+                "q1",
+                "문항",
+                description,
+                QuestionItemType.SHORT_TEXT,
+                true,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null);
+    }
+
+    @Test
+    void keepsQuestionItemDescription() {
+        QuestionCompositionContent validated =
+                validator.validate(
+                        new QuestionCompositionContent(
+                                List.of(new Page("한 장", null)),
+                                List.of(describedItem("**학번**을 하이픈 없이 적어주세요"))));
+
+        assertThat(validated.qitems().get(0).qitemDescCn()).isEqualTo("**학번**을 하이픈 없이 적어주세요");
+    }
+
+    // 지운 설명("")과 한 번도 적지 않은 설명(null)이 같은 값으로 굳어야 한다
+    @Test
+    void normalizesBlankQuestionItemDescriptionToNull() {
+        for (String blank : new String[] {"", "   ", "\n"}) {
+            QuestionCompositionContent validated =
+                    validator.validate(
+                            new QuestionCompositionContent(
+                                    List.of(new Page("한 장", null)), List.of(describedItem(blank))));
+
+            assertThat(validated.qitems().get(0).qitemDescCn()).isNull();
+        }
+    }
+
+    /*
+     * 지금 저장된 모든 폼이 이 상태다 — 설명 필드가 없다. 검증이 그것을 거절하면 돌고 있는
+     * 폼이 전부 저장 불가가 된다.
+     */
+    @Test
+    void allowsQuestionItemWithoutDescription() {
+        QuestionCompositionContent validated =
+                validator.validate(
+                        composition(1, item("q1", QuestionItemType.SHORT_TEXT, 0, List.of())));
+
+        assertThat(validated.qitems().get(0).qitemDescCn()).isNull();
+    }
+
+    // 설명은 안내 문구이지 유형별 속성이 아니라, 유형을 바꿔도 정리되지 않는다
+    @Test
+    void keepsDescriptionForEveryQuestionItemType() {
+        for (QuestionItemType type : QuestionItemType.values()) {
+            List<String> options =
+                    QuestionCompositionValidator.CHOICE_TYPES.contains(type)
+                            ? List.of("가", "나")
+                            : null;
+            QuestionItem qitem =
+                    new QuestionItem(
+                            "q1", "문항", "안내", type, true, 0, options, null, null, null, null, null);
+
+            QuestionCompositionContent validated =
+                    validator.validate(
+                            new QuestionCompositionContent(
+                                    List.of(new Page("한 장", null)), List.of(qitem)));
+
+            assertThat(validated.qitems().get(0).qitemDescCn()).isEqualTo("안내");
+        }
+    }
+
+    // 폼 복제(#32)에서 설명만 사라지면 안 된다
+    @Test
+    void carriesDescriptionThroughDeepCopy() {
+        QuestionCompositionContent copied =
+                new QuestionCompositionContent(
+                                List.of(new Page("한 장", null)), List.of(describedItem("안내")))
+                        .deepCopy();
+
+        assertThat(copied.qitems().get(0).qitemDescCn()).isEqualTo("안내");
+    }
 }

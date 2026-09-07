@@ -90,12 +90,16 @@ public record QuestionCompositionContent(List<Page> pages, List<QuestionItem> qi
      *
      * qitemId는 응답(rspns_cn)의 key다. 문항을 수정해도 이 값만은 바뀌면 안 된다 —
      * 바뀌는 순간 이미 접수된 응답이 어느 문항의 답인지 알 수 없게 된다.
+     *
+     * qitemDescCn(문항 설명)은 qitemLblNm의 짝이다 (ssccops#222) — 질문 문구와 안내를 한 값에
+     * 담으면 화면이 둘을 다르게 그릴 수 없다. 페이지의 pageDescCn과 같은 어휘를 쓴다.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record QuestionItem(
             String qitemId,
             String qitemLblNm,
+            String qitemDescCn,
             QuestionItemType qitemTypeCd,
             Boolean reqYn,
             Integer pageSeq,
@@ -106,11 +110,49 @@ public record QuestionCompositionContent(List<Page> pages, List<QuestionItem> qi
             String ptrnMsgCn,
             Integer maxSlctCnt) {
 
+        /*
+         * qitemDescCn이 없던 시절의 시그니처 (ssccops#222).
+         *
+         * 설명은 **유형과 무관하게 모든 문항이 가질 수 있는 선택 값**이라, 그것을 모르는 자리
+         * (학술·행사 도메인의 테스트, 시스템 폼 시드)까지 인자 하나를 더 적게 만들 이유가 없다.
+         * 옛 시그니처를 남겨 두면 이 변경의 diff가 폼 도메인 안에 머문다.
+         *
+         * Jackson은 record의 **정규 생성자**(12개)를 자동으로 골라 쓰므로 이 생성자가 역직렬화에
+         * 끼어들지 않는다 — 인자 수가 달라 모호할 자리도 없다. 그 사실은 왕복 테스트가 지킨다.
+         */
+        public QuestionItem(
+                String qitemId,
+                String qitemLblNm,
+                QuestionItemType qitemTypeCd,
+                Boolean reqYn,
+                Integer pageSeq,
+                List<String> optionList,
+                Map<String, Integer> branchMap,
+                String ptrnCn,
+                String ptrnNm,
+                String ptrnMsgCn,
+                Integer maxSlctCnt) {
+            this(
+                    qitemId,
+                    qitemLblNm,
+                    null,
+                    qitemTypeCd,
+                    reqYn,
+                    pageSeq,
+                    optionList,
+                    branchMap,
+                    ptrnCn,
+                    ptrnNm,
+                    ptrnMsgCn,
+                    maxSlctCnt);
+        }
+
         /** 문항 한 건의 깊은 복사. 안쪽 컬렉션까지 새로 만든다 — 근거는 deepCopy() 주석 참조 */
         public QuestionItem copy() {
             return new QuestionItem(
                     qitemId,
                     qitemLblNm,
+                    qitemDescCn,
                     qitemTypeCd,
                     reqYn,
                     pageSeq,

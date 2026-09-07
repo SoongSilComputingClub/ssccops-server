@@ -85,11 +85,27 @@ QG_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
 QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 
+# 개수는 **facet으로 센다.** `.issues` 배열의 길이를 세면 안 된다 (ssccops#236).
+#
+# api/issues/search 의 기본 페이지 크기는 100이다. ps 없이 부르고 `.issues | length` 를 세면
+# 전체 개수가 아니라 **첫 100건 안에서 타입별로 몇 개인지**를 세게 된다. 실제로 그랬다 —
+# ssccops#232 로 분석 대상을 43% 늘렸는데(색인 460 → 697) 두 실행의 합이 정확히 100으로
+# 같았다(1+71+28 = 0+71+29 = 100). "취약점 71건"은 처음부터 총계가 아니었다.
+#
+# ps 를 500 으로 올리는 것은 답이 아니다 — 상한만 옮기고, 넘어가는 순간 같은 오류가 조용히
+# 돌아오며 넘었다는 사실조차 알 수 없다. facet 은 페이지와 무관하게 전체를 센다.
+# 그래서 ps=1 로 본문을 최소화하고 facets=types 의 count 만 읽는다.
 ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false")
-BUGS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="BUG") ] | length')
-VULNS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="VULNERABILITY") ] | length')
-SMELLS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="CODE_SMELL") ] | length')
+  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types")
+
+# facet 이 비어 있어도 리포트는 살아야 한다 — 이 파일의 다른 폴백과 같은 태도다.
+issue_count() {
+  echo "$ISSUES_JSON" | jq -r --arg t "$1" \
+    '[ (.facets // [])[] | select(.property=="types") | (.values // [])[] | select(.val==$t) | .count ] | first // 0'
+}
+BUGS=$(issue_count BUG)
+VULNS=$(issue_count VULNERABILITY)
+SMELLS=$(issue_count CODE_SMELL)
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH_ENC&metricKeys=coverage,duplicated_lines_density")
@@ -122,6 +138,8 @@ ${ICON} **Quality Gate ${RESULT}**
 
 Dashboard: ${DASHBOARD_URL}&branch=${BRANCH_ENC}
 
+> **보안 핫스팟은 위 숫자에 없다** — 별도 API(\`api/hotspots/search\`)라 세지 않는다. 취약점 수가 보안 지적의 전부가 아니다.
+>
 > Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
 EOF
 )

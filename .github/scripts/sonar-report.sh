@@ -39,6 +39,12 @@ DASHBOARD_URL=$(grep '^dashboardUrl=' "$REPORT_FILE" | cut -d'=' -f2-)
 echo "ProjectKey: $PROJECT_KEY"
 echo "Branch: $BRANCH"
 
+# 브랜치명을 URL 인코딩한다. 이 저장소의 브랜치는 `{type}/#{이슈번호}-{슬러그}` 형식이라
+# **이름에 `#`이 들어간다** — 그대로 쿼리에 끼우면 curl 이 그 뒤를 fragment 로 잘라내
+# `branch=chore/` 만 전송되고, 없는 브랜치라 응답이 비어 커버리지가 0%로 보고된다.
+# 실제로 #282 의 첫 실행이 그렇게 나왔다.
+BRANCH_ENC=$(jq -rn --arg v "$BRANCH" '$v|@uri')
+
 # ----------------------------------------------------------------------------
 # CE 태스크가 끝나기를 기다린다 (분석 제출과 집계는 비동기다)
 # ----------------------------------------------------------------------------
@@ -70,21 +76,23 @@ ANALYSIS_ID=$(echo "$STATUS_JSON" | jq -r '.task.analysisId')
 
 # ----------------------------------------------------------------------------
 # Quality Gate · 이슈 · 측정값
-#   jq의 `// []` `// "0"` 폴백은 그대로 둔다 — Community Edition에서는 branch 파라미터가
-#   무시되거나 빈 응답이 오는데, 그때 리포트가 죽는 것보다 0으로 보이는 편이 낫다.
+#   jq의 `// []` `// "0"` 폴백은 그대로 둔다 — 에디션·설정에 따라 branch 파라미터가 무시되거나
+#   빈 응답이 올 수 있는데, 그때 리포트가 죽는 것보다 0으로 보이는 편이 낫다.
+#   **다만 그 폴백이 진짜 오류를 가린 적이 있다**(위 BRANCH_ENC 주석) — 0%가 나오면
+#   "커버리지가 없다"가 아니라 "질의가 빗나갔다"부터 의심할 것.
 # ----------------------------------------------------------------------------
 QG_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
 QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 
 ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH&resolved=false")
+  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false")
 BUGS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="BUG") ] | length')
 VULNS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="VULNERABILITY") ] | length')
 SMELLS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="CODE_SMELL") ] | length')
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH&metricKeys=coverage,duplicated_lines_density")
+  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH_ENC&metricKeys=coverage,duplicated_lines_density")
 COVERAGE=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="coverage")) | .[0].value // "0"')
 DUPLICATION=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="duplicated_lines_density")) | .[0].value // "0"')
 
@@ -112,7 +120,7 @@ ${ICON} **Quality Gate ${RESULT}**
 - 커버리지: ${COVERAGE}%
 - 중복도: ${DUPLICATION}%
 
-Dashboard: ${DASHBOARD_URL}&branch=${BRANCH}
+Dashboard: ${DASHBOARD_URL}&branch=${BRANCH_ENC}
 
 > Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
 EOF

@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# ============================================================================
+# SonarQube 분석 결과를 읽어 PR 코멘트와 job 요약으로 남긴다.
+# ============================================================================
+# integrate-dev.yml(develop PR)과 integrate-prod.yml(main)이 **함께 쓴다.**
+# 스크립트로 뺀 이유는 두 워크플로에 90줄짜리 bash가 복제되는 것을 막기 위해서다 —
+# 그 복제는 이 저장소가 이미 경계하는 것이다(integrate-dev.yml 주석: "두 워크플로가 다른
+# 명령을 쓰면 develop에서 통과한 코드가 main에서 떨어진다").
+#
+# **Quality Gate가 실패해도 이 스크립트는 0으로 끝난다** (ssccops#231).
+# 처음 분석을 켜면 기존 코드의 지적이 수백 건 나오는데, 그 상태로 게이트를 잠그면
+# 아무것도 머지할 수 없다. 먼저 숫자를 보고, 기준을 정한 뒤에 잠근다.
+#
+# 반대로 **인프라 오류(report-task.txt 없음·CE 태스크 실패)는 그대로 실패시킨다.**
+# 토큰이 비어 분석이 안 된 것과 품질이 나쁜 것은 다른 일인데, 그 둘이 같은 실패로 보고되던
+# 것이 이 이슈의 출발점이었다 — v0.2.1 릴리스까지 다섯 번의 Analyze가 전부 "실패"였고
+# 원인은 언제나 빈 SONAR_TOKEN이었다. 신호를 뭉개면 그 상태로 돌아간다.
+#
+# 필요한 환경변수:
+#   SONAR_TOKEN · SONAR_HOST_URL   분석 서버 접속
+#   GH_TOKEN                       PR 코멘트 작성 (gh CLI)
+#   REPO                           owner/repo
+#   BRANCH                         분석 대상 브랜치명
+#   PR_NUMBER                      (선택) 있으면 PR에 코멘트를 단다
+# ============================================================================
+set -euo pipefail
+
+REPORT_FILE="${REPORT_FILE:-build/sonar/report-task.txt}"
+
+if [ ! -f "$REPORT_FILE" ]; then
+  echo "::error::$REPORT_FILE 이 없다. 분석이 실제로 돌지 않았다."
+  exit 1
+fi
+
+CE_TASK_ID=$(grep '^ceTaskId=' "$REPORT_FILE" | cut -d'=' -f2)
+PROJECT_KEY=$(grep '^projectKey=' "$REPORT_FILE" | cut -d'=' -f2)
+DASHBOARD_URL=$(grep '^dashboardUrl=' "$REPORT_FILE" | cut -d'=' -f2-)
+
+echo "ProjectKey: $PROJECT_KEY"
+echo "Branch: $BRANCH"
+
+# ----------------------------------------------------------------------------
+# CE 태스크가 끝나기를 기다린다 (분석 제출과 집계는 비동기다)
+# ----------------------------------------------------------------------------
+TASK_STATUS=""
+for i in $(seq 1 30); do
+  STATUS_JSON=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/ce/task?id=$CE_TASK_ID")
+  TASK_STATUS=$(echo "$STATUS_JSON" | jq -r '.task.status // "UNKNOWN"')
+
+  if [ "$TASK_STATUS" = "SUCCESS" ]; then
+    break
+  fi
+
+  # FAILED·CANCELED는 기다려도 바뀌지 않는다 — 30회를 채울 이유가 없다
+  if [ "$TASK_STATUS" = "FAILED" ] || [ "$TASK_STATUS" = "CANCELED" ]; then
+    echo "::error::SonarQube CE 태스크가 $TASK_STATUS 로 끝났다."
+    exit 1
+  fi
+
+  echo "Waiting for SonarQube task... ($i)"
+  sleep 5
+done
+
+if [ "$TASK_STATUS" != "SUCCESS" ]; then
+  echo "::error::SonarQube CE 태스크가 150초 안에 끝나지 않았다 (마지막 상태: $TASK_STATUS)."
+  exit 1
+fi
+
+ANALYSIS_ID=$(echo "$STATUS_JSON" | jq -r '.task.analysisId')
+
+# ----------------------------------------------------------------------------
+# Quality Gate · 이슈 · 측정값
+#   jq의 `// []` `// "0"` 폴백은 그대로 둔다 — Community Edition에서는 branch 파라미터가
+#   무시되거나 빈 응답이 오는데, 그때 리포트가 죽는 것보다 0으로 보이는 편이 낫다.
+# ----------------------------------------------------------------------------
+QG_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
+QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
+
+ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH&resolved=false")
+BUGS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="BUG") ] | length')
+VULNS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="VULNERABILITY") ] | length')
+SMELLS=$(echo "$ISSUES_JSON" | jq '[ (.issues // [])[] | select(.type=="CODE_SMELL") ] | length')
+
+MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH&metricKeys=coverage,duplicated_lines_density")
+COVERAGE=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="coverage")) | .[0].value // "0"')
+DUPLICATION=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="duplicated_lines_density")) | .[0].value // "0"')
+
+if [ "$QG_STATUS" = "OK" ]; then
+  ICON="✅"
+  RESULT="PASSED"
+else
+  ICON="⚠️"
+  RESULT="$QG_STATUS"
+fi
+
+BODY=$(cat <<EOF
+## SonarQube 분석 결과
+
+${ICON} **Quality Gate ${RESULT}**
+
+**브랜치:** \`${BRANCH}\`
+
+### 이슈
+- 버그: ${BUGS}
+- 취약점: ${VULNS}
+- 코드 스멜: ${SMELLS}
+
+### 측정값
+- 커버리지: ${COVERAGE}%
+- 중복도: ${DUPLICATION}%
+
+Dashboard: ${DASHBOARD_URL}&branch=${BRANCH}
+
+> Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
+EOF
+)
+
+echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
+
+if [ -n "${PR_NUMBER:-}" ]; then
+  gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$BODY"
+fi
+
+# Quality Gate 실패로 이 스크립트를 실패시키지 않는다 — 위 주석 참고.
+if [ "$QG_STATUS" != "OK" ]; then
+  echo "::warning::Quality Gate 가 $QG_STATUS 다. 지금은 막지 않는다 (ssccops#231)."
+fi

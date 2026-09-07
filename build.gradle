@@ -9,8 +9,16 @@ plugins {
 }
 
 group = 'org.sscc'
-version = '0.0.1-SNAPSHOT'
-description = 'Demo project for Spring Boot'
+
+// 릴리스 버전. **git 태그(v0.2.1)와 같은 값을 유지한다** — 릴리스할 때 여기를 함께 올린다
+// (AGENTS.md '릴리스' 절). v0.2.0까지 세 번의 릴리스 동안 이 값이 초기값 그대로였던 탓에
+// 태그는 v0.2.0인데 산출물은 0.0.1-SNAPSHOT이었다.
+//
+// **-SNAPSHOT을 붙이지 않는다.** 이 저장소는 스냅숏을 배포하고 나중에 릴리스로 굳히는
+// 사이클을 돌리지 않는다 — develop이 dev로, main이 prod로 그대로 나가고 릴리스는 태그다.
+// 붙여 두면 어느 산출물도 릴리스가 아니게 되고, 지금 고치는 문제가 이름만 바뀌어 남는다.
+version = '0.2.1'
+description = 'SSCC 운영관리 백엔드'
 
 // ============================================================================
 // Coverage Exclusion Patterns (공통 제외 패턴)
@@ -34,6 +42,25 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(17)
     }
+}
+
+// META-INF/build-info.properties 를 산출물에 넣는다 → /actuator/info 가 group·artifact·name·
+// version·time 을 돌려준다. 그 엔드포인트는 이미 노출 목록(include: health,info,...)에 있고
+// SecurityConfig 가 permitAll 로 열어 두었는데, 이 파일이 없어 그동안 빈 {} 였다 —
+// **배포된 것이 어느 버전인지 물을 자리가 없었다.**
+//
+// 값을 여기서 손으로 적지 않는다(management.info.env 로 버전을 따로 쓰는 방법도 있다).
+// 그러면 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다.
+springBoot {
+    buildInfo()
+}
+
+// 산출물 이름에서 버전을 뺀다. Dockerfile 이 이 파일을 이름으로 집어 오므로, 고정해 두지
+// 않으면 **버전을 올릴 때마다 Dockerfile 의 COPY 글롭이 함께 깨진다** — 실제로 -SNAPSHOT 을
+// 떼는 이번 변경이 `COPY .../*-SNAPSHOT.jar` 를 무효로 만든다. 버전은 build-info 와 태그가
+// 말하므로 파일명이 그것을 또 말할 이유가 없다.
+tasks.named('bootJar') {
+    archiveFileName = 'app.jar'
 }
 
 configurations {

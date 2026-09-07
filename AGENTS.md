@@ -340,3 +340,41 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **배포는 저장소가 하지 않는다** (#202). Coolify가 GitHub App으로 이 저장소를 직접 보고 있어, `develop` 푸시는 dev로 `main` 푸시는 prod로 **자동 배포**된다. 이미지도 Coolify가 레포의 멀티스테이지 `Dockerfile`로 직접 빌드하므로 GHCR을 거치지 않는다.
   - 따라서 `.github/workflows/`에는 **CI만 있다** — 예전의 `deploy-dev.yml`·`deploy-prod.yml`과 배포 전용 `Dockerfile.deploy`는 걷어냈다.
   - **환경변수의 정본은 Coolify다.** 예전에는 배포마다 Actions가 Coolify API(`envs/bulk`)로 값을 덮어썼는데, 그 구조에서는 대시보드에서 직접 넣은 값(R2 설정 등)이 다음 배포에 날아갔다. 지금은 덮어쓰는 주체가 없으므로 Coolify 대시보드에서 관리한다.
+
+## 릴리스 — 버전은 태그와 코드 양쪽에 남긴다 (ssccops#229)
+
+릴리스는 `develop → main` 일반 merge commit이고, 그 커밋에 붙는 git 태그(`vX.Y.Z`)와 GitHub
+릴리스가 무엇이 나갔는지를 말한다. **그런데 태그만으로는 "지금 떠 있는 것"에 답하지 못한다** —
+배포를 Coolify가 자동으로 하므로(#202) 사람이 누른 것과 실제로 뜬 것 사이에 확인할 자리가 필요하다.
+
+### 올릴 때 고치는 곳
+
+| | |
+|---|---|
+| `build.gradle`의 `version` | 태그와 **같은 값**. `-SNAPSHOT`을 붙이지 않는다 |
+| `ssccops-web` | 루트와 `apps/*`의 `package.json` — **같은 릴리스에 함께 올린다** |
+
+`v0.1.0`·`v0.1.1`·`v0.2.0` 세 번의 릴리스 동안 이 절이 없어 `version`이 초기값
+(`0.0.1-SNAPSHOT`)으로 남아 있었다. 태그는 v0.2.0인데 산출물은 0.0.1-SNAPSHOT이었다.
+
+### 확인하는 곳
+
+```bash
+curl -s https://<배포 주소>/actuator/info
+# {"build":{"artifact":"ssccops-server","name":"ssccops-server","time":"...","version":"0.2.1","group":"org.sscc"}}
+```
+
+`springBoot { buildInfo() }`가 `META-INF/build-info.properties`를 산출물에 넣고, `/actuator/info`가
+그것을 읽는다(이미 `permitAll`이고 노출 목록에도 있다). **부팅 로그에도 한 줄 찍힌다** —
+`BuildVersionLogger`가 같은 `BuildProperties`를 쓰므로 두 값이 갈릴 수 없다. Coolify 배포 로그에서
+바로 보이므로, 배포가 끝났는데 옛 버전이 찍히면 그 자리에서 드러난다.
+
+**버전 문자열을 코드나 설정에 손으로 적지 않는다.** `management.info.env`로 따로 쓰는 방법도
+있지만 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다 — 이 절이 생긴 이유가 그것이다.
+
+### ⚠️ 산출물 이름을 바꾸지 말 것
+
+`bootJar`의 `archiveFileName`이 `app.jar`로 고정돼 있고 `Dockerfile`이 그 이름을 집어 온다.
+예전에는 `COPY .../*-SNAPSHOT.jar` 글롭이었는데, 그러면 **버전에서 `-SNAPSHOT`을 떼는 순간 맞는
+파일이 없어 이미지 빌드가 그 줄에서 죽는다.** 이름을 고정한 덕에 다음 릴리스에는 `version` 한
+줄만 고치면 되고 `Dockerfile`을 다시 볼 일이 없다 — 되돌리려면 두 파일을 함께 봐야 한다.

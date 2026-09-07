@@ -130,6 +130,7 @@ class SubWorkServiceImplSearchTest {
 
     private SubWorkService subWorkService;
     private MemberEntity registrant;
+    private MemberEntity owner;
     private Long ownerId;
     private Long springMtWorkId;
     private Long expoWorkId;
@@ -202,7 +203,8 @@ class SubWorkServiceImplSearchTest {
                 memberRoleAssignmentRepository,
                 registrant,
                 MemberRoleFixture.TREASURER);
-        ownerId = saveMember("20200002", "이서연", "owner@sscc.org").getId();
+        owner = saveMember("20200002", "이서연", "owner@sscc.org");
+        ownerId = owner.getId();
 
         noChecklistTypeId =
                 subWorkTypeRepository
@@ -332,6 +334,115 @@ class SubWorkServiceImplSearchTest {
 
         assertThat(idsOf(search(condition().size(20).build()))).doesNotContain(needle);
         assertThat(idsOf(search(condition().keyword("숨어").build()))).containsExactly(needle);
+    }
+
+    // ── mine: 담당자 필터 (ssccops#225) ───────────────────────────────────────
+
+    // 담당자가 나인 건만 남는다. 등록자가 나인 건은 남지 않는다 — '내 업무'는 담당이다
+    @Test
+    void mineKeepsOnlyRowsWhereViewerIsPersonInCharge() {
+        Long mine = createSubWorkOwnedBy("내가 담당", owner);
+        Long othersButIRegistered = createSubWorkOwnedBy("남이 담당", registrant);
+
+        List<Long> ids = idsOf(search(condition().mine(true).build()));
+
+        assertThat(ids).containsExactly(mine).doesNotContain(othersButIRegistered);
+    }
+
+    /*
+     * 이 필터의 존재 이유 — 첫 페이지 밖의 건이 찾아진다. 화면에서 배열을 걸렀다면 25건을
+     * 채운 뒤의 이 하위 업무는 어떤 조작으로도 나오지 않는다.
+     */
+    @Test
+    void mineFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createSubWorkOwnedBy("남의 하위 업무 " + i, registrant);
+        }
+        Long needle = createSubWorkOwnedBy("내 하위 업무", owner);
+        entityManager.flush();
+        entityManager
+                .getEntityManager()
+                .createQuery(
+                        "update OperationEntity o set o.createdAt = :createdAt"
+                                + " where o.id in (select s.operation.id from SubWorkEntity s"
+                                + " where s.id = :id)")
+                .setParameter("createdAt", NOW.minusDays(30).toInstant())
+                .setParameter("id", needle)
+                .executeUpdate();
+        entityManager.clear();
+
+        assertThat(idsOf(search(condition().build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().mine(true).build()))).containsExactly(needle);
+    }
+
+    // 건수도 필터 결과를 말한다 — filterConditions를 목록·건수 쿼리가 공유한다
+    @Test
+    void mineIsAppliedToCountsAsWell() {
+        createSubWorkOwnedBy("내가 담당 1", owner);
+        createSubWorkOwnedBy("내가 담당 2", owner);
+        createSubWorkOwnedBy("남이 담당", registrant);
+
+        SubWorkSearchResponse response = search(condition().mine(true).build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 다른 필터와 겹쳐 걸린다 — 조건이 서로를 지우지 않는다
+    @Test
+    void mineCombinesWithOtherFilters() {
+        Long target = createSubWorkOwnedBy("내 진행 건", owner);
+        transition(target, TransitionAction.START, null);
+        createSubWorkOwnedBy("내 기획 건", owner);
+        Long othersStarted = createSubWorkOwnedBy("남의 진행 건", registrant);
+        transition(othersStarted, TransitionAction.START, null);
+
+        List<Long> ids =
+                idsOf(
+                        search(
+                                condition()
+                                        .mine(true)
+                                        .workStatus(WorkStatus.IN_PROGRESS.name())
+                                        .build()));
+
+        assertThat(ids).containsExactly(target);
+    }
+
+    /*
+     * 조회자가 바뀌면 결과도 바뀐다. 대상 회원을 파라미터로 받지 않으므로 '나'를 정하는 자리는
+     * 인증 주체 하나뿐이며, 그 사실을 여기서 못 박는다.
+     */
+    @Test
+    void mineFollowsTheViewerNotAParameter() {
+        Long ownersSubWork = createSubWorkOwnedBy("담당자의 하위 업무", owner);
+        Long registrantsSubWork = createSubWorkOwnedBy("등록자의 하위 업무", registrant);
+
+        assertThat(idsOf(searchAs(condition().mine(true).build(), owner)))
+                .containsExactly(ownersSubWork);
+        assertThat(idsOf(searchAs(condition().mine(true).build(), registrant)))
+                .containsExactly(registrantsSubWork);
+    }
+
+    // 끄면(생략·false) 필터가 걸리지 않는다 — Boolean 이웃들과 같은 꼴이다
+    @Test
+    void mineDisabledLeavesEveryRow() {
+        createSubWorkOwnedBy("내가 담당", owner);
+        createSubWorkOwnedBy("남이 담당", registrant);
+
+        assertThat(idsOf(search(condition().build()))).hasSize(2);
+        assertThat(idsOf(search(condition().mine(false).build()))).hasSize(2);
+    }
+
+    // 담당한 건이 없으면 빈 목록이다 — 화면이 '비어 있음'을 문구로 알릴 근거다
+    @Test
+    void mineReturnsEmptyWhenViewerOwnsNothing() {
+        createSubWorkOwnedBy("남이 담당", registrant);
+
+        SubWorkSearchResponse response = search(condition().mine(true).build());
+
+        assertThat(response.subWorks()).isEmpty();
+        assertThat(response.page().totalCount()).isZero();
+        assertThat(response.page().hasNext()).isFalse();
     }
 
     // 화면 우상단의 '8건'도 검색 결과 건수를 말한다
@@ -698,7 +809,7 @@ class SubWorkServiceImplSearchTest {
                         .getStatistics();
         statistics.clear();
 
-        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build());
+        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build(), owner);
 
         assertThat(response.subWorks()).hasSize(5);
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(5);
@@ -828,7 +939,7 @@ class SubWorkServiceImplSearchTest {
                         .getStatistics();
         statistics.clear();
 
-        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build());
+        SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build(), owner);
 
         assertThat(response.subWorks()).hasSize(5);
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
@@ -874,6 +985,25 @@ class SubWorkServiceImplSearchTest {
                 workId, title, typeId, ownerId, null, null, dueAt, null, null, null);
     }
 
+    // 담당자를 지정해 만드는 하위 업무. mine이 담당자로 가르는지 보려면 남의 건이 필요하다
+    private Long createSubWorkOwnedBy(String title, MemberEntity personInCharge) {
+        return subWorkService
+                .createSubWork(
+                        new SubWorkCreateRequest(
+                                springMtWorkId,
+                                title,
+                                approvalFreeTypeId,
+                                personInCharge.getId(),
+                                null,
+                                null,
+                                SOON,
+                                null,
+                                null,
+                                null),
+                        registrant)
+                .subWorkId();
+    }
+
     // 정상 경로로 완료까지 올린다 (TR-01 → TR-02 → 체크리스트 충족 → TR-03)
     private void complete(Long subWorkId) {
         transition(subWorkId, TransitionAction.START, null);
@@ -911,10 +1041,18 @@ class SubWorkServiceImplSearchTest {
                 subWorkId, new SubWorkTransitionRequest(action, reason), registrant);
     }
 
+    /*
+     * 조회자는 담당자(owner)다. mine 필터가 '내가 담당인 건'을 뜻하므로, 기본 조회자를
+     * 담당자로 두면 mine을 켠 조회가 픽스처의 하위 업무를 그대로 돌려준다.
+     */
     private SubWorkSearchResponse search(SubWorkSearchCondition condition) {
+        return searchAs(condition, owner);
+    }
+
+    private SubWorkSearchResponse searchAs(SubWorkSearchCondition condition, MemberEntity viewer) {
         entityManager.flush();
         entityManager.clear();
-        return subWorkService.searchSubWorks(condition);
+        return subWorkService.searchSubWorks(condition, viewer);
     }
 
     // 목록이 아니라 엔티티에게 직접 묻는다 — 목록 필터와 답이 갈리는지 보려면 두 경로가 필요하다
@@ -1029,6 +1167,7 @@ class SubWorkServiceImplSearchTest {
         private Boolean isReadyForReview;
         private Boolean isReviewStale;
         private String keyword;
+        private Boolean mine;
         private Integer size;
         private String cursor;
         private String sort;
@@ -1073,6 +1212,11 @@ class SubWorkServiceImplSearchTest {
             return this;
         }
 
+        private ConditionBuilder mine(Boolean value) {
+            this.mine = value;
+            return this;
+        }
+
         private ConditionBuilder cursor(String value) {
             this.cursor = value;
             return this;
@@ -1092,6 +1236,7 @@ class SubWorkServiceImplSearchTest {
                     isReadyForReview,
                     isReviewStale,
                     keyword,
+                    mine,
                     size,
                     cursor,
                     sort);

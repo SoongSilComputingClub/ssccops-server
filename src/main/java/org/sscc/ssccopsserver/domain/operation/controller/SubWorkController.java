@@ -84,8 +84,9 @@ public class SubWorkController {
     @RequireAuthority(AuthorityCode.WORK_READ)
     @GetMapping
     public ApiResponse<List<SubWorkSummaryResponse>> searchSubWorks(
-            @Valid @ModelAttribute SubWorkSearchCondition condition) {
-        SubWorkSearchResponse result = subWorkService.searchSubWorks(condition);
+            @Valid @ModelAttribute SubWorkSearchCondition condition,
+            @CurrentMember MemberEntity viewer) {
+        SubWorkSearchResponse result = subWorkService.searchSubWorks(condition, viewer);
         return ApiResponse.success(result.subWorks(), result.page());
     }
 

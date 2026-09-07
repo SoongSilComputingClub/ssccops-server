@@ -181,6 +181,20 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
                             + "'");
             parameters.put("keyword", KeywordSearch.toLikePattern(query.keyword()));
         }
+        /*
+         * 담당자가 나인 건만 (ssccops#225). 상위 업무 쪽과 같은 조건이며 담당자는 sub_work가
+         * 아니라 그 oper에 있다(pic_id). o가 이미 join된 alias라 countMatching에도 함께 걸린다.
+         *
+         * o.personInCharge.id는 FK 컬럼을 그대로 읽는다 — 통째로 비교하면 회원 테이블에
+         * join이 하나 더 붙는데 필요한 것은 식별자뿐이다.
+         *
+         * 승인 대기 건은 이 축에 들어오지 않는다. '내가 승인해야 할 것'은 담당이 아니라 권한
+         * 판정(ApprovalAuthorityPolicy)이고 승인함이 이미 그 화면이다.
+         */
+        if (query.hasPersonInChargeFilter()) {
+            conditions.append(" and o.personInCharge.id = :personInChargeId");
+            parameters.put("personInChargeId", query.personInChargeId());
+        }
         return conditions.toString();
     }
 

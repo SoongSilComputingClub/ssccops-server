@@ -108,6 +108,21 @@ public class WorkRepositoryImpl implements WorkRepositoryCustom {
                             + "'");
             parameters.put("keyword", KeywordSearch.toLikePattern(query.keyword()));
         }
+        /*
+         * 담당자가 나인 건만 (ssccops#225). 담당자는 sub_work/work가 아니라 그 oper에 있고
+         * (pic_id), o는 목록·건수 두 쿼리 모두에서 이미 join된 alias다 — 그래서
+         * countMatching에도 자동으로 걸리며, 화면의 건수가 필터 결과 건수를 말하게 된다.
+         *
+         * o.personInCharge.id는 FK 컬럼을 그대로 읽는다. o.personInCharge를 통째로 비교하면
+         * Hibernate가 회원 테이블에 join을 하나 더 붙이는데, 필요한 것은 식별자뿐이다.
+         *
+         * 대상이 조회자 자신인지는 여기서 묻지 않는다 — 그 값은 @CurrentMember에서만
+         * 채워지므로(*SearchCondition.toQuery) 다른 사람의 식별자가 여기까지 올 길이 없다.
+         */
+        if (query.hasPersonInChargeFilter()) {
+            conditions.append(" and o.personInCharge.id = :personInChargeId");
+            parameters.put("personInChargeId", query.personInChargeId());
+        }
         return conditions.toString();
     }
 

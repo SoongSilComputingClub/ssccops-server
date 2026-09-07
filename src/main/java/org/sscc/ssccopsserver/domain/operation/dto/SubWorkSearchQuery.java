@@ -32,6 +32,7 @@ public record SubWorkSearchQuery(
         boolean reviewStaleOnly,
         Instant reviewStaleBefore,
         String keyword,
+        Long personInChargeId,
         int size,
         SubWorkSortOrder sort,
         SubWorkCursor cursor) {
@@ -55,6 +56,14 @@ public record SubWorkSearchQuery(
      */
     public boolean hasKeywordFilter() {
         return keyword != null;
+    }
+
+    /*
+     * 담당자 필터 (ssccops#225). 상위 업무 쪽과 같은 모양이며, mine이 꺼져 있으면 요청
+     * 단계에서 이미 null이다 (SubWorkSearchCondition.toQuery).
+     */
+    public boolean hasPersonInChargeFilter() {
+        return personInChargeId != null;
     }
 
     public boolean hasCursor() {

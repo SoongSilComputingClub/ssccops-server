@@ -41,6 +41,9 @@ public record ApprovalInboxSearchCondition(
                 false,
                 false,
                 null,
+                // 제목 검색도 열지 않는다 (ssccops#216) — 위와 같은 이유이며, 승인함은 처리할
+                // 건이 쌓이는 화면이 아니라 비워 내는 화면이라 훑어 찾을 대상이 애초에 적다
+                null,
                 size == null ? SubWorkSearchCondition.DEFAULT_SIZE : size,
                 SubWorkSortOrder.DEFAULT,
                 SubWorkCursor.decode(cursor, SubWorkSortOrder.DEFAULT));

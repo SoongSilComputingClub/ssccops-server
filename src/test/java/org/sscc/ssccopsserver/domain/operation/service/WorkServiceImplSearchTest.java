@@ -258,6 +258,137 @@ class WorkServiceImplSearchTest {
         assertThat(idsOf(search(condition().workType("EVENT").build()))).containsExactly(event);
     }
 
+    // 제목 부분 일치 (ssccops#216). 회의 안건 추가가 이 조건으로 후보를 좁힌다
+    @Test
+    void keywordFilterMatchesPartOfTitle() {
+        Long fair = createWork("2026 동아리 박람회", WorkType.EVENT, null, null).workId();
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("박람회").build()))).containsExactly(fair);
+        assertThat(idsOf(search(condition().keyword("없는제목").build()))).isEmpty();
+    }
+
+    // 사용자가 기억하는 것은 대소문자가 아니라 단어다
+    @Test
+    void keywordFilterIgnoresCase() {
+        Long workId = createWork("SSCC MT", WorkType.EVENT, null, null).workId();
+
+        assertThat(idsOf(search(condition().keyword("sscc").build()))).containsExactly(workId);
+        assertThat(idsOf(search(condition().keyword("MT").build()))).containsExactly(workId);
+    }
+
+    /*
+     * 공백만인 검색어는 조건 없음이다 (KeywordSearch.normalize). 빈 문자열을 살려 보내면
+     * '%%'가 되어 전체 조회와 결과는 같은데 조건만 붙는다.
+     */
+    @Test
+    void blankKeywordIsTreatedAsNoFilter() {
+        createWork("행사", WorkType.EVENT, null, null);
+        createWork("정례운영", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("   ").build()))).hasSize(2);
+        assertThat(idsOf(search(condition().keyword("").build()))).hasSize(2);
+    }
+
+    // 앞뒤 공백은 검색을 막지 않는다 — 붙여넣기하면 흔히 딸려 온다
+    @Test
+    void keywordIsTrimmedBeforeMatching() {
+        Long workId = createWork("2026 동아리 박람회", WorkType.EVENT, null, null).workId();
+
+        assertThat(idsOf(search(condition().keyword("  박람회  ").build()))).containsExactly(workId);
+    }
+
+    /*
+     * 와일드카드는 이스케이프한다 (ssccops#216). 검색창은 질의 언어가 아니라 제목 입력란이라
+     * '%'를 친 사람이 기대하는 것은 "그 글자가 든 제목"이지 "전부"가 아니다.
+     */
+    @Test
+    void wildcardCharactersAreMatchedLiterally() {
+        Long discount = createWork("할인 50% 협상", WorkType.EVENT, null, null).workId();
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        // '%' 한 글자가 전체 목록이 되지 않는다
+        assertThat(idsOf(search(condition().keyword("%").build()))).containsExactly(discount);
+        assertThat(idsOf(search(condition().keyword("50%").build()))).containsExactly(discount);
+        // '_'도 아무 글자에나 맞지 않는다
+        assertThat(idsOf(search(condition().keyword("_").build()))).isEmpty();
+    }
+
+    // 이스케이프 문자 자신을 친 경우에도 리터럴이다 — 막지 않으면 뒤 글자를 삼킨다
+    @Test
+    void escapeCharacterItselfIsMatchedLiterally() {
+        Long urgent = createWork("긴급! 예산 확정", WorkType.EVENT, null, null).workId();
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("긴급!").build()))).containsExactly(urgent);
+        assertThat(idsOf(search(condition().keyword("!").build()))).containsExactly(urgent);
+    }
+
+    /*
+     * **이 작업의 핵심이다** — 커서 페이징 20건이라 화면이 받아 둔 배열을 거르면 첫 페이지
+     * 안의 건만 찾아진다. 검색이 필요해진 바로 그 상황(목록이 길다)에서 닿아야 한다.
+     */
+    @Test
+    void keywordFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createWork("채우기 업무 " + i, WorkType.ROUTINE, null, null);
+        }
+        Long needle = createWorkRegisteredAt("숨어 있는 제목", NOW.minusDays(30).toInstant());
+
+        // 기본 정렬(등록 최신순)에서 가장 뒤라 첫 페이지에는 없다
+        assertThat(idsOf(search(condition().build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().keyword("숨어").build()))).containsExactly(needle);
+    }
+
+    // 화면 우상단의 건수도 검색 결과 건수를 말한다 — filterConditions를 목록·건수가 공유한다
+    @Test
+    void keywordIsAppliedToCountsAsWell() {
+        createWork("2026 동아리 박람회", WorkType.EVENT, null, null);
+        createWork("2025 동아리 박람회", WorkType.EVENT, null, null);
+        createWork("정기 총회", WorkType.ROUTINE, null, null);
+
+        WorkSearchResponse response = search(condition().keyword("박람회").build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 검색어와 기존 필터가 함께 걸린다
+    @Test
+    void keywordCombinesWithStatusAndTypeFilters() {
+        Long target = createWork("동아리 박람회", WorkType.EVENT, null, null).workId();
+        createWork("동아리 박람회 정산", WorkType.ROUTINE, null, null);
+
+        assertThat(idsOf(search(condition().keyword("박람회").workType("EVENT").build())))
+                .containsExactly(target);
+        assertThat(idsOf(search(condition().keyword("박람회").workStatus("DONE").build()))).isEmpty();
+    }
+
+    // 검색어를 건 채 커서로 이어 받아도 같은 조건의 페이지가 이어진다
+    @Test
+    void cursorPagingKeepsKeywordCondition() {
+        for (int i = 0; i < 3; i++) {
+            createWork("박람회 준비 " + i, WorkType.EVENT, null, null);
+        }
+        createWork("무관한 업무", WorkType.ROUTINE, null, null);
+
+        WorkSearchResponse first = search(condition().keyword("박람회").size(2).build());
+        assertThat(first.works()).hasSize(2);
+        assertThat(first.page().hasNext()).isTrue();
+
+        WorkSearchResponse second =
+                search(
+                        condition()
+                                .keyword("박람회")
+                                .size(2)
+                                .cursor(first.page().nextCursor())
+                                .build());
+
+        assertThat(second.works()).hasSize(1);
+        assertThat(second.page().hasNext()).isFalse();
+        assertThat(second.works().get(0).title()).contains("박람회");
+    }
+
     @Test
     void statusAndTypeFiltersAreAppliedTogether() {
         Long eventPlanning = createWork("행사·기획", WorkType.EVENT, null, null).workId();
@@ -636,6 +767,7 @@ class WorkServiceImplSearchTest {
 
         private String workStatus;
         private String workType;
+        private String keyword;
         private Integer size;
         private String cursor;
         private String sort;
@@ -647,6 +779,11 @@ class WorkServiceImplSearchTest {
 
         private ConditionBuilder workType(String value) {
             this.workType = value;
+            return this;
+        }
+
+        private ConditionBuilder keyword(String value) {
+            this.keyword = value;
             return this;
         }
 
@@ -666,7 +803,7 @@ class WorkServiceImplSearchTest {
         }
 
         private WorkSearchCondition build() {
-            return new WorkSearchCondition(workStatus, workType, size, cursor, sort);
+            return new WorkSearchCondition(workStatus, workType, keyword, size, cursor, sort);
         }
     }
 }

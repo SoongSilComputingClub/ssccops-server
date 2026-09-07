@@ -280,6 +280,109 @@ class SubWorkServiceImplSearchTest {
     }
 
     /*
+     * 제목 부분 일치 (ssccops#216). 업무 쪽(WorkServiceImplSearchTest)과 **같은 규칙**이어야
+     * 한다 — 두 목록이 회의 안건 추가 화면에 나란히 놓이므로 한쪽만 대소문자를 가리거나 한쪽만
+     * '%'를 특수문자로 다루면 같은 검색어가 종류를 바꾼 순간 다른 결과를 낸다.
+     */
+    @Test
+    void keywordFilterMatchesPartOfTitle() {
+        Long poster = createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        assertThat(idsOf(search(condition().keyword("포스터").build()))).containsExactly(poster);
+        assertThat(idsOf(search(condition().keyword("없는제목").build()))).isEmpty();
+    }
+
+    @Test
+    void keywordFilterIgnoresCase() {
+        Long subWorkId = createSubWork(springMtWorkId, "SSCC 부스 운영", SOON);
+
+        assertThat(idsOf(search(condition().keyword("sscc").build()))).containsExactly(subWorkId);
+    }
+
+    // 공백만인 검색어는 조건 없음이다 (KeywordSearch.normalize)
+    @Test
+    void blankKeywordIsTreatedAsNoFilter() {
+        createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        assertThat(idsOf(search(condition().keyword("   ").build()))).hasSize(2);
+    }
+
+    // 와일드카드는 리터럴이다 — 업무 쪽과 같은 규칙
+    @Test
+    void wildcardCharactersAreMatchedLiterally() {
+        Long discount = createSubWork(springMtWorkId, "할인 50% 협상", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        assertThat(idsOf(search(condition().keyword("%").build()))).containsExactly(discount);
+        assertThat(idsOf(search(condition().keyword("_").build()))).isEmpty();
+    }
+
+    /*
+     * **이 작업의 핵심이다** — 커서 페이징 20건이라 화면이 받아 둔 배열을 거르면 첫 페이지
+     * 안의 건만 찾아진다.
+     */
+    @Test
+    void keywordFindsRowsBeyondTheFirstPage() {
+        for (int i = 0; i < 25; i++) {
+            createSubWork(springMtWorkId, "채우기 " + i, SOON);
+        }
+        Long needle = createSubWork(springMtWorkId, "숨어 있는 하위 업무", SOON);
+
+        assertThat(idsOf(search(condition().size(20).build()))).doesNotContain(needle);
+        assertThat(idsOf(search(condition().keyword("숨어").build()))).containsExactly(needle);
+    }
+
+    // 화면 우상단의 '8건'도 검색 결과 건수를 말한다
+    @Test
+    void keywordIsAppliedToCountsAsWell() {
+        createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        createSubWork(springMtWorkId, "포스터 인쇄", SOON);
+        createSubWork(springMtWorkId, "예산 정산", SOON);
+
+        SubWorkSearchResponse response = search(condition().keyword("포스터").build());
+
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        assertThat(response.page().overallCount()).isEqualTo(3);
+    }
+
+    // 검색어와 기존 필터가 함께 걸린다
+    @Test
+    void keywordCombinesWithStatusFilter() {
+        Long started = createSubWork(springMtWorkId, "포스터 디자인", SOON);
+        transition(started, TransitionAction.START, null);
+        createSubWork(springMtWorkId, "포스터 인쇄", SOON);
+
+        assertThat(idsOf(search(condition().keyword("포스터").workStatus("IN_PROGRESS").build())))
+                .containsExactly(started);
+    }
+
+    // 검색어를 건 채 커서로 이어 받아도 같은 조건의 페이지가 이어진다
+    @Test
+    void cursorPagingKeepsKeywordCondition() {
+        for (int i = 0; i < 3; i++) {
+            createSubWork(springMtWorkId, "포스터 작업 " + i, SOON);
+        }
+        createSubWork(springMtWorkId, "무관한 건", SOON);
+
+        SubWorkSearchResponse first = search(condition().keyword("포스터").size(2).build());
+        assertThat(first.subWorks()).hasSize(2);
+        assertThat(first.page().hasNext()).isTrue();
+
+        SubWorkSearchResponse second =
+                search(
+                        condition()
+                                .keyword("포스터")
+                                .size(2)
+                                .cursor(first.page().nextCursor())
+                                .build());
+
+        assertThat(second.subWorks()).hasSize(1);
+        assertThat(second.page().hasNext()).isFalse();
+    }
+
+    /*
      * 화면 '승인대기' 칩. 승인이 필요한 유형은 등록 직후부터 승인 상태가 대기(PENDING)라
      * 승인 상태만 걸면 아직 검토요청도 하지 않은 건까지 잡힌다. 업무 상태를 함께 걸어야
      * 승인함에 실제로 뜨는 건과 목록이 일치한다.
@@ -925,6 +1028,7 @@ class SubWorkServiceImplSearchTest {
         private OffsetDateTime dueBefore;
         private Boolean isReadyForReview;
         private Boolean isReviewStale;
+        private String keyword;
         private Integer size;
         private String cursor;
         private String sort;
@@ -959,6 +1063,11 @@ class SubWorkServiceImplSearchTest {
             return this;
         }
 
+        private ConditionBuilder keyword(String value) {
+            this.keyword = value;
+            return this;
+        }
+
         private ConditionBuilder size(Integer value) {
             this.size = value;
             return this;
@@ -982,6 +1091,7 @@ class SubWorkServiceImplSearchTest {
                     dueBefore,
                     isReadyForReview,
                     isReviewStale,
+                    keyword,
                     size,
                     cursor,
                     sort);

@@ -12,6 +12,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseOverviewResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
@@ -67,6 +68,15 @@ public interface FormResponseService {
      * 이루지 않아 접수 판정을 걸 이유가 없고, 걸면 마감 직후부터 자기가 낸 것을 볼 수 없다.
      */
     List<MyFormResponseSummaryResponse> getMyResponses(Long formId, MemberEntity respondent);
+
+    /*
+     * 폼을 가로지르는 내 응답 목록 (ssccops#221). 폼을 모르는 채로 시작하는 유일한 응답 조회이며,
+     * 수정요청을 받은 응답자가 그 폼 링크를 잃어버렸을 때 찾아 들어오는 길이다.
+     *
+     * **행사 신청은 빠진다** — GET /v1/events/my-applications가 그것을 답하고, 두 목록이 같은
+     * 화면에 놓이므로 거르지 않으면 같은 응답이 두 줄로 보인다.
+     */
+    List<MyFormResponseOverviewResponse> getMyResponsesAcrossForms(MemberEntity respondent);
 
     /*
      * 제출자용 본인 응답 상세 (#177). 내 답 전체(rspnsCn)와 검토 처리 이력을 함께 돌려준다 —

@@ -108,10 +108,22 @@ QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 # 직전에 고친 "총계 761건"(ssccops#236)도 그 합이었다. 합계만 볼 때는 아무도 이상하다고
 # 느끼지 못했고, 규칙 분포를 찍고 나서야 드러났다.
 #
-# **검증은 두 가지다: (1) typescript: 규칙이 나오면 필터가 또 빠진 것이고,
-# (2) 전부 0이면 필터가 너무 좁아 아무것도 못 찾은 것이다.**
+# **그리고 `branch` 를 붙이지 않는다.** 이 서버에는 브랜치 분석이 없다(Community Edition
+# 추정 — 확인은 ssccops#234). 유효한 프로젝트 필터에 `branch` 를 함께 주면 그 브랜치가
+# 존재하지 않는 것으로 취급돼 **0건이 돌아온다.** 실제로 그렇게 나왔다.
+#
+# 그동안 이 사실이 가려져 있었던 것은 필터 이름이 틀려(`projectKeys`) 조건이 통째로 무시됐기
+# 때문이다 — 필터가 없으니 branch 도 함께 무시됐고 인스턴스 전체가 돌아왔다. 필터를 고치는
+# 순간 branch 가 살아나 0건이 됐다. **#284 가 고친 URL 인코딩도 같은 자리다** — 인코딩이
+# 맞아도 없는 브랜치를 가리키는 것은 그대로였고, **커버리지가 계속 0%였던 이유가 이것이다.**
+#
+# 그래서 지금 숫자는 **프로젝트 전체**이지 이 PR 의 것이 아니다. 브랜치별로 보려면 에디션이
+# 먼저다(ssccops#234). `BRANCH_ENC` 는 대시보드 링크에만 남는다.
+#
+# **검증은 세 가지다: (1) typescript: 규칙이 나오면 필터가 또 빠진 것이고,
+# (2) 전부 0이면 필터가 너무 좁은 것이며, (3) 커버리지가 0%면 branch 가 되살아난 것이다.**
 ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types,rules")
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&ps=1&facets=types,rules")
 
 # facet 이 비어 있어도 리포트는 살아야 한다 — 이 파일의 다른 폴백과 같은 태도다.
 issue_count() {
@@ -137,7 +149,7 @@ RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
     end')
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH_ENC&metricKeys=coverage,duplicated_lines_density")
+  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage,duplicated_lines_density")
 COVERAGE=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="coverage")) | .[0].value // "0"')
 DUPLICATION=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="duplicated_lines_density")) | .[0].value // "0"')
 

@@ -95,8 +95,35 @@ QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 # ps 를 500 으로 올리는 것은 답이 아니다 — 상한만 옮기고, 넘어가는 순간 같은 오류가 조용히
 # 돌아오며 넘었다는 사실조차 알 수 없다. facet 은 페이지와 무관하게 전체를 센다.
 # 그래서 ps=1 로 본문을 최소화하고 facets=types 의 count 만 읽는다.
+# 프로젝트 필터는 `componentKeys` 다. 두 가지를 실제로 시도해 보고 정했다 (ssccops#237).
+#
+# | 파라미터 | 결과 |
+# |---|---|
+# | `projectKeys` | **존재하지 않는 이름.** SonarQube 는 모르는 파라미터를 오류로 만들지 않고 조용히 무시한다 — 필터가 통째로 빠져 인스턴스 전체가 돌아왔다 |
+# | `components`  | 0건. 이 버전에서는 파일·디렉터리 키를 기대하는 것으로 보인다 |
+# | `componentKeys` | 프로젝트 키를 받는다 |
+#
+# `projectKeys` 로 돌던 동안 ssccops-server 리포트의 상위가 `typescript:S6759` 235건이었다 —
+# **이 저장소에는 .ts 파일이 한 개도 없다.** server 와 web 두 프로젝트의 숫자가 합쳐져 있었고,
+# 직전에 고친 "총계 761건"(ssccops#236)도 그 합이었다. 합계만 볼 때는 아무도 이상하다고
+# 느끼지 못했고, 규칙 분포를 찍고 나서야 드러났다.
+#
+# **그리고 `branch` 를 붙이지 않는다.** 이 서버에는 브랜치 분석이 없다(Community Edition
+# 추정 — 확인은 ssccops#234). 유효한 프로젝트 필터에 `branch` 를 함께 주면 그 브랜치가
+# 존재하지 않는 것으로 취급돼 **0건이 돌아온다.** 실제로 그렇게 나왔다.
+#
+# 그동안 이 사실이 가려져 있었던 것은 필터 이름이 틀려(`projectKeys`) 조건이 통째로 무시됐기
+# 때문이다 — 필터가 없으니 branch 도 함께 무시됐고 인스턴스 전체가 돌아왔다. 필터를 고치는
+# 순간 branch 가 살아나 0건이 됐다. **#284 가 고친 URL 인코딩도 같은 자리다** — 인코딩이
+# 맞아도 없는 브랜치를 가리키는 것은 그대로였고, **커버리지가 계속 0%였던 이유가 이것이다.**
+#
+# 그래서 지금 숫자는 **프로젝트 전체**이지 이 PR 의 것이 아니다. 브랜치별로 보려면 에디션이
+# 먼저다(ssccops#234). `BRANCH_ENC` 는 대시보드 링크에만 남는다.
+#
+# **검증은 세 가지다: (1) typescript: 규칙이 나오면 필터가 또 빠진 것이고,
+# (2) 전부 0이면 필터가 너무 좁은 것이며, (3) 커버리지가 0%면 branch 가 되살아난 것이다.**
 ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types")
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&ps=1&facets=types,rules")
 
 # facet 이 비어 있어도 리포트는 살아야 한다 — 이 파일의 다른 폴백과 같은 태도다.
 issue_count() {
@@ -107,8 +134,22 @@ BUGS=$(issue_count BUG)
 VULNS=$(issue_count VULNERABILITY)
 SMELLS=$(issue_count CODE_SMELL)
 
+# 규칙별 상위 목록 (ssccops#237).
+#
+# 타입별 합계만으로는 **무엇부터 볼지 알 수 없다.** 761건이 761가지 문제인 경우는 드물고,
+# 같은 규칙이 여러 파일에서 걸린 것이 대부분이라 규칙으로 묶으면 판단 단위가 몇 개로 줄어든다.
+# facets=rules 는 위 요청에 이미 얹혀 오므로 추가 왕복이 없다.
+#
+# **PR 코멘트가 아니라 job 요약에만 넣는다** — 규칙이 수십 개라 코멘트에 실으면 리뷰가 묻힌다.
+RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
+  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] ]
+  | sort_by(-.count) | .[:15]
+  | if length == 0 then empty
+    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
+    end')
+
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH_ENC&metricKeys=coverage,duplicated_lines_density")
+  "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage,duplicated_lines_density")
 COVERAGE=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="coverage")) | .[0].value // "0"')
 DUPLICATION=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="duplicated_lines_density")) | .[0].value // "0"')
 
@@ -145,6 +186,25 @@ EOF
 )
 
 echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
+
+# 규칙별 분포는 **job 요약에만** 붙인다 (ssccops#237). PR 코멘트에 넣지 않는 이유는
+# 위 RULES_TABLE 주석에 있다 — 규칙이 수십 개라 코멘트가 길어지면 리뷰가 묻힌다.
+if [ -n "$RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 규칙별 상위 15개"
+    echo
+    echo "$RULES_TABLE"
+    echo
+    echo "> 761건이 761가지 문제인 것이 아니다 — 같은 규칙이 여러 파일에서 걸린 것이 대부분이라,"
+    echo "> 규칙으로 묶으면 판단 단위가 몇 개로 줄어든다 (ssccops#233)."
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  # **stdout 에도 찍는다.** job 요약은 UI 에서만 보이고 Actions API 로는 읽히지 않는다 —
+  # 로그에 없으면 사람이 브라우저를 열기 전에는 아무도(자동화 포함) 이 표를 볼 수 없다.
+  echo "--- 규칙별 상위 15개 ---"
+  echo "$RULES_TABLE"
+fi
 
 if [ -n "${PR_NUMBER:-}" ]; then
   gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$BODY"

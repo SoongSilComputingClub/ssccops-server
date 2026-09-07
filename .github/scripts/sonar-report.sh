@@ -172,6 +172,11 @@ if [ -n "$RULES_TABLE" ]; then
     echo "> 761건이 761가지 문제인 것이 아니다 — 같은 규칙이 여러 파일에서 걸린 것이 대부분이라,"
     echo "> 규칙으로 묶으면 판단 단위가 몇 개로 줄어든다 (ssccops#233)."
   } >> "$GITHUB_STEP_SUMMARY"
+
+  # **stdout 에도 찍는다.** job 요약은 UI 에서만 보이고 Actions API 로는 읽히지 않는다 —
+  # 로그에 없으면 사람이 브라우저를 열기 전에는 아무도(자동화 포함) 이 표를 볼 수 없다.
+  echo "--- 규칙별 상위 15개 ---"
+  echo "$RULES_TABLE"
 fi
 
 if [ -n "${PR_NUMBER:-}" ]; then

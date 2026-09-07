@@ -96,7 +96,7 @@ QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 # 돌아오며 넘었다는 사실조차 알 수 없다. facet 은 페이지와 무관하게 전체를 센다.
 # 그래서 ps=1 로 본문을 최소화하고 facets=types 의 count 만 읽는다.
 ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types")
+  "$SONAR_HOST_URL/api/issues/search?projectKeys=$PROJECT_KEY&branch=$BRANCH_ENC&resolved=false&ps=1&facets=types,rules")
 
 # facet 이 비어 있어도 리포트는 살아야 한다 — 이 파일의 다른 폴백과 같은 태도다.
 issue_count() {
@@ -106,6 +106,20 @@ issue_count() {
 BUGS=$(issue_count BUG)
 VULNS=$(issue_count VULNERABILITY)
 SMELLS=$(issue_count CODE_SMELL)
+
+# 규칙별 상위 목록 (ssccops#237).
+#
+# 타입별 합계만으로는 **무엇부터 볼지 알 수 없다.** 761건이 761가지 문제인 경우는 드물고,
+# 같은 규칙이 여러 파일에서 걸린 것이 대부분이라 규칙으로 묶으면 판단 단위가 몇 개로 줄어든다.
+# facets=rules 는 위 요청에 이미 얹혀 오므로 추가 왕복이 없다.
+#
+# **PR 코멘트가 아니라 job 요약에만 넣는다** — 규칙이 수십 개라 코멘트에 실으면 리뷰가 묻힌다.
+RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
+  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] ]
+  | sort_by(-.count) | .[:15]
+  | if length == 0 then empty
+    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
+    end')
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&branch=$BRANCH_ENC&metricKeys=coverage,duplicated_lines_density")
@@ -145,6 +159,20 @@ EOF
 )
 
 echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
+
+# 규칙별 분포는 **job 요약에만** 붙인다 (ssccops#237). PR 코멘트에 넣지 않는 이유는
+# 위 RULES_TABLE 주석에 있다 — 규칙이 수십 개라 코멘트가 길어지면 리뷰가 묻힌다.
+if [ -n "$RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 규칙별 상위 15개"
+    echo
+    echo "$RULES_TABLE"
+    echo
+    echo "> 761건이 761가지 문제인 것이 아니다 — 같은 규칙이 여러 파일에서 걸린 것이 대부분이라,"
+    echo "> 규칙으로 묶으면 판단 단위가 몇 개로 줄어든다 (ssccops#233)."
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
 
 if [ -n "${PR_NUMBER:-}" ]; then
   gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$BODY"

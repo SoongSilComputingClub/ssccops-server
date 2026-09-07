@@ -69,19 +69,24 @@ public record FormResponseDetailResponse(
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
+    /**
+     * @param canSeeContact 요청자가 MEMBER_MANAGE를 가졌는가 — 응답자 연락처를 담을지 가른다 (#277). 조립 시점에 굳혀 내리므로 화면이
+     *     다시 판단하지 않는다.
+     */
     public static FormResponseDetailResponse of(
             FormResponseHistoryEntity response,
             List<FormResponseReviewHistoryEntity> reviewHistories,
             Long previousId,
             Long nextId,
-            Object academicProgramPreview) {
+            Object academicProgramPreview,
+            boolean canSeeContact) {
         return new FormResponseDetailResponse(
                 response.getId(),
                 response.getResponseSequence(),
                 response.getStatus(),
                 toOffsetDateTime(response.getSubmittedAt()),
                 response.getSubmissionSequence(),
-                ResponseMemberDetail.from(response.getMember()),
+                ResponseMemberDetail.from(response.getMember(), canSeeContact),
                 response.getContent(),
                 reviewHistories.stream().map(FormResponseReviewHistoryResponse::from).toList(),
                 previousId,

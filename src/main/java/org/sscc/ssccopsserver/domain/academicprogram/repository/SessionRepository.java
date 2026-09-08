@@ -35,6 +35,18 @@ public interface SessionRepository
             @Param("sessionId") Long sessionId, @Param("academicProgramId") Long academicProgramId);
 
     /*
+     * 공유 미리보기(ssccops#311)가 회차 하나를 읽는 자리. **활동으로 좁히지 않는 유일한
+     * 단건 조회다** — 토큰이 이미 회차 하나를 못 박고 있어(shr_lnk.trgt_id) 경로처럼 남의
+     * 활동으로 흘러갈 자리가 없고, 활동 ID를 함께 요구하면 공유 도메인이 그 값을 어딘가에
+     * 또 들고 있어야 한다.
+     *
+     * 제목이 계획(crclm_artcl.ttl)에 있으므로 함께 끌어온다 — LAZY 그대로면 미리보기를
+     * 조립하며 조회가 한 번 더 나간다(DB-13).
+     */
+    @EntityGraph(attributePaths = {"curriculumItem"})
+    Optional<SessionEntity> findWithCurriculumItemById(Long sessionId);
+
+    /*
      * 계획 조회(#134 · GET .../curriculum-items)가 붙이는 실적. 커리큘럼 항목마다 "실적이
      * 있나"를 물으면 그대로 N+1이라(DB-13) 활동 하나의 실적을 한 번에 읽어 호출부가 계획에
      * 접는다. 계획이 이미 활동으로 좁혀 읽히므로 여기서도 활동으로 좁힌다.

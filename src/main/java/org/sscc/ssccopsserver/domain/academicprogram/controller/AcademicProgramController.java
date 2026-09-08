@@ -4,6 +4,7 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,6 +22,9 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.CurriculumItemWithSessi
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramService;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
+import org.sscc.ssccopsserver.domain.share.dto.ShareLinkResponse;
+import org.sscc.ssccopsserver.domain.share.service.ShareLinkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
@@ -49,6 +53,7 @@ import lombok.RequiredArgsConstructor;
 public class AcademicProgramController {
 
     private final AcademicProgramService academicProgramService;
+    private final ShareLinkService shareLinkService;
 
     @Operation(summary = "활동 상세 조회", description = "기획안·활동 상세. 소프트 삭제가 없어 존재하면 항상 조회된다.")
     @GetMapping("/{academicProgramId}")
@@ -126,5 +131,81 @@ public class AcademicProgramController {
             @CurrentMember MemberEntity performer) {
         return ApiResponse.success(
                 academicProgramService.transition(academicProgramId, request, performer));
+    }
+
+    /*
+     * 공유 링크 발급 (ssccops#311 · ADR-0016). 활동 상세 화면의 '공유' 버튼이 부른다.
+     *
+     * **이 셋이 `ShareController` 하나가 아니라 여기 있는 이유**는 `ShareLinkService` 주석에
+     * 있다 — ssccops#306이 후보 ①(도메인 컨트롤러마다 얇게)로 확정했고 여기서는 그 형판을
+     * 반복한다.
+     *
+     * **@RequireAuthority를 걸지 않는 것은 의도된 것이다.** 업무가 WORK_MANAGE가 아니라
+     * WORK_READ를 요구한 근거는 *"볼 수 있는 사람이 공유할 수 있다"*였다(토큰이 주는 것은
+     * 미리보기까지이고, 그것은 이 화면을 이미 보고 있는 사람이 아는 것을 넘지 않는다).
+     * **학술의 대응 권한을 찾으면 그런 것이 없다** — 활동 상세·목록·커리큘럼 조회 셋은
+     * 인증만 요구하고(클래스 주석), `ACADEMIC_PROGRAM_MANAGE`는 그와 짝이 아니라 국장 전용
+     * 쓰기(전이·회차 승인)의 권한이다. 그러므로 같은 판단을 적용한 결과가 "인증만"이다.
+     *
+     * ACADEMIC_PROGRAM_MANAGE를 걸면 **정작 뿌릴 사람이 막힌다** — 스터디장/팀장은 정적 권한
+     * 코드를 갖지 않고 `leadrMbrId` 소유권으로만 판정되는데(AuthorityCode 주석), 부원에게
+     * 링크를 뿌리는 당사자가 바로 그 사람이다.
+     *
+     * **멱등이다.** 살아 있는 링크가 있으면 그것을 돌려주므로 몇 번을 눌러도 결과가 같다 —
+     * 새 자원이 만들어지지 않는 호출이 있어 201이 아니라 200이다.
+     */
+    @Operation(
+            summary = "학술 프로그램 공유 링크 발급",
+            description =
+                    "발급은 멱등이다 — 살아 있는 링크가 있으면 새로 만들지 않고 그것을 돌려주므로 응답은"
+                            + " 언제나 200이다. 응답은 URL이 아니라 토큰(shrTkn)이며 웹이"
+                            + " `{자기 origin}/s/{token}`을 조립한다. 없는 활동이면 404다.")
+    @PostMapping("/{academicProgramId}/share")
+    public ApiResponse<ShareLinkResponse> issueShareLink(
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity issuer) {
+        // 없는 활동을 여기서 404로 끊는다 — 조회를 먼저 태우지 않으면 존재하지 않는 대상에
+        // 토큰이 발급된다(shr_lnk에 FK가 없어 DB가 막아 주지 않는다).
+        academicProgramService.getAcademicProgram(academicProgramId, issuer);
+        return ApiResponse.success(
+                shareLinkService.issue(
+                        ShareTargetType.ACADEMIC_PROGRAM, academicProgramId, issuer));
+    }
+
+    /*
+     * 현재 공유 상태 (ssccops#311). 화면이 '공유하기'와 '공유 중지' 중 무엇을 그릴지 정한다.
+     *
+     * 공유한 적이 없거나 폐기했으면 **data가 null인 200**이다 — 404가 아닌 것은 '공유 중이
+     * 아니다'가 오류가 아니라 정상적인 조회 결과이기 때문이다(업무·하위 업무와 같은 판단).
+     */
+    @Operation(
+            summary = "학술 프로그램 공유 상태 조회",
+            description = "공유 중이 아니면 404가 아니라 data가 null인 200이다. 없는 활동이면 404다.")
+    @GetMapping("/{academicProgramId}/share")
+    public ApiResponse<ShareLinkResponse> getShareLink(
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity viewer) {
+        academicProgramService.getAcademicProgram(academicProgramId, viewer);
+        return ApiResponse.success(
+                shareLinkService
+                        .findActive(ShareTargetType.ACADEMIC_PROGRAM, academicProgramId)
+                        .orElse(null));
+    }
+
+    /*
+     * 공유 중지 (ssccops#311). 폐기하면 그 링크로는 미리보기도 상세도 열리지 않는다.
+     *
+     * 만료를 두지 않기로 했으므로(ADR-0016) **이것이 링크를 거두는 유일한 길이다.** 살아 있는
+     * 링크가 없어도 조용히 지나가며 언제나 200이다.
+     */
+    @Operation(
+            summary = "학술 프로그램 공유 중지",
+            description =
+                    "폐기하면 그 토큰으로는 미리보기가 404가 된다. 살아 있는 링크가 없어도 200이다 —"
+                            + " 결과가 같은데 두 번째 요청만 오류로 만들 이유가 없다.")
+    @DeleteMapping("/{academicProgramId}/share")
+    public ApiResponse<Void> revokeShareLink(
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity viewer) {
+        academicProgramService.getAcademicProgram(academicProgramId, viewer);
+        shareLinkService.revoke(ShareTargetType.ACADEMIC_PROGRAM, academicProgramId);
+        return ApiResponse.successWithNoData();
     }
 }

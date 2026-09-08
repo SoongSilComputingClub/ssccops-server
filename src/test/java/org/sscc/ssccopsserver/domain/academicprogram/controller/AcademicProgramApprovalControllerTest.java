@@ -169,12 +169,32 @@ class AcademicProgramApprovalControllerTest {
                 // 승인은 통보할 것이 없어 사유가 비어 있다
                 .andExpect(jsonPath("$.data[0].opnnCn").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.data[0].aprvDt").isNotEmpty())
+                // 처리 시각은 서비스 오프셋이 붙어 나간다 (#318 — 아래 전용 테스트가 근거)
+                .andExpect(jsonPath("$.data[0].aprvDt", Matchers.endsWith("+09:00")))
                 .andExpect(jsonPath("$.data[1].aprvSttsCd").value("REVISION_REQUESTED"))
                 .andExpect(jsonPath("$.data[1].opnnCn").value("출석 인원과 명단이 맞지 않습니다."))
                 .andExpect(jsonPath("$.page.sort").value("-approvalId"))
                 .andExpect(jsonPath("$.page.hasNext").value(false))
                 .andExpect(jsonPath("$.page.totalCount").value(2))
                 .andExpect(jsonPath("$.page.overallCount").value(2));
+    }
+
+    /*
+     * 처리 시각은 **Asia/Seoul 오프셋이 붙은 채로** 나간다 (#318 · AP-12).
+     *
+     * 이 자리만 Instant를 그대로 내려 `"...Z"`(UTC)로 나갔고, 화면은 응답 문자열의 앞자리를
+     * 잘라 그리므로 아홉 시간 이른 시각이 그대로 찍혔다. 값도 타입도 멀쩡해 보여 타입·린트·
+     * 빌드가 전부 통과하는 종류의 어긋남이라, **`Z`로 끝나면 여기서 떨어져야 한다.**
+     */
+    @Test
+    void approvalDateCarriesServiceOffset() throws Exception {
+        Long sessionId = submitSession(0, "2026-09-05", "1회차");
+        approveSession(sessionId);
+
+        mockMvc.perform(authorized(get(approvalsPath(study)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].aprvDt", Matchers.endsWith("+09:00")))
+                .andExpect(jsonPath("$.data[0].aprvDt", Matchers.not(Matchers.endsWith("Z"))));
     }
 
     // 국장도 감독 목적으로 본다 — 소유권과 관리권한의 OR이다(#138과 같은 정책 한 곳)

@@ -2,6 +2,8 @@ package org.sscc.ssccopsserver.domain.member.dto;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -18,6 +20,9 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 상세 진입 한 번에 이력 전량을 실으면 오래된 회원일수록 응답이 무한정 커진다.
  *
  * capabilities는 담지 않는다 (MemberSummaryResponse 주석과 같은 이유).
+ *
+ * createdAt·updatedAt은 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다. 두 칸 모두 Instant를
+ * 그대로 내리고 있었다(#318) — 문자열을 잘라 그리는 화면에서는 아홉 시간 이른 시각이 된다.
  */
 public record MemberDetailResponse(
         Long memberId,
@@ -38,8 +43,10 @@ public record MemberDetailResponse(
         boolean linkedAccount,
         List<MemberRoleResponse> roles,
         List<MemberChangeHistoryResponse> recentChanges,
-        Instant createdAt,
-        Instant updatedAt) {
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt) {
+
+    private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static MemberDetailResponse of(
             MemberEntity member,
@@ -64,7 +71,11 @@ public record MemberDetailResponse(
                 member.getAuthUserId() != null,
                 roles,
                 recentChanges,
-                member.getCreatedAt(),
-                member.getUpdatedAt());
+                toOffsetDateTime(member.getCreatedAt()),
+                toOffsetDateTime(member.getUpdatedAt()));
+    }
+
+    private static OffsetDateTime toOffsetDateTime(Instant instant) {
+        return instant == null ? null : instant.atZone(SERVICE_ZONE).toOffsetDateTime();
     }
 }

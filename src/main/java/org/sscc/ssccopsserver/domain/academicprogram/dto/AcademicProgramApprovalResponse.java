@@ -1,6 +1,8 @@
 package org.sscc.ssccopsserver.domain.academicprogram.dto;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
@@ -21,6 +23,11 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
  * aprvDt는 처리 일시이며 PENDING이면 null이다. 지금 이 테이블에 PENDING 행을 쌓는 경로는
  * 없지만(AcademicProgramApprovalStatus 주석) 그 사실은 이 DTO가 아니라 쓰는 쪽의 성질이라
  * null 아님을 전제하지 않는다.
+ *
+ * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다. 이 자리만 Instant를 그대로 내리고
+ * 있었고(#318), 화면은 응답 문자열의 앞자리를 잘라 그리므로 UTC 표기가 그대로 아홉 시간 이른
+ * 시각으로 찍혔다 — 값도 타입도 멀쩡해 보여 조용히 틀리는 종류였다. 변환은 같은 폴더의
+ * AcademicProgramDetailResponse와 같은 모양이다.
  */
 public record AcademicProgramApprovalResponse(
         Long approvalId,
@@ -29,7 +36,9 @@ public record AcademicProgramApprovalResponse(
         Long sessionId,
         String aprvrMbrNm,
         String opnnCn,
-        Instant aprvDt) {
+        OffsetDateTime aprvDt) {
+
+    private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static AcademicProgramApprovalResponse of(AcademicProgramApprovalEntity approval) {
         SessionEntity session = approval.getSession();
@@ -41,6 +50,10 @@ public record AcademicProgramApprovalResponse(
                 session == null ? null : session.getId(),
                 approval.getApprover().getName(),
                 approval.getOpinionContent(),
-                approval.getApprovedAt());
+                toOffsetDateTime(approval.getApprovedAt()));
+    }
+
+    private static OffsetDateTime toOffsetDateTime(Instant instant) {
+        return instant == null ? null : instant.atZone(SERVICE_ZONE).toOffsetDateTime();
     }
 }

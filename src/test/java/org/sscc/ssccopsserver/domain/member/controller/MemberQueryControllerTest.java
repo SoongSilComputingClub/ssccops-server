@@ -259,6 +259,27 @@ class MemberQueryControllerTest {
     }
 
     /*
+     * 감사 일시는 **Asia/Seoul 오프셋이 붙은 채로** 나간다 (#318 · AP-12).
+     *
+     * 목록·단건 모두 Instant를 그대로 내려 `"...Z"`(UTC)로 나갔다. 화면은 응답 문자열의
+     * 앞자리를 잘라 그리므로(`@ssccops/date`) UTC 표기는 아홉 시간 이른 시각이 된다 —
+     * **`Z`로 끝나면 여기서 떨어져야 한다.**
+     */
+    @Test
+    void auditTimestampsCarryServiceOffset() throws Exception {
+        mockMvc.perform(authorized(get(MEMBERS).param("q", "박준호"), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].createdAt", Matchers.endsWith("+09:00")))
+                .andExpect(jsonPath("$.data[0].createdAt", Matchers.not(Matchers.endsWith("Z"))))
+                .andExpect(jsonPath("$.data[0].updatedAt", Matchers.endsWith("+09:00")));
+
+        mockMvc.perform(authorized(get(MEMBERS + "/" + targetMemberId), MANAGER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.createdAt", Matchers.endsWith("+09:00")))
+                .andExpect(jsonPath("$.data.updatedAt", Matchers.endsWith("+09:00")));
+    }
+
+    /*
      * 없는 회원은 404다. 404로 감추지 않는다는 규칙(VR-M10)은 권한 부족을 두고 하는 말이고,
      * 정말로 없는 자원은 그대로 404다.
      *

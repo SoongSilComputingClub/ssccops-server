@@ -2,6 +2,8 @@ package org.sscc.ssccopsserver.domain.member.dto;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -24,6 +26,9 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  *
  * roles는 현재 역할이며 판정 규칙은 BR-M25다(MemberSearchQuery·Service 주석 참고).
  * 표시용이므로 대표 역할 여부(rprs_role_yn)로 정렬하거나 걸러내지 않는다 (BR-M26).
+ *
+ * createdAt·updatedAt은 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다. 두 칸 모두 Instant를
+ * 그대로 내리고 있었다(#318) — 문자열을 잘라 그리는 화면에서는 아홉 시간 이른 시각이 된다.
  */
 public record MemberSummaryResponse(
         Long memberId,
@@ -43,8 +48,10 @@ public record MemberSummaryResponse(
         Integer clubJoinMonth,
         boolean linkedAccount,
         List<MemberRoleResponse> roles,
-        Instant createdAt,
-        Instant updatedAt) {
+        OffsetDateTime createdAt,
+        OffsetDateTime updatedAt) {
+
+    private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     /*
      * 등급·상태는 지연 로딩이라 이 변환은 조회 트랜잭션 안에서 호출해야 한다.
@@ -69,7 +76,11 @@ public record MemberSummaryResponse(
                 member.getClubJoinMonth(),
                 member.getAuthUserId() != null,
                 roles,
-                member.getCreatedAt(),
-                member.getUpdatedAt());
+                toOffsetDateTime(member.getCreatedAt()),
+                toOffsetDateTime(member.getUpdatedAt()));
+    }
+
+    private static OffsetDateTime toOffsetDateTime(Instant instant) {
+        return instant == null ? null : instant.atZone(SERVICE_ZONE).toOffsetDateTime();
     }
 }

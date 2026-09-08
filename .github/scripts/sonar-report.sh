@@ -194,6 +194,11 @@ EOF
 
 echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
 
+# **본문도 stdout 에 찍는다.** 규칙표에 붙여 둔 이유(아래)가 총계·커버리지에도 똑같이
+# 걸린다 — 기준선 숫자가 job 요약에만 있으면 Actions API 로 읽히지 않아, 사람이 브라우저를
+# 열어 옮겨 적기 전에는 이슈에도 남지 않는다. ssccops#238 의 검증이 실제로 여기서 막혔다.
+echo "$BODY"
+
 # 규칙별 분포는 job 요약에 붙인다 (ssccops#237).
 if [ -n "$RULES_TABLE" ]; then
   {
@@ -202,7 +207,7 @@ if [ -n "$RULES_TABLE" ]; then
     echo
     echo "$RULES_TABLE"
     echo
-    echo "> 761건이 761가지 문제인 것이 아니다 — 같은 규칙이 여러 파일에서 걸린 것이 대부분이라,"
+    echo "> 지적 수가 곧 문제의 가짓수는 아니다 — 같은 규칙이 여러 파일에서 걸린 것이 대부분이라,"
     echo "> 규칙으로 묶으면 판단 단위가 몇 개로 줄어든다 (ssccops#233)."
   } >> "$GITHUB_STEP_SUMMARY"
 

@@ -114,16 +114,13 @@ public interface SubWorkService {
     List<SubWorkSummaryResponse> listSubWorks();
 
     /*
-     * 이 회원이 담당 중인(완료되지 않은) 하위 업무의 건수 (#78).
+     * 담당 중인 하위 업무 건수(#78)는 **이 인터페이스에 없다** (ssccops#242).
      *
-     * 회원 도메인이 탈퇴·제명 전이의 경고를 만들 때 쓴다. 회원 도메인은 운영 Repository를
-     * 직접 호출할 수 없으므로(AR-07·LY-10) 진입점을 여기 하나로 둔다 — 운영 도메인이 회원
-     * 정보를 MemberService로만 얻는 것과 같은 규칙을 반대 방향으로 지킨다.
-     *
-     * **아무것도 바꾸지 않는다.** 담당 업무를 자동으로 회수하거나 재배정하는 동작은 운영 규칙이
-     * 필요한 판단이라 범위 밖이고, 이 메서드는 화면이 사람에게 알릴 숫자만 돌려준다.
+     * 그 값을 묻는 곳은 회원 도메인 하나이고(탈퇴·제명 경고), 여기 두면 회원이 운영을 import
+     * 해야 해서 member → operation → member 순환이 된다. 그래서 선언은 묻는 쪽에 있고
+     * (MemberSubWorkLoadProvider) 운영 도메인의 SubWorkOwnerLoadProvider가 그것을 구현한다 —
+     * 운영 도메인 안에서 쓰는 코드는 없으므로 이 인터페이스가 들고 있을 이유도 없다.
      */
-    long countOngoingByOwner(Long ownerId);
 
     /*
      * 하위 업무를 소프트 삭제한다 (#125). 자기 operation만 del_dt를 채운다 — 상위 업무·다른

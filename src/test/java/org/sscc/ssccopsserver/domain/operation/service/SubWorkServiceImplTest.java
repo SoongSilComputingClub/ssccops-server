@@ -138,6 +138,13 @@ class SubWorkServiceImplTest {
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
+
+    /*
+     * countOngoingByOwner 는 SubWorkService 가 아니라 회원 도메인이 선언한 포트
+     * (MemberSubWorkLoadProvider)의 메서드이고 운영 쪽 구현이 이 클래스다(ssccops#242).
+     * 같은 리포지토리 질의를 쓰므로 여기서 함께 검증한다.
+     */
+    private SubWorkOwnerLoadProvider subWorkOwnerLoadProvider;
     private MemberEntity registrant;
     private Long ownerId;
     private Long parentWorkId;
@@ -197,6 +204,7 @@ class SubWorkServiceImplTest {
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
+        subWorkOwnerLoadProvider = new SubWorkOwnerLoadProvider(subWorkRepository);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
@@ -1346,8 +1354,8 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThat(subWorkService.countOngoingByOwner(ownerId)).isEqualTo(1);
-        assertThat(subWorkService.countOngoingByOwner(registrant.getId())).isZero();
+        assertThat(subWorkOwnerLoadProvider.countOngoingByOwner(ownerId)).isEqualTo(1);
+        assertThat(subWorkOwnerLoadProvider.countOngoingByOwner(registrant.getId())).isZero();
     }
 
     // ---------------------------------------------------------------- 삭제 (#125)

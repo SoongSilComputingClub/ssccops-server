@@ -65,7 +65,8 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * 지킨다.
  *
  * academicProgramId(#190)는 이 폼이 학술 활동(acdm_actv)에 연결돼 있으면 그 활동 id, 아니면
- * null이다. form → event → acdm_actv 역참조로 채운다(AcademicProgramRepository.findIdByFormId).
+ * null이다. form → event → acdm_actv 역참조로 채운다(AcademicFormLinkProvider — 판별은 학술
+ * 도메인이 하고 폼은 포트로 묻는다, ssccops#242).
  * 편집 화면은 이 값이 있으면 접수 기간 입력란을 숨긴다 — 학술 연결 폼의 접수 기간은 "모집
  * 관리"에서만 바꾸고, 폼 편집으로 바꾸면 400 ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED다. 이관 폼의
  * 분류는 "EVENT"라 분류 코드로는 일반 폼과 구별되지 않으므로(#187) 이 조인이 유일한 판별이다.

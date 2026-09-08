@@ -45,7 +45,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
-import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
+import org.sscc.ssccopsserver.domain.member.service.MemberSubWorkLoadProvider;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
@@ -67,7 +67,8 @@ import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
  * 적용 일자가 주입된 Clock에서 오는지 확인해야 하므로 Clock을 고정한다 — 시스템 시각을 쓰고
  * 있었다면 기본 적용 일자 검증만 조용히 통과할 수 없다.
  *
- * 담당 하위 업무 건수는 SubWorkService를 대역으로 세워 정한다. 여기서 확인할 것은 '운영
+ * 담당 하위 업무 건수는 MemberSubWorkLoadProvider를 대역으로 세워 정한다(ssccops#242 — 회원
+ * 도메인이 선언하고 운영 도메인이 구현하는 포트다). 여기서 확인할 것은 '운영
  * 도메인에서 받아 온 숫자가 경고로 실리는가'이고, 그 숫자를 어떻게 세는지(완료 건 제외)는
  * 운영 도메인의 SubWorkServiceImplTest가 맡는다 — 회원 테스트가 상위 업무·유형·체크리스트
  * 픽스처를 통째로 세우기 시작하면 무엇을 검증하는 테스트인지 알 수 없게 된다.
@@ -102,7 +103,7 @@ class MemberChangeControllerTest {
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
 
-    @MockitoBean private SubWorkService subWorkService;
+    @MockitoBean private MemberSubWorkLoadProvider subWorkLoadProvider;
 
     private Long managerId;
     private Long plainMemberId;
@@ -375,7 +376,7 @@ class MemberChangeControllerTest {
      */
     @Test
     void withdrawalCarriesRemainingRolesAndSubWorksAsWarnings() throws Exception {
-        given(subWorkService.countOngoingByOwner(targetMemberId)).willReturn(3L);
+        given(subWorkLoadProvider.countOngoingByOwner(targetMemberId)).willReturn(3L);
 
         mockMvc.perform(
                         changeStatus(

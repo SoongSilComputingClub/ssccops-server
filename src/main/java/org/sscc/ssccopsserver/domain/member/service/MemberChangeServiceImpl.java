@@ -26,7 +26,6 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
-import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -60,7 +59,7 @@ public class MemberChangeServiceImpl implements MemberChangeService {
     private final MemberService memberService;
 
     // 탈퇴·제명 경고의 '담당 중인 하위 업무' 건수. 운영 Repository를 직접 부르지 않는다 (AR-07)
-    private final SubWorkService subWorkService;
+    private final MemberSubWorkLoadProvider subWorkLoadProvider;
 
     // 적용 일자의 기본값·미래 판정 기준. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -159,7 +158,7 @@ public class MemberChangeServiceImpl implements MemberChangeService {
             warnings.add(MemberChangeWarningResponse.currentRoles(roleCount));
         }
 
-        long subWorkCount = subWorkService.countOngoingByOwner(memberId);
+        long subWorkCount = subWorkLoadProvider.countOngoingByOwner(memberId);
         if (subWorkCount > 0) {
             warnings.add(MemberChangeWarningResponse.assignedSubWorks(subWorkCount));
         }

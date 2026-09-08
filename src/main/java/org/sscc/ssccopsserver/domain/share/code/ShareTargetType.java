@@ -47,7 +47,20 @@ public enum ShareTargetType {
      * (구분 코드 + 대상 ID)으로 두기로 했으므로 세 번째 값이 필요한 대상은 여기 들어올 수 없고,
      * 회차는 자기 PK가 있어 그럴 필요도 없다.
      */
-    ACADEMIC_SESSION;
+    ACADEMIC_SESSION,
+
+    /*
+     * 행사 (ssccops#312 · 미리보기 제공자는 EventSharePreviewProvider).
+     *
+     * **여는 것은 게시 전(DRAFT) 행사뿐이다.** 게시된 행사는 이미 익명이 여는 주소가 있어
+     * (`apps/www`의 `/events/{eventId}`) 토큰이 더하는 것이 폐기 기능뿐인데, 그 폐기가 원본
+     * 공개 URL을 막지 못한다 — 지키지 못하는 것을 지킨다고 말하는 버튼이 된다. 그 판정은
+     * `EventService.requireShareableDraft`가 한다.
+     *
+     * 착지 앱은 `apps/www`다(ssccops#254 착지 결정) — 뿌리는 대상이 동아리 밖이라 로그인 벽
+     * 뒤의 `apps/admin`이 받으면 링크를 받은 사람이 아무것도 볼 수 없다.
+     */
+    EVENT;
 
     public String code() {
         return name();

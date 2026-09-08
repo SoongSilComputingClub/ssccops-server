@@ -358,6 +358,19 @@ public class EventServiceImpl implements EventService {
     }
 
     /*
+     * 공유 링크 발급 전 가드 (ssccops#312 · ADR-0016). 인터페이스 주석에 근거가 있다.
+     *
+     * 발급 자체는 여기서 하지 않는다 — 토큰을 만드는 것은 `ShareLinkService`의 일이고, 행사
+     * 도메인이 답하는 것은 **"이 행사를 지금 공유해도 되는가"** 하나다.
+     */
+    @Override
+    public void requireShareableDraft(Long eventId) {
+        if (findEvent(eventId).getStatus() != EventStatus.DRAFT) {
+            throw new GeneralException(EventErrorCode.EVENT_SHARE_NOT_DRAFT);
+        }
+    }
+
+    /*
      * 저장으로 본문·썸네일에서 빠진 이미지의 오브젝트 키 (ssccops#188 · ADR-0014).
      *
      * **static이고 package-private인 것은 이 규칙만 따로 검증하기 위해서다.** 지우는 실제

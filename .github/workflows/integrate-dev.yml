@@ -60,10 +60,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -92,10 +92,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -108,7 +108,7 @@ jobs:
         run: ./gradlew test jacocoTestReport
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results
@@ -147,13 +147,13 @@ jobs:
 
       - name: Checkout source
         if: env.SONAR_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 얕은 클론이면 blame·신규 코드 판정이 어긋난다
 
       - name: Set up JDK
         if: env.SONAR_TOKEN != ''
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -161,15 +161,19 @@ jobs:
 
       - name: Cache SonarQube packages
         if: env.SONAR_TOKEN != ''
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
+      # 이름으로 받는다 — download-artifact v5 가 깨뜨린 것은 `artifact-ids` 로 받는 경로뿐이다.
+      # v8 부터 다이제스트 불일치가 경고가 아니라 실패다(`digest-mismatch` 기본값 error).
+      # 업로드가 zip 그대로이므로(upload-artifact v7 의 `archive: false` 를 쓰지 않는다)
+      # 여기서 압축을 푸는 흐름도 그대로다.
       - name: Download test results
         if: env.SONAR_TOKEN != ''
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: test-results
@@ -209,10 +213,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin

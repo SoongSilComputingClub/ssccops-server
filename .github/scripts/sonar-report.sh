@@ -90,6 +90,20 @@ QG_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
 QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 
+# **무엇이 게이트를 깨뜨렸는가** (ssccops#233 · #235).
+#
+# 그전까지 이 스크립트는 `ERROR` 한 단어만 찍었다. 응답의 conditions[] 에 어느 지표가 어느
+# 임계값에서 걸렸는지가 **이미 들어 있는데** 버리고 있었다 — 추가 왕복이 없다.
+#
+# ssccops#235(게이트를 언제·어떤 기준으로 잠글지)는 이 목록 없이는 시작할 수 없다.
+# 무엇이 걸리는지 모르는 채로 임계값을 정할 수는 없다.
+QG_CONDITIONS=$(echo "$QG_JSON" | jq -r '
+  [ (.projectStatus.conditions // [])[] | select(.status != "OK") ]
+  | if length == 0 then empty
+    else ("| 지표 | 실제 | 조건 | 임계값 |", "|---|---|---|---|"),
+         (.[] | "| `\(.metricKey)` | \(.actualValue // "?") | \(.comparator // "?") | \(.errorThreshold // "?") |")
+    end')
+
 # 개수는 **facet으로 센다.** `.issues` 배열의 길이를 세면 안 된다 (ssccops#236).
 #
 # api/issues/search 의 기본 페이지 크기는 100이다. ps 없이 부르고 `.issues | length` 를 세면
@@ -153,6 +167,38 @@ RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
     else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
     end')
 
+# 취약점만의 규칙 분포 (ssccops#233).
+#
+# 위 RULES_TABLE 은 버그·취약점·코드 스멜을 **한 표에 섞어 놓는다.** 분류의 첫 단추는
+# "어느 규칙이 취약점인가"인데 그것을 읽을 수 없었다 — server 의 상위가 `java:S4684` 80건일 때
+# 그 80이 취약점 93건 중 80인지 코드 스멜 108건 중 80인지 표만 봐서는 갈리지 않는다.
+#
+# 요청을 하나 더 보내는 것은 `types` 가 facet 이 아니라 **필터**라서다. 같은 응답에서
+# 두 축을 동시에 얻을 수 없다. ps=1 이라 본문은 최소이고 왕복 하나가 는다.
+# **branch 는 붙이지 않는다** — 이 서버에는 브랜치 분석이 없어 붙이면 0건이 온다 (ssccops#238).
+VULN_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&types=VULNERABILITY&ps=1&facets=rules")
+
+VULN_RULES_TABLE=$(echo "$VULN_ISSUES_JSON" | jq -r '
+  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) ]
+  | sort_by(-.count) | .[:15]
+  | if length == 0 then empty
+    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
+    end')
+
+# 보안 핫스팟 (ssccops#233).
+#
+# 이 리포트가 각주로 "세지 않는다"고 적어 두었던 값이다. 보안 점검을 하면서 보안 핫스팟을
+# 빼 두는 것은 앞뒤가 맞지 않아 실제로 센다.
+#
+# **프로젝트 필터 이름이 issues API 와 다르다** — 이쪽은 `projectKey`(단수)이고
+# api/issues/search 는 `componentKeys` 다. SonarQube 는 모르는 파라미터를 오류로 만들지 않고
+# 조용히 무시하므로(ssccops#237 에서 `projectKeys` 로 밟았다) 이름이 틀리면 인스턴스 전체가
+# 돌아온다. 값이 총계와 동떨어지면 그것부터 의심할 것.
+HOTSPOTS_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/hotspots/search?projectKey=$PROJECT_KEY&status=TO_REVIEW&ps=1")
+HOTSPOTS=$(echo "$HOTSPOTS_JSON" | jq -r '.paging.total // "?"')
+
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage,duplicated_lines_density")
 COVERAGE=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="coverage")) | .[0].value // "0"')
@@ -177,6 +223,7 @@ ${ICON} **Quality Gate ${RESULT}**
 - 버그: ${BUGS}
 - 취약점: ${VULNS}
 - 코드 스멜: ${SMELLS}
+- 보안 핫스팟(검토 대기): ${HOTSPOTS}
 
 ### 측정값
 - 커버리지: ${COVERAGE}%
@@ -186,7 +233,7 @@ Dashboard: ${DASHBOARD_URL}
 
 > **이 수치는 프로젝트 기본 브랜치 기준이다** — 이 서버는 Community Build 라 브랜치를 가르지 못한다(ssccops#234). 분석은 develop push 한 곳에서만 돌므로 곧 develop 의 상태다.
 >
-> **보안 핫스팟은 위 숫자에 없다** — 별도 API(\`api/hotspots/search\`)라 세지 않는다. 취약점 수가 보안 지적의 전부가 아니다.
+> **보안 핫스팟은 취약점 수에 포함되지 않는다** — 별도 API(\`api/hotspots/search\`)라 따로 센다. 취약점 수가 보안 지적의 전부가 아니다.
 >
 > Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
 EOF
@@ -198,6 +245,37 @@ echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
 # 걸린다 — 기준선 숫자가 job 요약에만 있으면 Actions API 로 읽히지 않아, 사람이 브라우저를
 # 열어 옮겨 적기 전에는 이슈에도 남지 않는다. ssccops#238 의 검증이 실제로 여기서 막혔다.
 echo "$BODY"
+
+# 게이트를 깨뜨린 조건 (ssccops#233 · #235). 통과했으면 표가 비어 아무것도 찍지 않는다.
+if [ -n "$QG_CONDITIONS" ]; then
+  {
+    echo
+    echo "### Quality Gate 실패 조건"
+    echo
+    echo "$QG_CONDITIONS"
+    echo
+    echo "> 게이트를 언제 잠글지는 이 목록을 보고 정한다 (ssccops#235)."
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  echo "--- Quality Gate 실패 조건 ---"
+  echo "$QG_CONDITIONS"
+fi
+
+# 취약점만의 규칙 분포 (ssccops#233). 취약점이 없으면 표가 비어 찍지 않는다.
+if [ -n "$VULN_RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 취약점 규칙별 분포"
+    echo
+    echo "$VULN_RULES_TABLE"
+    echo
+    echo "> 아래 전체 분포와 달리 **취약점만** 센다. 합이 위의 취약점 총계와 맞지 않으면"
+    echo "> 필터가 빗나간 것이다 (ssccops#237 에서 실제로 그랬다)."
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  echo "--- 취약점 규칙별 분포 ---"
+  echo "$VULN_RULES_TABLE"
+fi
 
 # 규칙별 분포는 job 요약에 붙인다 (ssccops#237).
 if [ -n "$RULES_TABLE" ]; then

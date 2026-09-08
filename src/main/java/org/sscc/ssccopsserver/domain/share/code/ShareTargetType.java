@@ -28,7 +28,26 @@ public enum ShareTargetType {
     SUB_WORK,
 
     /** 업무 (ssccops#306 · 미리보기 제공자는 WorkSharePreviewProvider) */
-    WORK;
+    WORK,
+
+    /*
+     * 학술 프로그램 — 모집 단위 (ssccops#311 · 미리보기 제공자는
+     * AcademicProgramSharePreviewProvider).
+     *
+     * **세션과 묶지 않는다.** 프로그램은 모집을 뿌리는 단위이고 세션은 회차를 알리는 단위라
+     * 뿌리는 시점도 받는 사람도 다르다 — 한 값으로 묶으면 대상 ID가 무엇을 가리키는지가
+     * 다시 갈려, 구분 코드를 둔 이유가 그 안에서 되풀이된다.
+     */
+    ACADEMIC_PROGRAM,
+
+    /*
+     * 학술 세션 — 회차 공지 단위 (ssccops#311 · 미리보기 제공자는 SessionSharePreviewProvider).
+     *
+     * 대상 ID는 `sesn_id`이지 (활동 ID, 회차 번호) 쌍이 아니다 — 이 enum이 대상을 두 값
+     * (구분 코드 + 대상 ID)으로 두기로 했으므로 세 번째 값이 필요한 대상은 여기 들어올 수 없고,
+     * 회차는 자기 PK가 있어 그럴 필요도 없다.
+     */
+    ACADEMIC_SESSION;
 
     public String code() {
         return name();

@@ -11,7 +11,7 @@ import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
  * **폼이 학술을 알게 된다** — 폼은 지원서·설문·모집 신청서를 함께 다루는 일반 도메인이고
  * 학술은 그 위에 얹힌 한 가지 쓰임일 뿐인데, 방향이 거꾸로 서면 시스템 폼이 하나 늘 때마다
  * FormResponseServiceImpl에 도메인 이름이 하나씩 박힌다(회원 도메인이 운영 도메인의
- * SubWorkService.countOngoingByOwner 하나만 아는 것과 같은 규칙, AR-07).
+ * MemberSubWorkLoadProvider 하나만 아는 것과 같은 규칙, AR-07).
  *
  * 그래서 폼은 "sys_form_cd가 이것인 응답이 승인됐다"는 사실만 알리고, 그 사실에 반응하는 쪽이
  * 자기 도메인에서 구현체를 빈으로 등록한다. 폼은 누가 구현하는지 모른다 —

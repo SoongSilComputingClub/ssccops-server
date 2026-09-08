@@ -14,7 +14,6 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
@@ -66,12 +65,18 @@ public class FormServiceImpl implements FormService {
     private final FormLabelService formLabelService;
 
     /*
-     * "이 폼이 학술 활동에 연결됐는가"를 묻는 유일한 진입점 (#190). form 도메인이 학술 도메인의
-     * Repository만 보고 Service는 보지 않는다 — AcademicProgramServiceImpl이 FormService를
-     * 주입받으므로 서비스끼리 물면 생성자 주입이 고리가 된다(회원 도메인이 SubWorkService만
-     * 아는 것과 같은 규칙). 조인 판별의 근거는 findIdByFormId 주석에 있다.
+     * "이 폼이 학술 활동에 연결됐는가"를 묻는 유일한 진입점 (#190).
+     *
+     * **폼 도메인은 학술 도메인을 아예 보지 않는다** (ssccops#242). 예전에는 학술
+     * Repository를 직접 주입받았는데 — Service를 물면 AcademicProgramServiceImpl이
+     * FormService를 주입받고 있어 생성자 주입이 고리가 되기 때문이었다 — 그러면 패키지는
+     * form → academicprogram → form 으로 순환한 채였다. 지금은 **폼이 필요한 사실의 모양만
+     * 선언하고**(AcademicFormLinkProvider) 학술이 구현하므로 어느 쪽으로도 고리가 없다.
+     * SystemFormApprovalHook이 같은 도메인에 대해 이미 쓰던 모양이다.
+     *
+     * 조인 판별의 근거는 그 인터페이스와 findIdByFormId 주석에 있다.
      */
-    private final AcademicProgramRepository academicProgramRepository;
+    private final AcademicFormLinkProvider academicFormLinkProvider;
 
     /*
      * 코드가 시스템 폼에 요구하는 qitemId 선언 (#140). 여기서 요구 목록을 들고 있지 않는 것은,
@@ -150,7 +155,7 @@ public class FormServiceImpl implements FormService {
                 labelsOf(form),
                 responseSummaryOf(form),
                 systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()),
-                academicProgramRepository.findIdByFormId(formId).orElse(null));
+                academicFormLinkProvider.academicProgramIdOf(formId).orElse(null));
     }
 
     /*
@@ -372,7 +377,8 @@ public class FormServiceImpl implements FormService {
         boolean periodChanged =
                 !Objects.equals(form.getReceiptBeginAt(), receiptBeginAt)
                         || !Objects.equals(form.getReceiptEndAt(), receiptEndAt);
-        if (periodChanged && academicProgramRepository.findIdByFormId(form.getId()).isPresent()) {
+        if (periodChanged
+                && academicFormLinkProvider.academicProgramIdOf(form.getId()).isPresent()) {
             throw new GeneralException(FormErrorCode.ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED);
         }
     }

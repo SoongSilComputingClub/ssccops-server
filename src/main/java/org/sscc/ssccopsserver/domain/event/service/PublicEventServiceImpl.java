@@ -6,7 +6,6 @@ import java.util.Set;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
@@ -50,7 +49,7 @@ public class PublicEventServiceImpl implements PublicEventService {
     private final EventParticipantRepository eventParticipantRepository;
     private final EventPhasePolicy eventPhasePolicy;
     private final EventReceiptPolicy eventReceiptPolicy;
-    private final AcademicProgramRepository academicProgramRepository;
+    private final AcademicEventLinkProvider academicEventLinkProvider;
 
     /*
      * 공개 목록. 질의는 하나다 — 분류·연결 폼은 목록 질의가 함께 페치하고(EventRepository),
@@ -130,13 +129,14 @@ public class PublicEventServiceImpl implements PublicEventService {
     /*
      * 주어진 event 중 학술 활동에서 이관된 것들의 id (#187). 공개 목록/상세가 이미 읽어 온
      * event에 대해서만 물으므로 질의는 IN 하나다 — event 도메인이 학술 도메인에 묻는 유일한
-     * 자리이며, 판별 규칙(1:1 관계)의 주인은 학술 도메인이다(AcademicProgramRepository).
+     * 자리이며, 판별 규칙(1:1 관계)의 주인은 학술 도메인이다 — 그래서 리포지토리를 직접 부르지
+     * 않고 이 도메인이 선언한 포트로 묻는다(AcademicEventLinkProvider, ssccops#242).
      */
     private Set<Long> academicEventIdsAmong(List<EventEntity> events) {
         if (events.isEmpty()) {
             return Set.of();
         }
-        return academicProgramRepository.findEventIdsByEventIdIn(
+        return academicEventLinkProvider.academicEventIdsAmong(
                 events.stream().map(EventEntity::getId).toList());
     }
 

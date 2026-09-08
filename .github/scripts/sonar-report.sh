@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ============================================================================
-# SonarQube 분석 결과를 읽어 PR 코멘트와 job 요약으로 남긴다.
+# SonarQube 분석 결과를 읽어 job 요약으로 남긴다.
 # ============================================================================
-# integrate-dev.yml(develop PR)과 integrate-prod.yml(main)이 **함께 쓴다.**
-# 스크립트로 뺀 이유는 두 워크플로에 90줄짜리 bash가 복제되는 것을 막기 위해서다 —
-# 그 복제는 이 저장소가 이미 경계하는 것이다(integrate-dev.yml 주석: "두 워크플로가 다른
-# 명령을 쓰면 develop에서 통과한 코드가 main에서 떨어진다").
+# **부르는 곳은 integrate-dev.yml 의 analyze job 하나다** (develop push, ssccops#238).
+# 예전에는 integrate-prod.yml(main)도 같은 스크립트를 썼는데, 이 서버는 Community Build 라
+# 브랜치를 가르지 못해 **두 워크플로의 분석이 같은 자리를 덮어썼다** — 그래서 main 쪽을
+# 걷어냈다. 스크립트 형태는 그대로 둔다: PR 분석이 돌아오는 날 부르는 곳이 다시 늘어난다.
 #
 # **Quality Gate가 실패해도 이 스크립트는 0으로 끝난다** (ssccops#231).
 # 처음 분석을 켜면 기존 코드의 지적이 수백 건 나오는데, 그 상태로 게이트를 잠그면
@@ -18,10 +18,7 @@
 #
 # 필요한 환경변수:
 #   SONAR_TOKEN · SONAR_HOST_URL   분석 서버 접속
-#   GH_TOKEN                       PR 코멘트 작성 (gh CLI)
-#   REPO                           owner/repo
-#   BRANCH                         분석 대상 브랜치명
-#   PR_NUMBER                      (선택) 있으면 PR에 코멘트를 단다
+#   REF_NAME                       분석한 ref (표시용. 질의에는 쓰지 않는다 — 아래 참고)
 # ============================================================================
 set -euo pipefail
 
@@ -37,15 +34,23 @@ PROJECT_KEY=$(grep '^projectKey=' "$REPORT_FILE" | cut -d'=' -f2)
 DASHBOARD_URL=$(grep '^dashboardUrl=' "$REPORT_FILE" | cut -d'=' -f2-)
 
 echo "ProjectKey: $PROJECT_KEY"
-echo "Branch: $BRANCH"
-
-# 브랜치명을 URL 인코딩한다. 이 저장소의 브랜치는 `{type}/#{이슈번호}-{슬러그}` 형식이라
-# **이름에 `#`이 들어간다** — 그대로 쿼리에 끼우면 curl 이 그 뒤를 fragment 로 잘라내
-# `branch=chore/` 만 전송되고, 없는 브랜치라 응답이 비어 커버리지가 0%로 보고된다.
-# 실제로 #282 의 첫 실행이 그렇게 나왔다.
-BRANCH_ENC=$(jq -rn --arg v "$BRANCH" '$v|@uri')
+echo "Ref: ${REF_NAME:-?}"
 
 # ----------------------------------------------------------------------------
+# **질의에 branch 파라미터를 넣지 않는다** (ssccops#238).
+#
+# 이 서버는 SonarQube Community Build 26.8.0 이고 브랜치 플러그인이 없다(ssccops#234).
+# 그래서 스캐너가 `sonar.branch.name` 을 선언하지 못하고 — 선언하면 업그레이드하라는 오류로
+# 분석이 죽는다 — **모든 분석이 프로젝트 기본 브랜치 한 자리에 쌓인다.**
+#
+# 그 상태에서 `&branch=<브랜치명>` 으로 조회하면 **없는 브랜치를 묻는 것**이라 응답이 비고,
+# 아래 `// "0"` 폴백이 그것을 0%로 보고했다. #284 가 URL 인코딩을 고쳤지만 그것은 다른
+# 결함이었고, 이쪽은 인코딩이 맞아도 여전히 빗나간다 — **제출할 때 브랜치를 밝히지 않았으니
+# 조회에서 무엇을 하든 같은 데이터를 되읽는다.**
+#
+# 그래서 파라미터를 뺀다. 지금 분석이 develop push 한 곳에서만 돌므로 프로젝트 기본 브랜치의
+# 상태가 곧 develop 의 상태다. 리포트도 그렇게 말한다.
+#
 # CE 태스크가 끝나기를 기다린다 (분석 제출과 집계는 비동기다)
 # ----------------------------------------------------------------------------
 TASK_STATUS=""
@@ -76,10 +81,10 @@ ANALYSIS_ID=$(echo "$STATUS_JSON" | jq -r '.task.analysisId')
 
 # ----------------------------------------------------------------------------
 # Quality Gate · 이슈 · 측정값
-#   jq의 `// []` `// "0"` 폴백은 그대로 둔다 — 에디션·설정에 따라 branch 파라미터가 무시되거나
-#   빈 응답이 올 수 있는데, 그때 리포트가 죽는 것보다 0으로 보이는 편이 낫다.
-#   **다만 그 폴백이 진짜 오류를 가린 적이 있다**(위 BRANCH_ENC 주석) — 0%가 나오면
-#   "커버리지가 없다"가 아니라 "질의가 빗나갔다"부터 의심할 것.
+#   jq의 `// []` `// "0"` 폴백은 그대로 둔다 — 응답이 비었을 때 리포트가 죽는 것보다 0으로
+#   보이는 편이 낫다.
+#   **다만 그 폴백이 진짜 오류를 두 번 가렸다** — 브랜치명 인코딩(#284)과 branch 파라미터
+#   자체(#238). 0%가 나오면 "커버리지가 없다"가 아니라 "질의가 빗나갔다"부터 의심할 것.
 # ----------------------------------------------------------------------------
 QG_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$ANALYSIS_ID")
@@ -117,8 +122,8 @@ QG_STATUS=$(echo "$QG_JSON" | jq -r '.projectStatus.status // "UNKNOWN"')
 # 순간 branch 가 살아나 0건이 됐다. **#284 가 고친 URL 인코딩도 같은 자리다** — 인코딩이
 # 맞아도 없는 브랜치를 가리키는 것은 그대로였고, **커버리지가 계속 0%였던 이유가 이것이다.**
 #
-# 그래서 지금 숫자는 **프로젝트 전체**이지 이 PR 의 것이 아니다. 브랜치별로 보려면 에디션이
-# 먼저다(ssccops#234). `BRANCH_ENC` 는 대시보드 링크에만 남는다.
+# 그래서 지금 숫자는 **프로젝트 기본 브랜치 기준**이다. 브랜치별로 보려면 에디션이
+# 먼저다(ssccops#234). branch 파라미터는 질의에서도 대시보드 링크에서도 걷어냈다(ssccops#238).
 #
 # **검증은 세 가지다: (1) typescript: 규칙이 나오면 필터가 또 빠진 것이고,
 # (2) 전부 0이면 필터가 너무 좁은 것이며, (3) 커버리지가 0%면 branch 가 되살아난 것이다.**
@@ -166,7 +171,7 @@ BODY=$(cat <<EOF
 
 ${ICON} **Quality Gate ${RESULT}**
 
-**브랜치:** \`${BRANCH}\`
+**분석한 커밋:** \`${REF_NAME:-?}\` @ \`${GITHUB_SHA:0:7}\`
 
 ### 이슈
 - 버그: ${BUGS}
@@ -177,8 +182,10 @@ ${ICON} **Quality Gate ${RESULT}**
 - 커버리지: ${COVERAGE}%
 - 중복도: ${DUPLICATION}%
 
-Dashboard: ${DASHBOARD_URL}&branch=${BRANCH_ENC}
+Dashboard: ${DASHBOARD_URL}
 
+> **이 수치는 프로젝트 기본 브랜치 기준이다** — 이 서버는 Community Build 라 브랜치를 가르지 못한다(ssccops#234). 분석은 develop push 한 곳에서만 돌므로 곧 develop 의 상태다.
+>
 > **보안 핫스팟은 위 숫자에 없다** — 별도 API(\`api/hotspots/search\`)라 세지 않는다. 취약점 수가 보안 지적의 전부가 아니다.
 >
 > Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
@@ -187,8 +194,7 @@ EOF
 
 echo "$BODY" >> "$GITHUB_STEP_SUMMARY"
 
-# 규칙별 분포는 **job 요약에만** 붙인다 (ssccops#237). PR 코멘트에 넣지 않는 이유는
-# 위 RULES_TABLE 주석에 있다 — 규칙이 수십 개라 코멘트가 길어지면 리뷰가 묻힌다.
+# 규칙별 분포는 job 요약에 붙인다 (ssccops#237).
 if [ -n "$RULES_TABLE" ]; then
   {
     echo
@@ -204,10 +210,6 @@ if [ -n "$RULES_TABLE" ]; then
   # 로그에 없으면 사람이 브라우저를 열기 전에는 아무도(자동화 포함) 이 표를 볼 수 없다.
   echo "--- 규칙별 상위 15개 ---"
   echo "$RULES_TABLE"
-fi
-
-if [ -n "${PR_NUMBER:-}" ]; then
-  gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$BODY"
 fi
 
 # Quality Gate 실패로 이 스크립트를 실패시키지 않는다 — 위 주석 참고.

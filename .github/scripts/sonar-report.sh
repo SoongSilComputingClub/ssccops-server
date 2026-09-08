@@ -195,9 +195,30 @@ VULN_RULES_TABLE=$(echo "$VULN_ISSUES_JSON" | jq -r '
 # api/issues/search 는 `componentKeys` 다. SonarQube 는 모르는 파라미터를 오류로 만들지 않고
 # 조용히 무시하므로(ssccops#237 에서 `projectKeys` 로 밟았다) 이름이 틀리면 인스턴스 전체가
 # 돌아온다. 값이 총계와 동떨어지면 그것부터 의심할 것.
-HOTSPOTS_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+HOTSPOTS_RAW=$(curl -s -w '\n%{http_code}' -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/hotspots/search?projectKey=$PROJECT_KEY&status=TO_REVIEW&ps=1")
+HOTSPOTS_CODE=$(printf '%s' "$HOTSPOTS_RAW" | tail -n1)
+HOTSPOTS_JSON=$(printf '%s' "$HOTSPOTS_RAW" | sed '$d')
 HOTSPOTS=$(echo "$HOTSPOTS_JSON" | jq -r '.paging.total // "?"')
+
+# ---- 진단 출력 (ssccops-server#301). 응답을 확인하면 지운다. ----------------
+# `?` 는 `.paging.total` 이 없을 때의 폴백이다. 그 원인이 **파라미터 이름인지 엔드포인트가
+# 사라진 것인지 모른다** — `/api/hotspots/*` 는 deprecated 계열이고 이 서버는 Community
+# Build 26.8.0 이라 그 변화의 한가운데다. 서버는 Force user authentication 이 켜져 있어
+# CI 밖에서는 401 이라 로컬에서 확인할 수 없다.
+#
+# 그래서 **추측해서 파라미터를 바꿔 넣지 않고 응답을 먼저 본다.** 404 면 엔드포인트가 없는
+# 것이고, 200 인데 모양이 다르면 필드 이름 문제이며, 200 에 total 이 0 이면 필터가 빗나간
+# 것이다 — SonarQube 는 모르는 파라미터를 오류로 만들지 않고 조용히 무시한다(ssccops#237).
+#
+# job 요약이 아니라 **stdout 에 찍는다** — 요약은 Actions API 로 읽히지 않아 사람이
+# 브라우저를 열기 전에는 아무도 볼 수 없다 (이 파일의 다른 stdout 출력과 같은 이유).
+# 이 리포트는 develop push 에서만 돌므로(ssccops#238) 확인도 머지 뒤 실행 로그로 한다.
+echo "--- [#301 진단] api/hotspots/search 응답 ---"
+echo "HTTP: $HOTSPOTS_CODE"
+echo "BODY(300): $(printf '%s' "$HOTSPOTS_JSON" | head -c 300)"
+echo "--- [#301 진단] 끝 ---"
+# ---------------------------------------------------------------------------
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage,duplicated_lines_density")

@@ -486,6 +486,9 @@ class AcademicProgramSessionControllerTest {
         mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sessionId").value(sessionId))
+                // 활동 id는 경로에 이미 있지만 응답에도 실린다 (#316) — 회차 하나만 아는
+                // 호출자를 위해 더한 값이라 두 경로의 응답이 갈리지 않게 여기에도 온다
+                .andExpect(jsonPath("$.data.academicProgramId").value(academicProgram.getId()))
                 .andExpect(jsonPath("$.data.prgrsCn").value("1회차 내용"))
                 .andExpect(jsonPath("$.data.sttsCd").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data.attendances", Matchers.hasSize(1)))

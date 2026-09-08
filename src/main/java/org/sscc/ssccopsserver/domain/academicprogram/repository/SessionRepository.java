@@ -47,6 +47,25 @@ public interface SessionRepository
     Optional<SessionEntity> findWithCurriculumItemById(Long sessionId);
 
     /*
+     * 회차 id 하나로 읽는 상세(#316 · GET /v1/academic-sessions/{sessionId}). 공유 링크의
+     * 착지가 대상 ID 하나(회차 id)로 활동 id를 얻어야 해서 열린 경로이며, 그래서 활동으로
+     * 좁히지 않는다 — 좁히려면 호출자가 이미 활동 id를 알아야 하고, 그것을 모르는 것이 이
+     * 조회가 생긴 이유다.
+     *
+     * **미리보기(findWithCurriculumItemById)와 갈리는 것은 끌어오는 연관이다.** 그쪽은
+     * 제목 하나면 되지만 여기는 상세 응답 전부를 조립하므로 계획·작성자에 더해 **활동까지**
+     * 함께 읽는다 — 응답에 활동 id를 싣는 것이 이 조회의 목적이라 LAZY 프록시로 두면 그
+     * 값을 꺼내는 자리에서 조회가 한 번 더 나간다(DB-13).
+     *
+     * 같은 상세를 활동 문맥에서 읽는 findByIdAndAcademicProgramId를 지우지 않는다 — 활동
+     * 안에서 여는 화면들은 남의 활동 회차 번호로 부르는 것이 404여야 한다.
+     */
+    @EntityGraph(
+            attributePaths = {"curriculumItem", "curriculumItem.academicProgram", "registrant"})
+    @Query("select s from SessionEntity s where s.id = :sessionId")
+    Optional<SessionEntity> findDetailById(@Param("sessionId") Long sessionId);
+
+    /*
      * 계획 조회(#134 · GET .../curriculum-items)가 붙이는 실적. 커리큘럼 항목마다 "실적이
      * 있나"를 물으면 그대로 N+1이라(DB-13) 활동 하나의 실적을 한 번에 읽어 호출부가 계획에
      * 접는다. 계획이 이미 활동으로 좁혀 읽히므로 여기서도 활동으로 좁힌다.

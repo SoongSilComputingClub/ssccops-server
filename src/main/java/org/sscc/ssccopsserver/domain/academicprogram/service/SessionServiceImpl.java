@@ -159,6 +159,27 @@ public class SessionServiceImpl implements SessionService {
     }
 
     /*
+     * 회차 하나로 읽는 상세 (#316). 활동 존재 검사가 없는 것은 활동을 경로로 받지 않기
+     * 때문이다 — 회차가 있으면 그 활동은 정의상 있다(crclm_artcl.acdm_actv_id가 NOT NULL이고
+     * 소프트 삭제가 없다). 없는 회차는 중첩 경로와 같은 404 SESSION_NOT_FOUND이며, 여기에는
+     * "활동이 사라진 것"과 "회차가 없는 것"을 가를 자리 자체가 없다.
+     *
+     * 조립은 detailOf 하나를 그대로 지난다 — 두 벌로 두면 같은 회차가 경로에 따라 다르게
+     * 나가고, 특히 인증사진 자격 판정이 갈리는 자리가 만들어진다.
+     */
+    @Override
+    public SessionDetailResponse getSessionById(Long sessionId, MemberEntity requester) {
+        SessionEntity session =
+                sessionRepository
+                        .findDetailById(sessionId)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                AcademicProgramErrorCode.SESSION_NOT_FOUND));
+        return detailOf(session, requester);
+    }
+
+    /*
      * 목록. 질의는 목록 · 필터 건수 · 활동 전체 건수 · 출석 집계 넷이며, 회차가 몇 건이든 이
      * 수는 변하지 않는다(DB-13).
      */

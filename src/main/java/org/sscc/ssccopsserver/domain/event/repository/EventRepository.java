@@ -49,6 +49,18 @@ public interface EventRepository extends JpaRepository<EventEntity, Long> {
     Optional<EventEntity> findByIdAndStatus(Long id, EventStatus status);
 
     /*
+     * 공유 미리보기가 여는 범위 (ssccops#312). 식별자와 상태를 **함께** 조건에 넣는 이유는
+     * 바로 위와 같다 — 상태 분기를 호출부에 두면 그 한 줄이 빠지는 것으로 열지 않기로 한 것이
+     * 익명에게 나간다.
+     *
+     * 넘기는 집합은 DRAFT·PUBLISHED다. **보관(ARCHIVED)을 빼는 것이 이 질의의 요점이다** —
+     * 공개 상세가 보관된 행사를 404로 답하는데(EventStatus 주석) 카드만 계속 열리면 익명에게
+     * 답하는 두 층이 서로 다른 말을 한다. 게시된 행사를 넣는 것은 반대 방향의 같은 이유다:
+     * 게시 전에 나눈 링크가 **게시되는 순간 죽으면** 볼 수 있게 된 시점에 카드가 깨진다.
+     */
+    Optional<EventEntity> findByIdAndStatusIn(Long id, Collection<EventStatus> statuses);
+
+    /*
      * 내 신청 목록이 쓰는 "이 폼들이 붙은 행사" (ssccops#145). 폼은 행사에 전속이므로
      * (uk_event_form) 폼 하나가 행사 하나로 풀린다.
      *

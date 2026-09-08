@@ -183,7 +183,25 @@ public enum EventErrorCode implements ErrorCode {
      * 답하지 않은 것이라서다.
      */
     EVENT_IMAGE_COPY_FAILED(
-            HttpStatus.BAD_GATEWAY, "EVENT_IMAGE_COPY_FAILED", "행사 이미지를 복사하지 못했습니다.");
+            HttpStatus.BAD_GATEWAY, "EVENT_IMAGE_COPY_FAILED", "행사 이미지를 복사하지 못했습니다."),
+
+    /*
+     * 409 — 게시 전(DRAFT)이 아닌 행사에 공유 링크를 발급하려 할 때 (ssccops#312 · ADR-0016).
+     *
+     * **게시된 행사에는 발급하지 않는다.** 이미 익명이 여는 주소가 있어(`/events/{eventId}`)
+     * 토큰이 더하는 것은 폐기 기능뿐인데, 그 폐기가 원본 공개 URL을 막지 못한다 — "공유를
+     * 중지했다"는 화면의 표시가 사실이 아니게 되므로 지키지 못하는 것을 지킨다고 말하는 버튼이
+     * 된다. 거절이 아무 수단도 빼앗지 않는다는 것이 근거의 나머지 절반이다: 게시된 행사를
+     * 공유할 길은 이미 있고 그쪽이 더 낫다.
+     *
+     * **보관된(ARCHIVED) 행사에도 발급하지 않는다.** 삭제가 없어진 뒤로(ADR-0014) 보관은 잘못
+     * 만든 행사를 치우는 유일한 길이라, 치운 것을 익명에게 다시 여는 것은 새로 만드는 노출이다.
+     *
+     * 400이 아니라 409인 것은 요청 형식이 아니라 대상의 현재 상태가 문제라서다 — 게시를
+     * 철회하면(RETRACT) 같은 요청이 통과한다 (APPLICATION_NOT_ACCEPTED와 같은 판단).
+     */
+    EVENT_SHARE_NOT_DRAFT(
+            HttpStatus.CONFLICT, "EVENT_SHARE_NOT_DRAFT", "게시 전 행사만 공유 링크를 발급할 수 있습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

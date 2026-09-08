@@ -64,6 +64,7 @@ import com.jayway.jsonpath.JsonPath;
 class AcademicProgramShareControllerTest {
 
     private static final String PROGRAMS = "/v1/academic-programs";
+    private static final String SESSIONS = "/v1/academic-sessions";
     private static final String PREVIEW = "/public/v1/share/{token}";
 
     private static final String GOAL = "목표";
@@ -83,6 +84,7 @@ class AcademicProgramShareControllerTest {
     @Autowired private SessionRepository sessionRepository;
 
     private UUID leaderToken;
+    private UUID otherToken;
     private AcademicProgramEntity academicProgram;
     private SessionEntity session;
 
@@ -90,6 +92,8 @@ class AcademicProgramShareControllerTest {
     void setUp() {
         leaderToken = UUID.randomUUID();
         MemberEntity leader = saveMember(leaderToken, "20260401", "스터디장");
+        otherToken = UUID.randomUUID();
+        saveMember(otherToken, "20260402", "다른회원");
         academicProgram =
                 AcademicProgramFixture.save(
                         eventRepository,
@@ -177,6 +181,13 @@ class AcademicProgramShareControllerTest {
     /* ── 세션 ──────────────────────────────────────────────── */
 
     /*
+     * **세션 공유는 세션 id 하나로 받는다**(#319). 경로가 `/v1/academic-sessions/{sessionId}/share`
+     * 인 것은 웹의 공유 대상 표가 `apiPath: (targetId) => string` 하나로 경로를 만들고, 토큰이
+     * 들고 오는 것이 대상 ID 하나이기 때문이다 — 활동 id를 함께 요구하는 경로는 그 표에서
+     * 조립되지 않는다(ssccops-web#335).
+     */
+
+    /*
      * **프로그램과 별개 대상이다.** 대상 좌표가 ACADEMIC_SESSION으로 오고 제목은 계획의 주제,
      * 요약은 실시일 + 공지다 — 실시일은 이미 일어난 일의 날짜라 담을 수 있다(ssccops#251·#252와
      * 같은 판단).
@@ -249,15 +260,39 @@ class AcademicProgramShareControllerTest {
     }
 
     /*
-     * 다른 활동의 회차 식별자로 부르면 404다 — 회차 상세 조회가 경로의 활동으로 좁혀 읽는
-     * 것과 같은 판정이고, 없는 회차와 남의 활동 회차는 같은 답이다.
+     * 없는 회차에도 토큰이 발급되지 않는다. 활동을 경로에서 받지 않으므로 "활동이 없다"와
+     * "회차가 없다"를 가를 자리가 없다 — 답은 404 SESSION_NOT_FOUND 하나다(#316·#319).
      */
     @Test
-    void issuingShareForASessionOfAnotherProgramIs404() throws Exception {
-        mockMvc.perform(
-                        authorized(
-                                post(PROGRAMS + "/999999/sessions/" + session.getId() + "/share")))
-                .andExpect(status().isNotFound());
+    void issuingShareForAnUnknownSessionIs404() throws Exception {
+        mockMvc.perform(authorized(post(SESSIONS + "/999999/share")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("SESSION_NOT_FOUND"));
+    }
+
+    /*
+     * **중첩 경로에는 공유가 없다**(#319). 같은 자원에 주소가 둘이면 발급·폐기가 두 문으로
+     * 들어오고, 어느 쪽으로 만든 링크인지가 코드에 드러나지 않는다 — 셋을 옮기고 그쪽은
+     * 지웠다는 것을 여기서 못 박는다. 회차 **조회**의 중첩 경로는 그대로 산다(#316).
+     */
+    @Test
+    void nestedSessionSharePathIsGone() throws Exception {
+        mockMvc.perform(authorized(post(nestedSessionShare()))).andExpect(status().isNotFound());
+        mockMvc.perform(authorized(get(nestedSessionShare()))).andExpect(status().isNotFound());
+        mockMvc.perform(authorized(delete(nestedSessionShare()))).andExpect(status().isNotFound());
+    }
+
+    /*
+     * 회차를 볼 수 있는 사람이 공유할 수 있다(ssccops#306) — 회차 상세가 인증만 요구하므로
+     * 발급도 그렇다. 스터디장이 아닌 회원이 눌러도 같은 토큰이 나오며, 그것이 발급이 멱등인
+     * 것과 같은 사실이다.
+     */
+    @Test
+    void anyAuthenticatedMemberCanIssueTheSessionShare() throws Exception {
+        String byLeader = issueSessionShareToken();
+        String byOther = issueShareToken(sessionShare(), otherToken);
+
+        assertThat(byOther).isEqualTo(byLeader);
     }
 
     /* ── 발급은 익명이 아니다 ──────────────────────────────── */
@@ -268,6 +303,16 @@ class AcademicProgramShareControllerTest {
         mockMvc.perform(post(programShare())).andExpect(status().isUnauthorized());
     }
 
+    /*
+     * 옮긴 경로에서도 같다(#319). `/v1/academic-sessions/**`는 새로 선 최상위 자원이라 익명
+     * 층에 흘러들지 않았는지를 필터체인을 태워 확인한다 — 토큰을 붙여 부르면 규칙이 사라져도
+     * 초록으로 남는다.
+     */
+    @Test
+    void issuingSessionShareWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(post(sessionShare())).andExpect(status().isUnauthorized());
+    }
+
     /* ── 표본 ───────────────────────────────────────────────── */
 
     private String programShare() {
@@ -275,6 +320,10 @@ class AcademicProgramShareControllerTest {
     }
 
     private String sessionShare() {
+        return SESSIONS + "/" + session.getId() + "/share";
+    }
+
+    private String nestedSessionShare() {
         return PROGRAMS + "/" + academicProgram.getId() + "/sessions/" + session.getId() + "/share";
     }
 
@@ -287,8 +336,12 @@ class AcademicProgramShareControllerTest {
     }
 
     private String issueShareToken(String path) throws Exception {
+        return issueShareToken(path, leaderToken);
+    }
+
+    private String issueShareToken(String path, UUID authUserId) throws Exception {
         String response =
-                mockMvc.perform(authorized(post(path)))
+                mockMvc.perform(authorized(post(path), authUserId))
                         .andExpect(status().isOk())
                         .andReturn()
                         .getResponse()
@@ -297,7 +350,12 @@ class AcademicProgramShareControllerTest {
     }
 
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder builder) {
-        return builder.header("Authorization", "Bearer " + leaderToken);
+        return authorized(builder, leaderToken);
+    }
+
+    private static MockHttpServletRequestBuilder authorized(
+            MockHttpServletRequestBuilder builder, UUID authUserId) {
+        return builder.header("Authorization", "Bearer " + authUserId);
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

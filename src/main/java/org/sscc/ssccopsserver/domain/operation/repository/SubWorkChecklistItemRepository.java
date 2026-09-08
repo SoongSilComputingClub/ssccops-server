@@ -27,6 +27,17 @@ public interface SubWorkChecklistItemRepository
     Optional<SubWorkChecklistItemEntity> findByIdAndSubWork(Long id, SubWorkEntity subWork);
 
     /*
+     * 항목 추가(#307)가 새 sort_seq를 매길 자리. 끝에 붙이므로 지금 가장 큰 값 + 1이다.
+     * 항목이 하나도 없거나(체크리스트 없는 유형) 전부 지워졌으면 NULL이라 호출부가 1로 시작한다.
+     *
+     * count가 아니라 max인 것은 삭제가 하드이기 때문이다 — 3개 중 2번을 지우면 count는 2라
+     * 다음 항목이 3번이 아니라 3번과 겹친다. 지운 뒤 남은 항목의 번호를 다시 매기지 않는
+     * 결정(SubWorkChecklistItemEntity 주석)이 이 선택과 짝이다.
+     */
+    @Query("select max(i.sortOrder) from SubWorkChecklistItemEntity i where i.subWork = :subWork")
+    Integer findMaxSortOrder(@Param("subWork") SubWorkEntity subWork);
+
+    /*
      * 완료 승인 전이(TR-03)의 선행 조건 판정용. 남은 항목이 0건이어야 완료할 수 있다.
      * 항목 전체를 로딩해 세지 않는다 — 판정에 필요한 것은 개수뿐이다.
      * 유형에 완료 점검 항목이 없어 체크리스트가 비어 있으면 0건이라 그대로 통과한다.

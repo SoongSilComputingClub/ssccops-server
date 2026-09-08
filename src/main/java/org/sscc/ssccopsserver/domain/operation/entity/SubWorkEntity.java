@@ -308,6 +308,39 @@ public class SubWorkEntity {
     }
 
     /*
+     * 완료 점검 **항목 자체**를 지금 더하거나 고치거나 지울 수 있는지 (#307 · ssccops#255 결정).
+     * 위의 requireChecklistEditable(체크·해제)보다 한 단계 세다 — 기획·진행까지만 통과하고
+     * 검토부터 잠근다.
+     *
+     * 검토에서 잠그는 것은 완료 조건이 그때부터 심사 대상이 되기 때문이다. 승인자가 보려는
+     * 것이 "이 목록이 다 채워졌는가"인데 보는 동안 목록이 움직이면 무엇을 승인한 것인지가
+     * 불분명해진다. 심사 직전에 기준을 낮추는 경로를 상태로 막는다 — 이력으로 사후에
+     * 발견하는 것보다 앞선다.
+     *
+     * 반려로 진행에 되돌아오면 다시 열린다. 그것이 '계획을 고쳐 다시 올린다'의 뜻이고,
+     * 승인 회차(currentApprovalSequence)가 올라가는 자리와 같은 경계다.
+     *
+     * 전용 오류 코드를 만들지 않고 TRANSITION_NOT_ALLOWED를 재사용한다 —
+     * requireChecklistEditable·requireVotable과 같은 이유다. 체크된 항목의 삭제 거절만
+     * 코드를 갈랐고 그 근거는 OperationErrorCode.CHECKLIST_ITEM_COMPLETED 주석에 있다.
+     */
+    public void requireChecklistItemEditable() {
+        if (!isChecklistItemEditable()) {
+            throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        }
+    }
+
+    /*
+     * 예외 없이 묻는 버전. 상세 응답의 isChecklistItemEditable이 이 값이고,
+     * 항목마다의 isDeletable도 이 값과 체크 여부를 합쳐 나온다 — 화면이 상태로
+     * 다시 추론하면 서버 판정과 갈리고, 그 어긋남은 버튼은 보이는데 누르면 409가 나는 자리로
+     * 나타난다(#121·#194가 지연 판정에서 두 번 겪은 일이다). 판정은 여기 하나뿐이다.
+     */
+    public boolean isChecklistItemEditable() {
+        return this.workStatus == WorkStatus.PLANNING || this.workStatus == WorkStatus.IN_PROGRESS;
+    }
+
+    /*
      * 지금 찬반 투표를 받을 수 있는지 (OPS-015 · #47). 세 가지가 모두 성립해야 한다.
      *  1. 정족수 유형이어야 한다 — 단독·승인 불필요 유형은 셀 대상이 없다. 승인함 화면이
      *     네 카드에 모두 찬성·반대 버튼을 그리고 있으나, 버튼 구성이 계약은 아니다.

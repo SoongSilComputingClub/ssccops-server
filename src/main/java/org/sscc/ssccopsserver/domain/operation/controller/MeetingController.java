@@ -25,6 +25,9 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.service.MeetingService;
+import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
+import org.sscc.ssccopsserver.domain.share.dto.ShareLinkResponse;
+import org.sscc.ssccopsserver.domain.share.service.ShareLinkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
@@ -50,6 +53,7 @@ import lombok.RequiredArgsConstructor;
 public class MeetingController {
 
     private final MeetingService meetingService;
+    private final ShareLinkService shareLinkService;
 
     @RequireAuthority(AuthorityCode.MEETING_MANAGE)
     @PostMapping
@@ -141,6 +145,63 @@ public class MeetingController {
     @DeleteMapping("/{meetingId}")
     public ApiResponse<Void> deleteMeeting(@PathVariable Long meetingId) {
         meetingService.deleteMeeting(meetingId);
+        return ApiResponse.successWithNoData();
+    }
+
+    /*
+     * 공유 링크 발급 (ssccops#310 · ADR-0016). 회의 상세 화면의 '공유' 버튼이 부른다.
+     *
+     * **이 셋이 `ShareController` 하나가 아니라 여기 있는 이유**는 `ShareLinkService` 주석에
+     * 적혀 있다 — ssccops-server#306이 업무를 붙여 보고 후보 ①(도메인 컨트롤러마다 얇게)로
+     * 확정했고, 세 번째 대상인 여기서 그 형판을 반복한다.
+     *
+     * **요구 권한이 MEETING_MANAGE가 아니라 MEETING_READ인 것은 의도된 것이다.** 이 토큰이 주는
+     * 것은 제목·요약을 보여주는 미리보기까지이고(ADR-0016), 그것은 이 화면을 이미 보고 있는
+     * 사람이 아는 것을 넘지 않는다 — 볼 수 있는 사람이 공유할 수 있다(업무와 같은 판단).
+     * **안건을 담지 않기로 한 것이 이 판단을 떠받친다** — 카드가 회의 유형과 일시까지만 말하므로
+     * 회의를 열고 닫는 권한까지 요구할 이유가 없다.
+     *
+     * **멱등이다.** 살아 있는 링크가 있으면 새로 만들지 않고 그것을 돌려주므로 몇 번을 눌러도
+     * 결과가 같다 — 만료가 없어(ADR-0016) 누를 때마다 발급하면 죽지 않는 링크가 쌓인다.
+     * 그래서 새 자원이 만들어지지 않는 호출이 있고, 201이 아니라 200으로 답한다.
+     */
+    @RequireAuthority(AuthorityCode.MEETING_READ)
+    @PostMapping("/{meetingId}/share")
+    public ApiResponse<ShareLinkResponse> issueShareLink(
+            @PathVariable Long meetingId, @CurrentMember MemberEntity issuer) {
+        // 없는 회의·삭제된 운영 건을 여기서 404로 끊는다 — 조회를 먼저 태우지 않으면 존재하지
+        // 않는 대상에 토큰이 발급된다(shr_lnk에 FK가 없어 DB가 막아 주지 않는다).
+        meetingService.getMeeting(meetingId);
+        return ApiResponse.success(
+                shareLinkService.issue(ShareTargetType.MEETING, meetingId, issuer));
+    }
+
+    /*
+     * 현재 공유 상태 (ssccops#310). 화면이 '공유하기'와 '공유 중지' 중 무엇을 그릴지 정한다.
+     *
+     * 공유한 적이 없거나 폐기했으면 **data가 null인 200**이다 — 404가 아닌 것은 '공유 중이
+     * 아니다'가 오류가 아니라 정상적인 조회 결과이기 때문이다(업무·하위 업무와 같은 판단).
+     */
+    @RequireAuthority(AuthorityCode.MEETING_READ)
+    @GetMapping("/{meetingId}/share")
+    public ApiResponse<ShareLinkResponse> getShareLink(@PathVariable Long meetingId) {
+        meetingService.getMeeting(meetingId);
+        return ApiResponse.success(
+                shareLinkService.findActive(ShareTargetType.MEETING, meetingId).orElse(null));
+    }
+
+    /*
+     * 공유 중지 (ssccops#310). 폐기하면 그 링크로는 미리보기도 상세도 열리지 않는다.
+     *
+     * 만료를 두지 않기로 했으므로(ADR-0016) **이것이 링크를 거두는 유일한 길이다.** 살아 있는
+     * 링크가 없어도 조용히 지나가며 언제나 200이다 — 결과가 같은데 두 번째 요청만 오류로 만들
+     * 이유가 없다.
+     */
+    @RequireAuthority(AuthorityCode.MEETING_READ)
+    @DeleteMapping("/{meetingId}/share")
+    public ApiResponse<Void> revokeShareLink(@PathVariable Long meetingId) {
+        meetingService.getMeeting(meetingId);
+        shareLinkService.revoke(ShareTargetType.MEETING, meetingId);
         return ApiResponse.successWithNoData();
     }
 }

@@ -18,6 +18,12 @@ package org.sscc.ssccopsserver.domain.share.code;
  * 늘 때마다 스키마와 데이터사전이 함께 바뀐다. 대가는 대상이 지워진 뒤 남는 행이며, 그때는
  * 미리보기 제공자가 대상을 찾지 못해 404가 나간다 — 폐기된 링크와 같은 답이라 문제가 되지 않는다.
  *
+ * **값 목록과 `V6__widen_share_target_check.sql`이 정본 한 쌍이다**(ssccops#310). `shr_lnk`의
+ * CHECK 제약은 `V2`가 dev에서 옮겨 올 때 `SUB_WORK` 하나뿐이었고, 그 뒤 이 목록만 자라 dev·prod
+ * 에서는 `SUB_WORK` 밖의 발급이 전부 제약 위반으로 터지고 있었다 — `test` 프로필은 Flyway가
+ * 꺼져 있고 H2 스키마를 Hibernate가 현재 enum으로 만들어 주므로 그 어긋남이 테스트에 보이지
+ * 않는다. **값을 더할 때 새 마이그레이션으로 그 제약도 함께 넓힌다.**
+ *
  * **값을 더하는 쪽이 착지 앱도 함께 정한다**(ADR-0017). 하위 업무·업무·회의는 `apps/admin`이,
  * 학술·행사는 `apps/www`가 받는다. 그 표는 서버가 아니라 `@ssccops/share-meta`가 갖는다 —
  * 서버가 URL을 조립하지 않기 때문이다(`ShareLinkResponse` 주석).
@@ -29,6 +35,9 @@ public enum ShareTargetType {
 
     /** 업무 (ssccops#306 · 미리보기 제공자는 WorkSharePreviewProvider) */
     WORK,
+
+    /** 회의 (ssccops#310 · 미리보기 제공자는 MeetingSharePreviewProvider) */
+    MEETING,
 
     /*
      * 학술 프로그램 — 모집 단위 (ssccops#311 · 미리보기 제공자는

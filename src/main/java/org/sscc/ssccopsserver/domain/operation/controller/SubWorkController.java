@@ -5,6 +5,7 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,8 +18,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistHistoryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistMutationResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -180,6 +184,87 @@ public class SubWorkController {
             @CurrentMember MemberEntity performer) {
         return ApiResponse.success(
                 subWorkService.updateChecklistItem(subWorkId, checklistItemId, request, performer));
+    }
+
+    /*
+     * 완료 체크리스트 항목 추가 (#307). 상세 화면의 '항목 추가'가 부른다.
+     *
+     * 기획·진행 단계에서만 된다 — 체크·해제가 완료 전까지 열려 있는 것과 다르며,
+     * 그 판정은 도메인(SubWorkEntity.requireChecklistItemEditable)이 하므로 여기서 분기하지
+     * 않는다 (LY-02). 새 자원이 만들어지므로 201이고(LY-06), Location은 두지 않는다 —
+     * 항목 단건을 여는 조회 경로가 없고 화면은 응답의 목록을 그대로 그린다.
+     *
+     * **유형(sub_work_type)의 원본 목록은 바뀌지 않는다.** 여기서 더한 항목은 이 하위 업무의
+     * 것이고 다음에 같은 유형으로 등록되는 건에는 나타나지 않는다 (POL-005).
+     */
+    @RequireAuthority(AuthorityCode.WORK_READ)
+    @PostMapping("/{subWorkId}/checklist")
+    public ResponseEntity<ApiResponse<SubWorkChecklistMutationResponse>> addChecklistItem(
+            @PathVariable Long subWorkId,
+            @Valid @RequestBody SubWorkChecklistItemSaveRequest request,
+            @CurrentMember MemberEntity performer) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(
+                        ApiResponse.created(
+                                subWorkService.addChecklistItem(subWorkId, request, performer)));
+    }
+
+    /*
+     * 완료 체크리스트 항목 문구 수정 (#307).
+     *
+     * **체크·해제와 경로를 나눈 것은 의도된 것이다.** 둘은 바꾸는 것도 허용 상태도
+     * 다르다 — 체크는 진척 기록이라 검토에서도 되고, 문구 수정은 판정 근거 자체를 바꾸는
+     * 일이라 기획·진행까지만 된다. 한 엔드포인트가 둘을 함께 받으면 한 요청이 반만 허용되는
+     * 자리가 생기고, 그것을 통째로 거절하면 화면은 무엇이 막혔는지 알 수 없다. 기존 PATCH의
+     * isCompleted 필수 규약(누락은 400)도 그대로 살린다.
+     *
+     * **순서 변경 API는 두지 않았다.** sort_seq는 화면 표시 순서일 뿐 완료 판정에 쓰이지
+     * 않고(모두 체크되었는가만 본다), 상세 화면에 드래그 재정렬 UI가 없다. 넣으면 이력 종류가
+     * 하나 늘고(순서 변경 이력) 그것을 볼 화면도 없다 — 값이 생기면 그때 더한다.
+     */
+    @RequireAuthority(AuthorityCode.WORK_READ)
+    @PatchMapping("/{subWorkId}/checklist/{checklistItemId}/article")
+    public ApiResponse<SubWorkChecklistMutationResponse> updateChecklistItemArticle(
+            @PathVariable Long subWorkId,
+            @PathVariable Long checklistItemId,
+            @Valid @RequestBody SubWorkChecklistItemSaveRequest request,
+            @CurrentMember MemberEntity performer) {
+        return ApiResponse.success(
+                subWorkService.updateChecklistItemArticle(
+                        subWorkId, checklistItemId, request, performer));
+    }
+
+    /*
+     * 완료 체크리스트 항목 삭제 (#307). 체크되지 않은 항목만 지울 수 있고, 체크된 항목은
+     * CHECKLIST_ITEM_COMPLETED(409)다 — 상태 잠금(TRANSITION_NOT_ALLOWED)과 코드를 가른 근거는
+     * OperationErrorCode 주석에 있다. 판정은 서비스와 도메인이 하므로 여기서 분기하지 않는다 (LY-02).
+     *
+     * 본문 없는 204가 아니라 바뀐 목록을 실은 200이다. 지우면 '2/4 완료' 표기와 목록이 함께
+     * 움직이는데, 빈 응답을 내리면 화면이 상세 조회를 한 번 더 불러야 한다.
+     */
+    @RequireAuthority(AuthorityCode.WORK_READ)
+    @DeleteMapping("/{subWorkId}/checklist/{checklistItemId}")
+    public ApiResponse<SubWorkChecklistMutationResponse> deleteChecklistItem(
+            @PathVariable Long subWorkId,
+            @PathVariable Long checklistItemId,
+            @CurrentMember MemberEntity performer) {
+        return ApiResponse.success(
+                subWorkService.deleteChecklistItem(subWorkId, checklistItemId, performer));
+    }
+
+    /*
+     * 완료 체크리스트 변경 이력 (#307). 더하고 고치고 지운 것이 일어난 순서대로 나온다.
+     *
+     * 이력을 쌓기만 하고 볼 길을 두지 않으면 "이 업무는 왜 점검 항목이 셋뿐이었나"에 여전히
+     * 답할 수 없다. 조회라 담당자 여부를 보지 않고 WORK_READ만 건다 — 하위 업무를 볼 수 있으면
+     * 그 완료 조건이 어떻게 달라졌는지도 볼 수 있다. 목록이지만 페이징하지 않는다 — 한 하위
+     * 업무의 점검 항목 변경은 한 화면에 들어가는 양이고, 상세의 체크리스트도 전량을 내린다.
+     */
+    @RequireAuthority(AuthorityCode.WORK_READ)
+    @GetMapping("/{subWorkId}/checklist/history")
+    public ApiResponse<List<SubWorkChecklistHistoryResponse>> getChecklistHistory(
+            @PathVariable Long subWorkId) {
+        return ApiResponse.success(subWorkService.getChecklistHistory(subWorkId));
     }
 
     /*

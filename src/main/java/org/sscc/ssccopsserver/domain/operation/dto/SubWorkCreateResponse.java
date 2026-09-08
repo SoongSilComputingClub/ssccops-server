@@ -70,7 +70,17 @@ public record SubWorkCreateResponse(
                 subWork.getContent(),
                 subWork.getExternalLink(),
                 delayed,
-                checklist.stream().map(SubWorkChecklistItemResponse::from).toList(),
+                /*
+                 * 등록 직후는 기획(PLANNING)이고 모두 미완료라 항목이 전부 isDeletable = true다
+                 * (#307). 그래도 상수로 박지 않고 도메인에게 묻는다 — 등록 상태가 달라지는 날
+                 * 이 응답만 예외가 되면 화면이 둘을 구별해야 한다.
+                 */
+                checklist.stream()
+                        .map(
+                                item ->
+                                        SubWorkChecklistItemResponse.from(
+                                                item, subWork.isChecklistItemEditable()))
+                        .toList(),
                 toOffsetDateTime(operation.getCreatedAt()));
     }
 

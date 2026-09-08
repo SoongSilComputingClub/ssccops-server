@@ -678,6 +678,157 @@ class SubWorkControllerTest {
     }
 
     /*
+     * 항목 추가는 새 자원이라 201이고, 응답에 바뀜 목록 전체와 편집 가능 여부가 실린다 (#307).
+     * 화면이 상세를 다시 불러 순서를 재계산하지 않게 하려는 것이 목록을 함께 실는 이유다.
+     */
+    @Test
+    void addChecklistItemReturns201WithTheWholeList() throws Exception {
+        Long subWorkId = createSubWork();
+
+        addChecklistItem(subWorkId, "현장 답사")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.subWorkId").value(subWorkId))
+                .andExpect(jsonPath("$.data.item.article").value("현장 답사"))
+                .andExpect(jsonPath("$.data.item.isCompleted").value(false))
+                .andExpect(jsonPath("$.data.item.sortOrder").value(5))
+                .andExpect(jsonPath("$.data.checklist.length()").value(5))
+                .andExpect(jsonPath("$.data.checklistSummary.totalCount").value(5))
+                .andExpect(jsonPath("$.data.isChecklistItemEditable").value(true));
+    }
+
+    /*
+     * 항목마다 isDeletable이 실린다 (#307). 화면이 "편집 가능한가 && 체크 안 됐는가"를
+     * 직접 엮지 않고 이 값 하나로 삭제 버튼을 그린다.
+     */
+    @Test
+    void checklistItemsCarryTheirOwnDeletability() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+        updateChecklistItem(subWorkId, itemId, "true")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.isDeletable").value(false));
+
+        mockMvc.perform(
+                        get("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(jsonPath("$.data.checklist[0].isDeletable").value(false))
+                .andExpect(jsonPath("$.data.checklist[1].isDeletable").value(true));
+    }
+
+    // 빈 문구는 400이다 — 체크할 수 없는 빈 행을 만들지 않는다
+    @Test
+    void addChecklistItemWithBlankArticleReturns400() throws Exception {
+        Long subWorkId = createSubWork();
+
+        addChecklistItem(subWorkId, "   ")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    // 문구 수정은 체크·해제와 다른 경로다 — 허용 상태가 달라 한 엔드포인트에 섮지 않았다
+    @Test
+    void updateChecklistItemArticleReturns200AndKeepsCompletion() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+        updateChecklistItem(subWorkId, itemId, "true").andExpect(status().isOk());
+
+        updateChecklistItemArticle(subWorkId, itemId, "장소 후보 5곳 리스트업")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.article").value("장소 후보 5곳 리스트업"))
+                .andExpect(jsonPath("$.data.item.isCompleted").value(true))
+                .andExpect(jsonPath("$.data.checklistSummary.completedCount").value(1));
+    }
+
+    // 체크되지 않은 항목은 지워지고, 응답은 204가 아니라 바뀜 목록을 실은 200이다
+    @Test
+    void deleteChecklistItemReturns200WithTheRemainingList() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+
+        deleteChecklistItem(subWorkId, itemId)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.item.checklistItemId").value(itemId))
+                .andExpect(jsonPath("$.data.checklist.length()").value(3))
+                .andExpect(jsonPath("$.data.checklistSummary.totalCount").value(3));
+    }
+
+    /*
+     * 체크된 항목의 삭제는 409 CHECKLIST_ITEM_COMPLETED다 — 상태 잠금의
+     * TRANSITION_NOT_ALLOWED와 **코드가 갈라야** 화면이 두 안내를 구별한다 (근거는
+     * OperationErrorCode 주석). 이 두 테스트가 그 계약을 붙잡는다.
+     */
+    @Test
+    void deleteCheckedChecklistItemReturns409WithItsOwnCode() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+        updateChecklistItem(subWorkId, itemId, "true").andExpect(status().isOk());
+
+        deleteChecklistItem(subWorkId, itemId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHECKLIST_ITEM_COMPLETED"));
+    }
+
+    // 검토부터는 항목 편집이 잠긴다. 거절은 상태 잠금의 TRANSITION_NOT_ALLOWED다
+    @Test
+    void checklistItemEndpointsReturn409FromReview() throws Exception {
+        Long subWorkId = createSubWork();
+        Long itemId = firstChecklistItemId(subWorkId);
+        transition(subWorkId, "START", null).andExpect(status().isOk());
+        transition(subWorkId, "REQUEST_REVIEW", null).andExpect(status().isOk());
+
+        mockMvc.perform(
+                        get("/v1/sub-works/{subWorkId}", subWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(jsonPath("$.data.isChecklistItemEditable").value(false));
+
+        addChecklistItem(subWorkId, "현장 답사")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSITION_NOT_ALLOWED"));
+        updateChecklistItemArticle(subWorkId, itemId, "바꾸기")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSITION_NOT_ALLOWED"));
+        deleteChecklistItem(subWorkId, itemId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("TRANSITION_NOT_ALLOWED"));
+
+        // 체크는 검토에서도 그대로 된다
+        updateChecklistItem(subWorkId, itemId, "true").andExpect(status().isOk());
+    }
+
+    // 변경 이력은 일어난 순서대로 나온다. 체크·해제는 여기 남지 않는다
+    @Test
+    void checklistHistoryReturnsWhatChanged() throws Exception {
+        Long subWorkId = createSubWork();
+        addChecklistItem(subWorkId, "현장 답사").andExpect(status().isCreated());
+        deleteChecklistItem(subWorkId, firstChecklistItemId(subWorkId)).andExpect(status().isOk());
+        updateChecklistItem(subWorkId, firstChecklistItemId(subWorkId), "true")
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        get("/v1/sub-works/{subWorkId}/checklist/history", subWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].changeType").value("ADDED"))
+                .andExpect(jsonPath("$.data[0].nextArticle").value("현장 답사"))
+                .andExpect(jsonPath("$.data[0].performer.memberId").value(registrantId))
+                .andExpect(jsonPath("$.data[1].changeType").value("REMOVED"))
+                .andExpect(jsonPath("$.data[1].nextArticle").doesNotExist());
+    }
+
+    @Test
+    void checklistItemEndpointsWithoutTokenReturn401() throws Exception {
+        mockMvc.perform(
+                        post("/v1/sub-works/{subWorkId}/checklist", 1)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"article\": \"현장 답사\"}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/v1/sub-works/{subWorkId}/checklist/{itemId}", 1, 1))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /*
      * 쿼리 파라미터는 이름·값을 짝으로 받아 붙인다. 목록 테스트마다 파라미터 조합이 하나씩만
      * 달라서, 조합마다 헬퍼를 두는 것보다 이 편이 어떤 조건을 보는 테스트인지 잘 드러난다.
      */
@@ -697,6 +848,29 @@ class SubWorkControllerTest {
                         .header("Authorization", "Bearer " + AUTH_USER_ID)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"isCompleted\": %s}".formatted(isCompleted)));
+    }
+
+    private ResultActions addChecklistItem(Long subWorkId, String article) throws Exception {
+        return mockMvc.perform(
+                post("/v1/sub-works/{subWorkId}/checklist", subWorkId)
+                        .header("Authorization", "Bearer " + AUTH_USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"article\": \"%s\"}".formatted(article)));
+    }
+
+    private ResultActions updateChecklistItemArticle(Long subWorkId, Long itemId, String article)
+            throws Exception {
+        return mockMvc.perform(
+                patch("/v1/sub-works/{subWorkId}/checklist/{itemId}/article", subWorkId, itemId)
+                        .header("Authorization", "Bearer " + AUTH_USER_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"article\": \"%s\"}".formatted(article)));
+    }
+
+    private ResultActions deleteChecklistItem(Long subWorkId, Long itemId) throws Exception {
+        return mockMvc.perform(
+                delete("/v1/sub-works/{subWorkId}/checklist/{itemId}", subWorkId, itemId)
+                        .header("Authorization", "Bearer " + AUTH_USER_ID));
     }
 
     private List<Long> checklistItemIds(Long subWorkId) throws Exception {

@@ -205,6 +205,103 @@ class ShareLinkControllerTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
+    /* ── 업무 (ssccops#306) ────────────────────────────────── */
+
+    /*
+     * 업무도 같은 두 층을 지난다 — 발급한 토큰이 익명으로 열리고 대상 좌표가 `WORK`로 온다.
+     *
+     * **요약이 조립된 문자열이라는 것을 여기서 못 박는다.** 업무에는 본문이 없어 유형과 기간으로
+     * 만드는데(ssccops#251), 이 표본은 기간이 비어 있어 **유형만** 남아야 한다 — 등록 화면에서
+     * 기간이 선택 입력이라 실제로 흔한 모양이고, 재료가 없을 때 구분자만 남으면 카드가 잘린
+     * 것처럼 보인다. 조합 넷 전부는 `WorkSharePreviewProviderTest`가 본다.
+     */
+    @Test
+    void issuedWorkTokenCarriesTheAssembledSummary() throws Exception {
+        String token = issueWorkShareToken();
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trgtSeCd").value("WORK"))
+                .andExpect(jsonPath("$.data.trgtId").value(parentWorkId))
+                .andExpect(jsonPath("$.data.title").value("2026 동아리 박람회"))
+                // 기간이 없으므로 유형만 — `행사 · ` 처럼 재료 없는 구분자가 남으면 안 된다
+                .andExpect(jsonPath("$.data.summary").value("행사"))
+                .andExpect(jsonPath("$.data.workSttsCd").doesNotExist())
+                .andExpect(jsonPath("$.data.prgrsRt").doesNotExist());
+    }
+
+    // 하위 업무와 같은 이유로 멱등이다 — 만료가 없어 누를 때마다 발급하면 죽지 않는 링크가 쌓인다
+    @Test
+    void issuingWorkShareTwiceReturnsTheSameToken() throws Exception {
+        assertThat(issueWorkShareToken()).isEqualTo(issueWorkShareToken());
+    }
+
+    @Test
+    void revokedWorkTokenIsNoLongerReadable() throws Exception {
+        String token = issueWorkShareToken();
+
+        mockMvc.perform(
+                        delete("/v1/works/{workId}/share", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * **삭제된 운영 건은 없는 것으로 답한다.** 폐기하지 않은 살아 있는 토큰인데도 404인 것은
+     * 미리보기 제공자가 대상을 찾지 못하기 때문이다 — 지운 업무의 제목이 링크로 계속 열리면
+     * "지웠다"는 화면의 표시가 사실이 아니게 된다.
+     */
+    @Test
+    void tokenOfADeletedWorkIsNoLongerReadable() throws Exception {
+        String token = issueWorkShareToken();
+
+        mockMvc.perform(
+                        delete("/v1/works/{workId}", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * 없는 업무에는 토큰이 발급되지 않는다. `shr_lnk`에 FK가 없어 DB가 막아 주지 않으므로
+     * **대상 조회를 먼저 태우는 것이 유일한 방어**다.
+     */
+    @Test
+    void issuingShareForAnUnknownWorkIs404() throws Exception {
+        mockMvc.perform(
+                        post("/v1/works/{workId}/share", 999_999L)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isNotFound());
+    }
+
+    /*
+     * 공유한 적이 없으면 404가 아니라 data가 null인 200이다 — 하위 업무와 같은 판단이며,
+     * 화면이 '공유하기'와 '공유 중지' 중 무엇을 그릴지 이 값으로 정한다.
+     */
+    @Test
+    void workShareStateIsNullBeforeIssuing() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works/{workId}/share", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        issueWorkShareToken();
+
+        mockMvc.perform(
+                        get("/v1/works/{workId}/share", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.shrTkn").isNotEmpty());
+    }
+
     /* ── 발급은 익명이 아니다 ──────────────────────────────── */
 
     // 미리보기만 익명이다. 토큰을 만드는 것은 그 자원을 볼 수 있는 사람의 일이다
@@ -253,6 +350,18 @@ class ShareLinkControllerTest {
                         .getResponse()
                         .getContentAsString();
         return JsonPath.parse(response).read("$.data.subWorkId", Long.class);
+    }
+
+    private String issueWorkShareToken() throws Exception {
+        String response =
+                mockMvc.perform(
+                                post("/v1/works/{workId}/share", parentWorkId)
+                                        .header("Authorization", "Bearer " + AUTH_USER_ID))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.shrTkn", String.class);
     }
 
     private String issueShareToken(Long subWorkId) throws Exception {

@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,6 +28,9 @@ import org.sscc.ssccopsserver.domain.event.service.EventImageService;
 import org.sscc.ssccopsserver.domain.event.service.EventService;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
+import org.sscc.ssccopsserver.domain.share.dto.ShareLinkResponse;
+import org.sscc.ssccopsserver.domain.share.service.ShareLinkService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
@@ -51,6 +55,7 @@ public class EventController {
 
     private final EventService eventService;
     private final EventImageService eventImageService;
+    private final ShareLinkService shareLinkService;
 
     /*
      * 행사 목록. 두 필터는 각각 선택이며 둘 다 주면 AND다. 본문(mtxtCn)은 목록에 싣지 않는다 —
@@ -192,5 +197,90 @@ public class EventController {
             @PathVariable Long eventId, @Valid @RequestBody EventImageUploadRequest request) {
         EventImageUploadResponse response = eventImageService.issueUploadUrl(eventId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 공유 링크 발급 (ssccops#312 · ADR-0016). 행사 편집 화면의 '공유' 버튼이 부른다.
+     *
+     * **이 셋이 `ShareController` 하나가 아니라 여기 있는 이유**는 `ShareLinkService` 주석에
+     * 있다 — ssccops#306이 후보 ①로 확정했고 여기서는 형판을 반복한다.
+     *
+     * **채우는 것은 게시 전(DRAFT) 행사다.** 게시된 행사는 이미 `apps/www`의
+     * `/events/{eventId}`로 익명이 열 수 있어 이 기능이 없어도 나눌 수 있었고, 없던 것은
+     * "기획하는 동안 봐 달라"고 말할 방법이었다. 그래서 게시·보관된 행사에 오는 발급 요청은
+     * 409 EVENT_SHARE_NOT_DRAFT로 거절한다 — 근거는 그 에러 코드 주석에 있다.
+     *
+     * **요구 권한은 클래스 레벨 EVENT_MANAGE 그대로다.** 행사 도메인은 조회/쓰기를 나눌 자식
+     * 권한이 없어(D8) 이것이 곧 "이 행사를 볼 수 있는 사람"이며, ADR-0016의 *볼 수 있는
+     * 사람이 공유할 수 있다*가 여기서는 이 한 권한으로 떨어진다.
+     *
+     * **멱등이다** — 살아 있는 링크가 있으면 그것을 돌려주므로 몇 번을 눌러도 결과가 같다.
+     * 새 자원이 만들어지지 않는 호출이 있으므로 201이 아니라 200이다.
+     */
+    @Operation(
+            summary = "행사 공유 링크 발급",
+            description =
+                    "게시 전(DRAFT) 행사의 미리보기를 익명에게 여는 토큰을 발급한다."
+                            + " **게시된 행사에는 발급하지 않는다** — 이미 공개 주소"
+                            + " (/events/{eventId})가 있어 토큰이 더하는 것은 폐기 기능뿐인데 그"
+                            + " 폐기가 원본 공개 URL을 막지 못한다. 보관된 행사도 같다(409"
+                            + " EVENT_SHARE_NOT_DRAFT). 없는 행사는 404 EVENT_NOT_FOUND다."
+                            + " 살아 있는 링크가 있으면 새로 만들지 않고 그것을 돌려주므로"
+                            + " 멱등이며 200이다. 응답은 토큰이고 링크 주소는 웹이 조립한다.")
+    @PostMapping("/{eventId}/share")
+    public ApiResponse<ShareLinkResponse> issueShareLink(
+            @PathVariable Long eventId, @CurrentMember MemberEntity issuer) {
+        // 없는 행사를 여기서 404로 끊는다 — shr_lnk에 FK가 없어 DB가 막아 주지 않는다.
+        // 게시 여부 판정도 같은 호출이 한다(LY-02 — 상태 분기는 도메인의 일이다).
+        eventService.requireShareableDraft(eventId);
+        return ApiResponse.success(shareLinkService.issue(ShareTargetType.EVENT, eventId, issuer));
+    }
+
+    /*
+     * 현재 공유 상태 (ssccops#312). 화면이 '공유하기'와 '공유 중지' 중 무엇을 그릴지 정한다.
+     *
+     * **발급과 달리 상태를 보지 않는다.** 게시 전에 발급한 링크는 행사가 게시된 뒤에도 살아
+     * 있으므로(카드가 깨지지 않게 하려는 판단 — `EventSharePreviewProvider`), 그때 화면이
+     * 살아 있는 링크를 보지 못하면 **폐기할 방법이 없어진다.**
+     *
+     * 공유한 적이 없거나 폐기했으면 data가 null인 200이다 — '공유 중이 아니다'는 오류가 아니라
+     * 정상적인 조회 결과다(업무·하위 업무와 같은 판단).
+     */
+    @Operation(
+            summary = "행사 공유 상태 조회",
+            description =
+                    "살아 있는 공유 링크가 있으면 토큰을, 없으면 data가 null인 200을 준다."
+                            + " 발급과 달리 게시 상태를 보지 않는다 — 게시 전에 발급한 링크는"
+                            + " 게시 뒤에도 살아 있고, 보이지 않으면 폐기할 수단이 없어진다."
+                            + " 없는 행사는 404 EVENT_NOT_FOUND다.")
+    @GetMapping("/{eventId}/share")
+    public ApiResponse<ShareLinkResponse> getShareLink(@PathVariable Long eventId) {
+        eventService.getEvent(eventId);
+        return ApiResponse.success(
+                shareLinkService.findActive(ShareTargetType.EVENT, eventId).orElse(null));
+    }
+
+    /*
+     * 공유 중지 (ssccops#312). 폐기하면 그 토큰으로는 미리보기가 열리지 않는다.
+     *
+     * **게시된 행사에서도 폐기는 열어 둔다.** 발급을 막는 것과 어긋나 보이지만 방향이 반대다 —
+     * 막는 쪽은 새 노출을 만드는 일이고 이쪽은 이미 있는 노출을 거두는 일이다. 다만 **이것이
+     * `/events/{eventId}` 공개 주소를 막지는 않는다**: 게시된 행사에 발급을 거절하는 이유가
+     * 바로 그것이며, 폐기가 지키는 것은 토큰 하나뿐이다.
+     *
+     * 살아 있는 링크가 없어도 조용히 지나가며 언제나 200이다.
+     */
+    @Operation(
+            summary = "행사 공유 중지",
+            description =
+                    "공유 링크를 폐기한다. 그 토큰으로는 미리보기가 열리지 않는다(404)."
+                            + " **게시된 행사의 공개 주소(/events/{eventId})는 막지 못한다** —"
+                            + " 폐기가 거두는 것은 토큰뿐이다."
+                            + " 살아 있는 링크가 없어도 200이며, 없는 행사는 404 EVENT_NOT_FOUND다.")
+    @DeleteMapping("/{eventId}/share")
+    public ApiResponse<Void> revokeShareLink(@PathVariable Long eventId) {
+        eventService.getEvent(eventId);
+        shareLinkService.revoke(ShareTargetType.EVENT, eventId);
+        return ApiResponse.successWithNoData();
     }
 }

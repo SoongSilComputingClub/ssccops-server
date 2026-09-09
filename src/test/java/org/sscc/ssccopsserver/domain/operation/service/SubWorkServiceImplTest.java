@@ -40,9 +40,12 @@ import org.sscc.ssccopsserver.domain.member.service.MemberProfileChangeRecorder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.member.service.MemberServiceImpl;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistHistoryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistMutationResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -51,6 +54,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
+import org.sscc.ssccopsserver.domain.operation.entity.ChecklistChangeType;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationType;
@@ -67,6 +71,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
@@ -120,6 +125,7 @@ class SubWorkServiceImplTest {
     @Autowired private SubWorkRepository subWorkRepository;
     @Autowired private SubWorkTypeRepository subWorkTypeRepository;
     @Autowired private SubWorkChecklistItemRepository subWorkChecklistItemRepository;
+    @Autowired private SubWorkChecklistHistoryRepository subWorkChecklistHistoryRepository;
     @Autowired private SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     @Autowired private SubWorkApprovalRepository subWorkApprovalRepository;
     @Autowired private SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
@@ -138,6 +144,13 @@ class SubWorkServiceImplTest {
     @Autowired private TestEntityManager entityManager;
 
     private SubWorkService subWorkService;
+
+    /*
+     * countOngoingByOwner 는 SubWorkService 가 아니라 회원 도메인이 선언한 포트
+     * (MemberSubWorkLoadProvider)의 메서드이고 운영 쪽 구현이 이 클래스다(ssccops#242).
+     * 같은 리포지토리 질의를 쓰므로 여기서 함께 검증한다.
+     */
+    private SubWorkOwnerLoadProvider subWorkOwnerLoadProvider;
     private MemberEntity registrant;
     private Long ownerId;
     private Long parentWorkId;
@@ -186,6 +199,7 @@ class SubWorkServiceImplTest {
                         subWorkRepository,
                         subWorkTypeRepository,
                         subWorkChecklistItemRepository,
+                        subWorkChecklistHistoryRepository,
                         subWorkStatusHistoryRepository,
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
@@ -197,6 +211,7 @@ class SubWorkServiceImplTest {
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         entityManager.getEntityManager());
+        subWorkOwnerLoadProvider = new SubWorkOwnerLoadProvider(subWorkRepository);
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
@@ -1346,8 +1361,8 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThat(subWorkService.countOngoingByOwner(ownerId)).isEqualTo(1);
-        assertThat(subWorkService.countOngoingByOwner(registrant.getId())).isZero();
+        assertThat(subWorkOwnerLoadProvider.countOngoingByOwner(ownerId)).isEqualTo(1);
+        assertThat(subWorkOwnerLoadProvider.countOngoingByOwner(registrant.getId())).isZero();
     }
 
     // ---------------------------------------------------------------- 삭제 (#125)
@@ -1401,6 +1416,330 @@ class SubWorkServiceImplTest {
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.ALREADY_DELETED);
+    }
+
+    /*
+     * ===== 완료 점검 항목 추가·수정·삭제 (#307) =====
+     *
+     * 상태 잠금·체크된 항목 삭제 금지·이력이 세트다. 셀을 하나만 빼면 "심사 직전에
+     * 기준을 낮추는 경로"가 다시 생기므로 세 가지를 함께 본다.
+     */
+
+    // 추가된 항목은 목록 끝에 붙고 미완료로 시작한다 — 완료 조건이 한 칸 늘어난다
+    @Test
+    void addChecklistItemAppendsAtTheEnd() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+
+        SubWorkChecklistMutationResponse response = addChecklistItem(subWorkId, "현장 답사");
+
+        assertThat(response.subWorkId()).isEqualTo(subWorkId);
+        assertThat(response.item().article()).isEqualTo("현장 답사");
+        assertThat(response.item().sortOrder()).isEqualTo(5);
+        assertThat(response.item().isCompleted()).isFalse();
+        assertThat(response.checklist()).hasSize(5);
+        assertThat(response.checklist().get(4).article()).isEqualTo("현장 답사");
+        assertThat(response.checklistSummary().totalCount()).isEqualTo(5);
+        assertThat(response.isChecklistItemEditable()).isTrue();
+
+        // 응답의 목록과 다음 상세 조회의 목록이 같아야 화면이 흔들리지 않는다
+        assertThat(detailOf(subWorkId).checklist()).hasSize(5);
+    }
+
+    /*
+     * 삭제가 하드라 다음 번호를 count로 매기면 겹친다. max + 1이어야 한다 — 남은 항목의
+     * sort_seq를 다시 매기지 않기로 한 결정과 짝이다.
+     */
+    @Test
+    void addChecklistItemNumbersFromMaxNotCount() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        deleteChecklistItem(subWorkId, checklistItemIds(subWorkId).get(1));
+
+        SubWorkChecklistMutationResponse response = addChecklistItem(subWorkId, "현장 답사");
+
+        assertThat(response.checklist()).hasSize(4);
+        assertThat(response.item().sortOrder()).isEqualTo(5);
+        assertThat(response.checklist())
+                .extracting(SubWorkChecklistItemResponse::sortOrder)
+                .containsExactly(1, 3, 4, 5);
+    }
+
+    // 문구를 고쳐도 체크 상태는 그대로다 — 다듬는 것과 해낸 것은 다른 사실이다
+    @Test
+    void updateChecklistItemArticleKeepsCompletion() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+        updateChecklistItem(subWorkId, firstItemId, true);
+
+        SubWorkChecklistMutationResponse response =
+                updateChecklistItemArticle(subWorkId, firstItemId, "장소 후보 5곳 리스트업");
+
+        assertThat(response.item().article()).isEqualTo("장소 후보 5곳 리스트업");
+        assertThat(response.item().isCompleted()).isTrue();
+        assertThat(response.item().sortOrder()).isEqualTo(1);
+        assertThat(response.checklistSummary().completedCount()).isEqualTo(1);
+        assertThat(response.checklistSummary().totalCount()).isEqualTo(4);
+    }
+
+    // 체크되지 않은 항목은 지워진다. 지우는 행위 자체가 "이번 건엔 해당 없다"는 선언이다
+    @Test
+    void deleteUncheckedChecklistItemRemovesItFromTheList() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        List<Long> itemIds = checklistItemIds(subWorkId);
+
+        SubWorkChecklistMutationResponse response = deleteChecklistItem(subWorkId, itemIds.get(1));
+
+        // 지운 항목의 마지막 모습이 응답에 남는다 — 지운 뒤에는 다시 물을 곳이 없다
+        assertThat(response.item().checklistItemId()).isEqualTo(itemIds.get(1));
+        assertThat(response.checklist()).hasSize(3);
+        assertThat(response.checklist())
+                .extracting(SubWorkChecklistItemResponse::checklistItemId)
+                .doesNotContain(itemIds.get(1));
+        assertThat(response.checklistSummary().totalCount()).isEqualTo(3);
+        assertThat(detailOf(subWorkId).checklist()).hasSize(3);
+    }
+
+    /*
+     * 지우면 완료 조건이 짧아진다 — 그것이 이 API의 뜻이고, 그래서 상태·체크 두 잠금과
+     * 이력이 함께 붙은 것이다. 남은 세 항목만 체크하면 완료 승인이 통과한다.
+     */
+    @Test
+    void deletingAnItemLowersTheBarForCompletion() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        deleteChecklistItem(subWorkId, checklistItemIds(subWorkId).get(3));
+        transition(subWorkId, TransitionAction.START, null);
+        completeChecklist(subWorkId);
+        transition(subWorkId, TransitionAction.REQUEST_REVIEW, null);
+
+        SubWorkTransitionResponse response =
+                transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
+
+        assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
+        assertThat(detailOf(subWorkId).checklistSummary().totalCount()).isEqualTo(3);
+    }
+
+    /*
+     * **체크된 항목은 지울 수 없다** (ssccops#255 결정). "해당 없음으로 지우기"와
+     * "안 하고 지우기"가 화면에서 구별되지 않기 때문이다. 상태 잠금과 다른 코드로 거절하는 이유는
+     * 해소 방법이 다르기 때문이다 — 이쪽은 체크를 푸는 순간 지울 수 있다.
+     */
+    @Test
+    void deleteCheckedChecklistItemIsRejected() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+        updateChecklistItem(subWorkId, firstItemId, true);
+
+        assertThatThrownBy(() -> deleteChecklistItem(subWorkId, firstItemId))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.CHECKLIST_ITEM_COMPLETED);
+        assertThat(detailOf(subWorkId).checklist()).hasSize(4);
+
+        // 체크를 풀면 지워진다 — 거절이 영구적인 금지가 아니라는 것이 코드를 가른 근거다
+        updateChecklistItem(subWorkId, firstItemId, false);
+        assertThat(deleteChecklistItem(subWorkId, firstItemId).checklist()).hasSize(3);
+    }
+
+    /*
+     * **검토부터 항목 편집이 잠긴다** (ssccops#255 결정). 체크·해제는 그대로 된다 —
+     * 두 기준이 갈리는 유일한 상태라 여기서 함께 본다.
+     */
+    @Test
+    void checklistItemsAreLockedFromReview() {
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
+        Long firstItemId = checklistItemIds(subWorkId).get(0);
+
+        assertThat(detailOf(subWorkId).isChecklistItemEditable()).isFalse();
+        assertThatThrownBy(() -> addChecklistItem(subWorkId, "현장 답사"))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        assertThatThrownBy(() -> updateChecklistItemArticle(subWorkId, firstItemId, "바꾸기"))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        assertThatThrownBy(() -> deleteChecklistItem(subWorkId, firstItemId))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+
+        // 체크는 검토에서도 된다 — 두 잠금을 같은 것으로 묶지 않았다는 증거다
+        assertThat(updateChecklistItem(subWorkId, firstItemId, true).item().isCompleted()).isTrue();
+    }
+
+    // 반려로 진행에 되돌아오면 다시 열린다 — '계획을 고쳐 다시 올린다'의 뜻이다
+    @Test
+    void checklistItemsReopenAfterRejection() {
+        Long subWorkId = subWorkInReview(approvalNeededTypeId);
+        transition(subWorkId, TransitionAction.REJECT, "현장 답사 결과 누락");
+
+        assertThat(detailOf(subWorkId).isChecklistItemEditable()).isTrue();
+        assertThat(addChecklistItem(subWorkId, "현장 답사").checklist()).hasSize(5);
+    }
+
+    /*
+     * **이 이슈의 가장 중요한 항목.** 두 잠금이 있어도 기획·진행 단계의 삭제는 여전히
+     * 가능하고 정당하다. 남지 않으면 "이 업무는 왜 점검 항목이 셋뿐이었나"에 답할 수 없다.
+     *
+     * 하드로 지워도 지워진 항목의 문구가 이력에 남는다 — 소프트 삭제를 고르지 않은 근거다.
+     */
+    @Test
+    void everyItemChangeIsRecordedInHistory() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        List<Long> itemIds = checklistItemIds(subWorkId);
+        Long addedItemId = addChecklistItem(subWorkId, "현장 답사").item().checklistItemId();
+        updateChecklistItemArticle(subWorkId, addedItemId, "현장 답사 및 사진 촬영");
+        String removedArticle = detailOf(subWorkId).checklist().get(3).article();
+        deleteChecklistItem(subWorkId, itemIds.get(3));
+
+        List<SubWorkChecklistHistoryResponse> history = historyOf(subWorkId);
+
+        assertThat(history)
+                .extracting(
+                        SubWorkChecklistHistoryResponse::changeType,
+                        SubWorkChecklistHistoryResponse::previousArticle,
+                        SubWorkChecklistHistoryResponse::nextArticle)
+                .containsExactly(
+                        tuple(ChecklistChangeType.ADDED, null, "현장 답사"),
+                        tuple(ChecklistChangeType.MODIFIED, "현장 답사", "현장 답사 및 사진 촬영"),
+                        tuple(ChecklistChangeType.REMOVED, removedArticle, null));
+        assertThat(history)
+                .allSatisfy(
+                        row -> {
+                            assertThat(row.performer().memberId()).isEqualTo(registrant.getId());
+                            assertThat(row.changedAt()).isEqualTo(NOW);
+                        });
+        // 지워진 항목의 식별자도 남는다 — 그 행은 이미 없지만 이력은 가리킨다
+        assertThat(history.get(2).checklistItemId()).isEqualTo(itemIds.get(3));
+    }
+
+    // 체크·해제는 이 이력에 남지 않는다 — 진척 기록이 완료 조건의 변경을 묻어 버리지 않게 한다
+    @Test
+    void togglingAnItemLeavesNoChecklistHistory() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        completeChecklist(subWorkId);
+
+        assertThat(historyOf(subWorkId)).isEmpty();
+    }
+
+    /*
+     * 항목 편집은 상태 전이가 아니다. 스테퍼(업무 상태)·승인 칩이 그대로여야 하고
+     * sub_work_stts_hstry에도 아무것도 들어가지 않는다 — 이력이 둘로 나뉘어 있는 이유다.
+     */
+    @Test
+    void itemChangesDoNotTouchStatusesOrStatusHistory() {
+        Long subWorkId = createSubWork(approvalNeededTypeId);
+
+        addChecklistItem(subWorkId, "현장 답사");
+
+        SubWorkDetailResponse detail = detailOf(subWorkId);
+        assertThat(detail.workStatus()).isEqualTo(WorkStatus.PLANNING);
+        assertThat(detail.approvalStatus()).isEqualTo(ApprovalStatus.PENDING);
+        assertThat(subWorkStatusHistoryRepository.count()).isZero();
+    }
+
+    // 경로의 하위 업무에 속하지 않는 항목은 고치거나 지울 수 없다 (IDOR) — 403이 아니라 404다
+    @Test
+    void editingAnItemOfAnotherSubWorkIsRejected() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        Long otherSubWorkId = createSubWork(approvalFreeTypeId);
+        Long otherItemId = checklistItemIds(otherSubWorkId).get(0);
+
+        assertThatThrownBy(() -> updateChecklistItemArticle(subWorkId, otherItemId, "바꾸기"))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND);
+        assertThatThrownBy(() -> deleteChecklistItem(subWorkId, otherItemId))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND);
+        assertThat(detailOf(otherSubWorkId).checklist()).hasSize(4);
+    }
+
+    /*
+     * 유형(sub_work_type)의 원본 목록은 건드리지 않는다 (POL-005). 여기서 더하고 지운 것은
+     * 이 하위 업무의 것이고, 다음에 같은 유형으로 등록되는 건은 원본 네 항목으로 시작한다.
+     */
+    @Test
+    void itemChangesDoNotLeakIntoTheType() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        addChecklistItem(subWorkId, "현장 답사");
+        deleteChecklistItem(subWorkId, checklistItemIds(subWorkId).get(0));
+
+        Long nextSubWorkId = createSubWork(approvalFreeTypeId);
+
+        assertThat(detailOf(nextSubWorkId).checklist()).hasSize(4);
+        assertThat(
+                        subWorkTypeRepository
+                                .findById(approvalFreeTypeId)
+                                .orElseThrow()
+                                .completionCheckArticles())
+                .hasSize(4);
+    }
+
+    /*
+     * 항목마다의 isDeletable은 **두 잠금을 합친 값**이다 (#307) — 화면이 "편집 가능 상태이고
+     * 체크 안 됨"을 직접 엮지 않게 한다. 같은 목록 안에서 항목마다 갈리고, 검토부터는 전부 false다.
+     */
+    @Test
+    void itemDeletabilityCombinesBothLocks() {
+        Long subWorkId = createSubWork(approvalFreeTypeId);
+        List<Long> itemIds = checklistItemIds(subWorkId);
+        updateChecklistItem(subWorkId, itemIds.get(0), true);
+
+        assertThat(detailOf(subWorkId).checklist())
+                .extracting(
+                        SubWorkChecklistItemResponse::isCompleted,
+                        SubWorkChecklistItemResponse::isDeletable)
+                .containsExactly(
+                        tuple(true, false),
+                        tuple(false, true),
+                        tuple(false, true),
+                        tuple(false, true));
+
+        // 체크를 풀면 지울 수 있게 된다 — 체크 응답이 그 전환을 그 자리에서 알려 준다
+        assertThat(updateChecklistItem(subWorkId, itemIds.get(0), false).item().isDeletable())
+                .isTrue();
+    }
+
+    // 검토부터는 체크 안 된 항목도 지울 수 없다 — 상태 잠금이 항목 상태보다 앞선다
+    @Test
+    void nothingIsDeletableFromReview() {
+        Long subWorkId = subWorkInReview(approvalFreeTypeId);
+
+        assertThat(detailOf(subWorkId).checklist())
+                .extracting(SubWorkChecklistItemResponse::isDeletable)
+                .containsOnly(false);
+    }
+
+    private SubWorkChecklistMutationResponse addChecklistItem(Long subWorkId, String article) {
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkService.addChecklistItem(
+                subWorkId, new SubWorkChecklistItemSaveRequest(article), registrant);
+    }
+
+    private SubWorkChecklistMutationResponse updateChecklistItemArticle(
+            Long subWorkId, Long checklistItemId, String article) {
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkService.updateChecklistItemArticle(
+                subWorkId,
+                checklistItemId,
+                new SubWorkChecklistItemSaveRequest(article),
+                registrant);
+    }
+
+    private SubWorkChecklistMutationResponse deleteChecklistItem(
+            Long subWorkId, Long checklistItemId) {
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkService.deleteChecklistItem(subWorkId, checklistItemId, registrant);
+    }
+
+    private List<SubWorkChecklistHistoryResponse> historyOf(Long subWorkId) {
+        entityManager.flush();
+        entityManager.clear();
+        return subWorkService.getChecklistHistory(subWorkId);
     }
 
     private Long createSubWork(long subWorkTypeId) {

@@ -45,6 +45,22 @@ public interface SessionService {
     SessionDetailResponse getSession(
             Long academicProgramId, Long sessionId, MemberEntity requester);
 
+    /*
+     * 회차 id 하나로 읽는 상세 (#316). 위의 getSession과 **결과가 같고 좁히는 값만 다르다** —
+     * 활동 id를 함께 받지 않으므로 남의 활동 회차도 그대로 읽힌다.
+     *
+     * **그것이 이 메서드의 목적이다.** 공유 링크가 들고 오는 것은 대상 ID 하나(회차 id)이고,
+     * 착지 화면은 그 하나로 활동 id를 얻어 사람이 갈 lms 주소를 조립한다 — 활동 id를 함께
+     * 요구하면 애초에 부를 수 없는 조회다.
+     *
+     * **자격을 넓히는 것이 아니다.** 활동 문맥의 조회도 인증만 요구하고 상태로 감추지 않으므로
+     * (SessionSharePreviewProvider의 "404로 감출 상태가 없다"와 같은 판단), 회차 하나로 읽어도
+     * 인증된 회원이 볼 수 있는 것의 범위는 그대로다. 중첩 경로의 활동 검사는 인가 경계가 아니라
+     * **경로가 가리키는 대상을 못 박는 장치**다 — 그 경로는 화면이 이미 활동을 알고 들어오므로
+     * 어긋난 조합을 404로 끊는 것이 맞고, 이 경로는 활동을 모르는 것이 전제라 끊을 것이 없다.
+     */
+    SessionDetailResponse getSessionById(Long sessionId, MemberEntity requester);
+
     /* 회차 목록. 활동 상세 화면 안에서 그 활동의 회차만 보는 용도다 */
     SessionSearchResponse searchSessions(Long academicProgramId, SessionCondition condition);
 }

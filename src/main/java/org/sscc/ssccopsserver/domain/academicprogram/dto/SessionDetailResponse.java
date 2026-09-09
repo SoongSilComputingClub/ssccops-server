@@ -19,9 +19,17 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * presentCount·totalCount는 저장하지 않는 파생값이다. attendances를 세면 나오는 값을 굳이
  * 함께 내리는 것은 화면 상단의 "N/M 참석" 요약이 목록 응답에도 같은 이름으로 필요해서다
  * (SessionSummaryResponse) — 한쪽만 세면 두 화면의 숫자가 갈린다.
+ *
+ * academicProgramId를 싣는 것은 **회차 하나만 아는 호출자 때문이다** (#316). 공유 링크가
+ * 들고 오는 것은 대상 ID 하나(회차 id)인데, 착지 화면이 사람을 lms의 활동 상세로 보내려면
+ * 활동 id가 있어야 한다 — 그 값을 응답에 싣지 않으면 회차를 읽고도 갈 곳을 조립하지 못한다.
+ * 중첩 경로(GET /v1/academic-programs/{id}/sessions/{id})에도 같은 값이 실리는데, 응답을
+ * 두 벌로 두면 같은 회차가 경로에 따라 다른 모양으로 나가기 때문이다. 경로에 이미 있는 값을
+ * 한 번 더 내리는 비용보다 그쪽이 크다.
  */
 public record SessionDetailResponse(
         Long sessionId,
+        Long academicProgramId,
         Long curriculumItemId,
         Integer seqno,
         String curriculumTtl,
@@ -61,6 +69,7 @@ public record SessionDetailResponse(
 
         return new SessionDetailResponse(
                 session.getId(),
+                curriculumItem.getAcademicProgram().getId(),
                 curriculumItem.getId(),
                 curriculumItem.getSeqno(),
                 curriculumItem.getTitle(),

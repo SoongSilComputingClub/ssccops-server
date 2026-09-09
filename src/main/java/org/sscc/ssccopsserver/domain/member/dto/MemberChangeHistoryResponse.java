@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.member.dto;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 
 import org.sscc.ssccopsserver.domain.member.code.MemberChangeField;
@@ -56,6 +57,9 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberStatusHistoryEntity;
  * '행이 만들어진 시각'이라 종료 사건의 발생 시각이 될 수 없어(종료는 같은 행의 UPDATE다),
  * 이슈가 정한 대로 role_bgng_ymd·role_end_ymd를 발생 시각으로 삼는다. 날짜를 시각으로
  * 옮길 때 쓰는 시간대는 주입된 Clock의 것이다(AP-12 — 서비스 표준 시간대 Asia/Seoul).
+ *
+ * createdAt은 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다. 이 자리도 Instant를 그대로
+ * 내리고 있었다(#318) — 문자열을 잘라 그리는 화면에서는 아홉 시간 이른 시각이 된다.
  */
 public record MemberChangeHistoryResponse(
         MemberChangeType changeType,
@@ -69,7 +73,9 @@ public record MemberChangeHistoryResponse(
         String changeReason,
         Long changedByMemberId,
         String changedByName,
-        Instant createdAt) {
+        OffsetDateTime createdAt) {
+
+    private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static MemberChangeHistoryResponse from(MemberGradeHistoryEntity history) {
         return new MemberChangeHistoryResponse(
@@ -84,7 +90,7 @@ public record MemberChangeHistoryResponse(
                 history.getChangeReason(),
                 changedById(history.getChangedBy()),
                 changedByName(history.getChangedBy()),
-                history.getCreatedAt());
+                toOffsetDateTime(history.getCreatedAt()));
     }
 
     public static MemberChangeHistoryResponse from(MemberStatusHistoryEntity history) {
@@ -100,7 +106,7 @@ public record MemberChangeHistoryResponse(
                 history.getChangeReason(),
                 changedById(history.getChangedBy()),
                 changedByName(history.getChangedBy()),
-                history.getCreatedAt());
+                toOffsetDateTime(history.getCreatedAt()));
     }
 
     /*
@@ -177,7 +183,7 @@ public record MemberChangeHistoryResponse(
                 null,
                 changedById(history.getChangedBy()),
                 changedByName(history.getChangedBy()),
-                history.getCreatedAt());
+                toOffsetDateTime(history.getCreatedAt()));
     }
 
     private static String roleCode(MemberRoleAssignmentEntity assignment) {
@@ -185,8 +191,12 @@ public record MemberChangeHistoryResponse(
     }
 
     // 역할 사건의 발생 시각은 날짜뿐이라 그날의 시작으로 굳힌다 (같은 날의 등급·상태보다 앞선다)
-    private static Instant occurredAt(LocalDate date, ZoneId zone) {
-        return date.atStartOfDay(zone).toInstant();
+    private static OffsetDateTime occurredAt(LocalDate date, ZoneId zone) {
+        return date.atStartOfDay(zone).toOffsetDateTime();
+    }
+
+    private static OffsetDateTime toOffsetDateTime(Instant instant) {
+        return instant == null ? null : instant.atZone(SERVICE_ZONE).toOffsetDateTime();
     }
 
     // 변경자는 nullable이다 — 배치나 이관으로 생긴 이력에는 사람이 없다

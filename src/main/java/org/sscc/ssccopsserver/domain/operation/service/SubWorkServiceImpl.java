@@ -18,8 +18,11 @@ import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalQuorumResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistHistoryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistMutationResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
@@ -40,6 +43,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkApprovalVoteEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistHistoryEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkRejectionEntity;
@@ -52,6 +56,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
@@ -75,6 +80,7 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkRepository subWorkRepository;
     private final SubWorkTypeRepository subWorkTypeRepository;
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
+    private final SubWorkChecklistHistoryRepository subWorkChecklistHistoryRepository;
     private final SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     private final SubWorkApprovalRepository subWorkApprovalRepository;
     private final SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
@@ -654,7 +660,158 @@ public class SubWorkServiceImpl implements SubWorkService {
                                                 OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND));
         item.updateCompletion(request.isCompleted());
 
-        return SubWorkChecklistItemUpdateResponse.of(subWorkId, item, checklistSummaryOf(subWork));
+        return SubWorkChecklistItemUpdateResponse.of(subWork, item, checklistSummaryOf(subWork));
+    }
+
+    /*
+     * 완료 점검 항목 추가 (#307).
+     *
+     * 검사 순서는 담당자 → 상태다. 담당자가 아닌 사람에게는 상태를 알려주지 않는다 —
+     * 체크·해제(updateChecklistItem)와 같은 순서다.
+     *
+     * sort_seq는 지금 가장 큰 값 + 1이라 목록 끝에 붙는다. 사이에 끼워 넣는 경로를 두지
+     * 않은 것은 순서 변경 API를 두지 않은 것과 같은 판단이다(SubWorkController 주석).
+     *
+     * 이력을 만들기 전에 flush 하는 것은 **새 항목의 식별자가 필요하기 때문이다** —
+     * IDENTITY라 INSERT 전에는 NULL이고, 그대로 이력에 담으면 NOT NULL 위반으로 커밋에서야
+     * 터진다. saveAndFlush 한 번으로 끝내고, 이력과 항목이 한 트랜잭션이라 하나만 남는 상태는
+     * 존재하지 않는다.
+     */
+    @Override
+    @Transactional
+    public SubWorkChecklistMutationResponse addChecklistItem(
+            Long subWorkId, SubWorkChecklistItemSaveRequest request, MemberEntity performer) {
+        SubWorkEntity subWork = editableChecklistOwnerOf(subWorkId, performer);
+
+        Integer maxSortOrder = subWorkChecklistItemRepository.findMaxSortOrder(subWork);
+        SubWorkChecklistItemEntity item =
+                subWorkChecklistItemRepository.saveAndFlush(
+                        SubWorkChecklistItemEntity.create(
+                                subWork,
+                                request.article().strip(),
+                                maxSortOrder == null ? 1 : maxSortOrder + 1));
+
+        subWorkChecklistHistoryRepository.save(
+                SubWorkChecklistHistoryEntity.added(item, performer, clock.instant()));
+
+        return mutationResponse(subWork, item);
+    }
+
+    /*
+     * 완료 점검 항목 문구 수정 (#307). 체크 상태는 건드리지 않는다.
+     *
+     * 이전 문구를 바꾸기 전에 읽어 둔다 — 이력이 무엇에서 무엇으로 바뀌었는지를 담아야 하는데,
+     * 엔티티를 먼저 고치면 그 값이 사라진다(sub_work_stts_hstry가 전이 전 상태를 미리 잡아
+     * 두는 것과 같다).
+     *
+     * 같은 문구를 다시 보내도 거절하지 않고 이력을 한 건 남긴다. 값으로 걸러 내면 "고쳤는데
+     * 아무 일도 안 일어났다"와 "안 고쳤다"가 구별되지 않고, 화면의 저장 버튼은 값이 같은지를
+     * 묻지 않는다.
+     */
+    @Override
+    @Transactional
+    public SubWorkChecklistMutationResponse updateChecklistItemArticle(
+            Long subWorkId,
+            Long checklistItemId,
+            SubWorkChecklistItemSaveRequest request,
+            MemberEntity performer) {
+        SubWorkEntity subWork = editableChecklistOwnerOf(subWorkId, performer);
+        SubWorkChecklistItemEntity item = checklistItemOf(subWork, checklistItemId);
+
+        String previousArticle = item.getArticle();
+        item.changeArticle(request.article().strip());
+
+        subWorkChecklistHistoryRepository.save(
+                SubWorkChecklistHistoryEntity.modified(
+                        item, previousArticle, performer, clock.instant()));
+
+        return mutationResponse(subWork, item);
+    }
+
+    /*
+     * 완료 점검 항목 삭제 (#307).
+     *
+     * 이력을 먼저 만들고 그 다음에 지운다. 순서가 뒤바뀌면 남길 문구도 식별자도 이미 없다.
+     * 하드 삭제라 sub_work_chck_list에는 아무것도 남지 않지만, 그 대가로 목록·미완료 개수·
+     * 진행률 집계 세 자리에 '지워진 항목' 필터가 붙지 않는다 — 소프트 삭제로 갔다가 그중
+     * 하나를 빠뜨리면 지워진 항목이 영영 완료를 막는다.
+     *
+     * 체크된 항목은 거절한다. 이 판정을 엔티티가 아니라 여기서 하는 것은 '체크됨'이 항목
+     * 자신의 값이라 서비스가 읽어 바로 판정할 수 있고, 그 거절이 상태 잠금과 다른 오류 코드로
+     * 나가야 하기 때문이다.
+     */
+    @Override
+    @Transactional
+    public SubWorkChecklistMutationResponse deleteChecklistItem(
+            Long subWorkId, Long checklistItemId, MemberEntity performer) {
+        SubWorkEntity subWork = editableChecklistOwnerOf(subWorkId, performer);
+        SubWorkChecklistItemEntity item = checklistItemOf(subWork, checklistItemId);
+
+        if (item.isCompleted()) {
+            throw new GeneralException(OperationErrorCode.CHECKLIST_ITEM_COMPLETED);
+        }
+
+        subWorkChecklistHistoryRepository.save(
+                SubWorkChecklistHistoryEntity.removed(item, performer, clock.instant()));
+        subWorkChecklistItemRepository.delete(item);
+        subWorkChecklistItemRepository.flush();
+
+        return mutationResponse(subWork, item);
+    }
+
+    /*
+     * 완료 점검 항목 변경 이력 (#307). 담당자 여부를 보지 않는다 — 볼 수 있는 사람이면
+     * 완료 조건이 어떻게 달라졌는지도 볼 수 있다.
+     */
+    @Override
+    public List<SubWorkChecklistHistoryResponse> getChecklistHistory(Long subWorkId) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+        return subWorkChecklistHistoryRepository
+                .findBySubWorkOrderByChangedAtAscIdAsc(subWork)
+                .stream()
+                .map(SubWorkChecklistHistoryResponse::from)
+                .toList();
+    }
+
+    /*
+     * 항목 추가·수정·삭제 세 경로가 공유하는 진입 검사. 소프트 삭제(404) → 담당자·관리
+     * 권한(403) → 편집 가능 상태(409) 순이며, 세 곳이 같은 순서를 쓰지 않으면 같은 요청이
+     * 경로에 따라 다른 코드로 거절된다.
+     */
+    private SubWorkEntity editableChecklistOwnerOf(Long subWorkId, MemberEntity performer) {
+        SubWorkEntity subWork =
+                subWorkRepository
+                        .findByIdAndOperationDeletedAtIsNull(subWorkId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.SUB_WORK_NOT_FOUND));
+        subWorkOwnershipPolicy.requireOwnerOrManager(subWork, performer);
+        // 검토부터는 완료 조건이 심사 대상이라 항목을 고칠 수 없다 (ssccops#255 결정)
+        subWork.requireChecklistItemEditable();
+        return subWork;
+    }
+
+    private SubWorkChecklistItemEntity checklistItemOf(
+            SubWorkEntity subWork, Long checklistItemId) {
+        return subWorkChecklistItemRepository
+                .findByIdAndSubWork(checklistItemId, subWork)
+                .orElseThrow(
+                        () -> new GeneralException(OperationErrorCode.CHECKLIST_ITEM_NOT_FOUND));
+    }
+
+    /*
+     * 바뀐 목록 전체를 다시 읽어 응답을 만든다. 같은 트랜잭션이라 JPQL 실행 전 flush가
+     * 일어나 방금 더하거나 고친 값이 반영되고, 삭제는 호출부가 이미 flush 해 두었다.
+     */
+    private SubWorkChecklistMutationResponse mutationResponse(
+            SubWorkEntity subWork, SubWorkChecklistItemEntity item) {
+        return SubWorkChecklistMutationResponse.of(
+                subWork,
+                item,
+                subWorkChecklistItemRepository.findBySubWorkOrderBySortOrderAsc(subWork));
     }
 
     // 운영 대시보드(OPS-038) '다가오는 마감'의 폭. 조회 시점 기준 ±5일이다(이슈#60)
@@ -704,20 +861,6 @@ public class SubWorkServiceImpl implements SubWorkService {
         List<SubWorkEntity> rows = subWorkRepository.findAllAlive();
         return toSummaries(
                 rows, deadlinePolicy.overdueBefore(), deadlinePolicy.reviewStaleBefore());
-    }
-
-    /*
-     * 회원 상태 변경(#78)의 경고용 건수. 완료된 건과 삭제된 건은 빠진다(SubWorkRepository 주석).
-     *
-     * 식별자가 없으면 0이다 — 부르는 쪽(회원 도메인)이 회원을 손에 쥔 채 호출하므로 실제로는
-     * 일어나지 않지만, null을 그대로 흘려보내면 조건이 조용히 아무것도 세지 않는 쪽으로 무너진다.
-     */
-    @Override
-    public long countOngoingByOwner(Long ownerId) {
-        if (ownerId == null) {
-            return 0L;
-        }
-        return subWorkRepository.countByOwnerIdExcludingStatus(ownerId, WorkStatus.DONE);
     }
 
     /*

@@ -4,21 +4,37 @@
 # 역할:
 #   - 소스 코드 정적 분석 (Spotless, Checkstyle)
 #   - 테스트 수행 및 JaCoCo 커버리지 생성
+#   - SonarQube 분석 (develop 푸시에서만 · 토큰이 있을 때만 · 아무것도 막지 않는다)
 #   - JAR 빌드 검증 (bootJar 가 깨지지 않는지만 본다 — 배포는 Coolify 몫이다)
 #
 # Job 구조:
 #   lint ──┬──> build
+#          ├──> analyze   (develop push 에서만)
 #   test ──┘
+#
+#   analyze 는 build 를 막지 않는다. 코드 품질 리포트가 없다고 해서 "이 브랜치가
+#   빌드되는가"라는 판정까지 함께 막을 이유가 없다 (ssccops-web integrate.yml 과 같은 판단).
 #
 # 대상 브랜치: develop (dev 환경)
 #
-# integrate-prod와의 차이:
-#   - SonarQube 분석(analyze job)이 없다. dev는 배포 속도가 우선이고,
-#     Quality Gate는 main으로 향하는 PR에서 integrate-prod가 강제한다.
-#   - 그 외 lint/test 실행 방식은 integrate-prod와 동일하게 맞춘다 —
-#     두 워크플로가 다른 명령을 쓰면 develop에서 통과한 코드가 main에서 떨어진다.
+# **분석은 이 워크플로의 develop 푸시에만 있다** (ssccops#238).
+#   ssccops#231은 PR에서 돌렸다 — "병합 전에 보는 편이 리뷰에 붙어 쓸모 있다"는 판단이었다.
+#   그 판단이 이 서버에서는 성립하지 않는다: SonarQube Community Build 26.8.0 이고 브랜치
+#   플러그인이 없어(ssccops#234) 스캐너가 브랜치를 선언하지 못하고, **모든 분석이 프로젝트
+#   기본 브랜치 한 자리를 덮어쓴다.** PR마다 돌리면 그 자리가 PR 내용으로 바뀌어
+#   **"지금 develop이 어떤 상태인가"를 아무도 알 수 없다.**
 #
-# GitHub Secrets: 없음 (외부 서비스에 접근하지 않는다)
+#   그래서 머지된 상태만 분석한다. 잃는 것은 머지 전 피드백이고, 얻는 것은 언제 봐도
+#   develop 을 가리키는 수치다 — 그것이 있어야 Quality Gate 를 잠글 기준이 생긴다.
+#   integrate-prod 의 analyze 는 같은 이유로 **걷어냈다**(develop 과 main 이 같은 자리를
+#   덮어써 수치가 오간다. develop 이 항상 앞서므로 이쪽을 남긴다).
+#
+#   그 외 lint/test 실행 방식은 integrate-prod와 동일하게 맞춘다 —
+#   두 워크플로가 다른 명령을 쓰면 develop에서 통과한 코드가 main에서 떨어진다.
+#
+# GitHub Secrets (없으면 analyze 를 건너뛴다):
+#   - SONAR_TOKEN        : SonarQube Token
+#   - SONAR_HOST_URL     : SonarQube Server URL
 # ============================================================================
 
 name: Integrate Dev
@@ -44,10 +60,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -76,10 +92,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -92,7 +108,7 @@ jobs:
         run: ./gradlew test jacocoTestReport
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-results
@@ -100,6 +116,88 @@ jobs:
             build/test-results/
             build/reports/jacoco/
           if-no-files-found: ignore
+
+  # ==========================================================================
+  # Analyze Job - SonarQube 분석 (PR에서만 · 토큰이 없으면 건너뛴다)
+  # ==========================================================================
+  #
+  # `if: github.event_name == 'pull_request'` 로 push 를 제외한다. develop 푸시마다
+  # 돌리면 dev 배포가 느려지는데, 그것이 원래 이 워크플로에 analyze 가 없던 이유다.
+  #
+  # 토큰 가드가 있는 이유: v0.2.1 릴리스까지 다섯 번의 Analyze 가 전부 "실패"였고 원인은
+  # 언제나 빈 SONAR_TOKEN 이었다(시크릿이 릴리스보다 2시간 뒤에 등록됐다). 설정이 없는 것과
+  # 품질이 나쁜 것은 다른 일인데 같은 빨간 X 로 보고되면 아무도 그 X 를 읽지 않게 된다.
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    if: github.event_name == 'push'
+
+    permissions:
+      contents: read
+
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+    steps:
+      - name: Skip notice
+        if: env.SONAR_TOKEN == ''
+        run: echo "SONAR_TOKEN이 설정되지 않아 SonarQube 분석을 건너뜁니다." >> $GITHUB_STEP_SUMMARY
+
+      - name: Checkout source
+        if: env.SONAR_TOKEN != ''
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 얕은 클론이면 blame·신규 코드 판정이 어긋난다
+
+      - name: Set up JDK
+        if: env.SONAR_TOKEN != ''
+        uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      - name: Cache SonarQube packages
+        if: env.SONAR_TOKEN != ''
+        uses: actions/cache@v6
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # 이름으로 받는다 — download-artifact v5 가 깨뜨린 것은 `artifact-ids` 로 받는 경로뿐이다.
+      # v8 부터 다이제스트 불일치가 경고가 아니라 실패다(`digest-mismatch` 기본값 error).
+      # 업로드가 zip 그대로이므로(upload-artifact v7 의 `archive: false` 를 쓰지 않는다)
+      # 여기서 압축을 푸는 흐름도 그대로다.
+      - name: Download test results
+        if: env.SONAR_TOKEN != ''
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: test-results
+          path: build/
+
+      - name: Grant execution to Gradle wrapper
+        if: env.SONAR_TOKEN != ''
+        run: chmod +x gradlew
+
+      # sonar 는 컴파일된 클래스를 읽는다(sonar.java.binaries). test job 이 만든 것은
+      # 커버리지 리포트뿐이라 여기서 다시 컴파일한다.
+      - name: Compile classes for SonarQube analysis
+        if: env.SONAR_TOKEN != ''
+        run: ./gradlew compileJava
+
+      - name: SonarQube Scan
+        if: env.SONAR_TOKEN != ''
+        run: ./gradlew sonar --info
+
+      - name: Quality Gate report
+        if: env.SONAR_TOKEN != ''
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: bash .github/scripts/sonar-report.sh
 
   # ==========================================================================
   # Build Job - JAR 빌드 및 Artifact 업로드
@@ -115,10 +213,10 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin

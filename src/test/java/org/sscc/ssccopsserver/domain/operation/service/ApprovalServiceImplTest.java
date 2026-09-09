@@ -57,6 +57,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRejectionRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
@@ -97,6 +98,7 @@ class ApprovalServiceImplTest {
     @Autowired private SubWorkRepository subWorkRepository;
     @Autowired private SubWorkTypeRepository subWorkTypeRepository;
     @Autowired private SubWorkChecklistItemRepository subWorkChecklistItemRepository;
+    @Autowired private SubWorkChecklistHistoryRepository subWorkChecklistHistoryRepository;
     @Autowired private SubWorkStatusHistoryRepository subWorkStatusHistoryRepository;
     @Autowired private SubWorkApprovalRepository subWorkApprovalRepository;
     @Autowired private SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
@@ -159,6 +161,7 @@ class ApprovalServiceImplTest {
                         subWorkRepository,
                         subWorkTypeRepository,
                         subWorkChecklistItemRepository,
+                        subWorkChecklistHistoryRepository,
                         subWorkStatusHistoryRepository,
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,

@@ -14,6 +14,7 @@ import java.util.UUID;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -239,6 +240,28 @@ class MemberHistoryControllerTest {
                 .andExpect(jsonPath("$.data[6].changeType").value("GRADE"))
                 .andExpect(jsonPath("$.data[6].previousCode").doesNotExist())
                 .andExpect(jsonPath("$.data[6].newCode").value("TEMP"));
+    }
+
+    /*
+     * 기록 시각은 **Asia/Seoul 오프셋이 붙은 채로** 나간다 (#318 · AP-12).
+     *
+     * 이 자리도 Instant를 그대로 내려 `"...Z"`(UTC)로 나갔다. 어드민의 이력 화면은
+     * `formatInstant`로 시간대를 옮겨 그려 눈에 띄지 않았지만, 문자열을 잘라 쓰는 나머지
+     * 규칙(`@ssccops/date`)과 전제가 갈린 채였다 — **`Z`로 끝나면 여기서 떨어져야 한다.**
+     *
+     * 두 출처를 함께 본다. data[0]은 엔티티의 crt_dt(Instant)에서 왔고 data[2]는 역할 부여일
+     * (LocalDate)을 그날의 시작으로 굳힌 값이라, 변환 경로가 서로 다르다.
+     */
+    @Test
+    void createdAtCarriesServiceOffset() throws Exception {
+        mockMvc.perform(histories(MANAGER, targetMemberId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].createdAt", Matchers.endsWith("+09:00")))
+                .andExpect(jsonPath("$.data[0].createdAt", Matchers.not(Matchers.endsWith("Z"))))
+                .andExpect(jsonPath("$.data[2].changeType").value("ROLE_ASSIGNED"))
+                // 역할 부여일의 그날 시작 — 초 자리 표기는 Jackson에 맡기고 앞뒤만 본다
+                .andExpect(jsonPath("$.data[2].createdAt", Matchers.startsWith("2026-07-01T00:00")))
+                .andExpect(jsonPath("$.data[2].createdAt", Matchers.endsWith("+09:00")));
     }
 
     /*

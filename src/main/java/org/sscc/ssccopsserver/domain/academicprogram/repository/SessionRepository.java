@@ -35,6 +35,37 @@ public interface SessionRepository
             @Param("sessionId") Long sessionId, @Param("academicProgramId") Long academicProgramId);
 
     /*
+     * 공유 미리보기(ssccops#311)가 회차 하나를 읽는 자리. **활동으로 좁히지 않는 유일한
+     * 단건 조회다** — 토큰이 이미 회차 하나를 못 박고 있어(shr_lnk.trgt_id) 경로처럼 남의
+     * 활동으로 흘러갈 자리가 없고, 활동 ID를 함께 요구하면 공유 도메인이 그 값을 어딘가에
+     * 또 들고 있어야 한다.
+     *
+     * 제목이 계획(crclm_artcl.ttl)에 있으므로 함께 끌어온다 — LAZY 그대로면 미리보기를
+     * 조립하며 조회가 한 번 더 나간다(DB-13).
+     */
+    @EntityGraph(attributePaths = {"curriculumItem"})
+    Optional<SessionEntity> findWithCurriculumItemById(Long sessionId);
+
+    /*
+     * 회차 id 하나로 읽는 상세(#316 · GET /v1/academic-sessions/{sessionId}). 공유 링크의
+     * 착지가 대상 ID 하나(회차 id)로 활동 id를 얻어야 해서 열린 경로이며, 그래서 활동으로
+     * 좁히지 않는다 — 좁히려면 호출자가 이미 활동 id를 알아야 하고, 그것을 모르는 것이 이
+     * 조회가 생긴 이유다.
+     *
+     * **미리보기(findWithCurriculumItemById)와 갈리는 것은 끌어오는 연관이다.** 그쪽은
+     * 제목 하나면 되지만 여기는 상세 응답 전부를 조립하므로 계획·작성자에 더해 **활동까지**
+     * 함께 읽는다 — 응답에 활동 id를 싣는 것이 이 조회의 목적이라 LAZY 프록시로 두면 그
+     * 값을 꺼내는 자리에서 조회가 한 번 더 나간다(DB-13).
+     *
+     * 같은 상세를 활동 문맥에서 읽는 findByIdAndAcademicProgramId를 지우지 않는다 — 활동
+     * 안에서 여는 화면들은 남의 활동 회차 번호로 부르는 것이 404여야 한다.
+     */
+    @EntityGraph(
+            attributePaths = {"curriculumItem", "curriculumItem.academicProgram", "registrant"})
+    @Query("select s from SessionEntity s where s.id = :sessionId")
+    Optional<SessionEntity> findDetailById(@Param("sessionId") Long sessionId);
+
+    /*
      * 계획 조회(#134 · GET .../curriculum-items)가 붙이는 실적. 커리큘럼 항목마다 "실적이
      * 있나"를 물으면 그대로 N+1이라(DB-13) 활동 하나의 실적을 한 번에 읽어 호출부가 계획에
      * 접는다. 계획이 이미 활동으로 좁혀 읽히므로 여기서도 활동으로 좁힌다.

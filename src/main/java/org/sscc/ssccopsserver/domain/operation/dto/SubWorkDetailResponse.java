@@ -44,6 +44,14 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * 모자란 승인자와 권한이 아예 없는 사람이 구별되지 않아, 승인자에게도 버튼이 사라진다.
  * 서버가 권한(ApprovalAuthorityPolicy)과 선행 조건(SubWorkEntity)을 나눠 두는 것과 같은 경계다.
  *
+ * isChecklistItemEditable은 완료 점검 **항목 자체**를 지금 더하거나 고치거나 지울 수 있는지다
+ * (#307). 체크박스를 켜고 끌 수 있는지가 아니다 — 그쪽은 완료 전까지 열려 있고 이쪽은
+ * 검토부터 잠긴다. 화면이 workStatus로 다시 계산하지 않게 서버가 실어 내린다: 규칙이 두
+ * 곳에 적히면 갈리고, 그 어긋남은 버튼은 보이는데 누르면 409가 나는 자리로만 드러난다
+ * (#121·#194가 지연 판정에서 겪은 일이다). 값이 false여도 checklist 배열은 그대로 내려간다 —
+ * 못 고칠 뿐 보이지 않는 것이 아니다. 항목마다의 checklist[].isDeletable은 거기에 체크 여부까지
+ * 합친 값이라, 화면은 삭제 버튼을 그릴 때 둘을 AND로 엮지 않고 그 값 하나만 본다.
+ *
  * quorum·myVote는 승인함 카드(OPS-017)와 같은 값이다 — 시안은 승인함이 아니라 이 상세 화면에서
  * 승인·반려를 누르므로, 같은 판단 근거가 여기에도 있어야 한다. 정족수 유형이 아니면 quorum.needed가
  * false이고 나머지는 NULL이다.
@@ -80,6 +88,7 @@ public record SubWorkDetailResponse(
         OffsetDateTime completedAt,
         List<SubWorkChecklistItemResponse> checklist,
         SubWorkChecklistSummaryResponse checklistSummary,
+        boolean isChecklistItemEditable,
         ApprovalQuorumResponse quorum,
         VoteChoice myVote,
         SubWorkRejectionResponse latestRejection,
@@ -122,8 +131,11 @@ public record SubWorkDetailResponse(
             String authorizerAuthorityName) {
         OperationEntity operation = subWork.getOperation();
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
+        boolean checklistItemEditable = subWork.isChecklistItemEditable();
         List<SubWorkChecklistItemResponse> checklistItems =
-                checklist.stream().map(SubWorkChecklistItemResponse::from).toList();
+                checklist.stream()
+                        .map(row -> SubWorkChecklistItemResponse.from(row, checklistItemEditable))
+                        .toList();
         long completedItems =
                 checklist.stream().filter(SubWorkChecklistItemEntity::isCompleted).count();
 
@@ -157,6 +169,7 @@ public record SubWorkDetailResponse(
                 toOffsetDateTime(subWork.getCompletedAt()),
                 checklistItems,
                 SubWorkChecklistSummaryResponse.from(checklistItems),
+                checklistItemEditable,
                 quorum,
                 myVote,
                 latestRejection,

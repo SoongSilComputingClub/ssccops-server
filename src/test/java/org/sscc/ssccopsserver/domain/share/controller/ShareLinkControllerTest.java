@@ -1,9 +1,12 @@
 package org.sscc.ssccopsserver.domain.share.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -57,6 +60,9 @@ class ShareLinkControllerTest {
     private static final long SUB_WORK_TYPE_ID = 1L;
 
     private static final String CONTENT = "박람회 부스 위치와 동선을 확정한다";
+
+    /** 카드에 실리면 안 되는 값. 안건 제목은 익명에게 나가지 않는다(ssccops#252) */
+    private static final String AGENDA_TITLE = "징계 심의 건";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
@@ -205,6 +211,210 @@ class ShareLinkControllerTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
+    /* ── 업무 (ssccops#306) ────────────────────────────────── */
+
+    /*
+     * 업무도 같은 두 층을 지난다 — 발급한 토큰이 익명으로 열리고 대상 좌표가 `WORK`로 온다.
+     *
+     * **요약이 조립된 문자열이라는 것을 여기서 못 박는다.** 업무에는 본문이 없어 유형과 기간으로
+     * 만드는데(ssccops#251), 이 표본은 기간이 비어 있어 **유형만** 남아야 한다 — 등록 화면에서
+     * 기간이 선택 입력이라 실제로 흔한 모양이고, 재료가 없을 때 구분자만 남으면 카드가 잘린
+     * 것처럼 보인다. 조합 넷 전부는 `WorkSharePreviewProviderTest`가 본다.
+     */
+    @Test
+    void issuedWorkTokenCarriesTheAssembledSummary() throws Exception {
+        String token = issueWorkShareToken();
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trgtSeCd").value("WORK"))
+                .andExpect(jsonPath("$.data.trgtId").value(parentWorkId))
+                .andExpect(jsonPath("$.data.title").value("2026 동아리 박람회"))
+                // 기간이 없으므로 유형만 — `행사 · ` 처럼 재료 없는 구분자가 남으면 안 된다
+                .andExpect(jsonPath("$.data.summary").value("행사"))
+                .andExpect(jsonPath("$.data.workSttsCd").doesNotExist())
+                .andExpect(jsonPath("$.data.prgrsRt").doesNotExist());
+    }
+
+    // 하위 업무와 같은 이유로 멱등이다 — 만료가 없어 누를 때마다 발급하면 죽지 않는 링크가 쌓인다
+    @Test
+    void issuingWorkShareTwiceReturnsTheSameToken() throws Exception {
+        assertThat(issueWorkShareToken()).isEqualTo(issueWorkShareToken());
+    }
+
+    @Test
+    void revokedWorkTokenIsNoLongerReadable() throws Exception {
+        String token = issueWorkShareToken();
+
+        mockMvc.perform(
+                        delete("/v1/works/{workId}/share", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * **삭제된 운영 건은 없는 것으로 답한다.** 폐기하지 않은 살아 있는 토큰인데도 404인 것은
+     * 미리보기 제공자가 대상을 찾지 못하기 때문이다 — 지운 업무의 제목이 링크로 계속 열리면
+     * "지웠다"는 화면의 표시가 사실이 아니게 된다.
+     */
+    @Test
+    void tokenOfADeletedWorkIsNoLongerReadable() throws Exception {
+        String token = issueWorkShareToken();
+
+        mockMvc.perform(
+                        delete("/v1/works/{workId}", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * 없는 업무에는 토큰이 발급되지 않는다. `shr_lnk`에 FK가 없어 DB가 막아 주지 않으므로
+     * **대상 조회를 먼저 태우는 것이 유일한 방어**다.
+     */
+    @Test
+    void issuingShareForAnUnknownWorkIs404() throws Exception {
+        mockMvc.perform(
+                        post("/v1/works/{workId}/share", 999_999L)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isNotFound());
+    }
+
+    /*
+     * 공유한 적이 없으면 404가 아니라 data가 null인 200이다 — 하위 업무와 같은 판단이며,
+     * 화면이 '공유하기'와 '공유 중지' 중 무엇을 그릴지 이 값으로 정한다.
+     */
+    @Test
+    void workShareStateIsNullBeforeIssuing() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works/{workId}/share", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        issueWorkShareToken();
+
+        mockMvc.perform(
+                        get("/v1/works/{workId}/share", parentWorkId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.shrTkn").isNotEmpty());
+    }
+
+    /* ── 회의 (ssccops#310) ────────────────────────────────── */
+
+    /*
+     * 회의도 같은 두 층을 지난다 — 발급한 토큰이 익명으로 열리고 대상 좌표가 `MEETING`으로 온다.
+     *
+     * **요약이 유형과 일시로 조립된 문자열이라는 것을 여기서 못 박는다**(ssccops#252). 그리고
+     * **안건 제목이 실리지 않는다**는 것을 함께 본다 — 이 표본은 안건을 하나 달고 등록했는데도
+     * 응답 어디에도 그 제목이 없어야 한다. 인사·징계·예산 같은 것이 섞일 수 있고 메신저 캐시는
+     * 우리가 지울 수 없어 한 번 나간 카드를 거둘 방법이 없다. 조합 넷 전부는
+     * `MeetingSharePreviewProviderTest`가 본다.
+     */
+    @Test
+    void issuedMeetingTokenCarriesCategoryAndStartAtOnly() throws Exception {
+        Long meetingId = createMeeting();
+        String token = issueMeetingShareToken(meetingId);
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.trgtSeCd").value("MEETING"))
+                .andExpect(jsonPath("$.data.trgtId").value(meetingId))
+                // 제목은 회의 자기 것이 없다 — 부모 운영 건의 oper_ttl이다
+                .andExpect(jsonPath("$.data.title").value("9월 정례회의"))
+                .andExpect(jsonPath("$.data.summary").value("정례 · 2026-09-15 19:00"))
+                // 안건 제목은 응답 어디에도 없다 — 카드가 굳으면 거둘 방법이 없다
+                .andExpect(content().string(not(containsString(AGENDA_TITLE))))
+                .andExpect(jsonPath("$.data.mtgSttsCd").doesNotExist())
+                .andExpect(jsonPath("$.data.atndTrgtCd").doesNotExist())
+                .andExpect(jsonPath("$.data.otsdMtgDtlCn").doesNotExist());
+    }
+
+    // 업무·하위 업무와 같은 이유로 멱등이다 — 만료가 없어 누를 때마다 발급하면 죽지 않는 링크가 쌓인다
+    @Test
+    void issuingMeetingShareTwiceReturnsTheSameToken() throws Exception {
+        Long meetingId = createMeeting();
+
+        assertThat(issueMeetingShareToken(meetingId)).isEqualTo(issueMeetingShareToken(meetingId));
+    }
+
+    @Test
+    void revokedMeetingTokenIsNoLongerReadable() throws Exception {
+        Long meetingId = createMeeting();
+        String token = issueMeetingShareToken(meetingId);
+
+        mockMvc.perform(
+                        delete("/v1/meetings/{meetingId}/share", meetingId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * **삭제된 운영 건은 없는 것으로 답한다.** 폐기하지 않은 살아 있는 토큰인데도 404인 것은
+     * 미리보기 제공자가 대상을 찾지 못하기 때문이다(mtg에는 del_dt가 없어 부모 oper를 본다).
+     */
+    @Test
+    void tokenOfADeletedMeetingIsNoLongerReadable() throws Exception {
+        Long meetingId = createMeeting();
+        String token = issueMeetingShareToken(meetingId);
+
+        mockMvc.perform(
+                        delete("/v1/meetings/{meetingId}", meetingId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/public/v1/share/{token}", token))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * 없는 회의에는 토큰이 발급되지 않는다. `shr_lnk`에 FK가 없어 DB가 막아 주지 않으므로
+     * **대상 조회를 먼저 태우는 것이 유일한 방어**다.
+     */
+    @Test
+    void issuingShareForAnUnknownMeetingIs404() throws Exception {
+        mockMvc.perform(
+                        post("/v1/meetings/{meetingId}/share", 999_999L)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isNotFound());
+    }
+
+    /*
+     * 공유한 적이 없으면 404가 아니라 data가 null인 200이다 — 업무·하위 업무와 같은 판단이며,
+     * 화면이 '공유하기'와 '공유 중지' 중 무엇을 그릴지 이 값으로 정한다.
+     */
+    @Test
+    void meetingShareStateIsNullBeforeIssuing() throws Exception {
+        Long meetingId = createMeeting();
+
+        mockMvc.perform(
+                        get("/v1/meetings/{meetingId}/share", meetingId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        issueMeetingShareToken(meetingId);
+
+        mockMvc.perform(
+                        get("/v1/meetings/{meetingId}/share", meetingId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.shrTkn").isNotEmpty());
+    }
+
     /* ── 발급은 익명이 아니다 ──────────────────────────────── */
 
     // 미리보기만 익명이다. 토큰을 만드는 것은 그 자원을 볼 수 있는 사람의 일이다
@@ -253,6 +463,58 @@ class ShareLinkControllerTest {
                         .getResponse()
                         .getContentAsString();
         return JsonPath.parse(response).read("$.data.subWorkId", Long.class);
+    }
+
+    private Long createMeeting() throws Exception {
+        String body =
+                """
+                {
+                  "title": "9월 정례회의",
+                  "meetingCategory": "REGULAR",
+                  "personInChargeId": %d,
+                  "startAt": "2026-09-15T19:00:00+09:00",
+                  "attendeeScope": "ALL",
+                  "location": "정보과학관 5층",
+                  "agendas": [{ "agendaName": "%s" }]
+                }
+                """
+                        .formatted(ownerId, AGENDA_TITLE);
+
+        String response =
+                mockMvc.perform(
+                                post("/v1/meetings")
+                                        .header("Authorization", "Bearer " + AUTH_USER_ID)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(body))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.meetingId", Long.class);
+    }
+
+    private String issueMeetingShareToken(Long meetingId) throws Exception {
+        String response =
+                mockMvc.perform(
+                                post("/v1/meetings/{meetingId}/share", meetingId)
+                                        .header("Authorization", "Bearer " + AUTH_USER_ID))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.shrTkn", String.class);
+    }
+
+    private String issueWorkShareToken() throws Exception {
+        String response =
+                mockMvc.perform(
+                                post("/v1/works/{workId}/share", parentWorkId)
+                                        .header("Authorization", "Bearer " + AUTH_USER_ID))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(response).read("$.data.shrTkn", String.class);
     }
 
     private String issueShareToken(Long subWorkId) throws Exception {

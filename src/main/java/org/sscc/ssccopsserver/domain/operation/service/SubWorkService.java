@@ -3,8 +3,11 @@ package org.sscc.ssccopsserver.domain.operation.service;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistHistoryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistMutationResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -90,6 +93,55 @@ public interface SubWorkService {
             MemberEntity performer);
 
     /*
+     * 완료 점검 항목을 새로 더한다 (#307). 순서는 지금 가장 큰 sort_seq + 1이라 목록 끝에
+     * 붙는다. 새 항목은 언제나 미완료로 시작하므로, 완료 직전이던 하위 업무에 항목을 더하면
+     * 완료 조건이 다시 미충족이 된다 — 그것이 이 API의 뜻이다.
+     *
+     * 기획·진행 단계에서만 가능하다(SubWorkEntity.requireChecklistItemEditable). 유형
+     * (sub_work_type)의 원본 목록은 건드리지 않는다 — 여기서 더한 항목은 이 하위 업무의 것이고
+     * 다음에 같은 유형으로 등록되는 건에는 나타나지 않는다 (POL-005 · #43 소급 금지).
+     *
+     * 더한 사실은 sub_work_chck_list_hstry에 남는다.
+     */
+    SubWorkChecklistMutationResponse addChecklistItem(
+            Long subWorkId, SubWorkChecklistItemSaveRequest request, MemberEntity performer);
+
+    /*
+     * 완료 점검 항목의 문구를 고친다 (#307). 체크 상태는 그대로 둔다 — 문구를 다듬는 것과
+     * 그 항목을 해낸 것은 다른 사실이다. 기획·진행 단계에서만 가능하며, 바뀐 사실은
+     * 이전·이후 문구와 함께 sub_work_chck_list_hstry에 남는다.
+     */
+    SubWorkChecklistMutationResponse updateChecklistItemArticle(
+            Long subWorkId,
+            Long checklistItemId,
+            SubWorkChecklistItemSaveRequest request,
+            MemberEntity performer);
+
+    /*
+     * 완료 점검 항목을 지운다 (#307). 두 겹으로 막는다 — 기획·진행 단계여야 하고
+     * (requireChecklistItemEditable), **체크되지 않은 항목이어야 한다.** 체크된 항목은
+     * CHECKLIST_ITEM_COMPLETED(409)로 거절한다.
+     *
+     * 체크된 항목을 막는 것은 "해당 없음으로 지우기"와 "안 하고 지우기"가 화면에서 구별되지
+     * 않기 때문이다 — 체크 안 된 것만 지울 수 있으면 지운다는 행위 자체가 "이번 건엔 해당
+     * 없다"는 선언이 된다. 체크된 항목은 이미 한 일이라 지울 이유가 없다 (ssccops#255 결정).
+     *
+     * **행은 하드로 지운다.** 지워진 항목의 문구·시점·수행자는 sub_work_chck_list_hstry에
+     * 남으므로 흔적이 사라지지 않는다. 남은 항목의 sort_seq는 다시 매기지 않는다.
+     */
+    SubWorkChecklistMutationResponse deleteChecklistItem(
+            Long subWorkId, Long checklistItemId, MemberEntity performer);
+
+    /*
+     * 완료 점검 항목의 변경 이력 (#307). 더하고 고치고 지운 것이 일어난 순서대로 나온다.
+     * 체크·해제는 여기 없다 — 진척 기록이라 완료 조건이 달라진 자리를 묻어 버린다.
+     *
+     * 조회이므로 담당자 여부를 보지 않는다 — 하위 업무를 볼 수 있으면(WORK_READ) 그 완료
+     * 조건이 어떻게 달라졌는지도 볼 수 있다. 소프트 삭제된 건은 404다.
+     */
+    List<SubWorkChecklistHistoryResponse> getChecklistHistory(Long subWorkId);
+
+    /*
      * 운영 대시보드(OPS-038) '내 업무 목록'. owner가 담당자인 하위 업무 전량을 마감 오름차순
      * (AGG-04)으로 돌려준다. 완료 건도 포함한다 — 전체/마감임박/지연 필터는 화면이 이 목록
      * 위에서 다시 나눈다.
@@ -114,16 +166,13 @@ public interface SubWorkService {
     List<SubWorkSummaryResponse> listSubWorks();
 
     /*
-     * 이 회원이 담당 중인(완료되지 않은) 하위 업무의 건수 (#78).
+     * 담당 중인 하위 업무 건수(#78)는 **이 인터페이스에 없다** (ssccops#242).
      *
-     * 회원 도메인이 탈퇴·제명 전이의 경고를 만들 때 쓴다. 회원 도메인은 운영 Repository를
-     * 직접 호출할 수 없으므로(AR-07·LY-10) 진입점을 여기 하나로 둔다 — 운영 도메인이 회원
-     * 정보를 MemberService로만 얻는 것과 같은 규칙을 반대 방향으로 지킨다.
-     *
-     * **아무것도 바꾸지 않는다.** 담당 업무를 자동으로 회수하거나 재배정하는 동작은 운영 규칙이
-     * 필요한 판단이라 범위 밖이고, 이 메서드는 화면이 사람에게 알릴 숫자만 돌려준다.
+     * 그 값을 묻는 곳은 회원 도메인 하나이고(탈퇴·제명 경고), 여기 두면 회원이 운영을 import
+     * 해야 해서 member → operation → member 순환이 된다. 그래서 선언은 묻는 쪽에 있고
+     * (MemberSubWorkLoadProvider) 운영 도메인의 SubWorkOwnerLoadProvider가 그것을 구현한다 —
+     * 운영 도메인 안에서 쓰는 코드는 없으므로 이 인터페이스가 들고 있을 이유도 없다.
      */
-    long countOngoingByOwner(Long ownerId);
 
     /*
      * 하위 업무를 소프트 삭제한다 (#125). 자기 operation만 del_dt를 채운다 — 상위 업무·다른

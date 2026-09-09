@@ -10,15 +10,21 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 회원 등급·상태를 바꾸고 그 이력을 남기는 서비스 (#78).
  *
  * ── 왜 MemberService가 아니라 별도 인터페이스인가 ────────────────
- * 탈퇴·제명 전이의 경고에 '담당 중인 하위 업무' 건수가 실리므로 운영 도메인의 SubWorkService가
- * 필요한데, SubWorkServiceImpl은 담당자 실재 확인을 위해 이미 MemberService를 주입받는다
- * (AR-07·LY-10). 이 두 메서드를 MemberServiceImpl에 넣으면
- * MemberServiceImpl → SubWorkServiceImpl → MemberServiceImpl 고리가 되어 생성자 주입이
- * 순환하고 애플리케이션이 아예 뜨지 않는다. 빈을 나누면 고리가 끊긴다 —
- * MemberChangeServiceImpl은 아무도 주입받지 않기 때문이다.
+ * 처음 나눈 이유는 순환 주입이었다. 탈퇴·제명 전이의 경고에 '담당 중인 하위 업무' 건수가
+ * 실리므로 운영 도메인이 필요한데, SubWorkServiceImpl은 담당자 실재 확인을 위해 이미
+ * MemberService를 주입받는다(AR-07·LY-10). 이 두 메서드를 MemberServiceImpl에 넣으면
+ * MemberServiceImpl → SubWorkServiceImpl → MemberServiceImpl 고리가 되어 애플리케이션이
+ * 아예 뜨지 않았다.
  *
- * 나누고 나서 보면 경계도 맞는다. MemberService는 '회원을 만들고 읽는' 일이고 이쪽은
- * '회원의 자격을 바꾸고 그 사실을 이력에 남기는' 일이다.
+ * **그 이유는 ssccops#242에서 사라졌다.** 이제 회원 도메인은 SubWorkService가 아니라 자기
+ * 도메인의 포트(MemberSubWorkLoadProvider)를 주입받고, 운영 도메인의 전용 빈
+ * (SubWorkOwnerLoadProvider)이 그것을 구현한다 —
+ * 빈 그래프의 고리는 그때도 끊겨 있었지만 패키지 순환(member → operation → member)은 남아
+ * 있었고, 그것까지 끊었다.
+ *
+ * **그래도 합치지 않는다.** 나누고 나서 보니 경계가 맞기 때문이다 — MemberService는 '회원을
+ * 만들고 읽는' 일이고 이쪽은 '회원의 자격을 바꾸고 그 사실을 이력에 남기는' 일이다. 순환이
+ * 풀렸다고 되돌리면 명분 없이 큰 클래스가 하나 생긴다.
  *
  * ── 왜 회원 정보 수정(PATCH)에 등급·상태 필드를 두지 않는가 ────────
  * "등급을 바꾼다"와 "이력을 남긴다"는 나눌 수 없는 한 건이다. 같은 API에 섞으면 이력 없이

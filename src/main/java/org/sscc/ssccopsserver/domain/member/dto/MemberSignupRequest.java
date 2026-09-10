@@ -5,6 +5,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
@@ -29,10 +30,33 @@ public record MemberSignupRequest(
         @NotBlank @Size(max = 50) String name,
         @NotBlank @Size(max = 20) String phoneNumber,
         @NotNull MemberStatusCode memberStatusCode,
-        @Size(max = 20) String studentNumber,
+        @Pattern(regexp = STUDENT_NUMBER_PATTERN, message = "학번은 숫자 8~10자리입니다.")
+                String studentNumber,
         @Size(max = 100) String departmentName,
         @Min(1) @Max(4) Integer academicYear,
         @PositiveOrZero Integer generationNumber) {
+
+    /*
+     * 학번 형식 (#334). 숫자만 · 8~10자리이고 **빈 값은 통과한다**.
+     *
+     * 졸업 회원은 학번이 없다. 재학 회원에게만 필수라는 규칙은 아래 isAcademicProfileComplete()가
+     * AcademicProfilePolicy를 통해 이미 보므로, 여기에 @NotBlank를 붙이면 그 정책과 두 벌이 되어
+     * 졸업 회원 가입이 막힌다. null은 Bean Validation의 @Pattern이 그냥 통과시키지만 가입 화면은
+     * 빈 칸을 ""로 보내오므로(MemberControllerTest.graduatedMemberSignsUpWithoutStudentNumber)
+     * 정규식 자체가 빈 문자열을 허용해야 한다.
+     *
+     * 8~10자리인 근거는 명부에 8자리 학번이 실재하기 때문이다(예: 20211725). 10자리로만 좁히면
+     * 그 회원들이 자기 학번으로 가입하지 못한다.
+     *
+     * @Size(max = 20)을 뺀 것은 이 정규식이 길이를 10자로 이미 묶어 두 규칙이 갈릴 자리를 남기지
+     * 않기 위해서다(stdnt_no 컬럼은 VARCHAR(20)이라 여전히 넉넉하다). EventCategoryCreateRequest가
+     * 길이를 묶는 @Pattern 옆에 @Size를 두지 않는 것과 같다.
+     *
+     * **이 형식을 계정 연결(MemberLinkRequest.stdntNo)과 CSV 이관 검증에는 넣지 않는다.** 그 둘은
+     * 명부에 이미 있는 값을 맞추거나 그대로 들여오는 경로라, 형식으로 거르면 형식 밖의 학번을 가진
+     * 본인이 연결하지 못하고 과거 명부의 이관이 멈춘다 (ssccops-web#364도 같은 이유로 뺐다).
+     */
+    private static final String STUDENT_NUMBER_PATTERN = "^$|^\\d{8,10}$";
 
     // 기준 코드 위반(@NotNull 미충족 포함)은 다른 검증이 이미 알려주므로 여기서 중복해 실패시키지 않는다
     @AssertTrue(message = "가입 시 선택할 수 없는 회원 상태입니다.")

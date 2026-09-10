@@ -12,6 +12,8 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -174,6 +176,10 @@ class MemberControllerTest {
     /*
      * 졸업 회원은 학번·학과·학년 없이도 가입된다. 학번은 빈 문자열이 아니라 NULL로 저장돼야 한다 —
      * 빈 문자열이면 두 번째 졸업 회원부터 uk_mbr_student_number에 걸린다.
+     *
+     * **학번 형식 검사(#334)가 빈 값을 통과시키는지도 여기서 확인된다** — @Pattern에 @NotBlank를
+     * 더하면 이 테스트가 400으로 빨개진다. 재학 회원에게만 필수라는 규칙은 아래
+     * enrolledMemberWithoutAcademicProfileIsRejected가 맡는 AcademicProfilePolicy의 몫이다.
      */
     @Test
     void graduatedMemberSignsUpWithoutStudentNumber() throws Exception {
@@ -238,6 +244,35 @@ class MemberControllerTest {
                                   "memberStatusCode": "ENROLLED"
                                 }
                                 """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        assertThat(memberRepository.count()).isEqualTo(baselineMemberCount);
+    }
+
+    /*
+     * 학번은 숫자 8~10자리다 (#334). 8자리를 함께 확인하는 것은 명부에 8자리 학번이 실재하기
+     * 때문이다(예: 20211725) — 10자리로만 좁히면 그 회원들이 자기 학번으로 가입하지 못한다.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"20211725", "2021172500"})
+    void studentNumberOfEightToTenDigitsIsAccepted(String studentNumber) throws Exception {
+        mockMvc.perform(signup(enrolledBody(studentNumber)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.studentNumber").value(studentNumber));
+    }
+
+    /*
+     * 숫자가 아니거나 자릿수가 벗어난 학번. @Pattern이 걸러 400 VALIDATION_FAILED다.
+     *
+     * 실패마다 테스트를 나누는 것은 MemberLinkControllerTest와 같은 이유이며, 여기서는 한 걸음
+     * 더 — 입력이 바뀌었을 뿐 같은 규칙을 확인하므로 한 메서드에 뭉치면 어느 입력이 통과해
+     * 버렸는지 실패 메시지가 말해 주지 않는다.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"abc", "2021abcd", "20211725-", "2021172", "202117250012"})
+    void malformedStudentNumberIsRejected(String studentNumber) throws Exception {
+        mockMvc.perform(signup(enrolledBody(studentNumber)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
@@ -346,16 +381,21 @@ class MemberControllerTest {
     }
 
     private static String enrolledBody() {
+        return enrolledBody("20200001");
+    }
+
+    private static String enrolledBody(String studentNumber) {
         return """
                 {
                   "name": "김도현",
                   "phoneNumber": "010-1234-5678",
                   "memberStatusCode": "ENROLLED",
-                  "studentNumber": "20200001",
+                  "studentNumber": "%s",
                   "departmentName": "컴퓨터학부",
                   "academicYear": 3
                 }
-                """;
+                """
+                .formatted(studentNumber);
     }
 
     private static MockHttpServletRequestBuilder signup(String body) {

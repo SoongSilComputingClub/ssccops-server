@@ -3,7 +3,7 @@ package org.sscc.ssccopsserver.domain.form.service;
 import java.time.Instant;
 import java.util.List;
 
-import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormDuplicateResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveRequest;
@@ -17,8 +17,14 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 /** 폼 조회·생성·수정·복제(#32)와 접수 상태 전이(#33). 폼 관리 화면이 전부 이 인터페이스를 소비한다. */
 public interface FormService {
 
-    /** 목록. 상태·라벨은 각각 선택이며 둘 다 주면 AND다 */
-    List<FormSummaryResponse> getForms(FormStatus statusCode, Long labelId);
+    /*
+     * 목록. 두 필터는 각각 선택이며 둘 다 주면 AND다.
+     *
+     * 거르는 축은 접수 상태 파생값이다 (#325 · ADR-0019) — 배지와 같은 값이라 '기간 종료'
+     * 배지를 보고 그 값으로 거르면 그 폼이 결과에 있다. 저장 컬럼(form_stts_cd)으로 거르던
+     * 옛 축은 없어졌다.
+     */
+    List<FormSummaryResponse> getForms(FormReceiptStatus receiptStatus, Long labelId);
 
     FormDetailResponse getForm(Long formId);
 

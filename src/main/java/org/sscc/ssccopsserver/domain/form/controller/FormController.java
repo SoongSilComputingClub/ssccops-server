@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormDuplicateResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveRequest;
@@ -57,22 +57,37 @@ public class FormController {
     /*
      * 폼 목록. 두 필터는 각각 선택이며 둘 다 주면 AND다.
      *
+     * **거르는 축은 receiptStatus다** (#325 · ADR-0019). 배지가 그리는 파생값과 같은 값이라
+     * '기간 종료' 배지를 보고 그 값으로 거르면 그 폼이 결과에 있다. 저장 컬럼(form_stts_cd)을
+     * 그대로 거르던 statusCode는 기간이 끝난 폼을 여전히 OPEN으로 세어 '마감'에 걸지 못했다 —
+     * 그것이 운영진이 보고한 증상이다.
+     *
+     * **statusCode는 남기지 않고 지웠다.** 같은 이름에 파생값을 받게 하는 것은 이슈가 기각했고,
+     * 두 축을 나란히 두는 것은 그 기각이 막으려던 질문("이 필터는 어느 쪽인가")을 이름만 바꿔
+     * 남기는 것이다. 옛 값은 새 축으로 1:1 번역되지도 않는다 — OPEN 하나가 SCHEDULED·ACCEPTING·
+     * EXPIRED 셋으로 갈라져, 셋 중 하나를 고르면 사용자가 보내지 않은 조건을 지어내게 된다.
+     * 그래서 웹도 옛 링크(?statusCode=...)를 번역하지 않고 전체로 떨어뜨린다 (ssccops-web#354).
+     *
      * 문항 구성(qitemCpstCn)은 응답에 싣지 않는다 — 폼 하나에 문항이 수십 개면 목록 응답이
      * 그만큼 곱해져 비대해진다. 문항이 필요하면 단건 조회를 부른다.
      */
     @Operation(
             summary = "폼 목록 조회",
             description =
-                    "폼 관리 화면의 카드 목록. statusCode·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다. 응답"
-                        + " 건수(responseCount)는 제출"
+                    "폼 관리 화면의 카드 목록. receiptStatus·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다. **필터는 접수 상태"
+                        + " 파생값(receiptStatus)으로 거른다** — DRAFT·SCHEDULED·ACCEPTING·EXPIRED·CLOSED"
+                        + " 다섯 값이며 응답의 receiptStatus 필드(배지)와 같은 값이라 목록과 배지가 어긋나지 않는다. 접수 기간이 끝난 폼은"
+                        + " form_stts_cd가 OPEN인 채로 EXPIRED이므로 CLOSED(운영자가 직접 마감)와 구분된다. 접수 기간이 비어"
+                        + " 있는 폼은 '제한 없음'이라 열려 있으면 ACCEPTING이고, 시작 정각·종료 정각은 양쪽 모두 접수 중이다. 저장"
+                        + " 컬럼(form_stts_cd)으로 거르던 statusCode 파라미터는 없어졌다. 응답 건수(responseCount)는 제출"
                         + " 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 세며 작성 중인 임시저장 응답은 세지"
                         + " 않는다. 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping
     public ApiResponse<List<FormSummaryResponse>> getForms(
-            @RequestParam(required = false) FormStatus statusCode,
+            @RequestParam(required = false) FormReceiptStatus receiptStatus,
             @RequestParam(required = false) Long labelId) {
-        return ApiResponse.success(formService.getForms(statusCode, labelId));
+        return ApiResponse.success(formService.getForms(receiptStatus, labelId));
     }
 
     /*

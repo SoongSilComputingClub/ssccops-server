@@ -182,6 +182,28 @@ public class FormEntity {
     @Column(name = "mltpl_rspns_yn", nullable = false)
     private Boolean multipleResponseAllowed;
 
+    /*
+     * 소프트 삭제 시각 (#329). 살아 있는 폼은 NULL이다 — oper.del_dt와 같은 컬럼·같은 뜻이며
+     * 이름을 맞춘 것은 "삭제됐는가"를 묻는 자리가 도메인마다 다른 어휘를 쓰지 않게 하려는 것이다.
+     *
+     * **지워진 폼은 목록·조회에서 없는 것과 같아진다.** 그 판정을 컬럼 하나로 두고 상태
+     * (form_stts_cd)에 값을 더하지 않은 것이 요점이다 — DELETED를 상태 전이표에 넣으면 접수
+     * 상태(DRAFT·OPEN·CLOSED)와 삭제 여부라는 서로 다른 두 축이 한 컬럼에서 겹쳐, 지운 폼을
+     * 되살릴 때 "어느 상태로 돌아가는가"를 어디에도 적어 두지 않은 채 골라야 한다. 두 축을
+     * 나눠 두면 되살리기는 이 값을 비우는 것뿐이고 접수 상태는 지울 때 그대로 남는다.
+     *
+     * **응답이 있어도 지운다** (ssccops#261 결정). 응답 수를 보지 않으므로 응답이 한 건이라도
+     * 들어온 테스트 폼이 목록에 영구히 남는 일이 없다. 대가는 신청자의 '내 신청'에서도 그 항목이
+     * 사라지는 것이며(폼이 없으면 제목·문항이 없어 그 화면이 성립하지 않는다), **되살리는 경로가
+     * 있다는 것이 그 대가를 감당 가능하게 만드는 유일한 조건이다** — 되돌릴 수 없으면 하드
+     * 삭제와 다를 것이 없고 그때는 신청자의 기록이 영영 닫힌다.
+     *
+     * 행사(event)는 이 값을 보지 않는다. 폼을 지운다고 그 폼을 붙여 둔 행사가 지워지는 것은
+     * 아니고, 행사 신청 목록은 event를 축으로 세워지므로 폼이 사라져도 그 화면은 그대로 선다.
+     */
+    @Column(name = "del_dt")
+    private Instant deletedAt;
+
     @CreatedDate
     @Column(name = "crt_dt", nullable = false, updatable = false)
     private Instant createdAt;
@@ -274,6 +296,8 @@ public class FormEntity {
                         false,
                         INITIAL_QUESTION_VERSION,
                         multipleResponseAllowed,
+                        // 새 폼은 언제나 살아 있다 — 지워진 채로 태어나는 경로를 두지 않는다 (#329)
+                        null,
                         null,
                         null);
         if (status == FormStatus.OPEN) {
@@ -369,10 +393,10 @@ public class FormEntity {
     /*
      * 삭제 잠금 (#140 · 409 SYSTEM_FORM_IMMUTABLE).
      *
-     * **아직 폼 삭제 API가 없다.** 그래서 이 메서드는 지금 아무도 부르지 않는다 — 그럼에도
-     * 서비스가 아니라 엔티티에 두는 것은, 삭제 경로가 생길 때 그 경로가 반드시 지나야 하는
-     * 자리를 미리 한 곳으로 정해 두기 위해서다. 삭제를 만드는 이슈에서 잠금을 함께 구현하게
-     * 두면 그 이슈가 잠금을 잊거나 자기 판정을 새로 적어 규칙이 두 벌이 된다 (BR-M28).
+     * #140에서 미리 세워 둔 자리이며 **#329의 삭제 경로가 그 첫 호출자다.** 서비스가 아니라
+     * 엔티티에 둔 것은 삭제 경로가 반드시 지나야 하는 자리를 미리 한 곳으로 정해 두기
+     * 위해서였고, 그래서 이번 이슈는 잠금 판정을 새로 적지 않고 이 메서드를 부르기만 한다
+     * (BR-M28 — 규칙이 두 벌이 되면 갈린다).
      *
      * 400이 아니라 409인 것은 요청 자체는 올바르고 폼의 성격이 거절 이유이기 때문이다
      * (SYSTEM_AUTHORITY_IMMUTABLE과 같은 판단).
@@ -381,6 +405,45 @@ public class FormEntity {
         if (isSystemForm()) {
             throw new GeneralException(FormErrorCode.SYSTEM_FORM_IMMUTABLE);
         }
+    }
+
+    /*
+     * 소프트 삭제 (#329). del_dt를 채우는 유일한 자리다.
+     *
+     * **응답 수를 보지 않는다** (ssccops#261 결정). 응답이 있으면 못 지우게 하는 안은 기각됐다 —
+     * 테스트 폼에 응답이 하나만 들어와도 영영 목록에 남고, 지금 고치려는 증상이 정확히 그것이다.
+     *
+     * 이미 지워진 폼을 다시 지우는 것은 여기서 막지 않고 서비스가 409로 끊는다. 판정 자체는
+     * isDeleted()로 이 클래스가 갖되, 무엇으로 거절할지는 삭제·복구 두 경로의 대칭을 아는 쪽이
+     * 정하는 것이 맞다 — 조회 계열은 지워진 폼도 404로 묶어 존재를 숨기므로 같은 상태가 자리마다
+     * 다른 코드로 나간다 (OperationErrorCode.ALREADY_DELETED와 같은 판단).
+     *
+     * 시각을 인자로 받는 것은 Instant.now()를 직접 부르면 테스트에서 고정할 수 없기 때문이다
+     * (OperationEntity.softDelete 선례 · ClockConfig).
+     */
+    public void softDelete(Instant deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    /*
+     * 되살리기 (#329). del_dt를 비우는 유일한 자리다.
+     *
+     * **접수 상태·접수 기간·문항 구성을 건드리지 않는다.** 되살린 폼은 지우기 직전 그대로이며,
+     * 예컨대 접수 중이던 폼을 지웠다 되살리면 다시 접수 중이다. DRAFT로 되돌리는 안도 있었지만
+     * 그러면 되살리기가 "복구"가 아니라 "상태를 하나 더 바꾸는 조작"이 되고, 접수 기간이 남아
+     * 있는데 상태만 DRAFT인 폼이 생겨 목록 배지와 실제가 갈린다 — 삭제 여부와 접수 상태를
+     * 별개 축으로 둔 이유가 여기서 값을 한다.
+     *
+     * 응답도 그대로다. 애초에 지우지 않았으므로 되살릴 것도 없고, 그래서 신청자의 '내 신청'이
+     * 되살린 순간 지우기 전 모습으로 돌아온다.
+     */
+    public void restore() {
+        this.deletedAt = null;
+    }
+
+    /** 지워진 폼인가 (#329). 살아 있으면 del_dt가 NULL이다 */
+    public boolean isDeleted() {
+        return this.deletedAt != null;
     }
 
     /*

@@ -27,6 +27,14 @@ import lombok.RequiredArgsConstructor;
  * PublicEventServiceImpl과 같은 태도로 상태를 질의 조건에 넣는다. 조회한 뒤 상태를 보고
  * 거르면 그 분기 하나가 빠지는 것으로 작성 중인 폼의 제목이 익명에게 나간다.
  *
+ * **지워진 폼(del_dt)도 404다** (#329). 상태와 함께 질의 조건에 넣으며 DRAFT와 같은 자리다 —
+ * 없는 폼과 코드를 나누면 그 번호의 폼이 있었다가 지워졌다는 사실이 익명에게 새어 나가고,
+ * 이 경로는 링크만 가진 크롤러가 부르는 자리라 그것이 곧 전부다.
+ *
+ * **메신저가 카드를 한 번 캐싱하면 갱신하지 않는다는 사실이 이 판단을 떠받친다**(ssccops#194).
+ * 삭제를 다른 안내로 답하면 그 안내가 그대로 굳어, 되살린 뒤에도 "삭제된 폼"이라 말하는 카드가
+ * 방에 남는다. 404는 카드를 만들지 않으므로 되살리기가 그대로 복구가 된다.
+ *
  * 쓰기는 없다(@Transactional(readOnly = true)). 익명 경로에 쓰기 자리를 두지 않는다.
  */
 @Service
@@ -43,7 +51,7 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
     @Override
     public PublicFormMetaResponse getFormMeta(Long formId) {
         return formRepository
-                .findByIdAndStatusIn(formId, EVER_OPENED)
+                .findByIdAndDeletedAtIsNullAndStatusIn(formId, EVER_OPENED)
                 .map(PublicFormMetaResponse::of)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }

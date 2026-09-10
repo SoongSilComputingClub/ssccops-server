@@ -142,14 +142,6 @@ public interface FormResponseHistoryRepository
     boolean existsByForm(FormEntity form);
 
     /*
-     * 행사 폼 연결 변경 가드(ssccops#139 · D11)의 판단 근거. 문항 식별자 보호(existsByForm)와
-     * 기준이 다르다 — 그쪽은 DRAFT를 포함하지만, "신청이 발생했는가"는 제출 이상
-     * (ResponseStatus.submittedOrLater)만 본다. 작성 중인 초안은 아직 낸 신청이 아니라서
-     * 폼 연결을 바꿔도 잃는 것이 없다.
-     */
-    boolean existsByFormAndStatusIn(FormEntity form, Collection<ResponseStatus> statuses);
-
-    /*
      * 폼별 응답 목록(#37). 운영자용 목록 표가 회원_명·학번·학과·등급·상태를 그리므로 회원과
      * 그 등급·상태 기준 코드까지 한 번에 끌어온다 — 응답마다 mbr을 따로 조회하면 그대로 N+1이고
      * (DB-13), 모집 폼은 응답이 수백 건이라 그 배수가 그대로 쿼리 수가 된다.

@@ -116,10 +116,19 @@ public interface FormResponseHistoryRepository
      * 정렬은 '마지막으로 움직인 순'이다. DRAFT가 섞여 sbmsn_dt가 NULL일 수 있으므로 mdfcn_dt로
      * 폴백한다 — NULL을 그대로 태우면 DB에 따라 맨 앞이나 맨 뒤로 몰려 방금 저장한 초안이 어디
      * 있는지 알 수 없다 (findAllForOperatorList와 같은 자리).
+     *
+     * **지워진 폼의 응답은 빠진다** (#329 · f.deletedAt is null). 상세가 404가 되는 것만으로는
+     * 부족하다 — 목록에 줄이 남아 있으면 응답자가 그것을 눌렀을 때 갈 곳이 없고, 그 화면은
+     * 폼에서 제목·문항을 가져온다(ssccops#261 결정 코멘트가 "목록에서 사라지는 것과 상세가
+     * 404가 되는 것은 다르다"고 못 박은 자리다). 되살리면 그 줄이 그대로 돌아온다.
+     *
+     * 행사 신청(findEventApplicationsByMember)에는 같은 조건을 걸지 않는다. 그쪽 목록의 축은
+     * 폼이 아니라 event이고 폼을 지운다고 행사가 지워지지 않아, 그 화면은 폼 없이도 선다.
      */
     @Query(
             "select r from FormResponseHistoryEntity r join fetch r.form f"
                     + " where r.member = :member"
+                    + " and f.deletedAt is null"
                     + " and not exists (select e.id from EventEntity e where e.form = f)"
                     + " order by coalesce(r.submittedAt, r.updatedAt) desc, r.id desc")
     List<FormResponseHistoryEntity> findNonEventResponsesByMember(

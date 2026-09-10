@@ -420,13 +420,20 @@ public class EventServiceImpl implements EventService {
                         () -> new GeneralException(EventErrorCode.EVENT_CLASSIFICATION_NOT_FOUND));
     }
 
-    /** 폼 연결 해석. NULL은 폼 없는 공지(D11)이고, 없는 폼은 404다 */
+    /*
+     * 폼 연결 해석. NULL은 폼 없는 공지(D11)이고, 없는 폼은 404다.
+     *
+     * **지워진 폼(#329)도 없는 폼과 같다.** 소프트 삭제된 폼을 행사에 새로 붙일 수 있으면
+     * 그 행사의 신청 링크가 열리자마자 404가 되고, 그 원인이 행사 쪽 화면에서는 보이지 않는다.
+     * 이미 붙어 있는 폼을 지우는 것은 막지 않는다 — 그쪽은 행사가 폼 없는 공지처럼 서고
+     * 되살리면 그대로 돌아온다.
+     */
     private FormEntity resolveForm(Long formId) {
         if (formId == null) {
             return null;
         }
         return formRepository
-                .findById(formId)
+                .findByIdAndDeletedAtIsNull(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }
 

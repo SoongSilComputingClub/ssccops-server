@@ -1337,6 +1337,163 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
     }
 
+    /* ── 최종 제출한 응답을 본인이 조회한다 (#326) ──── */
+
+    /*
+     * **이 이슈의 핵심 한 줄이다** — 수정요청을 받지 않은 응답도 내용이 그대로 온다.
+     * 운영진이 본 증상(ssccops#263 — "수정 요청을 보내야 응답이 보이는군요")이 여기다.
+     * 서버는 원래도 상태로 분기하지 않았으나 그것이 계약으로 못 박혀 있지 않아, 상태 분기가
+     * 나중에 슬근 들어오는 것을 이 테스트가 막는다.
+     *
+     * canResubmit은 false다 — 조회를 열었다고 재제출이 함께 열리지 않는다(운영진이 응답 수정
+     * 기능 자체를 기각했다).
+     */
+    @Test
+    void getMyResponseReturnsContentEvenWithoutAChangeRequest() throws Exception {
+        Long formId = saveForm("수정요청 없는 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("SUBMITTED"))
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("홍길동"))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
+                .andExpect(jsonPath("$.data.canResubmit").value(false))
+                // 제출(SUBMIT) 한 줄만 있다 — 아직 아무도 이 응답을 처리하지 않았다
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(1))
+                .andExpect(jsonPath("$.data.reviewHistories[0].rvwPrcsSeCd").value("SUBMIT"));
+    }
+
+    /*
+     * **승인으로 종결된 응답도 열린다** (#326 결정). 종결은 수정을 막는 것이지 조회를
+     * 막는 것이 아니다 — 승인·반려를 되돌릴 수 없는 근거는 "승인 직후 후속 처리가
+     * 시작된다"이고 읽는 쪽에는 그런 되돌릴 것이 없다. 오히려 결과가 난 뒤가 자기가 무엇을
+     * 냈는지 확인하는 시점이다.
+     */
+    @Test
+    void getMyResponseOnAnAcceptedResponseReturnsContent() throws Exception {
+        Long formId = saveForm("승인 종결 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        accept();
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("ACCEPTED"))
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("홍길동"))
+                .andExpect(jsonPath("$.data.canResubmit").value(false))
+                .andExpect(jsonPath("$.data.reviewHistories.length()").value(2))
+                .andExpect(jsonPath("$.data.reviewHistories[1].rvwPrcsSeCd").value("ACCEPT"));
+    }
+
+    /*
+     * **반려된 응답도 같다.** 여기가 조회를 닫으면 가장 눈에 띄게 깨지는 자리다 — 반려
+     * 사유는 이력(reviewHistories)에만 있어, 막으면 반려된 사람이 왜 반려됐는지를 읽을 길이
+     * 사라진다.
+     */
+    @Test
+    void getMyResponseOnARejectedResponseReturnsContentAndReason() throws Exception {
+        Long formId = saveForm("반려 종결 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        reject();
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("REJECTED"))
+                .andExpect(jsonPath("$.data.rspnsCn.q1").value("홍길동"))
+                .andExpect(jsonPath("$.data.canResubmit").value(false))
+                .andExpect(jsonPath("$.data.reviewHistories[1].rvwPrcsSeCd").value("REJECT"))
+                .andExpect(
+                        jsonPath("$.data.reviewHistories[1].rvwOpnnCn")
+                                .value("이번 회차에는 반영하지 않습니다."));
+    }
+
+    /*
+     * canResubmit이 true가 되는 유일한 자리다. 화면이 "수정 요청을 받은 응답입니다"와
+     * "내가 낸 응답"을 이 값으로 가르며, 값은 제출 경로가 쓰는 판정(isResubmission) 그대로다 —
+     * 두 벌이 되면 상태 어휘가 늘 때 한쪽만 고쳐진다.
+     */
+    @Test
+    void getMyResponseMarksOnlyChangesRequestedAsResubmittable() throws Exception {
+        Long formId = saveForm("재제출 판정 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        submit(formId, """
+               {"q1": "홍길동"}
+               """)
+                .andExpect(status().isCreated());
+        requestChanges();
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rspnsSttsCd").value("CHANGES_REQUESTED"))
+                .andExpect(jsonPath("$.data.canResubmit").value(true));
+
+        // 다시 내면 SUBMITTED로 돌아가 재제출이 닫힌다 — 수정을 여는 이슈가 아니다
+        submit(formId, """
+               {"q1": "김철수"}
+               """)
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(myResponse(formId, onlyResponse().getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.canResubmit").value(false));
+    }
+
+    /*
+     * 작성 중(DRAFT)도 canResubmit은 false다. 아직 낸 적이 없는 것과 다시 내는 것은 다른
+     * 일이라, 화면이 이 값으로 재제출 폼을 여는 순간 초안이 "수정 요청을 받은 응답"으로
+     * 그려진다.
+     */
+    @Test
+    void getMyResponseOnDraftIsNotResubmittable() throws Exception {
+        Long formId = saveForm("초안 판정 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        FormResponseHistoryEntity draft =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createDraft(
+                                form, respondent, ResponseContent.of(Map.of("q1", "쓰는 중"))));
+
+        mockMvc.perform(myResponse(formId, draft.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.canResubmit").value(false));
+    }
+
+    /*
+     * **종결된 남의 응답도 여전히 404다.** 조회를 연 것은 상태 분기를 없액는 일이지
+     * 회원 경계를 물리는 일이 아니다 — 본인 판정은 종전대로 조회 조건
+     * (findByIdAndFormAndMember) 한 자리에서만 이뤄진다. 이 이슈가 판정을 두 벌로 만들지
+     * 않았다는 회귀다.
+     */
+    @Test
+    void getMyResponseStillHidesAnotherMembersClosedResponse() throws Exception {
+        Long formId = saveForm("남의 종결 응답 폼", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity other = saveMember(UUID.randomUUID(), "20260005", "정다은", "other4@sscc.org");
+        FormResponseHistoryEntity others =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                form, other, ResponseContent.of(Map.of("q1", "정다은")), NOW));
+        others.review(ResponseStatus.ACCEPTED);
+        formResponseHistoryRepository.saveAndFlush(others);
+
+        String body =
+                mockMvc.perform(myResponse(formId, others.getId()))
+                        .andExpect(status().isNotFound())
+                        .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+
+        assertThat(body).doesNotContain("정다은");
+    }
+
     /* ── 마감된 폼의 재제출 (#177) ─────────────────────────── */
 
     /*
@@ -1692,6 +1849,15 @@ class PublicFormControllerTest {
                         FormEntity.create(
                                 respondent, title, content, null, null, FormStatus.OPEN, true))
                 .getId();
+    }
+
+    /** 검토자의 승인을 흉내 낸다 (#326 — 종결된 응답이 열리는지 보기 위해) */
+    private void accept() {
+        FormResponseHistoryEntity response = onlyResponse();
+        ResponseReviewAction action = response.review(ResponseStatus.ACCEPTED);
+        formResponseReviewHistoryRepository.save(
+                FormResponseReviewHistoryEntity.record(response, action, reviewer, null, NOW));
+        formResponseHistoryRepository.flush();
     }
 
     /** 검토자의 반려를 흉내 낸다 (requestChanges와 같은 이유로 엔티티를 직접 옮긴다) */

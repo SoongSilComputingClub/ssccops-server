@@ -34,6 +34,11 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  * mltplRspnsYn(#143)도 같은 이유로 목록에 싣는다 — 상세로 들어가기 전에 "여러 건 받는 폼"임을
  * 배지로 그릴 수 있어야 하고, 스칼라 하나라 목록 응답을 키우지 않는다.
  *
+ * delDt(#329)는 **살아 있는 폼에서 언제나 null이고 휴지통 목록에서만 값이 있다.** 지운 폼은
+ * 목록 질의에서 통째로 빠지므로 두 목록이 한 화면에 섞이지 않으며, 그래서 이 필드 하나로 두
+ * 목록이 같은 카드를 그린다 — 휴지통 전용 DTO를 따로 만들면 폼 목록에 필드가 늘 때마다 한쪽만
+ * 늘어 두 화면이 갈린다. 빼지 않고 null로 내리는 것은 AP-15(값이 없어도 필드는 내린다)다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record FormSummaryResponse(
@@ -49,7 +54,8 @@ public record FormSummaryResponse(
         boolean mltplRspnsYn,
         List<FormLabelSummaryResponse> labels,
         long responseCount,
-        OffsetDateTime mdfcnDt) {
+        OffsetDateTime mdfcnDt,
+        OffsetDateTime delDt) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -71,7 +77,8 @@ public record FormSummaryResponse(
                 form.isMultipleResponseAllowed(),
                 labels,
                 responseCount,
-                toOffsetDateTime(form.getUpdatedAt()));
+                toOffsetDateTime(form.getUpdatedAt()),
+                toOffsetDateTime(form.getDeletedAt()));
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

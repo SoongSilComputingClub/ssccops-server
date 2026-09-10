@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.form.repository;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +22,30 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 public interface FormRepository extends JpaRepository<FormEntity, Long> {
 
     /*
+     * 살아 있는 폼 단건 (#329). 조회·수정·응답 경로가 전부 이것을 지난다 — 지워진 폼은
+     * 없는 폼과 같아야 하고, 그 판정을 서비스마다 `if (form.isDeleted())`로 적으면 한 자리만
+     * 빠져도 지운 폼이 그 화면에서만 계속 보인다. 조건을 질의에 넣는 것은 상태로 DRAFT 폼을
+     * 없는 것으로 만드는 findByIdAndDeletedAtIsNullAndStatus와 같은 태도다.
+     *
+     * **삭제·복구 경로는 이것을 쓰지 않는다.** 그쪽은 지워진 폼을 찾아내야 "없는 폼"과 "이미
+     * 지운 폼"을 409로 갈라 줄 수 있어 findById(필터 없음)를 쓴다.
+     */
+    Optional<FormEntity> findByIdAndDeletedAtIsNull(Long id);
+
+    /*
+     * 휴지통 목록 (#329 · GET /v1/forms/deleted). 지운 시각 역순이라 방금 지운 것이 맨 위다 —
+     * 되살리기를 누르는 사람이 찾는 것은 대개 직전에 지운 폼이다.
+     *
+     * 관리자 목록(findAllForAdminList)과 달리 접수 상태·라벨 필터를 받지 않는다. 휴지통은
+     * 거를 만큼 쌓이는 화면이 아니고, 필터를 붙이면 목록 질의의 조건이 두 벌이 되어 #325가
+     * 한곳으로 모아 둔 번역표가 다시 갈라진다.
+     *
+     * 목록에는 생성자 이름이 필요하므로 연관을 함께 끌어온다 (DB-13).
+     */
+    @EntityGraph(attributePaths = "creator")
+    List<FormEntity> findAllByDeletedAtIsNotNullOrderByDeletedAtDescIdDesc();
+
+    /*
      * 관리자 폼 목록(#32). 상태 필터가 선택 사항이라 상태 집합을 받는 형태로 두었다 —
      * "전체"는 전체 상태를 넣어 부르면 되고, 상태별 메서드를 상태 수만큼 늘리지 않아도 된다.
      *
@@ -28,13 +53,14 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * 회원 조회가 한 번씩 더 나간다 (DB-13).
      */
     @EntityGraph(attributePaths = "creator")
-    Page<FormEntity> findAllByStatusIn(Collection<FormStatus> statuses, Pageable pageable);
+    Page<FormEntity> findAllByDeletedAtIsNullAndStatusIn(
+            Collection<FormStatus> statuses, Pageable pageable);
 
     /*
      * 공개 폼 단건 조회(#35). 작성 중(DRAFT)인 폼은 링크를 알아도 열리면 안 되므로
      * 상태를 조건에 넣어 "없는 것"으로 만든다 — 존재를 알려주지 않기 위해 403으로 나누지 않는다.
      */
-    Optional<FormEntity> findByIdAndStatus(Long id, FormStatus status);
+    Optional<FormEntity> findByIdAndDeletedAtIsNullAndStatus(Long id, FormStatus status);
 
     /*
      * 익명 미리보기용 단건 조회(ssccops#201). "접수를 연 적 있는" 폼만 찾는다 — 상태 집합을
@@ -42,7 +68,8 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * 넘기는 것은 목록(findAllByStatusIn)과 같은 이유이며, 무엇이 "연 적 있는" 상태인지는
      * PublicFormMetaServiceImpl 한 곳이 정한다.
      */
-    Optional<FormEntity> findByIdAndStatusIn(Long id, Collection<FormStatus> statuses);
+    Optional<FormEntity> findByIdAndDeletedAtIsNullAndStatusIn(
+            Long id, Collection<FormStatus> statuses);
 
     /*
      * 시스템 폼 조회 (#140). **코드가 폼을 찾는 유일한 경로다.**
@@ -54,6 +81,11 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * sys_form_cd에 UNIQUE가 걸려 있어 결과는 최대 한 건이다. 첫 호출자는 기획안 시스템 폼
      * 시드(#173 ProposalFormSeeder)이며 "이미 세웠는가"를 이 조회 하나로 판정한다 — 제목이나
      * form_id로 물으면 제목을 고친 다음 기동에서 폼이 하나 더 생긴다.
+     *
+     * **del_dt를 보지 않는다** (#329). 시스템 폼은 애초에 지울 수 없어(FormEntity.requireDeletable
+     * · 409 SYSTEM_FORM_IMMUTABLE) 지워진 시스템 폼이라는 상태가 존재하지 않는다. 조건을 더하면
+     * 그 상태가 있을 수 있는 것처럼 읽히고, 무엇보다 시드의 멱등 판정이 "지워진 폼은 없는 것"이
+     * 되어 지울 수 없는 폼을 한 벌 더 세우려다 sys_form_cd UNIQUE에 걸린다.
      */
     Optional<FormEntity> findBySystemFormCode(String systemFormCode);
 
@@ -62,7 +94,7 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * 연관 경로를 그대로 쓰는 파생 이름 대신 여기서 이름을 고정한다.
      */
     @EntityGraph(attributePaths = "creator")
-    List<FormEntity> findAllByIdInOrderByIdDesc(Collection<Long> ids);
+    List<FormEntity> findAllByDeletedAtIsNullAndIdInOrderByIdDesc(Collection<Long> ids);
 
     /*
      * 관리자 폼 목록의 실제 조회 (#32 · GET /v1/forms). 상태·라벨 두 필터가 각각 선택이고
@@ -77,14 +109,71 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * 라벨 필터를 조인이 아니라 EXISTS 하위 질의로 쓴 것은, 한 폼에 라벨이 여러 개 달려 있을 때
      * 조인이 폼을 라벨 수만큼 중복시키기 때문이다. distinct로 지우면 join fetch와 함께 쓸 때
      * 페이징이 메모리로 넘어간다. 생성자는 목록에 필요하므로 함께 페치한다 (DB-13).
+     *
+     * ── 접수 기간 비교 (#325 · ADR-0019) ──
+     *
+     * 목록 필터가 파생값(FormReceiptStatus) 축으로 옮겨져 질의가 기간을 함께 본다. periodMatch·now는
+     * FormReceiptPolicy.filterFor가 만들며 **이 질의는 번역표를 갖지 않는다** — 판정식과 갈리지
+     * 않게 하려고 번역은 판정식 옆 한 곳에서만 한다.
+     *
+     * periodMatch를 열거형이 아니라 String으로 받는 것은 위와 같은 이유다. 열거형 파라미터를 문자열
+     * 리터럴과 비교하면 Hibernate가 타입을 추론하지 못한다. now는 언제나 값이 있으므로 ANY일 때도
+     * 바인딩이 비지 않는다.
+     *
+     * AFTER_END가 시작 일시까지 보는 것은 receiptStatusOf가 SCHEDULED를 먼저 판정하기 때문이다.
+     * 종료가 시작보다 앞선 폼은 FormEntity.requireValidReceiptPeriod가 막지만, 막는 자리와 판정하는
+     * 자리가 달라 여기서 전제로 삼지 않는다 — 두 경로가 같은 답을 내는 것이 이 조건의 목적이다.
+     *
+     * 경계는 양쪽 모두 포함이다(<=·>=). NULL은 '제한 없음'이라 그 방향의 비교를 통과시킨다.
+     *
+     * ── 지워진 폼 (#329) ──
+     *
+     * `f.deletedAt is null`이 필터 위에 그대로 얹힌다. 접수 상태 축과 나란히 두지 않고 언제나
+     * 붙는 조건으로 둔 것은 두 축이 다른 종류이기 때문이다 — 접수 상태는 운영진이 고르는
+     * 값이지만 삭제 여부는 고를 수 있는 값이 아니다. receiptStatus에 DELETED를 하나 더하면
+     * 그 값이 상태 배지와 같은 어휘라는 #325의 계약이 깨지고(배지는 DELETED를 그리지 않는다),
+     * 지운 폼이 '전체'에도 섞여 들어온다. 휴지통은 별도 조회(위)가 답한다.
+     *
+     * ── 인덱스: 지금은 만들지 않는다 (실행 계획을 보고 내린 판단) ──
+     *
+     * form에는 **form_stts_cd 인덱스가 애초에 없다**(V1__baseline.sql에 PK와 FK뿐이다). 그래서
+     * "상태 컬럼 하나로는 안 듣는다"가 아니라 원래 전부 훑고 있었고, 기간 비교가 붙어도 훑는
+     * 것은 그대로다. PostgreSQL 16에 폼 5,000건(DRAFT 20% · CLOSED 20% · OPEN 60%, EXPIRED가
+     * 1,234건)을 넣고 EXPLAIN (ANALYZE, BUFFERS)로 잰 값은 이렇다.
+     *
+     *   인덱스 없음                          Seq Scan · shared hit 55 · 1.6ms
+     *   (form_stts_cd, rcpt_end_dt) 복합     Bitmap Index Scan · shared hit 41 · 1.2ms
+     *
+     * **만들지 않는 이유는 이득이 0.4ms라서가 아니라 선택도가 낮아서다.** EXPIRED가 전체의 25%라
+     * 인덱스를 타도 힙 블록 38개를 그대로 읽고, 무엇보다 이 목록에는 페이징이 없어(위 주석)
+     * 어차피 조건에 맞는 행 전부를 만들어야 한다. 응답 시간을 지배하는 것은 이 질의가 아니라
+     * 뒤따르는 라벨·응답 집계 두 번이다. 마이그레이션 파일 하나를 늘려 얻는 것이 그만큼이면
+     * 지금은 아니고, **폼이 만 단위로 늘거나 페이징이 붙으면 그때 이 표를 다시 뜬다.**
+     *
+     * 파라미터 OR 체인이 인덱스를 막지 않는다는 것도 함께 확인했다 — PREPARE/EXECUTE로 여섯 번
+     * 돌려도 PostgreSQL이 custom plan을 유지해 :periodMatch를 상수로 접고 나머지 가지를 지운다.
+     * 제네릭 플랜으로 굳어 네 가지를 다 훑는 계획이 나오지는 않았다.
      */
     @Query(
             "select f from FormEntity f join fetch f.creator"
-                    + " where f.status in :statuses"
+                    + " where f.deletedAt is null"
+                    + " and f.status in :statuses"
                     + " and (:labelId is null or exists ("
                     + "   select 1 from FormLabelRelationEntity r"
                     + "   where r.form = f and r.label.id = :labelId))"
+                    + " and (:periodMatch = 'ANY'"
+                    + "   or (:periodMatch = 'BEFORE_BEGIN'"
+                    + "     and f.receiptBeginAt is not null and f.receiptBeginAt > :now)"
+                    + "   or (:periodMatch = 'AFTER_END'"
+                    + "     and (f.receiptBeginAt is null or f.receiptBeginAt <= :now)"
+                    + "     and f.receiptEndAt is not null and f.receiptEndAt < :now)"
+                    + "   or (:periodMatch = 'WITHIN'"
+                    + "     and (f.receiptBeginAt is null or f.receiptBeginAt <= :now)"
+                    + "     and (f.receiptEndAt is null or f.receiptEndAt >= :now)))"
                     + " order by f.id desc")
     List<FormEntity> findAllForAdminList(
-            @Param("statuses") Collection<FormStatus> statuses, @Param("labelId") Long labelId);
+            @Param("statuses") Collection<FormStatus> statuses,
+            @Param("labelId") Long labelId,
+            @Param("periodMatch") String periodMatch,
+            @Param("now") Instant now);
 }

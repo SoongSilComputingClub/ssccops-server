@@ -72,7 +72,21 @@ public enum FormErrorCode implements ErrorCode {
     FORM_HAS_NO_QUESTION(
             HttpStatus.BAD_REQUEST, "FORM_HAS_NO_QUESTION", "문항이 없는 폼은 접수를 시작할 수 없습니다."),
 
-    // 404 — 폼 자체를 찾을 수 없을 때. 미공개(DRAFT) 폼은 존재하므로 여기가 아니라 FORM_NOT_ACCEPTING이다
+    /*
+     * 404 — 폼 자체를 찾을 수 없을 때. 미공개(DRAFT) 폼은 존재하므로 여기가 아니라
+     * FORM_NOT_ACCEPTING이다.
+     *
+     * **소프트 삭제된 폼도 여기에 걸린다** (#329). 없는 폼과 같은 코드로 묶는 것은 공개
+     * 링크(/f/{formId})가 링크만 가진 사람에게 답하는 자리이기 때문이다 — 코드를 나누면 그
+     * 번호의 폼이 존재했다가 지워졌다는 사실이 새어 나가고, form_id는 연속된 정수라 훑는 데
+     * 비용이 들지 않는다. DRAFT 폼을 없는 것으로 만드는 판단(findByIdAndStatus)의 연장이다.
+     *
+     * 409 FORM_NOT_ACCEPTING으로 나누지 않은 것도 같은 이유다. 그 코드는 "지금은 못 낸다"라서
+     * 폼이 있다는 것을 전제로 하고, 지워진 폼에 그것을 돌려주면 존재가 드러난다.
+     *
+     * 반대로 삭제·복구 경로는 지워진 폼을 404가 아니라 409(FORM_ALREADY_DELETED)로 끊는다 —
+     * 그쪽은 휴지통을 이미 보고 있는 운영진이 부르는 자리라 숨길 것이 없다.
+     */
     FORM_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "폼을 찾을 수 없습니다."),
 
     /*
@@ -204,6 +218,31 @@ public enum FormErrorCode implements ErrorCode {
      * 400이 아니라 409인 것은 요청 자체는 올바르고 대상 폼의 성격이 거절 이유이기 때문이다.
      */
     SYSTEM_FORM_IMMUTABLE(HttpStatus.CONFLICT, "SYSTEM_FORM_IMMUTABLE", "시스템 폼은 삭제할 수 없습니다."),
+
+    /*
+     * 409 — 이미 지워진 폼을 다시 지우려 할 때 (#329).
+     *
+     * 조회 계열이 지워진 폼을 없는 폼과 같은 404 FORM_NOT_FOUND로 묶는 것과 **일부러 갈린다.**
+     * 그쪽은 링크만 가진 사람에게 존재를 알려주지 않는 것이 목적이지만, 삭제·복구는 휴지통을
+     * 이미 보고 있는 운영진이 부르는 경로라 "없는 폼"과 "이미 지운 폼"을 구별해 줘야 다음에 할
+     * 일이 갈린다 — 앞은 목록을 새로고침할 일이고 뒤는 아무것도 할 일이 없다.
+     * OperationErrorCode.ALREADY_DELETED가 #125에서 내린 것과 같은 판단이며, 그래서 삭제 경로의
+     * 조회는 del_dt 필터가 없는 조회를 쓴다.
+     *
+     * **코드 문자열이 열거형 이름과 다른 것은 의도다**(FORM_NOT_FOUND → "NOT_FOUND"와 같은 자리).
+     * 운영 도메인이 이미 같은 상황에 "ALREADY_DELETED"를 쓰고 있어, 여기서 이름을 새로 지으면
+     * 화면이 "이미 삭제됨"이라는 한 가지 사실에 도메인마다 다른 분기를 갖게 된다.
+     */
+    FORM_ALREADY_DELETED(HttpStatus.CONFLICT, "ALREADY_DELETED", "이미 삭제된 폼입니다."),
+
+    /*
+     * 409 — 지워지지 않은 폼을 되살리려 할 때 (#329).
+     *
+     * FORM_ALREADY_DELETED의 대칭이다. 둘 다 조용히 통과시키면(멱등) 두 운영진이 같은 휴지통을
+     * 열고 있을 때 뒤에 누른 쪽이 자기가 되살렸다고 믿는데 실제로는 아무 일도 하지 않은 상태가
+     * 되고, 그 차이는 화면에 드러나지 않는다.
+     */
+    FORM_NOT_DELETED(HttpStatus.CONFLICT, "NOT_DELETED", "삭제되지 않은 폼입니다."),
 
     /*
      * 400 — 시스템 폼에서 코드가 요구하는 qitemId를 지우려 할 때 (#140).

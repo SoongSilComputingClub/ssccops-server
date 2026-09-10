@@ -3,7 +3,7 @@ package org.sscc.ssccopsserver.domain.form.service;
 import java.time.Instant;
 import java.util.List;
 
-import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormDuplicateResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSaveRequest;
@@ -17,8 +17,22 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 /** 폼 조회·생성·수정·복제(#32)와 접수 상태 전이(#33). 폼 관리 화면이 전부 이 인터페이스를 소비한다. */
 public interface FormService {
 
-    /** 목록. 상태·라벨은 각각 선택이며 둘 다 주면 AND다 */
-    List<FormSummaryResponse> getForms(FormStatus statusCode, Long labelId);
+    /*
+     * 목록. 두 필터는 각각 선택이며 둘 다 주면 AND다.
+     *
+     * 거르는 축은 접수 상태 파생값이다 (#325 · ADR-0019) — 배지와 같은 값이라 '기간 종료'
+     * 배지를 보고 그 값으로 거르면 그 폼이 결과에 있다. 저장 컬럼(form_stts_cd)으로 거르던
+     * 옛 축은 없어졌다.
+     */
+    List<FormSummaryResponse> getForms(FormReceiptStatus receiptStatus, Long labelId);
+
+    /*
+     * 휴지통 목록 (#329). 지워진 폼만, 지운 시각 역순으로 돌려준다.
+     *
+     * 목록(getForms)에 필터 값을 하나 더 두지 않고 메서드를 나눈 것은 삭제 여부가 접수 상태와
+     * 다른 축이기 때문이다 — 근거는 FormRepository.findAllForAdminList 주석에 있다.
+     */
+    List<FormSummaryResponse> getDeletedForms();
 
     FormDetailResponse getForm(Long formId);
 
@@ -46,6 +60,23 @@ public interface FormService {
 
     /** 복제. 생성자는 원본 생성자가 아니라 복제를 수행한 회원이다 */
     FormDuplicateResponse duplicateForm(Long formId, MemberEntity creator);
+
+    /*
+     * 소프트 삭제 (#329 · DELETE /v1/forms/{formId}). del_dt를 채우고 데이터는 남긴다.
+     *
+     * **응답 수를 보지 않는다** (ssccops#261 결정). 시스템 폼만 거절한다(#140의 잠금).
+     * 이미 지워진 폼은 409 FORM_ALREADY_DELETED이며 없는 폼(404)과 구별해 준다.
+     */
+    void deleteForm(Long formId);
+
+    /*
+     * 되살리기 (#329 · POST /v1/forms/{formId}/restore). del_dt를 비운다.
+     *
+     * **이 경로가 삭제의 전제다.** 되돌릴 수 없으면 응답이 있는 폼을 지우는 결정이 하드 삭제와
+     * 같아지고, 그때는 신청자의 기록이 영영 닫힌다 (ssccops#261 결정 코멘트).
+     * 지워지지 않은 폼은 409 FORM_NOT_DELETED다.
+     */
+    void restoreForm(Long formId);
 
     /*
      * 문항 0개인 DRAFT 폼 생성 (#133 학술 활동 승인 후속 처리 전용, 공개 API 아님).

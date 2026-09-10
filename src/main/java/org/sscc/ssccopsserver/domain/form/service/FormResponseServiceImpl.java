@@ -220,6 +220,13 @@ public class FormResponseServiceImpl implements FormResponseService {
      * 쓰임이 마감 뒤에 있다: 기획안은 접수를 마감한 뒤 검토하므로 수정요청 사유를 읽는 시점은
      * 언제나 접수가 끝난 뒤다.
      *
+     * **응답 상태도 보지 않는다** (#326). 수정요청을 받았든 아니든, 승인·반려로 종결됐든 본인
+     * 행이면 내용이 그대로 내려간다 — 이 메서드는 처음부터 상태로 분기한 적이 없고 이 이슈는
+     * 그것을 계약으로 못 박는다. 조회를 여는 것이 곧 수정을 여는 것은 아니다: 재제출은 종전대로
+     * 수정요청을 받은 응답에서만 열리며(submitResponse가 isResubmission으로 가른다) 이 메서드는
+     * 그 판정을 응답에 실어 보내기만 한다(canResubmit). 운영진이 응답 수정 기능 자체를 기각했으므로
+     * (ssccops#263) 여기서 그 규칙을 건드리지 않는다.
+     *
      * 쿼리는 폼 1 + 응답 1 + 이력 1로 세 번이며 이력이 몇 줄이든 그대로다(처리자는
      * 리포지토리의 엔티티 그래프가 함께 끌어온다).
      */
@@ -700,9 +707,26 @@ public class FormResponseServiceImpl implements FormResponseService {
         return statusCode == null ? ResponseStatus.submittedOrLater() : EnumSet.of(statusCode);
     }
 
+    /*
+     * 폼 조회. **지워진 폼은 없는 폼과 같은 404다** (#329).
+     *
+     * 응답자 경로(공개 폼 조회·제출·초안·내 응답 목록·본인 응답 상세)와 운영자 경로(응답 목록·
+     * 상세·검토)가 전부 이 한 자리를 지나므로, 조건을 여기 한 번 넣는 것으로 지워진 폼의 응답이
+     * 어느 화면에도 나타나지 않는다 — 화면마다 isDeleted()를 물으면 한 자리만 빠져도 그 화면에서만
+     * 계속 보인다.
+     *
+     * **본인 응답 조회(.../responses/mine/...)가 404가 되는 것이 이 결정이 치르는 대가다**
+     * (ssccops#261). 폼이 없으면 제목·문항이 없어 그 화면 자체가 성립하지 않으므로 200으로
+     * 내려줄 내용이 없고, 409 FORM_NOT_ACCEPTING으로 나누면 그 번호의 폼이 있다는 것이 링크만
+     * 가진 사람에게 드러난다. 되살리면 그대로 돌아온다 — 응답을 지우지 않기 때문이다.
+     *
+     * 심사 경로(운영자용)도 함께 404가 되는 것은 의도한 것이다. 지워진 폼의 응답을 계속 심사할
+     * 수 있으면 "지웠다"의 뜻이 화면마다 달라지고, 승인이 후속 처리를 부르는 폼(기획안)에서는
+     * 지운 폼이 활동을 만들어 낸다.
+     */
     private FormEntity findForm(Long formId) {
         return formRepository
-                .findById(formId)
+                .findByIdAndDeletedAtIsNull(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }
 

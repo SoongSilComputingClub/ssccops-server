@@ -6,6 +6,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -88,6 +89,35 @@ public class FormController {
             @RequestParam(required = false) FormReceiptStatus receiptStatus,
             @RequestParam(required = false) Long labelId) {
         return ApiResponse.success(formService.getForms(receiptStatus, labelId));
+    }
+
+    /*
+     * 휴지통 목록 (#329). 지워진 폼만 지운 시각 역순으로 돌려준다.
+     *
+     * **목록에 필터 값을 하나 더 두지 않고 경로를 나눴다.** receiptStatus에 DELETED를 더하면 그
+     * 값이 배지와 같은 어휘라는 #325의 계약이 깨지고(배지는 DELETED를 그리지 않는다), 지운 폼이
+     * '전체'에도 섞여 들어온다. 삭제 여부는 운영진이 고르는 축이 아니라 언제나 붙는 조건이다.
+     *
+     * **요구 권한이 FORM_READ인 것은 이 화면이 목록의 다른 모습이기 때문이다.** 휴지통이
+     * 보여주는 것은 폼 목록이 이미 보여주던 값(제목·상태·라벨·응답 수)에 지운 시각 하나가
+     * 붙은 것이라, 목록을 볼 수 있는 사람에게 숨길 것이 없다. 되살리는 것은 별개이며 그쪽은
+     * FORM_WRITE다 — 읽기와 쓰기를 가르는 이 컨트롤러의 기존 선이 그대로 적용된다.
+     *
+     * 경로가 /{formId}와 겹치지 않는 것은 리터럴 세그먼트가 경로 변수보다 먼저 매칭되기
+     * 때문이다(Spring의 패턴 비교 규칙). formId가 Long이라 'deleted'는 어차피 변환되지 않는다.
+     */
+    @Operation(
+            summary = "삭제된 폼 목록 조회",
+            description =
+                    "휴지통 화면. 소프트 삭제된 폼만 지운 시각(delDt) 역순으로 돌려준다. 항목의 모양은 폼 목록과 같고"
+                            + " delDt만 값이 있다 — 살아 있는 폼의 delDt는 언제나 null이다."
+                            + " receiptStatus·labels·responseCount는 지우기 직전 값 그대로이며,"
+                            + " responseCount로 '이 폼에 신청이 몇 건 있었는가'를 보고 되살릴지 정한다."
+                            + " 되살리기는 POST /v1/forms/{formId}/restore다.")
+    @RequireAuthority(AuthorityCode.FORM_READ)
+    @GetMapping("/deleted")
+    public ApiResponse<List<FormSummaryResponse>> getDeletedForms() {
+        return ApiResponse.success(formService.getDeletedForms());
     }
 
     /*
@@ -181,6 +211,73 @@ public class FormController {
         FormDuplicateResponse response = formService.duplicateForm(formId, creator);
         URI location = URI.create("/v1/forms/" + response.formId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 폼 삭제 (#329 · 소프트 삭제). 목록·조회에서 빠지지만 데이터는 남는다.
+     *
+     * **요구 권한이 FORM_WRITE인 것은 기존 폼 관리 권한을 그대로 따른 것이다**(이슈가 못 박은
+     * 조건). 전용 FORM_DELETE를 새로 만들지 않은 근거는 둘이다.
+     *
+     *   1. **잠가도 지키는 것이 없다.** FORM_WRITE 보유자는 이미 PUT 하나로 제목을 지우고
+     *      문항을 통째로 갈아엎을 수 있어, 그 사람에게서 삭제만 막아 봐야 폼을 못 쓰게 만드는
+     *      길이 그대로 남는다. 소프트 삭제는 그중 **유일하게 되돌릴 수 있는** 조작이다.
+     *   2. **권한을 하나 더 만드는 것은 시드 마이그레이션을 하나 더 만드는 것이다**(authrt 트리 +
+     *      role_authrt_rel). 그 값을 치르는 것은 운영 도메인처럼 "삭제만 따로 떼어 주고 싶다"는
+     *      요구가 실제로 있을 때이며(#125의 WORK_DELETE·MEETING_DELETE), 폼에는 그 요구가 없다.
+     *
+     * **되살리기도 같은 권한이다.** 지울 수 있는 사람이 되돌릴 수 없으면 자기가 저지른 것을
+     * 스스로 수습하지 못하고, 삭제를 감당 가능하게 만드는 조건(되돌릴 수 있다)이 권한 배분
+     * 하나로 깨진다. 반대로 되살리기만 더 낮은 권한에 열면 지운 폼이 다시 목록에 나타나는 것을
+     * 삭제 권한 없는 사람이 할 수 있게 된다.
+     *
+     * 삭제는 생성이 아니고 돌려줄 표현도 없으므로 204가 아니라 **본문 없는 200**이다 —
+     * 모든 응답이 ApiResponse 봉투를 쓰는데 이 하나만 본문이 없으면 웹의 공통 응답 처리가
+     * 예외를 하나 갖게 된다 (MeetingController.deleteMeeting과 같은 모양).
+     */
+    @Operation(
+            summary = "폼 삭제",
+            description =
+                    "소프트 삭제다 — 목록·상세·공개 링크·본인 응답 조회에서 빠지지만 데이터는 남고"
+                            + " POST /v1/forms/{formId}/restore로 되살릴 수 있다."
+                            + " **응답이 있어도 지워진다** — 응답 수를 보지 않는다."
+                            + " 그 대가로 그 폼에 응답한 사람의 '내 신청' 목록에서도 항목이 사라지고"
+                            + " 본인 응답 상세는 404가 된다(되살리면 그대로 돌아온다)."
+                            + " 지워진 폼은 없는 폼과 같은 404 NOT_FOUND로 응답하며 이는 공개 링크가"
+                            + " 존재 여부를 알려주지 않기 위해서다."
+                            + " 시스템 폼(sysYn = true)은 409 SYSTEM_FORM_IMMUTABLE,"
+                            + " 이미 지워진 폼은 409 ALREADY_DELETED, 없는 폼은 404 NOT_FOUND다."
+                            + " 응답·문항 이력·라벨 지정은 아무것도 지우지 않는다.")
+    @RequireAuthority(AuthorityCode.FORM_WRITE)
+    @DeleteMapping("/{formId}")
+    public ApiResponse<Void> deleteForm(@PathVariable Long formId) {
+        formService.deleteForm(formId);
+        return ApiResponse.successWithNoData();
+    }
+
+    /*
+     * 폼 되살리기 (#329). 삭제의 역이며 **이 경로가 있다는 것이 삭제를 여는 전제였다**
+     * (ssccops#261 결정 코멘트 — 되돌릴 수 없으면 하드 삭제와 다를 것이 없고, 그때는 신청자의
+     * 기록이 영영 닫힌다).
+     *
+     * DELETE의 역이라고 해서 PUT이나 PATCH로 두지 않고 행위 경로를 쓰는 것은 /status·/duplicate와
+     * 같은 판단이다 (AP-03). 새 자원이 생기지 않으므로 201이 아니라 200이다.
+     */
+    @Operation(
+            summary = "폼 되살리기",
+            description =
+                    "소프트 삭제된 폼을 목록으로 되돌린다. 접수 상태(formSttsCd)·접수 기간·문항·라벨·응답은"
+                            + " 지울 때 그대로 남아 있으므로 지우기 직전 모습으로 돌아온다 — 접수 중이던 폼은"
+                            + " 다시 접수 중이다. 그 폼에 응답한 사람의 '내 신청' 목록과 본인 응답 상세도"
+                            + " 함께 돌아온다."
+                            + " 지워지지 않은 폼은 409 NOT_DELETED, 없는 폼은 404 NOT_FOUND다."
+                            + " 요구 권한은 삭제와 같은 FORM_WRITE다 — 지울 수 있는 사람이 되돌릴 수 없으면"
+                            + " 삭제를 감당 가능하게 만드는 조건이 깨진다.")
+    @RequireAuthority(AuthorityCode.FORM_WRITE)
+    @PostMapping("/{formId}/restore")
+    public ApiResponse<Void> restoreForm(@PathVariable Long formId) {
+        formService.restoreForm(formId);
+        return ApiResponse.successWithNoData();
     }
 
     /*

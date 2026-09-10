@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.form.service;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.EnumMap;
@@ -90,6 +91,13 @@ public class FormServiceImpl implements FormService {
     private final FormReceiptPolicy formReceiptPolicy;
 
     /*
+     * 삭제 시각(del_dt)의 기준 (#329). Instant.now()를 직접 부르지 않는 것은 마감 경계 판정과
+     * 같은 이유다 — 테스트에서 고정할 수 없으면 "지운 뒤 목록에서 빠졌는가"를 시각과 무관하게
+     * 확인할 수 없다 (global/config/ClockConfig · OperationEntity.softDelete 선례).
+     */
+    private final Clock clock;
+
+    /*
      * 폼 목록. 쿼리는 폼 1 + 라벨 1 + 응답 집계 1로 3회다 — 폼마다 라벨을 조회하거나 응답을
      * 세면 그대로 N+1이 된다 (DB-13).
      *
@@ -109,9 +117,19 @@ public class FormServiceImpl implements FormService {
         // 접수 상태 미지정은 "전체"다. NULL 비교 대신 전체 상태 집합을 넘긴다 (FormRepository 주석)
         FormReceiptPolicy.ReceiptFilter filter = formReceiptPolicy.filterFor(receiptStatus);
 
-        List<FormEntity> forms =
+        return summariesOf(
                 formRepository.findAllForAdminList(
-                        filter.statuses(), labelId, filter.periodMatch().name(), filter.now());
+                        filter.statuses(), labelId, filter.periodMatch().name(), filter.now()));
+    }
+
+    /*
+     * 폼 목록 항목 조립 (#329에서 꺼냈다). 관리자 목록과 휴지통 목록이 같은 카드를 그리므로
+     * 조립을 두 벌로 두지 않는다 — 두 벌이 되면 한쪽에만 필드가 늘거나 응답 집계 기준이 갈린다
+     * (라벨 지정 규칙이 두 벌이 됐을 때 실제로 겪은 일이다, replaceLabels 주석).
+     *
+     * 질의는 어느 쪽이든 폼 1 + 라벨 1 + 집계 1로 3회다.
+     */
+    private List<FormSummaryResponse> summariesOf(List<FormEntity> forms) {
         if (forms.isEmpty()) {
             // IN () 은 DB에 따라 문법 오류이므로 뒤따르는 두 조회를 아예 보내지 않는다
             return List.of();
@@ -134,6 +152,22 @@ public class FormServiceImpl implements FormService {
                                                         FormResponseStatusSummary.empty())
                                                 .total()))
                 .toList();
+    }
+
+    /*
+     * 휴지통 목록 (#329 · GET /v1/forms/deleted). 지워진 폼만 지운 시각 역순으로 돌려준다.
+     *
+     * 라벨·응답 집계를 함께 싣는 것은 목록과 같은 조립을 쓰기 때문이며(질의 3회), 그중
+     * responseCount는 여기서 특히 값을 한다 — **되살릴지 정하는 사람이 알아야 하는 것이
+     * "이 폼에 신청이 몇 건 있었는가"다.** 지우는 순간 그 신청자들의 '내 신청'에서 항목이
+     * 사라졌으므로, 되살리기는 그 수만큼의 기록을 되돌리는 일이다.
+     *
+     * 접수 상태(receiptStatus)도 그대로 계산해 싣는다. 지웠다는 사실이 접수 상태를 바꾸지
+     * 않으므로(FormEntity.restore 주석) 되살렸을 때 어떤 폼이 돌아오는지를 미리 보여 준다.
+     */
+    @Override
+    public List<FormSummaryResponse> getDeletedForms() {
+        return summariesOf(formRepository.findAllByDeletedAtIsNotNullOrderByDeletedAtDescIdDesc());
     }
 
     /*
@@ -312,6 +346,60 @@ public class FormServiceImpl implements FormService {
     }
 
     /*
+     * 폼 소프트 삭제 (#329 · DELETE /v1/forms/{formId}).
+     *
+     * **응답 수를 보지 않는다** (ssccops#261 결정). 응답이 있으면 못 지우게 하는 안은 기각됐다 —
+     * 테스트 폼에 응답이 하나만 들어와도 영영 목록에 남고, 운영진이 보고한 증상이 정확히
+     * 그것이다. 그래서 여기에는 formResponseHistoryRepository 호출이 없으며, **없는 것이
+     * 의도다** — 나중에 "안전하게" 한 줄을 더하면 그 순간 기각된 안으로 돌아간다.
+     *
+     * 거절하는 것은 시스템 폼 하나뿐이고 판정은 #140이 미리 세워 둔 FormEntity.requireDeletable을
+     * 그대로 부른다(409 SYSTEM_FORM_IMMUTABLE). 그 폼은 sys_form_cd로 코드가 직접 가리키므로
+     * 지워지는 순간 그 코드를 읽는 기능이 통째로 무너진다.
+     *
+     * **조회는 findForm이 아니라 del_dt 필터가 없는 조회다.** 이미 지워진 폼을 404로 돌려주면
+     * 휴지통을 보고 있는 운영진에게 "없는 폼"과 "이미 지운 폼"이 같은 답이 된다
+     * (OperationErrorCode.ALREADY_DELETED가 #125에서 내린 것과 같은 판단).
+     *
+     * 응답·문항 이력·라벨 지정은 아무것도 지우지 않는다. 남겨 두는 것이 되살리기가 성립하는
+     * 조건이며, 그 되살리기가 이 삭제를 감당 가능하게 만드는 유일한 조건이다.
+     */
+    @Override
+    @Transactional
+    public void deleteForm(Long formId) {
+        FormEntity form = findFormIncludingDeleted(formId);
+        if (form.isDeleted()) {
+            throw new GeneralException(FormErrorCode.FORM_ALREADY_DELETED);
+        }
+        form.requireDeletable();
+        form.softDelete(Instant.now(clock));
+    }
+
+    /*
+     * 폼 되살리기 (#329 · POST /v1/forms/{formId}/restore).
+     *
+     * **이 경로가 없으면 삭제를 열 수 없었다.** 응답이 들어온 폼을 지우면 신청자의 '내 신청'에서
+     * 그 항목이 사라지고 ssccops#263이 연 "본인 응답 조회"가 그 폼에 대해서는 닫히는데, 되돌릴
+     * 수 있다는 것이 그 대가를 감당 가능하게 만드는 유일한 조건이다 (ssccops#261 결정 코멘트).
+     *
+     * 되살리기는 del_dt를 비우는 것뿐이다 — 접수 상태·기간·문항·응답은 지울 때 그대로 남아
+     * 있으므로 되돌릴 것이 없다. 근거는 FormEntity.restore 주석에 있다.
+     *
+     * 시스템 폼 잠금을 여기서 다시 보지 않는 것은 시스템 폼이 애초에 지워지지 않아 휴지통에
+     * 있을 수 없기 때문이다. 조건을 하나 더 두면 도달할 수 없는 분기가 생기고, 그 분기는
+     * 잠금이 풀리는 날 아무도 다시 보지 않는다.
+     */
+    @Override
+    @Transactional
+    public void restoreForm(Long formId) {
+        FormEntity form = findFormIncludingDeleted(formId);
+        if (!form.isDeleted()) {
+            throw new GeneralException(FormErrorCode.FORM_NOT_DELETED);
+        }
+        form.restore();
+    }
+
+    /*
      * 접수 상태 전이 (#33). 전이표·사전 검증은 FormEntity.changeStatus가 갖고 여기서는 조회와
      * 응답 조립만 한다 — 서비스에 if 분기로 옮겨 적으면 폼을 OPEN으로 만드는 생성 경로와
      * 규칙이 갈린다 (LY-02·AR-10).
@@ -360,7 +448,25 @@ public class FormServiceImpl implements FormService {
         form.changeReceiptPeriod(receiptBeginAt, receiptEndAt);
     }
 
+    /*
+     * 살아 있는 폼 조회 (#329부터 del_dt를 함께 본다). 지워진 폼은 없는 폼과 같은 404다 —
+     * 조건을 질의에 넣는 것은 조회한 뒤 isDeleted()로 거르면 그 분기 하나가 빠지는 것으로
+     * 지운 폼이 그 화면에서만 계속 보이기 때문이다.
+     */
     private FormEntity findForm(Long formId) {
+        return formRepository
+                .findByIdAndDeletedAtIsNull(formId)
+                .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+    }
+
+    /*
+     * 삭제·복구 경로 전용 조회 (#329). **지워진 폼도 찾는다.**
+     *
+     * findForm과 갈리는 유일한 자리이며, 그 이유는 이 두 경로만이 "없는 폼"과 "이미 지운 폼"을
+     * 구별해 줘야 하기 때문이다 — 조회 계열은 둘을 같은 404로 묶어 존재를 숨기지만, 삭제·복구는
+     * 휴지통을 이미 보고 있는 운영진이 부르므로 숨길 것이 없고 다음에 할 일이 갈린다.
+     */
+    private FormEntity findFormIncludingDeleted(Long formId) {
         return formRepository
                 .findById(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));

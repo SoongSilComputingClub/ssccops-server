@@ -707,9 +707,26 @@ public class FormResponseServiceImpl implements FormResponseService {
         return statusCode == null ? ResponseStatus.submittedOrLater() : EnumSet.of(statusCode);
     }
 
+    /*
+     * 폼 조회. **지워진 폼은 없는 폼과 같은 404다** (#329).
+     *
+     * 응답자 경로(공개 폼 조회·제출·초안·내 응답 목록·본인 응답 상세)와 운영자 경로(응답 목록·
+     * 상세·검토)가 전부 이 한 자리를 지나므로, 조건을 여기 한 번 넣는 것으로 지워진 폼의 응답이
+     * 어느 화면에도 나타나지 않는다 — 화면마다 isDeleted()를 물으면 한 자리만 빠져도 그 화면에서만
+     * 계속 보인다.
+     *
+     * **본인 응답 조회(.../responses/mine/...)가 404가 되는 것이 이 결정이 치르는 대가다**
+     * (ssccops#261). 폼이 없으면 제목·문항이 없어 그 화면 자체가 성립하지 않으므로 200으로
+     * 내려줄 내용이 없고, 409 FORM_NOT_ACCEPTING으로 나누면 그 번호의 폼이 있다는 것이 링크만
+     * 가진 사람에게 드러난다. 되살리면 그대로 돌아온다 — 응답을 지우지 않기 때문이다.
+     *
+     * 심사 경로(운영자용)도 함께 404가 되는 것은 의도한 것이다. 지워진 폼의 응답을 계속 심사할
+     * 수 있으면 "지웠다"의 뜻이 화면마다 달라지고, 승인이 후속 처리를 부르는 폼(기획안)에서는
+     * 지운 폼이 활동을 만들어 낸다.
+     */
     private FormEntity findForm(Long formId) {
         return formRepository
-                .findById(formId)
+                .findByIdAndDeletedAtIsNull(formId)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }
 

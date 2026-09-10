@@ -16,11 +16,14 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 public interface EventParticipantRepository extends JpaRepository<EventParticipantEntity, Long> {
 
     /*
-     * 폼 연결 변경 가드(D11 · EVENT_FORM_IN_USE)의 판단 근거. 상태를 가리지 않는다 —
-     * 취소(CANCELLED)된 참가자도 명단에 영구 보존되는 이력(D16)이라, 취소만 남았다고 연결을
-     * 옮겨도 되는 것은 아니다.
+     * "이 행사에 참가자가 있는가". 상태를 가리지 않는다 — 취소(CANCELLED)된 참가자도 명단에
+     * 영구 보존되는 이력(D16)이라, 취소만 남았다고 명단이 빈 것은 아니다.
      *
-     * 행사 삭제 가드(D9)도 이것을 썼지만 삭제 자체가 없어졌다(ssccops ADR-0014).
+     * **판단 근거로 쓰던 가드가 둘 다 사라졌다.** 행사 삭제 가드(D9)는 삭제 자체가
+     * 없어졌고(ssccops ADR-0014), 폼 연결 변경 가드(EVENT_FORM_IN_USE)는 #336에서 걷었다 —
+     * 지금 부르는 곳은 복제본에 명단이 딸려 오지 않는지 보는 테스트뿐이다. 남겨 두는 것은
+     * "명단이 비었는가"가 이 리포지토리가 답할 만한 질문이어서이지 **연결 변경을 다시 막으라는
+     * 뜻이 아니다** — 왜 걷었는지는 EventServiceImpl.updateEvent에 적혀 있다.
      */
     boolean existsByEvent(EventEntity event);
 

@@ -43,6 +43,7 @@ import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.event.service.EventService;
+import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
@@ -418,15 +419,20 @@ class EventControllerTest {
     }
 
     /*
-     * 신청(제출 이후 응답)이 발생하면 연결을 해제할 수 없다. 연결을 움직이지 않는 수정은
-     * 신청이 몇 건이든 통과해야 한다 — 그래야 신청이 시작된 행사도 오타를 고칠 수 있다.
+     * **신청이 있어도 연결은 바뀐다** (#336). 예전에는 아래 두 저장이 409 EVENT_FORM_IN_USE였고,
+     * 그 가드 때문에 폼을 잘못 연결한 행사는 신청이 한 건만 들어와도 고칠 길이 없었다. 연결을
+     * 움직이지 않는 저장이 통과하는 것은 종전 그대로다(linkChanged 검사).
+     *
+     * **응답은 옛 폼에 그대로 남는다** — 끊기는 것은 응답 자체가 아니라 그것을 이 행사의 참가자
+     * 등록 근거로 쓸 수 있는 길뿐이다(relinkedFormMakesOldResponseUnusableForRegistration이 본다).
      */
     @Test
-    void unlinkingFormAfterSubmittedResponseReturns409ButKeepingItPasses() throws Exception {
+    void formLinkChangesEvenAfterSubmittedResponse() throws Exception {
         Long formId = createOpenForm("신청 폼", null, null);
         Long eventId = createEventLinkedTo("RECRUIT", "신청 시작된 행사", formId);
         saveSubmittedResponse(formId, "20260021");
 
+        // 같은 formId를 되돌려 보내는 저장 — 신청이 몇 건이든 통과한다
         mockMvc.perform(
                         authorized(put(EVENTS + "/" + eventId), managerToken)
                                 .content(eventBody("RECRUIT", "제목만 고친 행사", formId, null, null)))
@@ -434,16 +440,30 @@ class EventControllerTest {
                 .andExpect(jsonPath("$.data.eventTtl").value("제목만 고친 행사"))
                 .andExpect(jsonPath("$.data.formId").value(formId));
 
+        Long newFormId = createOpenForm("갈아 끼운 폼", null, null);
+        mockMvc.perform(
+                        authorized(put(EVENTS + "/" + eventId), managerToken)
+                                .content(eventBody("RECRUIT", "폼을 옮긴 행사", newFormId, null, null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").value(newFormId));
+
+        // 해제도 같다
         mockMvc.perform(
                         authorized(put(EVENTS + "/" + eventId), managerToken)
                                 .content(eventBody("RECRUIT", "연결을 끊은 행사", null, null, null)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("EVENT_FORM_IN_USE"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").isEmpty());
+
+        FormEntity oldForm = formRepository.findById(formId).orElseThrow();
+        assertThat(formResponseHistoryRepository.existsByForm(oldForm)).isTrue();
     }
 
-    // 참가자(수동 등록 포함)가 있어도 연결은 움직일 수 없다 — 응답과 참가자 어느 쪽으로든 신청은 신청이다
+    /*
+     * 참가자가 있어도 연결은 움직이고 **명단은 그대로 남는다** — 참가자 행은 (event_id, mbr_id)로
+     * 행사에 달려 있어 폼 연결과 무관하다(D16 · 영구 보존).
+     */
     @Test
-    void unlinkingFormAfterParticipantReturns409() throws Exception {
+    void formLinkChangesAfterParticipantAndParticipantsRemain() throws Exception {
         Long formId = createOpenForm("참가자 있는 행사의 폼", null, null);
         Long eventId = createEventLinkedTo("EVENT", "참가자 있는 행사", formId);
         saveConfirmedParticipant(eventId, "20260031");
@@ -451,25 +471,44 @@ class EventControllerTest {
         mockMvc.perform(
                         authorized(put(EVENTS + "/" + eventId), managerToken)
                                 .content(eventBody("EVENT", "참가자 있는 행사", null, null, null)))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("EVENT_FORM_IN_USE"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").isEmpty());
+
+        EventEntity event = eventRepository.findById(eventId).orElseThrow();
+        assertThat(eventParticipantRepository.existsByEvent(event)).isTrue();
     }
 
     /*
-     * 임시저장(DRAFT) 응답만 있는 폼은 아직 신청이 없다 — 기준은 제출 이상
-     * (ResponseStatus.submittedOrLater)이다. 문항 식별자 보호(DRAFT 포함)와 기준이 다르다.
+     * **끊긴다는 것이 무엇인지**를 못 박는 테스트 (#336). 옛 폼의 수락된 응답으로는 더 이상 이
+     * 행사의 참가자를 올릴 수 없다 — findAcceptedApplication이 응답을 행사의 연결 폼으로 좁혀
+     * 찾으므로(findByIdAndForm) 없는 응답과 같은 404가 된다. 옮기기 전에는 같은 폼의 응답으로
+     * 등록되던 것을 함께 확인해, 404의 원인이 연결 변경이라는 것이 드러나게 한다.
      */
     @Test
-    void unlinkingFormWithOnlyDraftResponsesPasses() throws Exception {
-        Long formId = createOpenForm("초안만 있는 폼", null, null);
-        Long eventId = createEventLinkedTo("RECRUIT", "초안만 있는 행사", formId);
-        saveDraftResponse(formId, "20260041");
+    void relinkedFormMakesOldResponseUnusableForRegistration() throws Exception {
+        Long formId = createOpenForm("옛 신청 폼", null, null);
+        Long eventId = createEventLinkedTo("RECRUIT", "폼을 옮길 행사", formId);
+        Long acceptedBefore = saveAcceptedResponse(formId, "20260051");
+        Long acceptedAfter = saveAcceptedResponse(formId, "20260052");
 
+        registerFromResponse(eventId, acceptedBefore).andExpect(status().isCreated());
+
+        Long newFormId = createOpenForm("새 신청 폼", null, null);
         mockMvc.perform(
                         authorized(put(EVENTS + "/" + eventId), managerToken)
-                                .content(eventBody("RECRUIT", "연결을 끊은 행사", null, null, null)))
+                                .content(eventBody("RECRUIT", "폼을 옮긴 행사", newFormId, null, null)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.formId").isEmpty());
+                .andExpect(jsonPath("$.data.formId").value(newFormId));
+
+        registerFromResponse(eventId, acceptedAfter)
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("FORM_RESPONSE_NOT_FOUND"));
+
+        // 이미 올라간 참가자는 근거 응답이 남의 폼 응답이 된 뒤에도 명단에 그대로 있다
+        mockMvc.perform(authorized(get(EVENTS + "/" + eventId + "/participants"), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].formRspnsId").value(acceptedBefore));
     }
 
     @Test
@@ -713,6 +752,35 @@ class EventControllerTest {
                         responder,
                         ResponseContent.of(Map.of("q1", "홍길동")),
                         Instant.parse("2026-03-10T12:00:00Z")));
+    }
+
+    /*
+     * 심사가 끝난(ACCEPTED) 응답 하나. 참가자 등록의 근거가 되려면 여기까지 와 있어야 한다 —
+     * 폼 검토 API(#141)를 부르지 않는 것은 여기서 확인할 것이 연결 규칙이지 검토 규칙이 아니기
+     * 때문이다 (EventParticipationControllerTest.saveResponse와 같은 판단).
+     */
+    private Long saveAcceptedResponse(Long formId, String studentNumber) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        MemberEntity responder = saveMember(UUID.randomUUID(), studentNumber, "응답자");
+        FormResponseHistoryEntity response =
+                FormResponseHistoryEntity.createSubmitted(
+                        form,
+                        responder,
+                        ResponseContent.of(Map.of("q1", "홍길동")),
+                        Instant.parse("2026-03-10T12:00:00Z"));
+        response.review(ResponseStatus.ACCEPTED);
+        return formResponseHistoryRepository.saveAndFlush(response).getId();
+    }
+
+    private org.springframework.test.web.servlet.ResultActions registerFromResponse(
+            Long eventId, Long responseId) throws Exception {
+        return mockMvc.perform(
+                authorized(post(EVENTS + "/" + eventId + "/participants"), managerToken)
+                        .content(
+                                """
+                                {"formRspnsId": %d, "ptcpSttsCd": "CONFIRMED"}
+                                """
+                                        .formatted(responseId)));
     }
 
     private void saveDraftResponse(Long formId, String studentNumber) {

@@ -34,20 +34,14 @@ public enum EventErrorCode implements ErrorCode {
             HttpStatus.BAD_REQUEST, "INVALID_EVENT_STATUS_TRANSITION", "허용되지 않는 행사 상태 전이입니다."),
 
     /*
-     * 409 — 신청이 발생한 뒤 폼 연결을 바꾸거나 해제하려 할 때 (D11).
-     *
-     * 폼→행사 역참조 하나로 "이 응답이 어느 행사의 신청인가"가 확정되는 구조라, 제출 이후
-     * 응답(SUBMITTED·ACCEPTED·REJECTED)이나 참가자가 생긴 뒤 연결을 움직이면 이미 낸 신청의
-     * 소속이 조용히 바뀐다. 임시저장(DRAFT) 응답만 있는 폼은 아직 신청이 없으므로 바꿀 수 있다.
-     */
-    EVENT_FORM_IN_USE(
-            HttpStatus.CONFLICT, "EVENT_FORM_IN_USE", "신청이 발생한 행사의 폼 연결은 변경하거나 해제할 수 없습니다."),
-
-    /*
      * 409 — 다른 행사에 이미 전속된 폼을 연결하려 할 때 (D11 · uk_event_form).
      *
      * 선조회로 대부분 걸리지만 두 행사가 같은 폼을 동시에 연결하면 둘 다 선조회를 통과하므로
      * UNIQUE 위반도 같은 코드로 옮긴다 (#21 학번 중복과 같은 방식).
+     *
+     * **폼 연결에 남은 409는 이것 하나다.** 신청이 발생한 뒤의 연결 변경을 막던
+     * EVENT_FORM_IN_USE는 걷었다 (#336) — 왜 걷었는지는 EventServiceImpl.updateEvent의 연결
+     * 변경 자리에 적혀 있다. 되살릴 코드를 여기 다시 만들기 전에 그 주석을 읽어라.
      */
     FORM_ALREADY_LINKED(HttpStatus.CONFLICT, "FORM_ALREADY_LINKED", "이미 다른 행사에 연결된 폼입니다."),
 

@@ -252,7 +252,14 @@ public class PublicFormController {
                             + " 정보는 싣지 않는다(남의 응답 식별자이거나 요청 주체 본인의 값이다)."
                             + " 작성 중(DRAFT) 응답도 조회되고, 접수가 끝났거나 아직 열지 않은 폼도 409가 아니라 200이다"
                             + " — 자기가 낸 것을 확인하는 조회라 접수 가능 여부와 무관하며, 수정요청 사유를 읽는 시점은"
-                            + " 대개 접수가 끝난 뒤다. 없는 폼은 404 NOT_FOUND다.")
+                            + " 대개 접수가 끝난 뒤다. 없는 폼은 404 NOT_FOUND다."
+                            + " **응답 상태로 분기하지 않는다**(#326) — 수정요청을 받지 않은 SUBMITTED도,"
+                            + " 승인(ACCEPTED)·반려(REJECTED)로 종결된 응답도 내용(rspnsCn)과 이력이 그대로 온다."
+                            + " 종결은 수정을 막는 것이지 조회를 막는 것이 아니며, 반려 사유는 이력에만 있어 막으면"
+                            + " 반려된 사람이 사유를 읽을 길이 사라진다."
+                            + " **재제출 가능 여부(canResubmit)를 함께 싣는다** — 화면이 상태 코드를 다시 해석하지"
+                            + " 않게 하려는 것이며, 값은 제출 경로가 쓰는 판정 그대로다(수정요청을 받은 응답만 true)."
+                            + " 이 필드는 재제출을 여는 것이 아니다 — false인 응답에 재제출을 시도하면 제출 경로가 그대로 막는다.")
     @GetMapping("/{formId}/responses/mine/{formRspnsId}")
     public ApiResponse<MyFormResponseDetailResponse> getMyFormResponse(
             @PathVariable Long formId,

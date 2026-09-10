@@ -2,9 +2,7 @@ package org.sscc.ssccopsserver.domain.form.service;
 
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.util.Collection;
 import java.util.EnumMap;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +12,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
@@ -97,14 +96,22 @@ public class FormServiceImpl implements FormService {
      * 페이징을 두지 않은 것은 화면이 필터 결과를 카드로 한 번에 그리기 때문이다. 폼은 모집
      * 회차마다 늘어나는 데이터라 언젠가는 필요하지만, 지금 넣으면 프론트가 쓰지 않는 page·size
      * 계약이 먼저 굳는다.
+     *
+     * **거르는 축은 receiptStatus다** (#325 · ADR-0019). 배지가 그리는 파생값과 같은 값이라
+     * '기간 종료' 배지를 보고 그 값으로 거르면 그 폼이 결과에 있다. form_stts_cd로 거르던 동안은
+     * 기간이 끝난 폼(EXPIRED)이 저장값으로는 OPEN이라 '마감'에 걸리지 않았다.
+     *
+     * 조건을 여기서 조립하지 않고 FormReceiptPolicy.filterFor에서 받아 오는 것이 요점이다 —
+     * 판정식과 질의 조건이 서로 다른 파일에서 자라면 갈린다.
      */
     @Override
-    public List<FormSummaryResponse> getForms(FormStatus statusCode, Long labelId) {
-        // 상태 미지정은 "전체"다. NULL 비교 대신 전체 상태 집합을 넘긴다 (FormRepository 주석 참고)
-        Collection<FormStatus> statuses =
-                statusCode == null ? EnumSet.allOf(FormStatus.class) : EnumSet.of(statusCode);
+    public List<FormSummaryResponse> getForms(FormReceiptStatus receiptStatus, Long labelId) {
+        // 접수 상태 미지정은 "전체"다. NULL 비교 대신 전체 상태 집합을 넘긴다 (FormRepository 주석)
+        FormReceiptPolicy.ReceiptFilter filter = formReceiptPolicy.filterFor(receiptStatus);
 
-        List<FormEntity> forms = formRepository.findAllForAdminList(statuses, labelId);
+        List<FormEntity> forms =
+                formRepository.findAllForAdminList(
+                        filter.statuses(), labelId, filter.periodMatch().name(), filter.now());
         if (forms.isEmpty()) {
             // IN () 은 DB에 따라 문법 오류이므로 뒤따르는 두 조회를 아예 보내지 않는다
             return List.of();

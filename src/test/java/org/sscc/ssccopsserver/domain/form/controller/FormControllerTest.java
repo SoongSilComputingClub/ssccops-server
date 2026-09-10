@@ -369,9 +369,12 @@ class FormControllerTest {
     /*
      * 필터 네 조합을 한 테스트에서 확인한다. 조합마다 테스트를 나누면 같은 세 폼을 세 번
      * 만들게 되고, 정작 확인하려는 것("둘 다 주면 AND")은 조합 간 비교라 한 자리에 있어야 한다.
+     *
+     * 상태 축은 form_stts_cd가 아니라 접수 상태 파생값이다 (#325) — 기간을 두지 않은 OPEN 폼은
+     * '제한 없음'이라 ACCEPTING이다. 파생값별 판정 자체는 FormReceiptFilterEquivalenceTest가 본다.
      */
     @Test
-    void getFormsAppliesStatusAndLabelFiltersWithAnd() throws Exception {
+    void getFormsAppliesReceiptStatusAndLabelFiltersWithAnd() throws Exception {
         Long recruitLabelId = saveLabel("신규모집").getId();
         Long eventLabelId = saveLabel("행사").getId();
 
@@ -382,7 +385,7 @@ class FormControllerTest {
         mockMvc.perform(authenticatedGet("/v1/forms"))
                 .andExpect(jsonPath("$.data.length()").value(3));
 
-        mockMvc.perform(authenticatedGet("/v1/forms?statusCode=OPEN"))
+        mockMvc.perform(authenticatedGet("/v1/forms?receiptStatus=ACCEPTING"))
                 .andExpect(jsonPath("$.data.length()").value(2))
                 .andExpect(
                         jsonPath(
@@ -397,7 +400,9 @@ class FormControllerTest {
                                 Matchers.hasItems(
                                         draftRecruit.intValue(), openRecruit.intValue())));
 
-        mockMvc.perform(authenticatedGet("/v1/forms?statusCode=OPEN&labelId=" + recruitLabelId))
+        mockMvc.perform(
+                        authenticatedGet(
+                                "/v1/forms?receiptStatus=ACCEPTING&labelId=" + recruitLabelId))
                 .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].formId").value(openRecruit))
                 .andExpect(jsonPath("$.data[0].labels[0].lblNm").value("신규모집"));
@@ -1358,6 +1363,9 @@ class FormControllerTest {
      * 이 이슈에서 내린 결정이 응답으로 드러나는 자리다. 접수 기간이 끝나도 자동 마감 배치를
      * 두지 않으므로 form_stts_cd는 OPEN으로 남고, 목록·상세는 receiptStatus로 '기간 종료'를
      * 구분해 내린다 (웹 #9는 이 값으로 배지를 고른다).
+     *
+     * #325에서 **목록 필터도 그 축으로 옮겨졌다** — 그전에는 이 폼이 form_stts_cd = OPEN이라
+     * '마감' 필터에 걸리지 않았고, 그것이 운영진이 보고한 증상이다.
      */
     @Test
     void formWithExpiredReceiptPeriodStaysOpenButIsReportedExpired() throws Exception {
@@ -1373,10 +1381,15 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.data.formSttsCd").value("OPEN"))
                 .andExpect(jsonPath("$.data.receiptStatus").value("EXPIRED"));
 
-        mockMvc.perform(authenticatedGet("/v1/forms?statusCode=OPEN"))
+        mockMvc.perform(authenticatedGet("/v1/forms?receiptStatus=EXPIRED"))
+                .andExpect(jsonPath("$.data.length()").value(1))
                 .andExpect(jsonPath("$.data[0].formId").value(formId))
                 .andExpect(jsonPath("$.data[0].formSttsCd").value("OPEN"))
                 .andExpect(jsonPath("$.data[0].receiptStatus").value("EXPIRED"));
+
+        // 운영자가 직접 닫은 것이 아니므로 '마감'에는 걸리지 않는다
+        mockMvc.perform(authenticatedGet("/v1/forms?receiptStatus=CLOSED"))
+                .andExpect(jsonPath("$.data").isEmpty());
     }
 
     /* ── 인증 ─────────────────────────────────────────────── */

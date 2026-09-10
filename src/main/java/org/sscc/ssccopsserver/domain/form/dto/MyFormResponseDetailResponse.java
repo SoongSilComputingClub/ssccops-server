@@ -60,6 +60,26 @@ import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
  * 이고 뒤는 그 응답을 몇 번 냈는가다. 이력의 각 줄이 몇 회차에 대한 처리였는지 읽으려면
  * "지금 몇 회차인가"라는 기준점이 필요해 후자를 함께 싣는다.
  *
+ * ── 재제출 가능 여부(canResubmit)를 함께 싣는다 (#326) ──
+ * **화면이 상태 코드를 다시 해석하지 않게 하려는 것이다.** 지금 웹은
+ * `detail.rspnsSttsCd === "CHANGES_REQUESTED"`를 스스로 적어 "수정 요청을 받은 응답입니다"와
+ * "내가 낸 응답"을 가르고 재제출 폼을 여닫는데, 그 판정은 이미 서버가 갖고 있다
+ * (FormResponseHistoryEntity.isResubmission — 제출 회차를 올릴지와 접수 마감을 태울지가 같은
+ * 한 줄을 쓴다). 두 벌이 되면 상태 어휘가 늘 때 서버만 고쳐지고 화면은 옛 규칙으로 남는다.
+ *
+ * 그래서 이 필드는 새 규칙이 아니라 **그 한 줄을 그대로 옮겨 실은 것**이며, 여는 것도 아니다 —
+ * 재제출은 종전대로 수정요청을 받은 응답에서만 열린다(#177 · 운영진이 응답 수정 기능 자체를
+ * 기각했다, ssccops#263). 값이 false인 응답에 재제출을 시도하면 제출 경로가 그대로 막는다.
+ *
+ * ── 승인·반려로 종결된 응답도 조회된다 (#326 결정) ────────
+ * **종결은 수정을 막는 것이지 조회를 막는 것이 아니다.** ACCEPTED·REJECTED는 검토를 되돌릴 수
+ * 없다는 뜻이고(FormResponseHistoryEntity의 전이표), 그 근거는 "승인 직후 후속 처리가 시작되므로
+ * 번복하면 이미 만들어진 것들을 되돌릴 방법이 없다"이다 — 읽는 쪽에는 그런 되돌릴 것이 없다.
+ * 오히려 결과가 난 뒤가 자기가 무엇을 냈고 왜 그렇게 됐는지를 확인하는 시점이고, 반려 사유는
+ * 이력(reviewHistories)에만 있어 이 조회를 막으면 반려된 사람이 사유를 읽을 길이 사라진다.
+ * 상태로 분기하지 않는 것은 이 record가 처음부터 세운 규칙이기도 하다(작성 중 응답도 열린다).
+ * 종결된 응답은 canResubmit이 false라 화면은 내용과 이력만 그린다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record MyFormResponseDetailResponse(
@@ -67,6 +87,7 @@ public record MyFormResponseDetailResponse(
         int rspnsSeq,
         ResponseStatus rspnsSttsCd,
         int sbmsnSeq,
+        boolean canResubmit,
         OffsetDateTime sbmsnDt,
         OffsetDateTime mdfcnDt,
         ResponseContent rspnsCn,
@@ -83,6 +104,8 @@ public record MyFormResponseDetailResponse(
                 response.getResponseSequence(),
                 response.getStatus(),
                 response.getSubmissionSequence(),
+                // 재제출 판정은 엔티티가 갖는다 — 제출 경로가 쓰는 것과 같은 한 줄이다 (#326)
+                response.isResubmission(),
                 toOffsetDateTime(response.getSubmittedAt()),
                 toOffsetDateTime(response.getUpdatedAt()),
                 response.getContent(),

@@ -16,7 +16,19 @@ import lombok.Getter;
 @AllArgsConstructor
 public enum EventErrorCode implements ErrorCode {
 
-    // 404 — 행사 자체를 찾을 수 없을 때. DRAFT·ARCHIVED도 관리 API에서는 존재하므로 여기 걸리지 않는다
+    /*
+     * 404 — 행사 자체를 찾을 수 없을 때. DRAFT·ARCHIVED도 관리 API에서는 존재하므로 여기 걸리지 않는다.
+     *
+     * **소프트 삭제된 행사도 여기에 걸린다** (#347 · ADR-0020). 없는 행사와 같은 코드로 묶는 것은
+     * 공개 상세·공유 링크·이미지 리다이렉트가 링크만 가진 사람에게 답하는 자리이기 때문이다 —
+     * 코드를 나누면 그 번호의 행사가 존재했다가 지워졌다는 사실이 새어 나가고, event_id는 연속된
+     * 정수라 훑는 데 비용이 들지 않는다. 작성 중인 행사를 익명에게 없는 것으로 만드는 판단
+     * (findByIdAndDeletedAtIsNullAndStatus)의 연장이다. 운영 경로(상세·수정·명단)도 같은 404다 —
+     * 지워진 행사를 계속 고칠 수 있으면 "지웠다"의 뜻이 화면마다 달라진다.
+     *
+     * 반대로 삭제·복구 경로는 지워진 행사를 404가 아니라 409(EVENT_ALREADY_DELETED)로 끊는다 —
+     * 그쪽은 휴지통을 이미 보고 있는 운영진이 부르는 자리라 숨길 것이 없다.
+     */
     EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "EVENT_NOT_FOUND", "행사를 찾을 수 없습니다."),
 
     // 404 — 존재하지 않는 행사 분류. 행사 저장의 eventClsfCd와 분류 관리 경로가 같이 쓴다
@@ -42,6 +54,11 @@ public enum EventErrorCode implements ErrorCode {
      * **폼 연결에 남은 409는 이것 하나다.** 신청이 발생한 뒤의 연결 변경을 막던
      * EVENT_FORM_IN_USE는 걷었다 (#336) — 왜 걷었는지는 EventServiceImpl.updateEvent의 연결
      * 변경 자리에 적혀 있다. 되살릴 코드를 여기 다시 만들기 전에 그 주석을 읽어라.
+     *
+     * **복구(POST /restore)도 이 코드다** (#347). 지운 행사는 폼을 붙잡지 않으므로 그 사이 다른
+     * 행사가 같은 폼을 가져갈 수 있고, 그 뒤에 되살리면 폼 하나에 살아 있는 행사가 둘이 된다.
+     * 복구 전용 코드를 따로 두지 않은 것은 사실이 같기 때문이다 — "그 폼은 이미 다른 행사의
+     * 것이다". 선조회를 지나친 경합은 uk_event_form(부분 인덱스)이 잡아 같은 코드로 옮긴다.
      */
     FORM_ALREADY_LINKED(HttpStatus.CONFLICT, "FORM_ALREADY_LINKED", "이미 다른 행사에 연결된 폼입니다."),
 
@@ -180,6 +197,48 @@ public enum EventErrorCode implements ErrorCode {
             HttpStatus.BAD_GATEWAY, "EVENT_IMAGE_COPY_FAILED", "행사 이미지를 복사하지 못했습니다."),
 
     /*
+     * 409 — 학술 활동이 딸린 행사를 지우려 할 때 (#347 · ADR-0020).
+     *
+     * acdm_actv.event_id는 NOT NULL이라 행사가 사라지면 학술 프로그램이 고아가 된다. 소프트
+     * 삭제는 행을 남기므로 FK 자체는 깨지지 않지만, 목록·상세에서 없는 행사가 된 것을 학술
+     * 화면이 계속 가리키게 되어 "행사는 없는데 스터디는 있다"는 상태가 생긴다 — ADR-0014가
+     * 하드 삭제에서 500으로 발견한 것을 이번에는 409로 끊는다. 학술 쪽에서 프로그램을 정리한
+     * 뒤에야 지울 수 있다.
+     *
+     * 판정은 acdm_actv 행의 존재이지 행사의 분류나 제목이 아니다(AcademicEventLinkProvider) —
+     * 분류로 유추하면 학술 활동도 일반 분류 "EVENT"를 쓰므로 아무것도 걸리지 않는다.
+     *
+     * 400이 아니라 409인 것은 요청 자체는 올바르고 행사의 현재 관계가 거절 이유이기 때문이다
+     * (EVENT_CLASSIFICATION_IN_USE와 같은 판단).
+     */
+    EVENT_HAS_ACADEMIC_PROGRAM(
+            HttpStatus.CONFLICT, "EVENT_HAS_ACADEMIC_PROGRAM", "학술 활동에 연결된 행사는 삭제할 수 없습니다."),
+
+    /*
+     * 409 — 이미 지워진 행사를 다시 지우려 할 때 (#347).
+     *
+     * 조회 계열이 지워진 행사를 없는 행사와 같은 404 EVENT_NOT_FOUND로 묶는 것과 **일부러
+     * 갈린다.** 그쪽은 링크만 가진 사람에게 존재를 알려주지 않는 것이 목적이지만, 삭제·복구는
+     * 휴지통을 이미 보고 있는 운영진이 부르는 경로라 "없는 행사"와 "이미 지운 행사"를 구별해
+     * 줘야 다음에 할 일이 갈린다 — 앞은 목록을 새로고침할 일이고 뒤는 아무것도 할 일이 없다.
+     * 그래서 삭제 경로의 조회는 del_dt 필터가 없는 조회를 쓴다.
+     *
+     * **코드 문자열이 열거형 이름과 다른 것은 의도다.** 폼(FORM_ALREADY_DELETED)·운영 도메인이
+     * 이미 같은 상황에 "ALREADY_DELETED"를 쓰고 있어, 여기서 이름을 새로 지으면 화면이 "이미
+     * 삭제됨"이라는 한 가지 사실에 도메인마다 다른 분기를 갖게 된다.
+     */
+    EVENT_ALREADY_DELETED(HttpStatus.CONFLICT, "ALREADY_DELETED", "이미 삭제된 행사입니다."),
+
+    /*
+     * 409 — 지워지지 않은 행사를 되살리려 할 때 (#347).
+     *
+     * EVENT_ALREADY_DELETED의 대칭이다. 둘 다 조용히 통과시키면(멱등) 두 운영진이 같은 휴지통을
+     * 열고 있을 때 뒤에 누른 쪽이 자기가 되살렸다고 믿는데 실제로는 아무 일도 하지 않은 상태가
+     * 되고, 그 차이는 화면에 드러나지 않는다. 코드 문자열은 폼(FORM_NOT_DELETED)과 같다.
+     */
+    EVENT_NOT_DELETED(HttpStatus.CONFLICT, "NOT_DELETED", "삭제되지 않은 행사입니다."),
+
+    /*
      * 409 — 게시 전(DRAFT)이 아닌 행사에 공유 링크를 발급하려 할 때 (ssccops#312 · ADR-0016).
      *
      * **게시된 행사에는 발급하지 않는다.** 이미 익명이 여는 주소가 있어(`/events/{eventId}`)
@@ -188,8 +247,9 @@ public enum EventErrorCode implements ErrorCode {
      * 된다. 거절이 아무 수단도 빼앗지 않는다는 것이 근거의 나머지 절반이다: 게시된 행사를
      * 공유할 길은 이미 있고 그쪽이 더 낫다.
      *
-     * **보관된(ARCHIVED) 행사에도 발급하지 않는다.** 삭제가 없어진 뒤로(ADR-0014) 보관은 잘못
-     * 만든 행사를 치우는 유일한 길이라, 치운 것을 익명에게 다시 여는 것은 새로 만드는 노출이다.
+     * **보관된(ARCHIVED) 행사에도 발급하지 않는다.** 보관은 끝난 행사를 공개에서 내리는 자리라
+     * (ADR-0020 — 잘못 만든 것을 치우는 자리는 삭제로 다시 갈라졌다), 내린 것을 익명에게 다시
+     * 여는 것은 새로 만드는 노출이다. 지워진 행사는 발급 전 조회에서 이미 404다.
      *
      * 400이 아니라 409인 것은 요청 형식이 아니라 대상의 현재 상태가 문제라서다 — 게시를
      * 철회하면(RETRACT) 같은 요청이 통과한다 (APPLICATION_NOT_ACCEPTED와 같은 판단).

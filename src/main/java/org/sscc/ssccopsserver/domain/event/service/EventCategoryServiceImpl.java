@@ -51,11 +51,15 @@ public class EventCategoryServiceImpl implements EventCategoryService {
      *
      * 행사가 없는 분류는 집계 결과에 아예 나오지 않으므로 여기서 0으로 채운다 — 방금 만든
      * 분류가 목록에서 빠지면 만들자마자 화면에서 사라진 것으로 보인다.
+     *
+     * **소프트 삭제된 행사(#347)도 센다.** 이 숫자는 삭제 가드(deleteCategory)가 보는 것과 같아야
+     * 한다 — 화면은 0건인데 지우면 409가 나는 상태를 만들지 않는다. 가드가 지운 행사를 세는 이유는
+     * EventRepository.existsByClassificationIncludingDeleted에 있다(FK · 500).
      */
     @Override
     public List<EventCategoryResponse> getCategories() {
         Map<String, Long> eventCountByCode =
-                eventRepository.countEventsGroupedByClassification().stream()
+                eventRepository.countEventsGroupedByClassificationIncludingDeleted().stream()
                         .collect(
                                 Collectors.toMap(
                                         EventClassificationUsageCount::getEventClsfCd,
@@ -125,7 +129,8 @@ public class EventCategoryServiceImpl implements EventCategoryService {
 
         // 관리 화면이 저장 직후에도 "사용 중 N건"을 그대로 보여주므로 건수를 다시 실어 준다
         return EventCategoryResponse.of(
-                classification, eventRepository.countByClassification(classification));
+                classification,
+                eventRepository.countByClassificationIncludingDeleted(classification));
     }
 
     /*
@@ -134,12 +139,17 @@ public class EventCategoryServiceImpl implements EventCategoryService {
      * 소속 행사를 함께 지우거나 다른 분류로 옮기지 않는 것은 의도된 것이다 — 그렇게 두면 삭제
      * 한 번으로 행사 목록의 필터가 조용히 바뀐다. 행사를 먼저 옮기게 해서 무엇이 어디로 가는지
      * 화면에서 보이게 한다 (ROLE_CLASSIFICATION_IN_USE와 같은 태도).
+     *
+     * **휴지통의 행사(#347)도 "사용 중"이다.** event.event_clsf_cd는 NOT NULL FK라 지운 행사도
+     * 분류를 물리적으로 붙잡고 있고, 그것을 빼고 통과시키면 DELETE가 FK 위반 500이 된다 —
+     * ADR-0014가 하드 삭제에서 발견한 것과 같은 경로다. 휴지통을 비우는 길이 없으므로 운영진은
+     * 그 행사를 되살려 분류를 옮긴 뒤 분류를 지운다.
      */
     @Override
     @Transactional
     public void deleteCategory(String classificationCode) {
         EventClassificationEntity classification = findClassification(classificationCode);
-        if (eventRepository.existsByClassification(classification)) {
+        if (eventRepository.existsByClassificationIncludingDeleted(classification)) {
             throw new GeneralException(EventErrorCode.EVENT_CLASSIFICATION_IN_USE);
         }
         eventClassificationRepository.delete(classification);

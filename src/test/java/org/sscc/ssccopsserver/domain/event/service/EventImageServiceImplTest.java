@@ -47,7 +47,7 @@ class EventImageServiceImplTest {
      */
     @Test
     void unknownFileExtensionNeverReachesTheSigner() {
-        when(eventRepository.existsById(1L)).thenReturn(true);
+        when(eventRepository.existsByIdAndDeletedAtIsNull(1L)).thenReturn(true);
         EventImageServiceImpl service = service(new AppPublicBaseUrl("https://api.sscc.club"));
 
         assertThatThrownBy(

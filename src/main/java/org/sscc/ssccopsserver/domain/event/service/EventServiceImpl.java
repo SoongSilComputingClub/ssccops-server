@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.event.service;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -47,10 +48,17 @@ import lombok.RequiredArgsConstructor;
  * FORM_ALREADY_LINKED). 신청이 발생한 연결은 움직이지 못하게 하던 가드(EVENT_FORM_IN_USE)는
  * 걷었고 그 코드도 함께 사라졌다 (#336) — 근거는 updateEvent의 연결 변경 자리에 적혀 있다.
  *
- * **행사를 지우는 경로는 없다** (ssccops ADR-0014). 예전에는 참가자가 없을 때만 하드 삭제를
- * 허용했는데(D9), 그 규칙이 지키려던 것("행사를 지우면 명단이 갈 곳을 잃는다" · D16)을
- * 보관(ARCHIVE)이 이미 지킨다 — 지우지 않으면 명단도 R2 오브젝트도 갈 곳을 잃지 않는다.
- * 그래서 D9와 EVENT_HAS_PARTICIPANT가 함께 사라졌다.
+ * **삭제는 소프트 삭제다** (#347 · ssccops ADR-0020, ADR-0014를 뒤집는다). 예전에는 참가자가
+ * 없을 때만 하드 삭제를 허용했고(D9 · EVENT_HAS_PARTICIPANT), ADR-0014가 그 경로를 통째로
+ * 걷어내 보관(ARCHIVE) 하나로 일원화했다 — 하드 삭제가 학술 활동이 딸린 행사에서 FK 위반
+ * 500이 났고 R2 오브젝트가 고아가 됐기 때문이다. 그 뒤 운영진이 "잘못 만든 행사를 치우고
+ * 싶다"를 다시 요청했고(보관은 끝난 행사를 내리는 자리지 실수를 치우는 자리가 아니다), 폼이
+ * 같은 문제를 소프트 삭제(#329)로 풀어 형판이 검증됐다. 그래서 DELETE가 소프트로 돌아왔다 —
+ * 행이 남으므로 학술 FK도 R2 오브젝트도 갈 곳을 잃지 않고, D9는 되살리지 않는다(참가자가
+ * 있어도 지운다). 학술 활동이 딸린 행사만 409로 막는다 (deleteEvent 주석).
+ *
+ * **조회는 전부 살아 있는 행사만 본다** — findEvent가 findByIdAndDeletedAtIsNull이고 목록 질의는
+ * where에 조건을 갖는다. 예외는 삭제·복구 경로의 findEventIncludingDeleted 하나다.
  *
  * 모집 판정(receiptStatus)은 EventReceiptPolicy(그 안에서 FormReceiptPolicy)를, 진행 단계
  * (eventPhase)는 EventPhasePolicy를 호출만 한다 — 판정을 여기 복제하면 폼 화면과 행사 화면이
@@ -94,6 +102,16 @@ public class EventServiceImpl implements EventService {
     private final FileCopier fileCopier;
 
     /*
+     * 삭제 가드(#347)가 "이 행사에 학술 활동이 딸려 있는가"를 묻는 포트. 공개 조회(#187)가 이미
+     * 같은 포트로 학술 event를 판별하고 있어 새로 선언하지 않았다 — 학술 저장소를 직접 부르면
+     * event → academicprogram → event 순환이 된다(DomainCycleTest · AcademicEventLinkProvider 주석).
+     */
+    private final AcademicEventLinkProvider academicEventLinkProvider;
+
+    /** 삭제 시각(del_dt)의 출처. Instant.now()를 직접 부르면 테스트에서 고정할 수 없다 (ClockConfig) */
+    private final Clock clock;
+
+    /*
      * 행사 목록. 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1로 2회다 — 행사마다
      * 참가자를 세면 그대로 N+1이 된다 (DB-13, 폼 목록의 3회 선례).
      *
@@ -105,7 +123,14 @@ public class EventServiceImpl implements EventService {
         Collection<EventStatus> statuses =
                 statusCode == null ? EnumSet.allOf(EventStatus.class) : EnumSet.of(statusCode);
 
-        List<EventEntity> events = eventRepository.findAllForList(statuses, classificationCode);
+        return summariesOf(eventRepository.findAllForList(statuses, classificationCode));
+    }
+
+    /*
+     * 목록 항목 조립. 운영 목록과 휴지통(#347)이 같은 것을 쓴다 — 두 화면이 같은 카드를 그리므로
+     * 집계 규칙(CONFIRMED만 센다)이 두 벌이 되면 안 된다.
+     */
+    private List<EventSummaryResponse> summariesOf(List<EventEntity> events) {
         if (events.isEmpty()) {
             // IN () 은 DB에 따라 문법 오류이므로 뒤따르는 집계를 아예 보내지 않는다
             return List.of();
@@ -148,7 +173,7 @@ public class EventServiceImpl implements EventService {
         requireContentWithinLimit(request.mtxtCn());
         EventClassificationEntity classification = findClassification(request.eventClsfCd());
         FormEntity form = resolveForm(request.formId());
-        if (form != null && eventRepository.existsByForm(form)) {
+        if (form != null && eventRepository.existsByFormAndDeletedAtIsNull(form)) {
             throw new GeneralException(EventErrorCode.FORM_ALREADY_LINKED);
         }
 
@@ -225,7 +250,9 @@ public class EventServiceImpl implements EventService {
              * 대신 다시 잃는 것은 잘못 연결한 폼을 고칠 유일한 길이다.
              */
             nextForm = resolveForm(request.formId());
-            if (nextForm != null && eventRepository.existsByFormAndIdNot(nextForm, event.getId())) {
+            if (nextForm != null
+                    && eventRepository.existsByFormAndIdNotAndDeletedAtIsNull(
+                            nextForm, event.getId())) {
                 throw new GeneralException(EventErrorCode.FORM_ALREADY_LINKED);
             }
         }
@@ -369,6 +396,114 @@ public class EventServiceImpl implements EventService {
     }
 
     /*
+     * 행사 소프트 삭제 (#347 · ADR-0020 · DELETE /v1/events/{eventId}).
+     *
+     * **참가자 수를 보지 않는다** (ADR-0020 규칙 · 폼 #329와 같은 판단). 참가자가 있으면 못
+     * 지우게 하던 D9는 ADR-0014에서 폐기됐고 되살리지 않는다 — 실수로 만든 행사에 신청이 하나만
+     * 들어와도 영영 목록에 남는 것이 고치려는 증상이다. 그래서 여기에는 eventParticipantRepository
+     * 호출이 없으며, **없는 것이 의도다.** 대가는 참가자의 '내 신청'에서 그 항목이 빠지는 것이고
+     * (지운 행사의 신청은 '내 폼 응답'으로 옮겨 간다 — FormResponseHistoryRepository 주석),
+     * 되살리면 그대로 돌아온다.
+     *
+     * **거절하는 것은 학술 활동이 딸린 행사 하나뿐이다** (409 EVENT_HAS_ACADEMIC_PROGRAM).
+     * acdm_actv.event_id가 NOT NULL이라 그 행사가 목록·상세에서 사라지면 학술 프로그램이 없는
+     * 행사를 가리키게 된다 — ADR-0014가 하드 삭제에서 500으로 발견한 경로를 이번에는 여기서
+     * 끊는다. 판정을 상태·분류에서 유추하지 않고 acdm_actv 행의 존재로 묻는 것은 학술 활동도
+     * 일반 분류를 쓰기 때문이다. 이 판정이 서비스에 있고 엔티티의 requireDeletable이 아닌 것은
+     * 엔티티가 학술 연결을 조회할 수 없어서다(폼 전속 선조회와 같은 이유).
+     *
+     * **R2 이미지는 지우지 않는다.** 되돌릴 수 있어야 하므로 보관(REPUBLISH)과 같은 판단이다 —
+     * 지우면 되살린 행사의 본문 이미지가 통째로 깨진다. 그래서 fileEraser 호출이 없다.
+     *
+     * **조회는 findEvent가 아니라 del_dt 필터가 없는 조회다.** 이미 지워진 행사를 404로 돌려주면
+     * 휴지통을 보고 있는 운영진에게 "없는 행사"와 "이미 지운 행사"가 같은 답이 된다
+     * (FormServiceImpl.deleteForm과 같은 판단). 게시 상태는 건드리지 않는다 — 지운 뒤 공개에서
+     * 사라지는 것은 조회가 del_dt를 보기 때문이다.
+     *
+     * 지운 행사는 폼을 놓는다 — 정확히는 uk_event_form(부분 인덱스 · V8)과 전속 선조회가 살아
+     * 있는 행사만 세므로, 여기서 연결을 풀지 않아도 다른 행사가 그 폼을 쓸 수 있다. 연결을 실제로
+     * 풀지 않는 것은 되살릴 때 그대로 돌아와야 하기 때문이다(restoreEvent).
+     */
+    @Override
+    @Transactional
+    public void deleteEvent(Long eventId) {
+        EventEntity event = findEventIncludingDeleted(eventId);
+        if (event.isDeleted()) {
+            throw new GeneralException(EventErrorCode.EVENT_ALREADY_DELETED);
+        }
+        if (academicEventLinkProvider.academicEventIdsAmong(List.of(eventId)).contains(eventId)) {
+            throw new GeneralException(EventErrorCode.EVENT_HAS_ACADEMIC_PROGRAM);
+        }
+        event.softDelete(Instant.now(clock));
+    }
+
+    /*
+     * 행사 되살리기 (#347 · POST /v1/events/{eventId}/restore).
+     *
+     * 되살리기는 del_dt를 비우는 것뿐이다 — 게시 상태·폼 연결·일시·본문·참가자·이미지는 지울 때
+     * 그대로 남아 있으므로 되돌릴 것이 없다 (EventEntity.restore 주석).
+     *
+     * ── 폼이 그새 다른 행사에 붙었으면 복구를 막는다 (409 FORM_ALREADY_LINKED) ──
+     *
+     * 지운 행사는 폼을 붙잡지 않으므로(uk_event_form이 살아 있는 행사끼리만 걸린다) 지워진 동안
+     * 다른 행사가 같은 폼을 연결할 수 있고, 그 뒤에 되살리면 폼 하나에 살아 있는 행사가 둘이 된다.
+     * 두 길을 봤다.
+     *
+     *   · **연결을 풀고 되살린다** — 기각. 되살린 행사가 지우기 전과 다른 것(폼 없는 공지)이 되는데
+     *     응답에는 그 사실이 실리지 않아 운영진이 알 수 없고, "되살리면 지우기 전 상태 그대로다"
+     *     (ADR-0020 규칙)가 조용히 깨진다. 무엇보다 그 폼의 응답을 어느 행사의 신청으로 볼지가
+     *     서버가 임의로 정한 결과가 된다.
+     *   · **막는다** ← 채택. 운영진이 그 폼을 새 행사에서 풀거나 새 행사를 지운 뒤 다시 되살리면
+     *     된다 — 무엇을 해야 하는지가 오류 코드에 그대로 드러나고, 어느 쪽 행사가 폼을 가질지를
+     *     사람이 정한다.
+     *
+     * 어느 쪽이든 두 행사가 한 폼을 조용히 공유하게 두지는 않는다. 코드를 FORM_ALREADY_LINKED로
+     * 두는 것은 사실이 생성·수정의 그것과 같기 때문이다("그 폼은 이미 다른 행사의 것이다").
+     * 선조회를 나란히 지나친 경합은 flush에서 uk_event_form 위반으로 드러나 같은 코드로 옮긴다 —
+     * 생성·수정과 같은 두 겹이다.
+     *
+     * 학술 가드를 여기서 다시 보지 않는 것은 학술 활동이 딸린 행사가 애초에 지워지지 않아 휴지통에
+     * 있을 수 없기 때문이다. 조건을 하나 더 두면 도달할 수 없는 분기가 생긴다.
+     */
+    @Override
+    @Transactional
+    public void restoreEvent(Long eventId) {
+        EventEntity event = findEventIncludingDeleted(eventId);
+        if (!event.isDeleted()) {
+            throw new GeneralException(EventErrorCode.EVENT_NOT_DELETED);
+        }
+        FormEntity form = event.getForm();
+        if (form != null
+                && eventRepository.existsByFormAndIdNotAndDeletedAtIsNull(form, event.getId())) {
+            throw new GeneralException(EventErrorCode.FORM_ALREADY_LINKED);
+        }
+        event.restore();
+
+        try {
+            eventRepository.flush();
+        } catch (DataIntegrityViolationException ex) {
+            // 선조회를 나란히 통과한 동시 연결은 uk_event_form 위반으로만 드러난다 — 같은 409로 옮긴다
+            throw new GeneralException(EventErrorCode.FORM_ALREADY_LINKED);
+        }
+    }
+
+    /*
+     * 휴지통 목록 (#347 · GET /v1/events/deleted). 지워진 행사만 지운 시각 역순으로 돌려준다.
+     *
+     * 확정 참가자 집계를 목록과 같이 싣는 것은 같은 조립을 쓰기 때문이며, 그중 confirmedCount는
+     * 여기서 특히 값을 한다 — **되살릴지 정하는 사람이 알아야 하는 것이 "이 행사에 참가자가 몇
+     * 명이었는가"다.** 지우는 순간 그 사람들의 '내 신청'에서 항목이 사라졌으므로, 되살리기는 그
+     * 수만큼의 기록을 되돌리는 일이다 (FormServiceImpl.getDeletedForms의 responseCount와 같은 자리).
+     *
+     * 게시 상태·eventPhase·receiptStatus도 그대로 계산해 싣는다. 지웠다는 사실이 그 값들을
+     * 바꾸지 않으므로 되살렸을 때 어떤 행사가 돌아오는지를 미리 보여 준다.
+     */
+    @Override
+    public List<EventSummaryResponse> getDeletedEvents() {
+        return summariesOf(eventRepository.findAllByDeletedAtIsNotNullOrderByDeletedAtDescIdDesc());
+    }
+
+    /*
      * 공유 링크 발급 전 가드 (ssccops#312 · ADR-0016). 인터페이스 주석에 근거가 있다.
      *
      * 발급 자체는 여기서 하지 않는다 — 토큰을 만드는 것은 `ShareLinkService`의 일이고, 행사
@@ -418,7 +553,25 @@ public class EventServiceImpl implements EventService {
 
     // ------------------------------------------------------------------ 헬퍼
 
+    /*
+     * 살아 있는 행사 조회 (#347부터 del_dt를 함께 본다). 지워진 행사는 없는 행사와 같은 404다 —
+     * 조건을 질의에 넣는 것은 조회한 뒤 isDeleted()로 거르면 그 분기 하나가 빠지는 것으로
+     * 지운 행사가 그 화면에서만 계속 보이기 때문이다.
+     */
     private EventEntity findEvent(Long eventId) {
+        return eventRepository
+                .findByIdAndDeletedAtIsNull(eventId)
+                .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));
+    }
+
+    /*
+     * 삭제·복구 경로 전용 조회 (#347). **지워진 행사도 찾는다.**
+     *
+     * findEvent와 갈리는 유일한 자리이며, 그 이유는 이 두 경로만이 "없는 행사"와 "이미 지운
+     * 행사"를 구별해 줘야 하기 때문이다 — 조회 계열은 둘을 같은 404로 묶어 존재를 숨기지만,
+     * 삭제·복구는 휴지통을 이미 보고 있는 운영진이 부르므로 숨길 것이 없고 다음에 할 일이 갈린다.
+     */
+    private EventEntity findEventIncludingDeleted(Long eventId) {
         return eventRepository
                 .findById(eventId)
                 .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));

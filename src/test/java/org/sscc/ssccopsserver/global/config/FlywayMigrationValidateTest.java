@@ -166,6 +166,39 @@ class FlywayMigrationValidateTest {
     }
 
     /*
+     * V8이 폼 전속 UNIQUE를 **살아 있는 행사끼리만** 걸도록 바꿨는지 본다 (#347 · ADR-0020).
+     *
+     * 이것을 여기서 보는 이유는 H2가 부분 인덱스를 지원하지 않아 일반 테스트가 이 규칙을 DB로는
+     * 확인할 수 없기 때문이다 — 엔티티의 @UniqueConstraint를 걷었으므로, 이 인덱스가 실제로 이
+     * 모양이 아니면 PostgreSQL에서 동시 연결을 막는 최종 방어선이 조용히 사라진다. 옛 제약이
+     * 남아 있어도 안 된다: 그러면 지운 행사의 폼을 다른 행사가 못 쓴다.
+     */
+    @Test
+    void formExclusivityIsAPartialUniqueIndexOnLiveEvents() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT count(*) FROM information_schema.table_constraints"
+                                        + " WHERE table_schema = 'public' AND table_name = 'event'"
+                                        + " AND constraint_name = 'uk_event_form'",
+                                Integer.class))
+                .as("조건 없는 UNIQUE 제약은 V8이 지웠어야 한다")
+                .isZero();
+
+        String indexDef =
+                jdbc.queryForObject(
+                        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public'"
+                                + " AND tablename = 'event' AND indexname = 'uk_event_form'",
+                        String.class);
+        assertThat(indexDef)
+                .as("살아 있는 행사끼리만 거는 부분 유니크 인덱스여야 한다")
+                .contains("UNIQUE INDEX")
+                .contains("(form_id)")
+                .contains("WHERE (del_dt IS NULL)");
+    }
+
+    /*
      * 시드가 마이그레이션으로 들어왔는지 본다. 옛 `data.sql`은 매 기동 돌았지만 V3는 한 번만
      * 도므로, 빠지면 기준 코드가 통째로 없는 DB가 만들어진다 — 회원가입부터 500이 난다.
      */

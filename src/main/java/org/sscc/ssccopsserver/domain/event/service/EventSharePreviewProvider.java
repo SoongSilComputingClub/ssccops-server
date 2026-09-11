@@ -64,10 +64,14 @@ public class EventSharePreviewProvider implements SharePreviewProvider {
     private static final int SUMMARY_LIMIT = 500;
 
     /*
-     * 카드가 열리는 상태. **보관(ARCHIVED)이 빠져 있는 것이 요점이다** — 삭제가 없어진 뒤로
-     * (ADR-0014) 보관은 잘못 만든 행사를 치우는 유일한 길이고, 치운 행사의 제목이 링크로 계속
-     * 열리면 "내렸다"는 화면의 표시가 사실이 아니게 된다(삭제된 운영 건을 없는 것으로 답하는
-     * `SubWorkSharePreviewProvider`와 같은 자리). 공개 상세도 보관된 행사를 404로 답한다.
+     * 카드가 열리는 상태. **보관(ARCHIVED)이 빠져 있는 것이 요점이다** — 보관은 끝난 행사를
+     * 공개에서 내리는 자리라(ADR-0020), 내린 행사의 제목이 링크로 계속 열리면 "내렸다"는 화면의
+     * 표시가 사실이 아니게 된다. 공개 상세도 보관된 행사를 404로 답한다.
+     *
+     * **지워진 행사(#347)는 상태와 무관하게 열리지 않는다** — 조회 자체가 del_dt를 본다
+     * (findByIdAndDeletedAtIsNullAndStatusIn). 삭제된 운영 건을 없는 것으로 답하는
+     * `SubWorkSharePreviewProvider`와 같은 자리이며, 지운 행사가 DRAFT였다고 카드가 계속 열리면
+     * 익명에게 답하는 두 층(공개 상세·공유 링크)이 서로 다른 말을 한다.
      *
      * 게시(PUBLISHED)가 들어 있는 것은 반대 방향의 같은 이유다. 발급은 DRAFT에서만 되지만
      * 그 뒤에 게시되는 것이 정상 경로이므로, 게시되는 순간 카드가 깨지면 **볼 수 있게 된
@@ -86,7 +90,7 @@ public class EventSharePreviewProvider implements SharePreviewProvider {
     @Override
     public Optional<SharePreview> preview(Long targetId) {
         return eventRepository
-                .findByIdAndStatusIn(targetId, READABLE_STATUSES)
+                .findByIdAndDeletedAtIsNullAndStatusIn(targetId, READABLE_STATUSES)
                 .map(event -> new SharePreview(event.getTitle(), summaryOf(event)));
     }
 

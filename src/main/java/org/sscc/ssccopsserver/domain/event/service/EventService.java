@@ -25,6 +25,23 @@ public interface EventService {
     EventDuplicateResponse duplicateEvent(Long eventId, MemberEntity creator);
 
     /*
+     * 소프트 삭제 (#347 · ADR-0020 · DELETE /v1/events/{eventId}). 없는 행사는 404, 이미 지운
+     * 행사는 409 ALREADY_DELETED, 학술 활동이 딸린 행사는 409 EVENT_HAS_ACADEMIC_PROGRAM이다.
+     * 참가자 수는 보지 않는다.
+     */
+    void deleteEvent(Long eventId);
+
+    /*
+     * 되살리기 (#347 · POST /v1/events/{eventId}/restore). 지우기 직전 상태 그대로 돌아온다.
+     * 지워지지 않은 행사는 409 NOT_DELETED, 지워진 동안 그 폼을 다른 행사가 가져갔으면
+     * 409 FORM_ALREADY_LINKED다.
+     */
+    void restoreEvent(Long eventId);
+
+    /** 휴지통 목록 (#347 · GET /v1/events/deleted). 지운 시각 역순이다 */
+    List<EventSummaryResponse> getDeletedEvents();
+
+    /*
      * 공유 링크 발급 전 가드 (ssccops#312). 없는 행사는 404 EVENT_NOT_FOUND, 게시·보관된
      * 행사는 409 EVENT_SHARE_NOT_DRAFT다.
      *

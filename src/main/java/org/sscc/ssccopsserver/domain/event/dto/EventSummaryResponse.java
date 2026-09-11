@@ -22,6 +22,12 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
  * confirmedCount는 확정(CONFIRMED) 참가자만 센다. 화면의 "확정 N/정원(ptcpLmtCnt)"이 이 값으로
  * 그려지므로 대기·취소를 세면 정원 판단이 부푼다.
  *
+ * delDt(#347)는 **살아 있는 행사에서 언제나 null이고 휴지통 목록(GET /v1/events/deleted)에서만
+ * 값이 있다.** 지운 행사는 목록 질의에서 통째로 빠지므로 두 목록이 한 화면에 섞이지 않으며,
+ * 그래서 이 필드 하나로 두 목록이 같은 카드를 그린다 — 휴지통 전용 DTO를 따로 만들면 행사
+ * 목록에 필드가 늘 때마다 한쪽만 늘어 두 화면이 갈린다(FormSummaryResponse.delDt와 같은 판단).
+ * 빼지 않고 null로 내리는 것은 AP-15(값이 없어도 필드는 내린다)다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record EventSummaryResponse(
@@ -39,7 +45,8 @@ public record EventSummaryResponse(
         Integer ptcpLmtCnt,
         long confirmedCount,
         OffsetDateTime crtDt,
-        OffsetDateTime mdfcnDt) {
+        OffsetDateTime mdfcnDt,
+        OffsetDateTime delDt) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -63,7 +70,8 @@ public record EventSummaryResponse(
                 event.getParticipantLimitCount(),
                 confirmedCount,
                 toOffsetDateTime(event.getCreatedAt()),
-                toOffsetDateTime(event.getUpdatedAt()));
+                toOffsetDateTime(event.getUpdatedAt()),
+                toOffsetDateTime(event.getDeletedAt()));
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

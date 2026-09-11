@@ -104,10 +104,9 @@ class SubWorkTypeServiceImplTest {
 
     @Test
     void createSubWorkTypeRejectsMissingAuthorizerWhenApprovalNeeded() {
-        assertThatThrownBy(
-                        () ->
-                                subWorkTypeService.createSubWorkType(
-                                        request("승인자없음", true, null, false, null, List.of())))
+        SubWorkTypeSaveRequest request = request("승인자없음", true, null, false, null, List.of());
+
+        assertThatThrownBy(() -> subWorkTypeService.createSubWorkType(request))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
                         "errorCode", OperationErrorCode.INVALID_APPROVAL_POLICY);
@@ -120,16 +119,10 @@ class SubWorkTypeServiceImplTest {
      */
     @Test
     void createSubWorkTypeRejectsCodeOutsideApproverVocabulary() {
-        assertThatThrownBy(
-                        () ->
-                                subWorkTypeService.createSubWorkType(
-                                        request(
-                                                "임의권한",
-                                                true,
-                                                "WORK_MANAGE",
-                                                false,
-                                                null,
-                                                List.of())))
+        SubWorkTypeSaveRequest request =
+                request("임의권한", true, "WORK_MANAGE", false, null, List.of());
+
+        assertThatThrownBy(() -> subWorkTypeService.createSubWorkType(request))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.INVALID_CODE_VALUE);
     }
@@ -153,16 +146,10 @@ class SubWorkTypeServiceImplTest {
 
     @Test
     void createSubWorkTypeRejectsQuorumWithoutCount() {
-        assertThatThrownBy(
-                        () ->
-                                subWorkTypeService.createSubWorkType(
-                                        request(
-                                                "정족수인원없음",
-                                                true,
-                                                "SUB_WORK_APPROVE_TREASURER",
-                                                true,
-                                                null,
-                                                List.of())))
+        SubWorkTypeSaveRequest request =
+                request("정족수인원없음", true, "SUB_WORK_APPROVE_TREASURER", true, null, List.of());
+
+        assertThatThrownBy(() -> subWorkTypeService.createSubWorkType(request))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
                         "errorCode", OperationErrorCode.INVALID_APPROVAL_POLICY);
@@ -184,16 +171,10 @@ class SubWorkTypeServiceImplTest {
 
     @Test
     void createSubWorkTypeRejectsDuplicateName() {
-        assertThatThrownBy(
-                        () ->
-                                subWorkTypeService.createSubWorkType(
-                                        request(
-                                                "예산지출",
-                                                true,
-                                                "SUB_WORK_APPROVE_TREASURER",
-                                                false,
-                                                null,
-                                                List.of())))
+        SubWorkTypeSaveRequest request =
+                request("예산지출", true, "SUB_WORK_APPROVE_TREASURER", false, null, List.of());
+
+        assertThatThrownBy(() -> subWorkTypeService.createSubWorkType(request))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
                         "errorCode", OperationErrorCode.DUPLICATE_SUB_WORK_TYPE_NAME);
@@ -201,11 +182,9 @@ class SubWorkTypeServiceImplTest {
 
     @Test
     void updateSubWorkTypeRejectsNameTakenByAnotherType() {
-        assertThatThrownBy(
-                        () ->
-                                subWorkTypeService.updateSubWorkType(
-                                        approvalFreeTypeId,
-                                        request("예산지출", false, null, false, null, List.of())))
+        SubWorkTypeSaveRequest request = request("예산지출", false, null, false, null, List.of());
+
+        assertThatThrownBy(() -> subWorkTypeService.updateSubWorkType(approvalFreeTypeId, request))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
                         "errorCode", OperationErrorCode.DUPLICATE_SUB_WORK_TYPE_NAME);
@@ -300,10 +279,9 @@ class SubWorkTypeServiceImplTest {
 
     @Test
     void updateSubWorkTypeThrowsWhenTypeMissing() {
-        assertThatThrownBy(
-                        () ->
-                                subWorkTypeService.updateSubWorkType(
-                                        999L, request("없음", false, null, false, null, List.of())))
+        SubWorkTypeSaveRequest request = request("없음", false, null, false, null, List.of());
+
+        assertThatThrownBy(() -> subWorkTypeService.updateSubWorkType(999L, request))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
                         "errorCode", OperationErrorCode.SUB_WORK_TYPE_NOT_FOUND);

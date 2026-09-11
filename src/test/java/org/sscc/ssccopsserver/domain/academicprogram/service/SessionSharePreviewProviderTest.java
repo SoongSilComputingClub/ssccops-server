@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import java.time.LocalDate;
 import java.util.Optional;
@@ -10,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
@@ -119,11 +119,7 @@ class SessionSharePreviewProviderTest {
                 CurriculumItemEntity.create(null, 3, curriculumTitle, realDate);
         SessionEntity session =
                 SessionEntity.submit(
-                        curriculumItem,
-                        realDate,
-                        content,
-                        noticeContent,
-                        Mockito.mock(MemberEntity.class));
+                        curriculumItem, realDate, content, noticeContent, mock(MemberEntity.class));
         given(sessionRepository.findWithCurriculumItemById(1L)).willReturn(Optional.of(session));
     }
 

@@ -77,10 +77,9 @@ class FormUniqueConstraintTest {
         FormLabelEntity label = formLabelRepository.saveAndFlush(FormLabelEntity.create("신규모집"));
         formLabelRelationRepository.saveAndFlush(FormLabelRelationEntity.create(form, label));
 
-        assertThatThrownBy(
-                        () ->
-                                formLabelRelationRepository.saveAndFlush(
-                                        FormLabelRelationEntity.create(form, label)))
+        FormLabelRelationEntity duplicate = FormLabelRelationEntity.create(form, label);
+
+        assertThatThrownBy(() -> formLabelRelationRepository.saveAndFlush(duplicate))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -111,14 +110,14 @@ class FormUniqueConstraintTest {
                 FormResponseHistoryEntity.createDraft(
                         form, creator, ResponseContent.of(Map.of("q1", "홍길동"))));
 
-        assertThatThrownBy(
-                        () ->
-                                formResponseHistoryRepository.saveAndFlush(
-                                        FormResponseHistoryEntity.createSubmitted(
-                                                form,
-                                                creator,
-                                                ResponseContent.of(Map.of("q1", "홍길동")),
-                                                Instant.parse("2026-03-10T12:00:00Z"))))
+        FormResponseHistoryEntity duplicate =
+                FormResponseHistoryEntity.createSubmitted(
+                        form,
+                        creator,
+                        ResponseContent.of(Map.of("q1", "홍길동")),
+                        Instant.parse("2026-03-10T12:00:00Z"));
+
+        assertThatThrownBy(() -> formResponseHistoryRepository.saveAndFlush(duplicate))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

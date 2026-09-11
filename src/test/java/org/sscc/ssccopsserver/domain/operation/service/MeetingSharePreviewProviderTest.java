@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.operation.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -12,7 +13,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.AttendeeScope;
@@ -140,7 +140,7 @@ class MeetingSharePreviewProviderTest {
     /* ── 표본 ───────────────────────────────────────────────── */
 
     private void givenMeeting(MeetingCategory meetingCategory, Instant beginAt) {
-        MemberEntity member = Mockito.mock(MemberEntity.class);
+        MemberEntity member = mock(MemberEntity.class);
         OperationEntity operation =
                 OperationEntity.createForMeeting(
                         "9월 정례회의", member, member, beginAt, null, OperationPriority.NORMAL);

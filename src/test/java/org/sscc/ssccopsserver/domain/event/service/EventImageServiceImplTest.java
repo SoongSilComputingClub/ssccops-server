@@ -50,8 +50,9 @@ class EventImageServiceImplTest {
         when(eventRepository.existsByIdAndDeletedAtIsNull(1L)).thenReturn(true);
         EventImageServiceImpl service = service(new AppPublicBaseUrl("https://api.sscc.club"));
 
-        assertThatThrownBy(
-                        () -> service.issueUploadUrl(1L, new EventImageUploadRequest(".", 1024L)))
+        EventImageUploadRequest request = new EventImageUploadRequest(".", 1024L);
+
+        assertThatThrownBy(() -> service.issueUploadUrl(1L, request))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(EventErrorCode.UNSUPPORTED_IMAGE_TYPE);
@@ -87,7 +88,9 @@ class EventImageServiceImplTest {
                 .when(publicEventService)
                 .requirePublishedEvent(any());
 
-        assertThatThrownBy(() -> service.viewUrlOf(1L, UUID.randomUUID() + ".png"))
+        String fileName = UUID.randomUUID() + ".png";
+
+        assertThatThrownBy(() -> service.viewUrlOf(1L, fileName))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(EventErrorCode.EVENT_NOT_FOUND);

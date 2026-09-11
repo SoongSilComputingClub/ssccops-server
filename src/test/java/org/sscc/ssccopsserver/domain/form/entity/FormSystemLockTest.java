@@ -64,7 +64,9 @@ class FormSystemLockTest {
         FormEntity form = form(composition("q1", "q2"));
         form.designateAsSystemForm("PROPOSAL");
 
-        assertThatThrownBy(() -> form.requireSystemContractKept(composition("q2"), CONTRACT))
+        QuestionCompositionContent withoutQ1 = composition("q2");
+
+        assertThatThrownBy(() -> form.requireSystemContractKept(withoutQ1, CONTRACT))
                 .isInstanceOf(GeneralException.class)
                 .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
                 .isEqualTo(FormErrorCode.SYSTEM_FORM_CONTRACT_VIOLATION);

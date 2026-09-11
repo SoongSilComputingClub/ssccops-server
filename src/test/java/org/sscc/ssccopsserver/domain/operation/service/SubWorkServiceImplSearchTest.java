@@ -890,8 +890,10 @@ class SubWorkServiceImplSearchTest {
         createSubWork(springMtWorkId, "하위 업무 1", SOON);
         createSubWork(springMtWorkId, "하위 업무 2", LATER);
         String cursor = search(condition().size(1).build()).page().nextCursor();
+        SubWorkSearchCondition otherSort =
+                condition().size(1).cursor(cursor).sort("-dueAt").build();
 
-        assertThatThrownBy(() -> search(condition().size(1).cursor(cursor).sort("-dueAt").build()))
+        assertThatThrownBy(() -> search(otherSort))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.INVALID_CURSOR);
@@ -899,7 +901,9 @@ class SubWorkServiceImplSearchTest {
 
     @Test
     void malformedCursorIsRejected() {
-        assertThatThrownBy(() -> search(condition().cursor("!!not-a-cursor!!").build()))
+        SubWorkSearchCondition malformed = condition().cursor("!!not-a-cursor!!").build();
+
+        assertThatThrownBy(() -> search(malformed))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.INVALID_CURSOR);
@@ -907,7 +911,9 @@ class SubWorkServiceImplSearchTest {
 
     @Test
     void unknownStatusCodeIsRejected() {
-        assertThatThrownBy(() -> search(condition().workStatus("진행").build()))
+        SubWorkSearchCondition unknownStatus = condition().workStatus("진행").build();
+
+        assertThatThrownBy(() -> search(unknownStatus))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(CommonErrorCode.INVALID_CODE_VALUE);
@@ -916,7 +922,9 @@ class SubWorkServiceImplSearchTest {
     // 오타 난 정렬을 기본값으로 떨어뜨리면 클라이언트는 서버가 정렬해 준 줄 안다
     @Test
     void unknownSortIsRejected() {
-        assertThatThrownBy(() -> search(condition().sort("dueDate").build()))
+        SubWorkSearchCondition unknownSort = condition().sort("dueDate").build();
+
+        assertThatThrownBy(() -> search(unknownSort))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(CommonErrorCode.INVALID_CODE_VALUE);

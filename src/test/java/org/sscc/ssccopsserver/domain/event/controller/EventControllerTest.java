@@ -329,8 +329,9 @@ class EventControllerTest {
 
         List<EventSummaryResponse> events = eventService.getEvents(null, null);
 
-        assertThat(events).hasSize(3);
-        assertThat(events).allSatisfy(event -> assertThat(event.confirmedCount()).isEqualTo(1));
+        assertThat(events)
+                .hasSize(3)
+                .allSatisfy(event -> assertThat(event.confirmedCount()).isEqualTo(1));
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
     }
 

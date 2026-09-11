@@ -15,8 +15,15 @@ import java.util.Set;
  *   ARCHIVED    | ✕       | ✕       | ✕       | → PUBLISHED
  *
  * **DRAFT에서도 보관할 수 있다** (ssccops ADR-0014). 예전에는 게시된 행사만 보관할 수 있었고
- * 작성 중인 행사를 치우는 길은 삭제였는데, 그 삭제를 걷어내면서 이 칸이 열렸다 — 열지 않으면
- * 잘못 만든 행사를 치울 방법이 아예 없어진다.
+ * 작성 중인 행사를 치우는 길은 삭제였는데, ADR-0014가 그 삭제를 걷어내면서 이 칸이 열렸다.
+ * **삭제는 ADR-0020(#347)으로 소프트 삭제가 되어 돌아왔지만 이 칸은 닫지 않는다** — 보관과
+ * 삭제는 뜻이 다르다. 보관은 끝난 행사를 공개에서 내리되 운영 기록으로 남기는 것이고, 삭제는
+ * 잘못 만든 것을 목록에서 치우되 되돌릴 수 있게 두는 것이다. 작성 중인 행사를 "끝났다"고
+ * 내리는 일은 여전히 있다(기획만 하고 열지 않은 행사).
+ *
+ * 삭제 여부(del_dt)는 이 표의 축이 아니다. DELETED를 상태로 넣지 않은 이유는
+ * EventEntity.deletedAt 주석에 있다 — 되살릴 때 "어느 상태로 돌아가는가"를 적어 둘 자리가
+ * 없어진다.
  *
  * DRAFT↔PUBLISHED·DRAFT→ARCHIVED·PUBLISHED→ARCHIVED·ARCHIVED→PUBLISHED를 허용한다. RETRACT(게시 철회)를
  * 두는 것은 잘못 게시한 운영자가 되돌릴 방법이 있어야 하기 때문이고, ARCHIVED→DRAFT를 열지
@@ -33,8 +40,9 @@ public enum EventStatusAction {
     RETRACT(EventStatus.DRAFT, EnumSet.of(EventStatus.PUBLISHED)),
 
     /*
-     * 보관 — 공개 목록에서 내린다. **작성 중(DRAFT)인 행사도 보관한다** (ssccops ADR-0014) —
-     * 삭제가 없어진 뒤로 잘못 만든 행사를 치우는 유일한 길이다.
+     * 보관 — 공개 목록에서 내린다. **작성 중(DRAFT)인 행사도 보관한다** (ssccops ADR-0014).
+     * 잘못 만든 행사를 치우는 길은 이제 소프트 삭제(ADR-0020 · DELETE /v1/events/{eventId})이고,
+     * 보관은 끝난 행사를 내리는 자리다 — 둘이 갈린 뒤에도 DRAFT 칸을 닫지 않는 이유는 위에 있다.
      */
     ARCHIVE(EventStatus.ARCHIVED, EnumSet.of(EventStatus.DRAFT, EventStatus.PUBLISHED)),
 

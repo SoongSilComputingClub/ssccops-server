@@ -202,9 +202,14 @@ public class EventParticipationServiceImpl implements EventParticipationService 
 
     // ------------------------------------------------------------------ 헬퍼
 
+    /*
+     * 살아 있는 행사만 찾는다 (#347). 지워진 행사의 신청 목록·참가자 명단은 없는 행사와 같은
+     * 404다 — 지운 행사의 명단을 계속 고칠 수 있으면 "지웠다"의 뜻이 화면마다 달라진다. 명단
+     * 행 자체는 남으므로(D16 · 영구 보존) 되살리면 그대로 돌아온다.
+     */
     private EventEntity findEvent(Long eventId) {
         return eventRepository
-                .findById(eventId)
+                .findByIdAndDeletedAtIsNull(eventId)
                 .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));
     }
 

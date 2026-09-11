@@ -24,10 +24,15 @@ import lombok.RequiredArgsConstructor;
  * 공개(익명) 행사 조회의 구현 (ssccops#143).
  *
  * 이 클래스가 지키는 것은 하나다 — **PUBLISHED 밖의 행사는 존재하지 않는 것으로 답한다.**
- * 목록은 질의에 상태 집합을 고정해 넣고, 상세는 findByIdAndStatus로만 찾아 없으면 404다.
- * 조회한 뒤 상태를 보고 거르는 방식을 쓰지 않는 것은 그 분기 하나가 빠지는 것으로 작성 중인
- * 행사의 본문이 익명에게 나가기 때문이다 (공개 폼 조회 #35가 접수 불가 폼을 200이 아니라 409로
- * 끊은 것과 같은 판단).
+ * 목록은 질의에 상태 집합을 고정해 넣고, 상세는 findByIdAndDeletedAtIsNullAndStatus로만 찾아
+ * 없으면 404다. 조회한 뒤 상태를 보고 거르는 방식을 쓰지 않는 것은 그 분기 하나가 빠지는 것으로
+ * 작성 중인 행사의 본문이 익명에게 나가기 때문이다 (공개 폼 조회 #35가 접수 불가 폼을 200이
+ * 아니라 409로 끊은 것과 같은 판단).
+ *
+ * **지워진 행사(#347)도 같은 규칙 안에 있다.** 게시 중인 행사를 지우면 상태는 PUBLISHED 그대로
+ * 남으므로(삭제와 게시 상태는 별개 축), 상태만 보는 조회는 그 행사를 계속 내보낸다 — ADR-0014가
+ * 소프트 삭제를 기각한 이유가 정확히 이 자리였고, 그래서 del_dt 조건이 목록·상세·이미지 세
+ * 경로가 공유하는 질의 자체에 들어 있다. 여기서 isDeleted()를 따로 보지 않는 것이 요점이다.
  *
  * **학술 활동에서 이관된 event는 예외로 조회 시점 판정을 하나 더 탄다(#187).** 모집 시작
  * (START_RECRUITMENT)이 event를 PUBLISHED로 만들지만, 접수 기간이 지나면 공개에서 사라져야
@@ -117,7 +122,7 @@ public class PublicEventServiceImpl implements PublicEventService {
     private EventEntity findVisibleEvent(Long eventId) {
         EventEntity event =
                 eventRepository
-                        .findByIdAndStatus(eventId, EventStatus.PUBLISHED)
+                        .findByIdAndDeletedAtIsNullAndStatus(eventId, EventStatus.PUBLISHED)
                         .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));
 
         if (!isVisibleToPublic(event, academicEventIdsAmong(List.of(event)))) {

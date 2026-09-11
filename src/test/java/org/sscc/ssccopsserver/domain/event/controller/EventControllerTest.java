@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.event.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -586,8 +585,9 @@ class EventControllerTest {
     }
 
     /*
-     * **보관해도 행이 남는다** — 그래서 재공개로 되돌아온다. 삭제와 갈리는 지점이며, R2
-     * 오브젝트를 보관 시점에 지우지 않는 근거이기도 하다(지우면 재공개한 행사의 이미지가 깨진다).
+     * **보관해도 행이 남는다** — 그래서 재공개로 되돌아온다. R2 오브젝트를 보관 시점에 지우지
+     * 않는 근거이기도 하다(지우면 재공개한 행사의 이미지가 깨진다). 삭제는 #347부터 소프트
+     * 삭제라 같은 성질을 갖는다 — 그쪽은 EventSoftDeleteTest가 본다.
      */
     @Test
     void archivedEventIsStillReadableAndCanComeBack() throws Exception {
@@ -601,15 +601,6 @@ class EventControllerTest {
         changeStatus(eventId, "REPUBLISH")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.eventSttsCd").value("PUBLISHED"));
-    }
-
-    /** 삭제 경로가 사라졌다 — 남아 있으면 학술 활동이 딸린 행사에서 FK 위반 500이 난다 */
-    @Test
-    void deleteEndpointIsGone() throws Exception {
-        Long eventId = createEvent("EVENT", "지울 수 없는 행사");
-
-        mockMvc.perform(authorized(delete(EVENTS + "/" + eventId), managerToken))
-                .andExpect(status().isMethodNotAllowed());
     }
 
     /* ── 인증·인가 ───────────────────────────────────────── */

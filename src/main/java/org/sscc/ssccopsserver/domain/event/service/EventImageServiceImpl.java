@@ -71,8 +71,10 @@ public class EventImageServiceImpl implements EventImageService {
 
     @Override
     public EventImageUploadResponse issueUploadUrl(Long eventId, EventImageUploadRequest request) {
-        // 남의 행사도 아니고 아예 없는 행사에 키를 발급하지 않는다 — 경로의 행사가 먼저다
-        if (!eventRepository.existsById(eventId)) {
+        // 남의 행사도 아니고 아예 없는 행사에 키를 발급하지 않는다 — 경로의 행사가 먼저다.
+        // 지워진 행사(#347)도 같은 404다 — 편집 화면이 닫힌 행사에 오브젝트만 쌓이면 되살리기 전까지
+        // 아무도 참조하지 않는 키가 남는다(ADR-0020 규칙: 지워진 행사에는 올릴 수 없다).
+        if (!eventRepository.existsByIdAndDeletedAtIsNull(eventId)) {
             throw new GeneralException(EventErrorCode.EVENT_NOT_FOUND);
         }
 

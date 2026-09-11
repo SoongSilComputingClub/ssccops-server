@@ -85,11 +85,18 @@ public interface FormResponseHistoryRepository
      *
      * 정렬은 '최신 신청 순'(제출 일시 내림차순)이고 동률은 식별자로 끊는다 — DRAFT가 빠져
      * sbmsn_dt가 언제나 있으므로 운영자 목록과 달리 coalesce가 필요 없다.
+     *
+     * **지워진 행사에 붙은 폼의 응답은 신청이 아니다** (#347 · `e.deletedAt is null`). 이 조건은
+     * EventRepository.findAllByFormIdIn의 필터와 짝이다 — 여기서만 빼면 응답은 오는데 짝지을
+     * 행사가 없어 호출부가 NPE로 500이 되고, 저기서만 빼면 지운 행사의 신청이 그대로 보인다.
+     * 그 응답은 아래 findNonEventResponsesByMember로 옮겨 가 '내 폼 응답'에 선다 — 행사에서
+     * 폼 연결을 풀었을 때(#336)와 같은 결과이며, 응답 자체는 어디에도 지워지지 않는다.
      */
     @Query(
             "select r from FormResponseHistoryEntity r join fetch r.form f"
                     + " where r.member = :member and r.status in :statuses"
-                    + " and exists (select e.id from EventEntity e where e.form = f)"
+                    + " and exists (select e.id from EventEntity e"
+                    + "   where e.form = f and e.deletedAt is null)"
                     + " order by r.submittedAt desc, r.id desc")
     List<FormResponseHistoryEntity> findEventApplicationsByMember(
             @Param("member") MemberEntity member,
@@ -124,12 +131,18 @@ public interface FormResponseHistoryRepository
      *
      * 행사 신청(findEventApplicationsByMember)에는 같은 조건을 걸지 않는다. 그쪽 목록의 축은
      * 폼이 아니라 event이고 폼을 지운다고 행사가 지워지지 않아, 그 화면은 폼 없이도 선다.
+     *
+     * 반대로 **지워진 행사(#347)는 여기서도 없는 행사다** — not exists가 살아 있는 행사만 보므로
+     * 지운 행사의 신청 응답은 '내 신청'에서 빠지는 대신 이 목록으로 온다. 두 목록의 경계가
+     * "살아 있는 행사가 붙은 폼인가" 하나로 유지되어야 같은 응답이 두 줄이 되거나 어디에도
+     * 없는 일이 없다.
      */
     @Query(
             "select r from FormResponseHistoryEntity r join fetch r.form f"
                     + " where r.member = :member"
                     + " and f.deletedAt is null"
-                    + " and not exists (select e.id from EventEntity e where e.form = f)"
+                    + " and not exists (select e.id from EventEntity e"
+                    + "   where e.form = f and e.deletedAt is null)"
                     + " order by coalesce(r.submittedAt, r.updatedAt) desc, r.id desc")
     List<FormResponseHistoryEntity> findNonEventResponsesByMember(
             @Param("member") MemberEntity member);

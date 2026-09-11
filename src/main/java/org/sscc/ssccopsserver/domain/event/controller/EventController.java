@@ -46,6 +46,12 @@ import lombok.RequiredArgsConstructor;
  * 했고(D8 · AuthorityCode.EVENT_MANAGE 주석), 폼처럼 조회/쓰기/전이를 나눌 자식 권한이 없다.
  * 공개(익명) 행사 조회는 이 컨트롤러가 아니라 별도 이슈(ssccops#143)의 몫이다 — 여기에는
  * permitAll 경로가 없다.
+ *
+ * 삭제(DELETE)·되살리기(/restore)·휴지통(/deleted)은 #347(ADR-0020)에서 돌아왔다 — ADR-0014가
+ * 걷어낸 하드 삭제가 아니라 소프트 삭제다. 세 경로 모두 클래스 레벨 EVENT_MANAGE 그대로다:
+ * 권한을 쪼갤 자식이 없기도 하지만(D8), 지울 수 있는 사람이 되돌릴 수 없으면 삭제를 감당
+ * 가능하게 만드는 조건이 권한 배분 하나로 깨진다(FormController의 삭제·복구가 같은 FORM_WRITE인
+ * 이유).
  */
 @RestController
 @RequiredArgsConstructor
@@ -76,11 +82,36 @@ public class EventController {
         return ApiResponse.success(eventService.getEvents(eventClsfCd, eventSttsCd));
     }
 
+    /*
+     * 휴지통 목록 (#347). 지워진 행사만 지운 시각 역순으로 돌려준다.
+     *
+     * **목록에 필터 값을 하나 더 두지 않고 경로를 나눴다.** eventSttsCd에 DELETED를 더하면 삭제
+     * 여부가 게시 상태와 같은 축인 것처럼 읽히고(EventStatusAction 전이표의 축이 아니다), 지운
+     * 행사가 '전체'(상태 미지정)에 섞여 들어온다. 삭제 여부는 운영진이 고르는 축이 아니라 언제나
+     * 붙는 조건이다 (FormController의 /deleted와 같은 판단).
+     *
+     * 경로가 /{eventId}와 겹치지 않는 것은 리터럴 세그먼트가 경로 변수보다 먼저 매칭되기
+     * 때문이다(Spring의 패턴 비교 규칙 · /my-applications가 이미 같은 자리에 있다). eventId가
+     * Long이라 'deleted'는 어차피 변환되지 않는다.
+     */
+    @Operation(
+            summary = "삭제된 행사 목록 조회",
+            description =
+                    "휴지통 화면. 소프트 삭제된 행사만 지운 시각(delDt) 역순으로 돌려준다. 항목의 모양은 행사 목록과 같고 delDt만 값이 있다 —"
+                        + " 살아 있는 행사의 delDt는 언제나 null이다."
+                        + " eventSttsCd·eventPhase·receiptStatus·confirmedCount는 지우기 직전 값 그대로이며,"
+                        + " confirmedCount로 '이 행사에 참가자가 몇 명이었는가'를 보고 되살릴지 정한다. 되살리기는 POST"
+                        + " /v1/events/{eventId}/restore다.")
+    @GetMapping("/deleted")
+    public ApiResponse<List<EventSummaryResponse>> getDeletedEvents() {
+        return ApiResponse.success(eventService.getDeletedEvents());
+    }
+
     @Operation(
             summary = "행사 단건 조회",
             description =
                     "행사 상세·편집 화면이 진입 시 호출한다. 본문(mtxtCn)은 md 원문 그대로다(D12)."
-                            + " 없는 행사는 404 EVENT_NOT_FOUND로 응답한다.")
+                            + " 없는 행사와 소프트 삭제된 행사는 같은 404 EVENT_NOT_FOUND로 응답한다.")
     @GetMapping("/{eventId}")
     public ApiResponse<EventDetailResponse> getEvent(@PathVariable Long eventId) {
         return ApiResponse.success(eventService.getEvent(eventId));
@@ -166,6 +197,59 @@ public class EventController {
     }
 
     /*
+     * 행사 소프트 삭제 (#347 · ADR-0020). ADR-0014가 걷어낸 DELETE가 돌아온 자리다 — 그때는
+     * 하드 삭제였고 학술 활동이 딸린 행사에서 FK 위반 500이 났다. 이번에는 행이 남고(del_dt),
+     * 학술 활동이 딸린 행사는 409로 끊는다.
+     *
+     * 삭제는 생성이 아니고 돌려줄 표현도 없으므로 204가 아니라 **본문 없는 200**이다 —
+     * 모든 응답이 ApiResponse 봉투를 쓰는데 이 하나만 본문이 없으면 웹의 공통 응답 처리가
+     * 예외를 하나 갖게 된다 (FormController.deleteForm과 같은 모양).
+     */
+    @Operation(
+            summary = "행사 삭제",
+            description =
+                    "소프트 삭제다 — 운영 목록·상세·공개 목록·공개 상세·공유 링크·내 신청·참가자 명단에서"
+                            + " 빠지지만 데이터는 남고 POST /v1/events/{eventId}/restore로 되살릴 수 있다."
+                            + " **참가자가 있어도 지워진다** — 참가자 수를 보지 않는다."
+                            + " 그 대가로 참가자의 '내 신청' 목록에서 그 항목이 사라진다(되살리면 그대로 돌아온다)."
+                            + " 게시 상태는 그대로 남으므로 게시 중이던 행사는 되살리면 다시 게시 중이다."
+                            + " R2 이미지는 지우지 않는다."
+                            + " 지워진 행사는 없는 행사와 같은 404 EVENT_NOT_FOUND로 응답하며 이는 공개 상세·"
+                            + "공유 링크가 존재 여부를 알려주지 않기 위해서다."
+                            + " 학술 활동이 딸린 행사는 409 EVENT_HAS_ACADEMIC_PROGRAM(학술 쪽에서 프로그램을"
+                            + " 정리한 뒤에야 지울 수 있다), 이미 지워진 행사는 409 ALREADY_DELETED,"
+                            + " 없는 행사는 404 EVENT_NOT_FOUND다."
+                            + " 지운 행사는 연결 폼을 붙잡지 않는다 — 그 폼을 다른 행사에 연결할 수 있다.")
+    @DeleteMapping("/{eventId}")
+    public ApiResponse<Void> deleteEvent(@PathVariable Long eventId) {
+        eventService.deleteEvent(eventId);
+        return ApiResponse.successWithNoData();
+    }
+
+    /*
+     * 행사 되살리기 (#347). 삭제의 역이며 **이 경로가 있다는 것이 삭제를 여는 전제였다**
+     * (ADR-0020 — 되돌릴 수 없으면 하드 삭제와 다를 것이 없고, 그때는 참가자의 기록이 영영 닫힌다).
+     *
+     * DELETE의 역이라고 해서 PUT이나 PATCH로 두지 않고 행위 경로를 쓰는 것은 /status·/duplicate와
+     * 같은 판단이다 (AP-03). 새 자원이 생기지 않으므로 201이 아니라 200이다.
+     */
+    @Operation(
+            summary = "행사 되살리기",
+            description =
+                    "소프트 삭제된 행사를 목록으로 되돌린다. 게시 상태(eventSttsCd)·폼 연결·일시·본문·참가자·"
+                            + "이미지는 지울 때 그대로 남아 있으므로 지우기 직전 모습으로 돌아온다 — 게시 중이던"
+                            + " 행사는 다시 공개된다. 참가자의 '내 신청' 항목도 함께 돌아온다."
+                            + " 지워진 동안 그 행사의 폼을 다른 행사가 연결했으면 409 FORM_ALREADY_LINKED로"
+                            + " 되살리지 않는다 — 그 행사에서 폼을 풀거나 그 행사를 지운 뒤 다시 시도한다."
+                            + " 지워지지 않은 행사는 409 NOT_DELETED, 없는 행사는 404 EVENT_NOT_FOUND다."
+                            + " 요구 권한은 삭제와 같은 EVENT_MANAGE다.")
+    @PostMapping("/{eventId}/restore")
+    public ApiResponse<Void> restoreEvent(@PathVariable Long eventId) {
+        eventService.restoreEvent(eventId);
+        return ApiResponse.successWithNoData();
+    }
+
+    /*
      * 본문 이미지 업로드 URL 발급 (#161 · D6). **서버는 파일 바이트를 받지 않는다** — 이
      * 컨트롤러에 multipart 핸들러를 더하지 말 것. 업로드는 웹 → R2 직행이고 서버가 하는 일은
      * 짧게 사는 서명된 PUT 주소를 내주는 것뿐이다.
@@ -191,7 +275,7 @@ public class EventController {
                             + " R2 GET URL로 302 리다이렉트된다(버킷은 비공개다)."
                             + " 허용 확장자는 png·jpg·jpeg·webp·gif이며 그 밖의 확장자는"
                             + " 400 UNSUPPORTED_IMAGE_TYPE, 10MB를 넘으면 413 IMAGE_TOO_LARGE,"
-                            + " 없는 행사는 404 EVENT_NOT_FOUND다."
+                            + " 없는 행사와 소프트 삭제된 행사는 404 EVENT_NOT_FOUND다."
                             + " uploadUrl은 expiresInSeconds 뒤 만료되므로 저장해 두고 재사용하지 않는다.")
     @PostMapping("/{eventId}/images")
     public ResponseEntity<ApiResponse<EventImageUploadResponse>> issueImageUploadUrl(

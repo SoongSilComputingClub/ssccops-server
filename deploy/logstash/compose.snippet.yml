@@ -1,0 +1,117 @@
+# Coolify `elasticsearch-with-kibana` 스택의 compose 에 붙여 넣는 두 서비스 (ssccops#297).
+# 파이프라인 본문은 pipeline/logstash.conf 와 같아야 한다 — `$$` 는 compose 치환 이스케이프라
+# 여기서는 `$${LOGSTASH_ES_PASSWORD}`, 파일에서는 `${LOGSTASH_ES_PASSWORD}` 다.
+services:
+  logstash:
+    image: 'docker.elastic.co/logstash/logstash:9.1.2'
+    environment:
+      - 'LS_JAVA_OPTS=-Xms256m -Xmx256m'
+      - 'LOGSTASH_ES_PASSWORD=${LOGSTASH_ES_PASSWORD}'
+      - XPACK_MONITORING_ENABLED=false
+      - PIPELINE_ECS_COMPATIBILITY=v8
+    volumes:
+      - type: bind
+        source: ./logstash/pipeline/logstash.conf
+        target: /usr/share/logstash/pipeline/logstash.conf
+        content: |
+          # ssccops 로그 파이프라인 — 정본은 ssccops-server/deploy/logstash/pipeline/logstash.conf
+          # 파싱하지 않는다. 애플리케이션이 ECS 구조 JSON을 보내고, 여기서는 라우팅만 한다.
+          input {
+            tcp {
+              port => 5000
+              codec => json_lines
+            }
+          }
+
+          filter {
+            # 헬스체크·액추에이터 잡음은 버린다
+            if [url][path] and [url][path] =~ /^\/actuator/ {
+              drop { }
+            }
+            # dataset·environment가 비어 오면 기본값 — 없는 stream으로 흩어지지 않게
+            if ![event][dataset] {
+              mutate { add_field => { "[event][dataset]" => "ssccops.application" } }
+            }
+            if ![service][environment] {
+              mutate { add_field => { "[service][environment]" => "unknown" } }
+            }
+            # data_stream.* 필드가 있으면 elasticsearch output이 그대로 라우팅한다
+            # → logs-{dataset}-{namespace} : logs-ssccops.audit-prod 등
+            mutate {
+              add_field => {
+                "[data_stream][type]"      => "logs"
+                "[data_stream][dataset]"   => "%{[event][dataset]}"
+                "[data_stream][namespace]" => "%{[service][environment]}"
+              }
+            }
+          }
+
+          output {
+            elasticsearch {
+              hosts => ["http://elasticsearch:9200"]
+              # api_key 인증은 Logstash가 TLS를 요구한다 — ES가 HTTP라 전용 사용자로 붙는다
+              user => "logstash_writer"
+              password => "$${LOGSTASH_ES_PASSWORD}"
+              ecs_compatibility => "v8"
+              data_stream => true
+              data_stream_auto_routing => true
+            }
+          }
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl --silent --fail http://localhost:9600/ || exit 1'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+  logstash-key-generator:
+    image: 'alpine:latest'
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    exclude_from_hc: true
+    environment:
+      - 'ELASTIC_PASSWORD=${SERVICE_PASSWORD_ELASTICSEARCH}'
+      - 'LOGSTASH_ES_PASSWORD=${LOGSTASH_ES_PASSWORD}'
+    entrypoint:
+      - sh
+      - '-c'
+      - |
+        apk add --no-cache curl jq >/dev/null 2>&1
+        AUTH="elastic:$${ELASTIC_PASSWORD}"
+        ES=http://elasticsearch:9200
+        # 역할은 매번 PUT — 권한을 넓히거나 좁힐 때 이 파일만 고치고 다시 배포한다
+        ROLE_CODE=$$(curl -s -o /dev/null -w "%{http_code}" -u "$${AUTH}" -H 'Content-Type: application/json' -X PUT "$${ES}/_security/role/logstash_writer" -d '{"cluster":["monitor"],"indices":[{"names":["logs-ssccops.*"],"privileges":["auto_configure","create_doc","create_index","view_index_metadata"]}]}')
+        echo "role logstash_writer: HTTP $${ROLE_CODE}"
+        # 첫 시도에서 만든 api key 는 HTTP 에서 쓸 수 없어 거둔다
+        curl -s -o /dev/null -u "$${AUTH}" -H 'Content-Type: application/json' -X DELETE "$${ES}/_security/api_key" -d '{"name":"logstash-writer"}'
+        EXISTS=$$(curl -s -o /dev/null -w "%{http_code}" -u "$${AUTH}" "$${ES}/_security/user/logstash_writer")
+        # 환경변수가 이미 채워져 있으면 손대지 않는다. 비어 있으면 (처음이거나, 값을 잃었거나,
+        # 일부러 지웠거나) 비밀번호를 새로 만들어 찍는다 — 변수를 비우고 재배포하는 것이 곧 회전이다
+        if [ "$${EXISTS}" = "200" ] && [ -n "$${LOGSTASH_ES_PASSWORD}" ]; then
+          echo "user logstash_writer exists and LOGSTASH_ES_PASSWORD is set. Nothing to do."
+          exit 0
+        fi
+        PASSWORD=$$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+        if [ "$${EXISTS}" = "200" ]; then
+          BODY=$$(jq -n --arg p "$${PASSWORD}" '{password:$$p}')
+          HTTP_CODE=$$(curl -s -o /tmp/body -w "%{http_code}" -u "$${AUTH}" -H 'Content-Type: application/json' -X POST "$${ES}/_security/user/logstash_writer/_password" -d "$${BODY}")
+          WHAT="password reset"
+        else
+          BODY=$$(jq -n --arg p "$${PASSWORD}" '{password:$$p, roles:["logstash_writer"], full_name:"Logstash writer (ssccops)"}')
+          HTTP_CODE=$$(curl -s -o /tmp/body -w "%{http_code}" -u "$${AUTH}" -H 'Content-Type: application/json' -X POST "$${ES}/_security/user/logstash_writer" -d "$${BODY}")
+          WHAT="user created"
+        fi
+        if [ "$${HTTP_CODE}" = "200" ]; then
+          echo "logstash_writer: $${WHAT}. Put this into the LOGSTASH_ES_PASSWORD environment variable, then restart logstash:"
+          echo "LOGSTASH_ES_PASSWORD=$${PASSWORD}"
+        else
+          echo "Failed ($${WHAT}). HTTP $${HTTP_CODE}"
+          cat /tmp/body
+          exit 1
+        fi
+    restart: 'no'

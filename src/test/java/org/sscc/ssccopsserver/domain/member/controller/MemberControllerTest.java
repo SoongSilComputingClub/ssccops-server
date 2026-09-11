@@ -250,13 +250,10 @@ class MemberControllerTest {
         assertThat(memberRepository.count()).isEqualTo(baselineMemberCount);
     }
 
-    /*
-     * 학번은 숫자 8~10자리다 (#334). 8자리를 함께 확인하는 것은 명부에 8자리 학번이 실재하기
-     * 때문이다(예: 20211725) — 10자리로만 좁히면 그 회원들이 자기 학번으로 가입하지 못한다.
-     */
+    /* 학번은 숫자 8자리다 (#334 · #345 — 8~10에서 좁혔다. 9·10자리는 목 데이터에만 있던 값이었다) */
     @ParameterizedTest
-    @ValueSource(strings = {"20211725", "2021172500"})
-    void studentNumberOfEightToTenDigitsIsAccepted(String studentNumber) throws Exception {
+    @ValueSource(strings = {"20211725", "20261001"})
+    void studentNumberOfEightDigitsIsAccepted(String studentNumber) throws Exception {
         mockMvc.perform(signup(enrolledBody(studentNumber)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.studentNumber").value(studentNumber));
@@ -270,7 +267,7 @@ class MemberControllerTest {
      * 버렸는지 실패 메시지가 말해 주지 않는다.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"abc", "2021abcd", "20211725-", "2021172", "202117250012"})
+    @ValueSource(strings = {"abc", "2021abcd", "20211725-", "2021172", "202117250", "2021172500"})
     void malformedStudentNumberIsRejected(String studentNumber) throws Exception {
         mockMvc.perform(signup(enrolledBody(studentNumber)))
                 .andExpect(status().isBadRequest())

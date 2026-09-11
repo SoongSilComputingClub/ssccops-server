@@ -42,6 +42,9 @@ import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -58,6 +61,7 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     private final FormService formService;
     private final FormReceiptPolicy formReceiptPolicy;
     private final Clock clock;
+    private final AuditLog auditLog;
 
     /*
      * 단건 조회(#131). AcademicProgram 행은 이제 폼 응답 승인 이관(#148)이 만든다 — 이 서비스는
@@ -194,6 +198,12 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                     case APPROVE_COMPLETION -> approveCompletion(academicProgram, performer);
                 };
 
+        auditLog.record(
+                AuditEvent.success(AuditAction.ACADEMIC_PROGRAM_TRANSITION)
+                        .target(academicProgramId)
+                        .decision(request.transition())
+                        .change(before, academicProgram.getStatus())
+                        .build());
         return AcademicProgramTransitionResponse.of(
                 academicProgram.getId(), before, academicProgram.getStatus(), formReceiptStatus);
     }

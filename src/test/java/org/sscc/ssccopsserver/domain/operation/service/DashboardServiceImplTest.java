@@ -55,6 +55,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
@@ -128,7 +129,8 @@ class DashboardServiceImplTest {
                         new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(FIXED_CLOCK),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        new AuditLog());
         ApprovalAuthorityPolicy approvalAuthorityPolicy =
                 new ApprovalAuthorityPolicy(authorityPolicy);
         subWorkService =
@@ -149,6 +151,7 @@ class DashboardServiceImplTest {
                         new SubWorkOwnershipPolicy(authorityPolicy),
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
+                        new AuditLog(),
                         entityManager.getEntityManager());
         ApprovalService approvalService =
                 new ApprovalServiceImpl(

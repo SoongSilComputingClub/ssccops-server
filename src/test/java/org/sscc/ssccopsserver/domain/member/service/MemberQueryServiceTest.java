@@ -49,6 +49,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryReposi
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 
@@ -106,7 +107,8 @@ class MemberQueryServiceTest {
                         new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(FIXED_CLOCK),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        new AuditLog());
     }
 
     /* ── 검색 ────────────────────────────────────────────── */

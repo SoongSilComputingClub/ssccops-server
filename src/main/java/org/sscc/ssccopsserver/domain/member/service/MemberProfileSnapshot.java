@@ -1,5 +1,9 @@
 package org.sscc.ssccopsserver.domain.member.service;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+
 import org.sscc.ssccopsserver.domain.member.code.MemberChangeField;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
@@ -63,6 +67,18 @@ public record MemberProfileSnapshot(
             case PHONE_NUMBER -> phoneNumber;
             case EMAIL -> email;
         };
+    }
+
+    /*
+     * 이 사본에서 `after`로 가며 바뀐 항목의 **이름**. 감사 로그(ADR-0024)가 값 대신 싣는 것이다 —
+     * 값은 mbr_chg_hstry에 있고 로그에는 전화·이메일·이름이 들어가면 안 된다. 같은 비교를
+     * MemberProfileChangeRecorder가 하지만 그쪽은 행을 만드는 자리라 여기서 이름만 다시 센다.
+     */
+    public List<String> changedFieldNames(MemberProfileSnapshot after) {
+        return Arrays.stream(MemberChangeField.values())
+                .filter(field -> !Objects.equals(valueOf(field), after.valueOf(field)))
+                .map(Enum::name)
+                .toList();
     }
 
     private static String text(Integer value) {

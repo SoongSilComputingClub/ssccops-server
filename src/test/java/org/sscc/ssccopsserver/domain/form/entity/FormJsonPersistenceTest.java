@@ -205,6 +205,9 @@ class FormJsonPersistenceTest {
     /*
      * 지금 저장된 모든 폼이 이 모양이다 — JSON에 qitemDescCn 키가 아예 없다.
      * 읽지 못하면 돌고 있는 폼이 전부 열리지 않는다.
+     *
+     * isNotEmpty()가 먼저다 (#357 · Sonar S5841) — allSatisfy는 빈 목록에서 그냥 통과하므로,
+     * 문항이 통째로 사라지는 회귀에서도 이 테스트가 초록이었다.
      */
     @Test
     void readsStoredCompositionWithoutDescriptionKey() {
@@ -214,7 +217,9 @@ class FormJsonPersistenceTest {
         QuestionCompositionContent reloaded =
                 formRepository.findById(saved.getId()).orElseThrow().getQuestionComposition();
 
-        assertThat(reloaded.qitems()).allSatisfy(qitem -> assertThat(qitem.qitemDescCn()).isNull());
+        assertThat(reloaded.qitems())
+                .isNotEmpty()
+                .allSatisfy(qitem -> assertThat(qitem.qitemDescCn()).isNull());
     }
 
     /*

@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.member.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -11,6 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -254,6 +256,40 @@ class RoleControllerTest {
                 .andExpect(jsonPath("$.data.roleNm").value("새 이름"))
                 .andExpect(jsonPath("$.data.roleClsfCd").value("PROJECT"))
                 .andExpect(jsonPath("$.data.indctSeqno").value(3));
+    }
+
+    // 수정에서도 공백뿐인 이름은 400이다 — @NotBlank 대신 @Pattern이 그 자리를 맡는다
+    @Test
+    void patchWithBlankRoleNameIsRejected() throws Exception {
+        Long roleId = createRole("옛 이름", "PROJECT", null);
+
+        mockMvc.perform(
+                        authorized(patch(ROLES + "/" + roleId), adminToken)
+                                .content("{\"roleNm\": \"   \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    /*
+     * 상한을 한참 넘긴 이름도 **곧바로** 400이어야 한다 (#357 · Sonar S8786).
+     *
+     * 옛 정규식 `.*\S.*`는 "x…x + 줄바꿈" 꼴에서 길이의 제곱으로 돌았고(20만 자에 50초), @Size가
+     * 먼저 실패해도 @Pattern은 그대로 돈다 — Bean Validation은 제약을 건너뛰지 않는다. 시간을
+     * 재는 것이 이 테스트의 요점이라 상한을 넉넉히 두어도(3초) 옛 식은 통과할 수 없다.
+     */
+    @Test
+    void patchWithPathologicalRoleNameFailsFast() throws Exception {
+        Long roleId = createRole("옛 이름", "PROJECT", null);
+        String pathological = "x".repeat(200_000) + "\\n";
+
+        assertTimeoutPreemptively(
+                Duration.ofSeconds(3),
+                () ->
+                        mockMvc.perform(
+                                        authorized(patch(ROLES + "/" + roleId), adminToken)
+                                                .content("{\"roleNm\": \"" + pathological + "\"}"))
+                                .andExpect(status().isBadRequest())
+                                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED")));
     }
 
     @Test

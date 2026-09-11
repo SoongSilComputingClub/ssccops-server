@@ -255,7 +255,9 @@ public class MemberServiceImpl implements MemberService {
 
         Long memberId = member.getId();
         return MemberProfileResponse.of(
-                member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
+                member,
+                findCurrentRoles(memberId), // this 호출 — findCurrentRoles 주석 참고 (S6809)
+                authorityPolicy.capabilityListOf(memberId));
     }
 
     /*
@@ -352,13 +354,22 @@ public class MemberServiceImpl implements MemberService {
                         .orElseThrow(() -> new GeneralException(MemberErrorCode.MEMBER_NOT_FOUND));
 
         return MemberProfileResponse.of(
-                member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
+                member,
+                findCurrentRoles(memberId), // this 호출 — findCurrentRoles 주석 참고 (S6809)
+                authorityPolicy.capabilityListOf(memberId));
     }
 
     /*
      * 현재 역할만 고른다 — 종료일이 채워진 배정은 지난 역할이라 권한 판정에도 화면에도 쓰이지 않는다.
      * 회원이 실재하는지는 확인하지 않는다. 역할이 없는 것과 회원이 없는 것 모두 빈 목록이며,
      * 이 메서드를 부르는 쪽(프로필 조회·승인 권한 판정)은 이미 회원을 손에 쥐고 있다.
+     *
+     * 같은 클래스의 link·getProfile·updateMyProfile이 this로 부르므로 그 자리에서는 이
+     * @Transactional이 프록시를 타지 않는다 (#357 · Sonar S6809). **일부러 둔다** — 세 호출자
+     * 모두 자기 메서드에 @Transactional이 있어 이 조회는 그 트랜잭션에 참여할 뿐이고, 읽기라
+     * readOnly 여부가 달라져도 결과가 같다. 자기 주입(@Lazy self)으로 프록시를 태우는 것은 이
+     * 빈이 이미 순환 주입으로 한 번 갈라진 자리(MemberChangeService, AGENTS.md)라 고리를 다시
+     * 들이는 셈이고, 얻는 것이 없다.
      */
     @Override
     @Transactional(readOnly = true)
@@ -593,7 +604,9 @@ public class MemberServiceImpl implements MemberService {
         profileChangeRecorder.record(member, before, MemberProfileSnapshot.of(member), member);
 
         return MemberProfileResponse.of(
-                member, findCurrentRoles(memberId), authorityPolicy.capabilityListOf(memberId));
+                member,
+                findCurrentRoles(memberId), // this 호출 — findCurrentRoles 주석 참고 (S6809)
+                authorityPolicy.capabilityListOf(memberId));
     }
 
     /*

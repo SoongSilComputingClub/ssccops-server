@@ -155,6 +155,8 @@ class PublicEventImageControllerTest {
         String cacheControl = response.getHeader("Cache-Control");
         assertThat(cacheControl).contains("public").contains("max-age=");
 
+        // 이 정규식의 백트래킹(Sonar S8786)은 실질이 없다 — 입력이 서버가 만든 한 줄짜리
+        // Cache-Control 헤더이지 요청 값이 아니다 (#357)
         long maxAge = Long.parseLong(cacheControl.replaceAll(".*max-age=(\\d+).*", "$1"));
         assertThat(maxAge).isPositive();
 

@@ -30,14 +30,13 @@ public record MemberSignupRequest(
         @NotBlank @Size(max = 50) String name,
         @NotBlank @Size(max = 20) String phoneNumber,
         @NotNull MemberStatusCode memberStatusCode,
-        @Pattern(regexp = STUDENT_NUMBER_PATTERN, message = "학번은 숫자 8~10자리입니다.")
-                String studentNumber,
+        @Pattern(regexp = STUDENT_NUMBER_PATTERN, message = "학번은 숫자 8자리입니다.") String studentNumber,
         @Size(max = 100) String departmentName,
         @Min(1) @Max(4) Integer academicYear,
         @PositiveOrZero Integer generationNumber) {
 
     /*
-     * 학번 형식 (#334). 숫자만 · 8~10자리이고 **빈 값은 통과한다**.
+     * 학번 형식 (#334 · #345). 숫자만 · 8자리이고 **빈 값은 통과한다**.
      *
      * 졸업 회원은 학번이 없다. 재학 회원에게만 필수라는 규칙은 아래 isAcademicProfileComplete()가
      * AcademicProfilePolicy를 통해 이미 보므로, 여기에 @NotBlank를 붙이면 그 정책과 두 벌이 되어
@@ -45,10 +44,11 @@ public record MemberSignupRequest(
      * 빈 칸을 ""로 보내오므로(MemberControllerTest.graduatedMemberSignsUpWithoutStudentNumber)
      * 정규식 자체가 빈 문자열을 허용해야 한다.
      *
-     * 8~10자리인 근거는 명부에 8자리 학번이 실재하기 때문이다(예: 20211725). 10자리로만 좁히면
-     * 그 회원들이 자기 학번으로 가입하지 못한다.
+     * 8자리인 것은 학번 체계가 그렇기 때문이다(예: 20211725). #334는 8~10자리로 넓게 열었는데,
+     * 그 근거였던 «9자리·10자리 학번»은 웹 목 데이터에만 있던 값이었다(#345에서 좁혔다). 폼
+     * 빌더의 학번 프리셋(ssccops#220)과 같은 자릿수가 되어 한 시스템 안에서 학번의 뜻이 한 벌이다.
      *
-     * @Size(max = 20)을 뺀 것은 이 정규식이 길이를 10자로 이미 묶어 두 규칙이 갈릴 자리를 남기지
+     * @Size(max = 20)을 뺀 것은 이 정규식이 길이를 8자로 이미 묶어 두 규칙이 갈릴 자리를 남기지
      * 않기 위해서다(stdnt_no 컬럼은 VARCHAR(20)이라 여전히 넉넉하다). EventCategoryCreateRequest가
      * 길이를 묶는 @Pattern 옆에 @Size를 두지 않는 것과 같다.
      *
@@ -56,7 +56,7 @@ public record MemberSignupRequest(
      * 명부에 이미 있는 값을 맞추거나 그대로 들여오는 경로라, 형식으로 거르면 형식 밖의 학번을 가진
      * 본인이 연결하지 못하고 과거 명부의 이관이 멈춘다 (ssccops-web#364도 같은 이유로 뺐다).
      */
-    private static final String STUDENT_NUMBER_PATTERN = "^$|^\\d{8,10}$";
+    private static final String STUDENT_NUMBER_PATTERN = "^$|^\\d{8}$";
 
     // 기준 코드 위반(@NotNull 미충족 포함)은 다른 검증이 이미 알려주므로 여기서 중복해 실패시키지 않는다
     @AssertTrue(message = "가입 시 선택할 수 없는 회원 상태입니다.")

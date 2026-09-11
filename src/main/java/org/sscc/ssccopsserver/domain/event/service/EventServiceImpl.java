@@ -29,11 +29,9 @@ import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.file.service.FileCopier;
 import org.sscc.ssccopsserver.domain.file.service.FileEraser;
-import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
-import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -45,8 +43,9 @@ import lombok.RequiredArgsConstructor;
 /*
  * 행사 CRUD·게시 전이의 구현 (ssccops#139).
  *
- * 지키는 것은 둘이다 — 폼은 최대 한 행사에만 전속되고(D11 · FORM_ALREADY_LINKED), 신청이
- * 발생한 연결은 움직이지 않는다(D11 · EVENT_FORM_IN_USE).
+ * 폼 연결에서 지키는 것은 하나뿐이다 — 폼은 최대 한 행사에만 전속된다(D11 ·
+ * FORM_ALREADY_LINKED). 신청이 발생한 연결은 움직이지 못하게 하던 가드(EVENT_FORM_IN_USE)는
+ * 걷었고 그 코드도 함께 사라졌다 (#336) — 근거는 updateEvent의 연결 변경 자리에 적혀 있다.
  *
  * **행사를 지우는 경로는 없다** (ssccops ADR-0014). 예전에는 참가자가 없을 때만 하드 삭제를
  * 허용했는데(D9), 그 규칙이 지키려던 것("행사를 지우면 명단이 갈 곳을 잃는다" · D16)을
@@ -75,7 +74,6 @@ public class EventServiceImpl implements EventService {
     private final EventClassificationRepository eventClassificationRepository;
     private final EventParticipantRepository eventParticipantRepository;
     private final FormRepository formRepository;
-    private final FormResponseHistoryRepository formResponseHistoryRepository;
     private final EventReceiptPolicy eventReceiptPolicy;
     private final EventPhasePolicy eventPhasePolicy;
 
@@ -182,8 +180,8 @@ public class EventServiceImpl implements EventService {
      * (폼 PUT 패턴), 상태를 바꾸는 길은 changeStatus 하나다.
      *
      * 폼 연결 규칙(D11)은 연결이 실제로 바뀔 때만 검사한다. 같은 formId를 그대로 되돌려
-     * 보내는 저장(편집 화면이 늘 하는 일)은 신청이 몇 건이든 통과해야 한다 — 연결을 움직이지
-     * 않는 저장까지 막으면 신청이 시작된 행사는 오타 하나 못 고친다.
+     * 보내는 저장(편집 화면이 늘 하는 일)에는 볼 것이 없다 — 이미 이 행사에 붙어 있는 폼이라
+     * 전속 검사(FORM_ALREADY_LINKED)에 걸릴 것이 없고, 그 검사가 남은 유일한 규칙이다.
      */
     @Override
     @Transactional
@@ -199,20 +197,33 @@ public class EventServiceImpl implements EventService {
         FormEntity nextForm = currentForm;
         if (linkChanged) {
             /*
-             * 신청 발생 후에는 연결을 움직일 수 없다(D11). "신청이 있다"는 연결된 폼의 제출 이후
-             * 응답(임시저장 제외) 또는 이 행사의 참가자(수동 등록 포함) 어느 쪽으로든 성립한다 —
-             * 응답만 보면 전화 접수로 참가자를 올린 행사의 연결이 자유로워지고, 참가자만 보면
-             * 아직 심사 전인 응답이 소속을 잃는다.
+             * **신청이 발생한 뒤에도 연결은 바뀐다** (#336). 여기 있던 두 가드(연결된 폼에 제출
+             * 이후 응답이 있거나 이 행사에 참가자가 있으면 409 EVENT_FORM_IN_USE)를 걷었다.
+             *
+             * 걷은 이유는 그 가드가 지키던 것보다 막아서 잃는 것이 컸기 때문이다 — 폼을 잘못
+             * 연결한 행사에 신청이 **한 건이라도** 들어오면 연결을 고칠 길이 영영 없어져,
+             * 운영진에게 남는 선택은 행사를 새로 만드는 것뿐이었다. 실제로 그 일이 났다.
+             *
+             * 연결을 옮길 때 무엇이 끊기는지가 옛 주석의 "소속을 잃는다"인데, 그 말이 가리키는
+             * 것은 하나뿐이라 확인해 두고 걷는다.
+             *   · **응답은 지워지지 않는다.** 옛 폼에 그대로 남는다. 다만 응답자의 '내 신청'
+             *     목록에서 빠져 '내 폼 응답' 쪽으로 옮겨 간다 — 두 목록이 "폼에 붙은 행사가
+             *     있는가"로 정확히 갈리기 때문이다(FormResponseHistoryRepository의
+             *     findEventApplicationsByMember ↔ findNonEventResponsesByMember).
+             *   · **이미 등록된 참가자는 그대로 남는다.** 명단 행은 (event_id, mbr_id)로 행사에
+             *     달려 있어 폼 연결과 무관하다(D16 · 영구 보존).
+             *   · 사라지는 것은 **옛 폼의 응답을 이 행사의 참가자 등록 근거로 쓸 수 있는 길**
+             *     하나다. EventParticipationServiceImpl.findAcceptedApplication이 응답을 행사의
+             *     연결 폼으로 좁혀 찾으므로(findByIdAndForm), 옮긴 뒤 옛 폼 응답은 이 행사에서
+             *     없는 응답과 같은 404가 된다 — 아직 심사 전인 응답이 "소속을 잃는다"는 것이
+             *     정확히 이 뜻이고, 그 이상은 아니다.
+             *
+             * 막는 대신 끊고, **끊긴다는 것은 웹이 저장 전 경고 팝업으로 알린다** (#336) —
+             * 서버가 조용히 하는 일이 아니라 운영진이 알고 누르는 일이 된다.
+             *
+             * 되살리려거든 위 셋을 먼저 읽어라. 되찾는 것은 심사 전 응답의 등록 경로 하나이고,
+             * 대신 다시 잃는 것은 잘못 연결한 폼을 고칠 유일한 길이다.
              */
-            if (currentForm != null
-                    && formResponseHistoryRepository.existsByFormAndStatusIn(
-                            currentForm, ResponseStatus.submittedOrLater())) {
-                throw new GeneralException(EventErrorCode.EVENT_FORM_IN_USE);
-            }
-            if (eventParticipantRepository.existsByEvent(event)) {
-                throw new GeneralException(EventErrorCode.EVENT_FORM_IN_USE);
-            }
-
             nextForm = resolveForm(request.formId());
             if (nextForm != null && eventRepository.existsByFormAndIdNot(nextForm, event.getId())) {
                 throw new GeneralException(EventErrorCode.FORM_ALREADY_LINKED);

@@ -216,7 +216,25 @@ class PublicEventControllerTest {
                 .andExpect(jsonPath("$.data.qitemCpstCn").doesNotExist());
     }
 
-    // 폼 없는 공지 성격 행사는 formId가 null이다 — 화면은 이때 신청 버튼을 내린다
+    /*
+     * 연결 폼의 다중 응답 허용 여부가 상세에 실린다 (#340). 행사 상세는 익명 SSR이라 폼을 조회할 수
+     * 없고, 이 값은 접수 기간처럼 공개해도 새는 것이 없다 — receiptStatus가 실리는 것과 같은 자리다.
+     */
+    @Test
+    void publicDetailCarriesLinkedFormMultipleResponseFlag() throws Exception {
+        Long singleEventId = saveEvent("RECRUIT", "한 건만", true, saveOpenForm(null), null);
+        Long multipleEventId =
+                saveEvent("RECRUIT", "여러 건", true, saveOpenMultipleResponseForm(), null);
+
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + singleEventId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mltplRspnsYn").value(false));
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + multipleEventId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.mltplRspnsYn").value(true));
+    }
+
+    // 폼 없는 공지 성격 행사는 폼에서 파생되는 셋이 모두 null이다 — 화면은 이때 신청 버튼을 내린다
     @Test
     void publicDetailHasNullFormIdWhenNoFormIsLinked() throws Exception {
         Long eventId = saveEvent("EVENT", "폼 없는 공지", true);
@@ -224,7 +242,8 @@ class PublicEventControllerTest {
         mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.formId").doesNotExist())
-                .andExpect(jsonPath("$.data.receiptStatus").doesNotExist());
+                .andExpect(jsonPath("$.data.receiptStatus").doesNotExist())
+                .andExpect(jsonPath("$.data.mltplRspnsYn").doesNotExist());
     }
 
     /*
@@ -384,6 +403,15 @@ class PublicEventControllerTest {
      * EXPIRED로 판정한다 (상태는 OPEN 그대로 — 자동 마감 배치가 없다).
      */
     private FormEntity saveOpenForm(Instant receiptEndAt) {
+        return saveOpenForm(receiptEndAt, false);
+    }
+
+    /** 한 회원의 응답을 여러 건 받는 접수 중 폼 — 상세의 mltplRspnsYn 표본이다 (#340) */
+    private FormEntity saveOpenMultipleResponseForm() {
+        return saveOpenForm(null, true);
+    }
+
+    private FormEntity saveOpenForm(Instant receiptEndAt, boolean multipleResponseAllowed) {
         QuestionCompositionContent composition =
                 new QuestionCompositionContent(
                         List.of(new Page("기본 정보", null)),
@@ -402,7 +430,13 @@ class PublicEventControllerTest {
                                         null)));
         return formRepository.saveAndFlush(
                 FormEntity.create(
-                        creator, "신청 폼", composition, null, receiptEndAt, FormStatus.OPEN));
+                        creator,
+                        "신청 폼",
+                        composition,
+                        null,
+                        receiptEndAt,
+                        FormStatus.OPEN,
+                        multipleResponseAllowed));
     }
 
     /*

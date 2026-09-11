@@ -111,9 +111,10 @@ public class EventController {
             description =
                     "행사 내용을 통째로 교체한다. 상태(eventSttsCd)는 이 API로 바꿀 수 없다 —"
                             + " POST /v1/events/{eventId}/status를 쓴다."
-                            + " 신청(제출 이후 응답 또는 참가자)이 발생한 뒤 폼 연결을 바꾸거나 해제하면"
-                            + " 409 EVENT_FORM_IN_USE, 다른 행사에 전속된 폼을 연결하면"
-                            + " 409 FORM_ALREADY_LINKED로 응답한다.")
+                            + " 폼 연결은 신청(제출 이후 응답·참가자)이 있어도 바꾸거나 해제할 수 있다 —"
+                            + " 옛 폼의 응답은 그 폼에 남고 이미 등록된 참가자도 행사에 남지만,"
+                            + " 옛 폼의 응답으로는 이 행사의 참가자를 등록할 수 없게 된다(404)."
+                            + " 다른 행사에 전속된 폼을 연결하면 409 FORM_ALREADY_LINKED로 응답한다.")
     @PutMapping("/{eventId}")
     public ApiResponse<EventDetailResponse> updateEvent(
             @PathVariable Long eventId, @Valid @RequestBody EventSaveRequest request) {

@@ -18,6 +18,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberBulkChangeResponse;
+import org.sscc.ssccopsserver.domain.member.dto.MemberBulkGradeChangeRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberBulkStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGenerationResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeRequest;
@@ -32,6 +35,7 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.MemberBulkChangeService;
 import org.sscc.ssccopsserver.domain.member.service.MemberChangeService;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -68,6 +72,13 @@ public class MemberController {
      * 한 빈에 두면 생성자 주입이 순환한다.
      */
     private final MemberChangeService memberChangeService;
+
+    /*
+     * 일괄 변경도 별도 빈이다 (#338). 나눈 이유는 트랜잭션 경계가 정반대이기 때문이며
+     * MemberBulkChangeService 주석에 적어 두었다 — 한 명짜리는 한 트랜잭션이어야 하고
+     * 일괄은 트랜잭션이 없어야 한 명의 실패가 앞선 성공을 되돌리지 않는다.
+     */
+    private final MemberBulkChangeService memberBulkChangeService;
 
     @Operation(
             summary = "회원가입",
@@ -307,5 +318,68 @@ public class MemberController {
             @Valid @RequestBody MemberStatusChangeRequest request,
             @CurrentMember MemberEntity changer) {
         return ApiResponse.success(memberChangeService.changeStatus(memberId, request, changer));
+    }
+
+    /*
+     * 회원 등급 **일괄** 변경 (#338). 명부 130명을 이관한 뒤 등급을 손보는 데 한 명씩 상세에
+     * 들어갔다 나오는 방식이 견디지 못했다는 운영진 피드백에서 나왔다.
+     *
+     * ── 왜 /{memberId}/grade-changes가 아니라 /grade-changes인가 ────────
+     * 같은 어휘의 **컬렉션 수준 경로**다. 한 명짜리는 회원 하나에 매달린 변경이고 이쪽은 회원
+     * 여럿에 걸친 변경이라, 경로가 회원 식별자를 지나지 않는 것이 그 차이를 그대로 드러낸다.
+     * 스프링이 리터럴 세그먼트를 경로 변수보다 먼저 보므로 두 경로는 섞이지 않는다
+     * (/assignable이 /{memberId}로 새지 않는 것과 같은 자리).
+     *
+     * 'bulk'를 경로에 넣지 않은 것은 그 단어가 이 저장소의 어휘에 없고, 세그먼트 수만으로 이미
+     * 갈리기 때문이다.
+     *
+     * **201이 아니라 200이다** — 한 명짜리와 같은 이유이며, 여기에 더해 이 응답은 만들어진 자원
+     * 하나가 아니라 여러 회원의 처리 결과 보고다 (CSV 이관 실행과 같은 판단).
+     */
+    @Operation(
+            summary = "회원 등급 일괄 변경",
+            description =
+                    "여러 회원의 등급을 같은 값으로 한 번에 바꾸고 회원마다 변경 이력(mbr_grd_hstry)을 남긴다."
+                            + " 한 명짜리 변경과 같은 로직을 쓰므로 검증·이력·경고 규칙이 모두 같다."
+                            + " **회원마다 트랜잭션이 따로라 한 명의 실패가 앞서 바뀐 회원을 되돌리지 않는다.**"
+                            + " 회원별 결과는 CHANGED(바뀌고 이력이 남음) · SKIPPED(이미 그 등급이라"
+                            + " 아무것도 하지 않음, 한 명짜리라면 400 NO_CHANGE였을 자리) ·"
+                            + " FAILED(없는 회원·기준 코드 밖·미래 일자 등) 셋이며 rows에 요청한 순서로"
+                            + " 전부 실린다(회원 id·회원명·결과·오류 코드·사유)."
+                            + " summary의 세 건수는 겹치지 않고 합이 totalCount이며, totalCount는 같은"
+                            + " 회원을 접은 뒤의 인원이다."
+                            + " 대상은 1~100명이고 비었거나 넘기면 400 VALIDATION_FAILED이며 이때는"
+                            + " 한 명도 바뀌지 않는다. 권한은 한 명짜리와 같은 MEMBER_MANAGE다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @PostMapping("/grade-changes")
+    public ApiResponse<MemberBulkChangeResponse> changeGrades(
+            @Valid @RequestBody MemberBulkGradeChangeRequest request,
+            @CurrentMember MemberEntity changer) {
+        return ApiResponse.success(memberBulkChangeService.changeGrades(request, changer));
+    }
+
+    /*
+     * 회원 상태 **일괄** 변경 (#338). 경로·결과 어휘·트랜잭션 경계는 등급 일괄 변경과 같다.
+     *
+     * 탈퇴·제명으로 함께 바꿀 때 남아 있는 역할·담당 업무는 **회원별 행의 warnings**로 실린다 —
+     * 한 줄로 합치면 "역할 7건이 남았습니다"에서 그 7건이 누구 것인지가 사라지고, 경고의 쓸모는
+     * 사람이 가서 정리하는 것이다 (MemberBulkChangeRow 주석).
+     */
+    @Operation(
+            summary = "회원 상태 일괄 변경",
+            description =
+                    "여러 회원의 상태를 같은 값으로 한 번에 바꾸고 회원마다 변경 이력(mbr_stts_hstry)을 남긴다."
+                            + " 결과 어휘·상한·권한은 등급 일괄 변경과 같다."
+                            + " 종료 예정일은 휴학·군휴학에만 지정할 수 있으며 대상 전원이 공유한다"
+                            + " (그 밖의 상태에 실려 오면 회원마다 FAILED다)."
+                            + " 탈퇴·제명으로 바꿔도 역할·담당 업무를 자동으로 정리하지 않으며,"
+                            + " 남아 있는 현재 역할·담당 하위 업무 건수를 **회원별 행의 warnings**로 내린다"
+                            + " (CHANGED가 아닌 행의 warnings는 언제나 비어 있다).")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @PostMapping("/status-changes")
+    public ApiResponse<MemberBulkChangeResponse> changeStatuses(
+            @Valid @RequestBody MemberBulkStatusChangeRequest request,
+            @CurrentMember MemberEntity changer) {
+        return ApiResponse.success(memberBulkChangeService.changeStatuses(request, changer));
     }
 }

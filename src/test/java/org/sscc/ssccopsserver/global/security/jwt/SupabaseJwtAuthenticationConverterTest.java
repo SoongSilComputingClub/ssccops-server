@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.global.security.jwt;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import java.time.Instant;
 import java.util.Map;
@@ -13,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
@@ -31,7 +31,7 @@ class SupabaseJwtAuthenticationConverterTest {
     @Test
     void signedUpUserCarriesLinkedMember() {
         UUID authUserId = UUID.randomUUID();
-        MemberEntity member = Mockito.mock(MemberEntity.class);
+        MemberEntity member = mock(MemberEntity.class);
         given(memberService.findByAuthUserId(authUserId)).willReturn(Optional.of(member));
 
         var token = converter.convert(jwt(authUserId.toString()));

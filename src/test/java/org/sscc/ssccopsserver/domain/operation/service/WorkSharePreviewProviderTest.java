@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.operation.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -13,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
@@ -129,7 +129,7 @@ class WorkSharePreviewProviderTest {
     /* ── 표본 ───────────────────────────────────────────────── */
 
     private void givenWork(WorkType workType, Instant beginAt, Instant endAt) {
-        MemberEntity member = Mockito.mock(MemberEntity.class);
+        MemberEntity member = mock(MemberEntity.class);
         OperationEntity operation =
                 OperationEntity.createForWork(
                         "2026 동아리 박람회", member, member, beginAt, endAt, OperationPriority.NORMAL);

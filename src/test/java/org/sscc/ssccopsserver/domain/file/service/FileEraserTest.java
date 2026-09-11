@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 import java.util.List;
@@ -68,7 +69,7 @@ class FileEraserTest {
         TransactionSynchronizationManager.getSynchronizations()
                 .forEach(synchronization -> synchronization.afterCommit());
 
-        verify(r2Client, org.mockito.Mockito.times(2)).deleteObject(any(DeleteObjectRequest.class));
+        verify(r2Client, times(2)).deleteObject(any(DeleteObjectRequest.class));
     }
 
     /*

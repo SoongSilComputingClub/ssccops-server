@@ -382,6 +382,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
     - **1차 대상은 `AuditAction`이 전부다** — 가입·연결·상세 조회(본인 제외, 컨트롤러에서)·프로필 수정·등급·상태·역할 부여/종료·역할별 권한 교체·하드 삭제(409도 failure)·명부 가져오기·하위 업무 전이·투표·응답 검토·학술 활동/회차 전이·행사/폼 상태 전이·`@RequireAuthority` 거절. 사건을 더하려면 enum에 한 줄 + 부르는 자리 하나. **목록 조회는 남기지 않는다** — 상세 1건이 개인정보가 드러나는 자리이고 목록까지 남기면 «누가 봤나»의 신호가 스크롤에 묻힌다. 로그인 자체는 Supabase에서 일어나 서버가 모른다.
     - 로깅이 업무를 막지 않는다 — `AuditLog` 안의 예외는 삼키고 WARN 한 줄이다.
   - **Logstash 파이프라인·compose 조각의 정본은 `deploy/logstash/`다** (#368 · ssccops#297). Coolify의 `elasticsearch-with-kibana` 스택에 붙여 넣은 것은 사본이며 `Dockerfile`과 같은 관계다. 파이프라인은 파싱하지 않고 `event.dataset`으로 `logs-ssccops.{application|audit}-{service.environment}` data stream에 라우팅만 한다. ES 자격은 `elastic`이 아니라 generator가 만드는 `logstash_writer` 사용자(`logs-ssccops.*` 쓰기만)이고 — API key는 Logstash가 HTTP 위에서 거부한다 — 어디에 붙이고 비밀번호를 어떻게 발급·회전하는지, Coolify가 `content:`를 처음 한 번만 파일로 만든다는 함정까지 `deploy/logstash/README.md`에 있다.
+  - **Kibana·ES 설정의 정본은 `deploy/kibana/`다** (#372 · ssccops#300). `setup.sh`가 ILM(일반 14일 · 감사 365일) · 인덱스 템플릿 · Data View · Kibana 역할(`ssccops-ops` · `ssccops-audit-reader`) · 대시보드 import를 idempotent하게 한다. 대시보드를 화면에서 고쳤으면 다시 export해 `saved-objects.ndjson`을 덮어쓴다 — 정본이 레포다.
 
 ## 커밋 · 브랜치 · PR 컨벤션
 

@@ -15,6 +15,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.member.code.MemberChangeField;
@@ -66,7 +68,10 @@ public class MemberChangeHistoryEntity {
     @Column(name = "mbr_chg_hstry_id")
     private Long id;
 
+    // 회원 본인 데이터 — 회원이 지워지면 함께 지워진다 (V9 · ADR-0021). chnrg_mbr_id는 행위자
+    // 참조라 cascade가 없다 — 본인 수정이면 변경자가 본인이지만 그 행은 mbr_id 쪽으로 먼저 지워진다.
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "mbr_id", nullable = false, updatable = false)
     private MemberEntity member;
 

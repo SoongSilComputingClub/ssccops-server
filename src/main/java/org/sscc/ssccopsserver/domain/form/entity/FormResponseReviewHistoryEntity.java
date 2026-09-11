@@ -15,6 +15,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.sscc.ssccopsserver.domain.form.code.ResponseReviewAction;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -73,7 +75,11 @@ public class FormResponseReviewHistoryEntity {
     @Column(name = "form_rspns_rvw_hstry_id")
     private Long id;
 
+    // 응답에 딸린 행 — 응답이 지워지면(회원 삭제의 cascade) 검토 이력도 함께 간다 (V9 · ADR-0021).
+    // prcs_mbr_id(처리자)는 행위자 참조라 cascade가 없다 — 제출 행의 처리자는 응답자 본인인데
+    // 이 행이 먼저 지워지므로 그 참조가 삭제를 막지 않는다(NO ACTION은 문장 끝에 검사한다).
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "form_rspns_id", nullable = false, updatable = false)
     private FormResponseHistoryEntity response;
 

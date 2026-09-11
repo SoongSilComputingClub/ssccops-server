@@ -106,3 +106,14 @@ ssccops:
   form:
     proposal-seed:
       on-member-created: false
+
+  # 회원 하드 삭제를 테스트에서 켠다 (#361 · ADR-0021).
+  #
+  # 기본값은 false이고 dev·prod에는 이 키가 없다 — 배포 설정(환경변수
+  # SSCCOPS_MEMBER_HARD_DELETE_ENABLED)으로만 켠다. 여기서 켜는 것은 MemberDeletionControllerTest가
+  # 공용 컨텍스트를 그대로 쓰기 위해서다(@SpringBootTest(properties=…)로 켜면 그 클래스만의
+  # 컨텍스트가 하나 더 뜬다 — ADR-0009가 줄여 놓은 것을 되돌린다). 꺼진 상태의 404는 컨텍스트
+  # 없이 MemberDeletionServiceImplTest가 생성자로 false를 넣어 확인한다.
+  member:
+    hard-delete:
+      enabled: true

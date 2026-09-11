@@ -18,6 +18,8 @@ import jakarta.persistence.UniqueConstraint;
 
 import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -107,7 +109,11 @@ public class FormResponseHistoryEntity {
      * 응답자(mbr.mbr_id). 응답의 주인은 바뀌지 않으므로 updatable = false로 잠근다.
      * 조회·매핑 전용 연관이며 회원의 상태를 여기서 바꾸지 않는다.
      */
+    // 회원 본인 데이터 — 회원이 지워지면 응답도 함께 지워진다 (V9 · ADR-0021). 검토 이력·응답으로
+    // 등록된 참가는 form_rspns_id 쪽 cascade로 뒤따른다. 폼 작성자(form.creatr_mbr_id)는 반대로
+    // 행위자 참조라 폼을 만든 회원은 지울 수 없다.
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "mbr_id", nullable = false, updatable = false)
     private MemberEntity member;
 

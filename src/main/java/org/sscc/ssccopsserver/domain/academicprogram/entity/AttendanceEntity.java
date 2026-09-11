@@ -11,6 +11,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 
 import lombok.AccessLevel;
@@ -56,7 +58,9 @@ public class AttendanceEntity {
     @JoinColumn(name = "sesn_id", nullable = false, updatable = false)
     private SessionEntity session;
 
+    // 참가에 딸린 행 — 참가가 지워지면(회원 삭제의 cascade) 출석도 함께 간다 (V9 · ADR-0021).
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "event_ptcp_id", nullable = false, updatable = false)
     private EventParticipantEntity participant;
 

@@ -19,15 +19,23 @@ Logstash(`../logstash`)가 stream에 쓰기 시작한 뒤 Kibana가 알아야 �
 기존 backing index에도 적용된다. 템플릿(정책 연결)은 **새** backing index부터라, 이미 있는
 stream에 바로 걸려면 `_rollover`를 한 번 친다.
 
-## 접근
+## 접근 — dev/prod 는 stream 이름으로 갈린다
 
-| Kibana 역할 | 읽는 것 | 누구에게 |
-|---|---|---|
-| `ssccops-ops` | `logs-ssccops.application-*` | 운영진 |
-| `ssccops-audit-reader` | `logs-ssccops.audit-*` | 회장·부회장급 |
+`service.environment`가 `logs-ssccops.{dataset}-{env}`의 `{env}`가 되므로 권한은 인덱스 패턴
+단위로 준다. **Data View·대시보드는 하나**(`logs-ssccops.audit-*`)를 쓰고, 와일드카드가 권한 있는
+인덱스로만 풀리므로 prod 권한이 없는 계정은 같은 대시보드에서 dev만 본다.
 
-`elastic`은 사람에게 주지 않는다. 사용자는 Kibana → Stack Management → Users에서 만들고 위 역할을
-붙인다(둘 다 붙이면 둘 다 본다).
+| 역할 = 사용자 이름 | app-dev | audit-dev | app-prod | audit-prod | Kibana |
+|---|---|---|---|---|---|
+| `ssccops-developer` | ✔ | ✔ | ✔ | — | Discover·Dashboard·Visualize **편집** |
+| `ssccops-administer` (최고관리자) | — | — | ✔ | ✔ | 읽기 |
+| `ssccops-operator` (운영자) | — | — | ✔ | — | 읽기 |
+
+- prod 감사(«누가 누구 정보를 봤나»)는 최고관리자만. 운영자는 서버 로그(오류·지연)까지다
+- 개발자는 prod 감사를 보지 않는다 — 장애 대응에 필요한 것은 일반 로그다
+- 대시보드를 만들고 고치는 것은 developer의 일이고, 정본은 이 디렉터리다(아래)
+- 사용자는 역할과 같은 이름으로 셋(2026-09-11 생성). 비밀번호는 스크립트에 두지 않는다 —
+  잃었으면 Kibana → Stack Management → Users에서 재설정. `elastic`은 사람에게 주지 않는다
 
 ## 대시보드
 

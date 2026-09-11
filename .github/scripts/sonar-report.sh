@@ -160,12 +160,28 @@ SMELLS=$(issue_count CODE_SMELL)
 # facets=rules 는 위 요청에 이미 얹혀 오므로 추가 왕복이 없다.
 #
 # **PR 코멘트가 아니라 job 요약에만 넣는다** — 규칙이 수십 개라 코멘트에 실으면 리뷰가 묻힌다.
-RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
-  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] ]
-  | sort_by(-.count) | .[:15]
-  | if length == 0 then empty
-    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
-    end')
+# ----------------------------------------------------------------------------
+# 규칙 표 하나를 만드는 함수 (ssccops#284 — 리포트 보강).
+#
+# 표가 넷이 됐다(전체·취약점·버그·새 코드). 같은 jq 를 네 벌 두면 열을 하나 더할 때 한 곳을
+# 빠뜨리고, 실제로 그 자리(이름 열)를 더하려다 이렇게 됐다.
+#
+# **규칙 이름을 함께 찍는다.** `java:S8924` 같은 키만 남기면 신규 규칙은 사전에 없어 읽을 수
+# 없었다 — 이번 정리에서 세 규칙(S8924·S8786·S7763)이 그랬다. 이름은 RULE_NAMES_JSON 에서
+# 찾고, 못 찾으면 키만 남긴다(리포트는 이름이 없어도 살아야 한다).
+#
+# 인자: $1 issues JSON · $2 최대 줄 수. 표는 네 요청이 다 돌아온 뒤 아래에서 만든다.
+# ----------------------------------------------------------------------------
+rules_table() {
+  # 기본값을 따옴표로 감싼다 — `${X:-{}}` 는 값이 있을 때 첫 `}` 에서 닫혀 `}` 가 하나 남는다
+  echo "$1" | jq -r --argjson names "${RULE_NAMES_JSON:-"{}"}" --argjson n "$2" '
+    [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) ]
+    | sort_by(-.count) | .[:$n]
+    | if length == 0 then empty
+      else ("| 규칙 | 이름 | 건수 |", "|---|---|---|"),
+           (.[] | "| `\(.val)` | \($names[.val] // "") | \(.count) |")
+      end'
+}
 
 # 취약점만의 규칙 분포 (ssccops#233).
 #
@@ -179,57 +195,57 @@ RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
 VULN_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&types=VULNERABILITY&ps=1&facets=rules")
 
-VULN_RULES_TABLE=$(echo "$VULN_ISSUES_JSON" | jq -r '
-  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) ]
-  | sort_by(-.count) | .[:15]
-  | if length == 0 then empty
-    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
-    end')
+# 버그만의 규칙 분포 (ssccops#284). 취약점 표와 같은 이유·같은 방식이다 — web 의 버그 41건이
+# 어느 규칙인지 전체 표에서는 갈리지 않았다(a11y 규칙 둘이 41건씩 나란히 있었다).
+BUG_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&types=BUG&ps=1&facets=rules")
 
-# 보안 핫스팟 (ssccops#233 · ssccops#239).
-#
-# 이 리포트가 각주로 "세지 않는다"고 적어 두었던 값이다. 보안 점검을 하면서 보안 핫스팟을
-# 빼 두는 것은 앞뒤가 맞지 않아 실제로 센다.
-#
-# **프로젝트 필터 이름이 issues API 와 다르다** — 이쪽은 `projectKey`(단수)이고
-# api/issues/search 는 `componentKeys` 다. SonarQube 는 모르는 파라미터를 오류로 만들지 않고
-# 조용히 무시하므로(ssccops#237 에서 `projectKeys` 로 밟았다) 이름이 틀리면 인스턴스 전체가
-# 돌아온다. 값이 총계와 동떨어지면 그것부터 의심할 것.
-#
-# **상태 코드를 함께 받는다** (ssccops#239). 이 값이 오래 `?` 로 나왔는데, `?` 는
-# `.paging.total` 이 없을 때의 폴백이라 **왜 없는지를 말해 주지 않았다.** 파라미터 이름이
-# 틀린 것인지 엔드포인트가 사라진 것인지(`/api/hotspots/*` 는 deprecated 계열이다) 구분이
-# 되지 않아, 응답을 CI 로그에 한 번 찍어 확인했다. 답은 둘 다 아니었다:
-#
-#     HTTP 403  {"errors":[{"msg":"Insufficient privileges"}]}
-#
-# **엔드포인트도 파라미터도 멀쩡하고 토큰이 못 읽는 것이다.** 같은 토큰으로 issues·measures·
-# qualitygates 질의는 전부 통하므로 토큰이 죽은 것도 아니다 — 핫스팟만 별도 권한을 요구한다.
-# 그러니 **여기서 고칠 수 있는 것은 없다.** SonarQube 에서 이 토큰에 프로젝트 Browse 권한을
-# 주면 숫자가 저절로 돌아온다.
-#
-# 대신 **물음표 하나만 남기지 않는다** — 값을 못 얻었으면 못 얻은 이유를 적는다. 물음표는
-# 매 실행마다 같은 질문을 다시 하게 만들었고, 그 질문의 답이 위에 있다.
-HOTSPOTS_RAW=$(curl -s -w '\n%{http_code}' -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/hotspots/search?projectKey=$PROJECT_KEY&status=TO_REVIEW&ps=1")
-HOTSPOTS_CODE=$(printf '%s' "$HOTSPOTS_RAW" | tail -n1)
-HOTSPOTS_JSON=$(printf '%s' "$HOTSPOTS_RAW" | sed '$d')
+# 새 코드 기간의 규칙 분포 (ssccops#284). 게이트가 보는 것은 `new_violations` 인데 리포트는
+# 전체 누적만 보여줘, 게이트가 71 이라 할 때 그 71 이 무엇인지 알 수 없었다.
+# `inNewCodePeriod=true` 는 프로젝트의 New Code 기준선을 그대로 쓴다 — 게이트와 같은 창이다.
+NEW_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&inNewCodePeriod=true&ps=1&facets=rules")
 
-HOTSPOTS=""
-if [ "$HOTSPOTS_CODE" = "200" ]; then
-  HOTSPOTS=$(echo "$HOTSPOTS_JSON" | jq -r '.paging.total // empty' 2>/dev/null || true)
-fi
+# 네 표에 나오는 규칙 키를 모아 이름을 받는다. 실패해도 표는 키만 남긴 채 찍힌다.
+#
+# **키마다 `api/rules/show` 를 한 번씩 부른다.** 처음엔 `api/rules/search?rule_keys=` 한 번으로
+# 받으려 했는데 이 서버(26.8.0)는 그 파라미터를 조용히 무시해 이름 열이 통째로 비었다 —
+# 모르는 파라미터를 오류로 만들지 않는 것은 #237 에서 `projectKeys` 로 밟은 것과 같은 성질이다.
+# 규칙은 많아야 수십 개라 왕복이 그만큼 늘어도 초 단위다. sonar-issues.sh 가 같은 호출을 쓴다.
+# `tr -d '\r'` 은 Windows jq 가 줄 끝에 CR 을 붙여 키가 `S1082\r` 이 되던 것을 로컬 스텁 실행에서
+# 밟아 둔 것이다 — CI(Linux)에서는 없어도 되지만 키가 곧 조회 인자라 값싼 보험이다.
+RULE_KEYS=$(jq -rn --argjson a "$ISSUES_JSON" --argjson b "$VULN_ISSUES_JSON" --argjson c "$BUG_ISSUES_JSON" --argjson d "$NEW_ISSUES_JSON" '
+  [ ($a, $b, $c, $d) | (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) | .val ]
+  | unique | .[]' 2>/dev/null | tr -d '\r' || true)
+RULE_NAMES_JSON="{}"
+for RULE_KEY in $RULE_KEYS; do
+  RULE_NAME=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/rules/show?key=$RULE_KEY" \
+    | jq -r '.rule.name // empty' 2>/dev/null || true)
+  [ -z "$RULE_NAME" ] && continue
+  RULE_NAMES_JSON=$(jq -cn --argjson m "$RULE_NAMES_JSON" --arg k "$RULE_KEY" --arg v "$RULE_NAME" '$m + {($k): $v}')
+done
 
-if [ -n "$HOTSPOTS" ]; then
-  HOTSPOTS_NOTE="> **보안 핫스팟은 취약점 수에 포함되지 않는다** — 별도 API(\`api/hotspots/search\`)라 따로 센다. 취약점 수가 보안 지적의 전부가 아니다."
-else
-  HOTSPOTS_ERR=$(echo "$HOTSPOTS_JSON" | jq -r '.errors[0].msg // empty' 2>/dev/null || true)
-  HOTSPOTS="세지 못했다 (HTTP ${HOTSPOTS_CODE}${HOTSPOTS_ERR:+ — ${HOTSPOTS_ERR}})"
-  HOTSPOTS_NOTE="> **보안 핫스팟을 세지 못했다** — \`api/hotspots/search\` 가 위 상태로 답했다. \`403 Insufficient privileges\` 면 CI 토큰에 이 프로젝트 Browse 권한이 없다는 뜻이고(같은 토큰으로 나머지 질의는 통한다), SonarQube 에서 권한을 주면 숫자가 돌아온다 (ssccops#239).
->
-> 어느 쪽이든 **보안 핫스팟은 위 취약점 수에 포함되지 않는다** — 취약점 수가 보안 지적의 전부가 아니다."
-  echo "::warning::보안 핫스팟을 세지 못했다 (HTTP $HOTSPOTS_CODE ${HOTSPOTS_ERR:-}). 토큰 권한을 확인할 것 (ssccops#239)."
-fi
+RULES_TABLE=$(rules_table "$ISSUES_JSON" 15)
+VULN_RULES_TABLE=$(rules_table "$VULN_ISSUES_JSON" 15)
+BUG_RULES_TABLE=$(rules_table "$BUG_ISSUES_JSON" 15)
+NEW_RULES_TABLE=$(rules_table "$NEW_ISSUES_JSON" 15)
+
+# 보안 핫스팟은 세지 않는다 (ssccops#239 종결).
+#
+# 한때 여기서 `api/hotspots/search` 를 따로 불렀고(ssccops#233 · #295), 그 값이 오래 `?` 였다가
+# 403 으로 밝혀져 "토큰에 권한을 주면 돌아온다" 로 남겨 두었다. 그런데 이 서버(Community Build
+# 26.8.0)의 대시보드가 답을 먼저 했다 —
+#
+#     The concept of Security Hotspots is deprecated. Security Hotspot findings now appear as
+#     security issues or vulnerabilities in the Issues page.
+#
+# **핫스팟이 이슈 모델로 합쳐졌다.** 별도 API 가 답하는 것은 옛 개념의 빈 목록이고(양쪽
+# 프로젝트 모두 0), 실제 지적은 위 `api/issues/search` 의 취약점 수에 이미 들어 있다. 그러니
+# 권한을 푸는 것이 아니라 **호출을 걷어내는 것**이 맞다 — 권한을 풀어 0 을 받아 봐야 "취약점
+# 수가 보안 지적의 전부가 아니다" 라는 각주가 거짓이 된다.
+#
+# 이 줄을 리포트에서 함께 지운다. `?` 든 `세지 못했다` 든 `0` 이든, 없는 개념의 자리를 남겨
+# 두면 매 실행마다 같은 질문("이건 왜 이러지")을 다시 하게 만든다.
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage,duplicated_lines_density")
@@ -255,7 +271,6 @@ ${ICON} **Quality Gate ${RESULT}**
 - 버그: ${BUGS}
 - 취약점: ${VULNS}
 - 코드 스멜: ${SMELLS}
-- 보안 핫스팟(검토 대기): ${HOTSPOTS}
 
 ### 측정값
 - 커버리지: ${COVERAGE}%
@@ -265,7 +280,7 @@ Dashboard: ${DASHBOARD_URL}
 
 > **이 수치는 프로젝트 기본 브랜치 기준이다** — 이 서버는 Community Build 라 브랜치를 가르지 못한다(ssccops#234). 분석은 develop push 한 곳에서만 돌므로 곧 develop 의 상태다.
 >
-${HOTSPOTS_NOTE}
+> **보안 핫스팟은 따로 세지 않는다** — 이 서버 버전에서 핫스팟은 이슈로 합쳐져 위 취약점 수에 들어 있다 (ssccops#239).
 >
 > Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
 EOF
@@ -307,6 +322,34 @@ if [ -n "$VULN_RULES_TABLE" ]; then
 
   echo "--- 취약점 규칙별 분포 ---"
   echo "$VULN_RULES_TABLE"
+fi
+
+# 버그만의 규칙 분포 (ssccops#284). 버그가 없으면 찍지 않는다.
+if [ -n "$BUG_RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 버그 규칙별 분포"
+    echo
+    echo "$BUG_RULES_TABLE"
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  echo "--- 버그 규칙별 분포 ---"
+  echo "$BUG_RULES_TABLE"
+fi
+
+# 새 코드 기간의 규칙 분포 (ssccops#284). 게이트의 new_violations 가 가리키는 것이 이 표다.
+if [ -n "$NEW_RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 새 코드 규칙별 분포"
+    echo
+    echo "$NEW_RULES_TABLE"
+    echo
+    echo "> 게이트의 \`new_violations\` 가 세는 것이 이 표다 — New Code 기준선 이후 들어온 지적만."
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  echo "--- 새 코드 규칙별 분포 ---"
+  echo "$NEW_RULES_TABLE"
 fi
 
 # 규칙별 분포는 job 요약에 붙인다 (ssccops#237).

@@ -14,6 +14,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
@@ -35,7 +37,10 @@ public class MemberGradeHistoryEntity {
     @Column(name = "mbr_grd_hstry_id")
     private Long id;
 
+    // 회원 본인 데이터 — 회원이 지워지면 함께 지워진다 (V9 · ADR-0021). chnrg_mbr_id는 행위자
+    // 참조라 cascade가 없고, 변경자로 등장하는 회원의 삭제를 DB가 막는다.
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "mbr_id", nullable = false, updatable = false)
     private MemberEntity member;
 

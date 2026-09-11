@@ -59,9 +59,17 @@ public class AuthorityPolicy {
      * 정렬 없이 Set으로 돌려준다 — 순서에 의미가 없고, 응답에 실을 때만 정렬한다.
      * 역할이 없거나 역할에 권한이 하나도 붙어 있지 않으면 빈 집합이다. "권한 없는 새 역할은
      * 아무것도 못 한다"가 기본값이라 여기서 어떤 기본 권한도 얹지 않는다.
+     *
+     * 이 클래스 안의 this 호출(capabilitiesOf → capabilitiesOn · hasAuthority/hasAuthorityOn/
+     * capabilityListOf → capabilitiesOf/On)은 프록시를 타지 않아 안쪽 @Transactional이 무시된다
+     * (#357 · Sonar S6809). **일부러 둔다** — 부르는 쪽이 전부 자기 메서드에
+     * @Transactional(readOnly = true)를 걸고 있어 안쪽은 어차피 그 트랜잭션에 참여할 뿐이고,
+     * 전부 읽기라 경계가 달라져도 결과가 같다. 자기 주입(@Lazy self)으로 프록시를 태우면 읽기
+     * 판정 하나에 빈 그래프가 자기 자신을 가리키는 고리가 생기는데, 그 대가로 얻는 것이 없다.
      */
     @Transactional(readOnly = true)
     public Set<String> capabilitiesOf(Long memberId) {
+        // this 호출 — 위 주석 참고 (S6809)
         return capabilitiesOn(memberId, LocalDate.now(clock));
     }
 
@@ -100,18 +108,21 @@ public class AuthorityPolicy {
     /** 요구 권한을 가졌는지. capabilities와 같은 계산을 쓰므로 화면과 서버의 판정이 갈리지 않는다 */
     @Transactional(readOnly = true)
     public boolean hasAuthority(Long memberId, AuthorityCode required) {
+        // this 호출 — capabilitiesOf 주석 참고 (S6809)
         return capabilitiesOf(memberId).contains(required.code());
     }
 
     /** 기준일에 요구 권한을 가지는지 (#110). 판정은 hasAuthority와 같고 묻는 날짜만 다르다 */
     @Transactional(readOnly = true)
     public boolean hasAuthorityOn(Long memberId, AuthorityCode required, LocalDate baseDate) {
+        // this 호출 — capabilitiesOf 주석 참고 (S6809)
         return capabilitiesOn(memberId, baseDate).contains(required.code());
     }
 
     /** 세션·프로필 응답에 실을 형태. 정렬은 응답을 읽기 쉽게 하려는 것뿐이다 */
     @Transactional(readOnly = true)
     public List<String> capabilityListOf(Long memberId) {
+        // this 호출 — capabilitiesOf 주석 참고 (S6809)
         return capabilitiesOf(memberId).stream().sorted().toList();
     }
 

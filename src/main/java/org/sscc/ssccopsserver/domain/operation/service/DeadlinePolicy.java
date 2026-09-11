@@ -52,6 +52,10 @@ public class DeadlinePolicy {
      * 목요일(요청일 + 3일)부터 정체이고, 수요일까지는 아니다. 즉 요청일 + 3일 ≤ 오늘
      * ⟺ 요청 시각 < (오늘 − 3일 + 1일) 0시. 서버 판정(SubWorkEntity.isReviewStaleBefore)과
      * 목록 필터(SubWorkRepositoryImpl)가 같은 값을 받으므로 경계를 만드는 코드는 여기 하나다.
+     *
+     * `REVIEW_STALE_DAYS - 1`은 int로 계산된 뒤 long으로 넘어간다 (#357 · Sonar S2184).
+     * 넘칠 수 없는 값이다 — 피연산자가 상수 3과 1이고 결과는 일수(2)라 밀리초처럼 int를
+     * 넘길 자리가 아니다. long 캐스트를 더하지 않는다.
      */
     public Instant reviewStaleBefore() {
         return LocalDate.now(clock)

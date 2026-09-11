@@ -319,8 +319,8 @@ class MyApplicationControllerTest {
         List<MyApplicationResponse> applications =
                 myApplicationService.getMyApplications(applicant);
 
-        assertThat(applications).hasSize(3);
         assertThat(applications)
+                .hasSize(3)
                 .allSatisfy(
                         application ->
                                 assertThat(application.applicationStatus().code())

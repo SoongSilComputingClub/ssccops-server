@@ -380,7 +380,40 @@ public enum MemberErrorCode implements ErrorCode {
     TOO_MANY_LINK_ATTEMPTS(
             HttpStatus.TOO_MANY_REQUESTS,
             "TOO_MANY_LINK_ATTEMPTS",
-            "연결 시도가 너무 많습니다. 잠시 후 다시 시도하십시오.");
+            "연결 시도가 너무 많습니다. 잠시 후 다시 시도하십시오."),
+
+    /*
+     * 404 — 회원 하드 삭제가 플래그로 닫혀 있을 때 (#361 · ADR-0021).
+     *
+     * 삭제는 중복 계정 정리용 **임시** 기능이라 `ssccops.member.hard-delete.enabled`(기본 false)로
+     * 여닫는다. 닫혀 있으면 엔드포인트가 없는 것처럼 404를 내리되, **없는 회원의 404(NOT_FOUND)와
+     * 코드를 나눈다** — 웹은 플래그가 켜져 있을 때만 버튼을 그리지만 그 값이 서버와 갈릴 수 있고,
+     * 그때 "회원을 찾을 수 없다"가 뜨면 운영진은 회원이 사라진 줄 안다. 403이 아닌 것은 권한의
+     * 문제가 아니라 기능이 없는 것이기 때문이다.
+     */
+    FEATURE_DISABLED(HttpStatus.NOT_FOUND, "FEATURE_DISABLED", "지금은 제공하지 않는 기능입니다."),
+
+    /*
+     * 400 — 자기 자신을 지우려 할 때 (#361).
+     *
+     * 지우는 사람은 MEMBER_MANAGE 보유자이고 그 계정이 사라지면 요청이 끝나는 순간 인증 주체가
+     * 없는 응답을 만들어야 한다. 무엇보다 이 기능의 대상은 연동 실패로 생긴 새 계정(TEMP)이지
+     * 운영진 계정이 아니다. 409가 아니라 400인 것은 상태 충돌이 아니라 요청 자체가 성립하지 않기
+     * 때문이다 (역할 자기 잠금 CANNOT_REVOKE_OWN_ROLE_MANAGE가 409인 것과 갈리는 지점 — 그쪽은
+     * 변경을 적용한 뒤에야 알 수 있는 결과다).
+     */
+    CANNOT_DELETE_SELF(HttpStatus.BAD_REQUEST, "CANNOT_DELETE_SELF", "자기 자신은 삭제할 수 없습니다."),
+
+    /*
+     * 409 — 다른 기록이 이 회원을 행위자로 가리키고 있어 지울 수 없을 때 (#361 · ADR-0021).
+     *
+     * 판정은 코드가 아니라 DB가 한다 — 행위자 참조 FK 20개가 V1 그대로 NO ACTION이라 DELETE가
+     * 실패하고, 그 DataIntegrityViolationException을 여기로 옮긴다. 메시지에는 어느 참조가 막았는지를
+     * MemberReferenceConstraints가 사람 표기로 번역해 싣는다(«폼 작성자» 등) — 코드 하나로는
+     * 운영진이 무엇을 정리해야 하는지 알 수 없다. 삭제 전에 무엇이 막을지는
+     * GET /v1/members/{memberId}/deletion-preview의 blockedBy가 같은 표로 답한다.
+     */
+    MEMBER_REFERENCED(HttpStatus.CONFLICT, "MEMBER_REFERENCED", "다른 기록이 이 회원을 가리키고 있어 삭제할 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

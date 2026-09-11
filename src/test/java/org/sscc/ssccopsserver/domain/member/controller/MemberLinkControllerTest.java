@@ -168,8 +168,12 @@ class MemberLinkControllerTest {
 
         // 어느 항목이 맞았는지·틀렸는지가 본문 어디에도 없어야 한다
         String body = result.getResponse().getContentAsString();
-        assertThat(body).doesNotContain(ROSTER_NAME).doesNotContain(ROSTER_PHONE);
-        assertThat(body).doesNotContain("학번").doesNotContain("이름").doesNotContain("연락처");
+        assertThat(body)
+                .doesNotContain(ROSTER_NAME)
+                .doesNotContain(ROSTER_PHONE)
+                .doesNotContain("학번")
+                .doesNotContain("이름")
+                .doesNotContain("연락처");
     }
 
     /*

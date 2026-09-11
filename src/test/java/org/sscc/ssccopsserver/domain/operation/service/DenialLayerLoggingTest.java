@@ -84,10 +84,10 @@ class DenialLayerLoggingTest {
         authenticate(performer);
 
         try (LogCapture logs = LogCapture.of(RequireAuthorityAspect.class)) {
-            assertThatThrownBy(
-                            () ->
-                                    new RequireAuthorityAspect(authorityPolicy)
-                                            .checkAuthority(joinPointOf("approvalInbox")))
+            RequireAuthorityAspect aspect = new RequireAuthorityAspect(authorityPolicy);
+            JoinPoint joinPoint = joinPointOf("approvalInbox");
+
+            assertThatThrownBy(() -> aspect.checkAuthority(joinPoint))
                     .isInstanceOf(GeneralException.class)
                     .hasFieldOrPropertyWithValue("errorCode", MemberErrorCode.AUTHORITY_REQUIRED);
 
@@ -124,12 +124,13 @@ class DenialLayerLoggingTest {
     void unauthenticatedAndNotSignedUpAreNotLogged() throws Exception {
         try (LogCapture logs = LogCapture.of(RequireAuthorityAspect.class)) {
             RequireAuthorityAspect aspect = new RequireAuthorityAspect(authorityPolicy);
+            JoinPoint joinPoint = joinPointOf("approvalInbox");
 
-            assertThatThrownBy(() -> aspect.checkAuthority(joinPointOf("approvalInbox")))
+            assertThatThrownBy(() -> aspect.checkAuthority(joinPoint))
                     .isInstanceOf(GeneralException.class);
 
             authenticate(null);
-            assertThatThrownBy(() -> aspect.checkAuthority(joinPointOf("approvalInbox")))
+            assertThatThrownBy(() -> aspect.checkAuthority(joinPoint))
                     .isInstanceOf(GeneralException.class)
                     .hasFieldOrPropertyWithValue("errorCode", MemberErrorCode.SIGNUP_REQUIRED);
 
@@ -149,10 +150,9 @@ class DenialLayerLoggingTest {
         given(authorityPolicy.hasAuthority(MEMBER_ID, AuthorityCode.WORK_MANAGE)).willReturn(false);
 
         try (LogCapture logs = LogCapture.of(SubWorkOwnershipPolicy.class)) {
-            assertThatThrownBy(
-                            () ->
-                                    new SubWorkOwnershipPolicy(authorityPolicy)
-                                            .requireOwnerOrManager(subWork, performer))
+            SubWorkOwnershipPolicy policy = new SubWorkOwnershipPolicy(authorityPolicy);
+
+            assertThatThrownBy(() -> policy.requireOwnerOrManager(subWork, performer))
                     .isInstanceOf(GeneralException.class)
                     .hasFieldOrPropertyWithValue("errorCode", OperationErrorCode.FORBIDDEN);
 
@@ -197,15 +197,13 @@ class DenialLayerLoggingTest {
         try (LogCapture ownership = LogCapture.of(SubWorkOwnershipPolicy.class);
                 LogCapture approval = LogCapture.of(ApprovalAuthorityPolicy.class)) {
 
+            SubWorkOwnershipPolicy ownershipPolicy = new SubWorkOwnershipPolicy(authorityPolicy);
+            ApprovalAuthorityPolicy approvalPolicy = new ApprovalAuthorityPolicy(authorityPolicy);
+
             assertThatThrownBy(
-                            () ->
-                                    new SubWorkOwnershipPolicy(authorityPolicy)
-                                            .requireOwnerOrManager(ownershipTarget, performer))
+                            () -> ownershipPolicy.requireOwnerOrManager(ownershipTarget, performer))
                     .isInstanceOf(GeneralException.class);
-            assertThatThrownBy(
-                            () ->
-                                    new ApprovalAuthorityPolicy(authorityPolicy)
-                                            .requireApprover(approvalTarget, performer))
+            assertThatThrownBy(() -> approvalPolicy.requireApprover(approvalTarget, performer))
                     .isInstanceOf(GeneralException.class);
 
             assertThat(ownership.warnMessages()).singleElement().asString().contains("picId=");

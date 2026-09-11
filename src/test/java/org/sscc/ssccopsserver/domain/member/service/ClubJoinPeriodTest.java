@@ -72,6 +72,20 @@ class ClubJoinPeriodTest {
         assertThat(ClubJoinPeriod.parse("2020-03-45")).isEmpty();
     }
 
+    /*
+     * 정규화의 마지막 `^-+|-+$`가 양끝을 **각각** 벗기는지 (#357). 앞뒤 구분자가 모두 남는
+     * 입력('-2020-3-')과 한쪽만 남는 입력('2020년 3월' → '2020-3-')이 같은 값으로 읽혀야 하고,
+     * 그 사이의 '-'는 남아야 한다 — `^(-+|-+)$`로 잘못 읽으면 양끝이 있는 값은 아무것도
+     * 벗겨지지 않아 형식 오류가 된다.
+     */
+    @Test
+    void stripsLeadingAndTrailingSeparatorsIndependently() {
+        assertThat(parse("-2020-3-")).isEqualTo(new ClubJoinPeriod(2020, 3));
+        assertThat(parse("--2020.03--")).isEqualTo(new ClubJoinPeriod(2020, 3));
+        assertThat(parse("2020년 3월")).isEqualTo(new ClubJoinPeriod(2020, 3));
+        assertThat(parse("-2020")).isEqualTo(new ClubJoinPeriod(2020, null));
+    }
+
     private static ClubJoinPeriod parse(String raw) {
         Optional<ClubJoinPeriod> parsed = ClubJoinPeriod.parse(raw);
         assertThat(parsed).isPresent();

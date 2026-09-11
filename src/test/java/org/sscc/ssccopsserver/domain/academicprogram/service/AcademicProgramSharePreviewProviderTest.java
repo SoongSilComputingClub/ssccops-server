@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.mock;
 
 import java.util.Optional;
 
@@ -9,7 +10,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramTypeEntity;
@@ -99,10 +99,10 @@ class AcademicProgramSharePreviewProviderTest {
     /* ── 표본 ───────────────────────────────────────────────── */
 
     private void givenProgram(String title, String goalContent) {
-        MemberEntity member = Mockito.mock(MemberEntity.class);
+        MemberEntity member = mock(MemberEntity.class);
         EventEntity event =
                 EventEntity.create(
-                        Mockito.mock(EventClassificationEntity.class),
+                        mock(EventClassificationEntity.class),
                         member,
                         title,
                         "본문",
@@ -115,8 +115,8 @@ class AcademicProgramSharePreviewProviderTest {
         AcademicProgramEntity program =
                 AcademicProgramEntity.create(
                         event,
-                        Mockito.mock(FormResponseHistoryEntity.class),
-                        Mockito.mock(AcademicProgramTypeEntity.class),
+                        mock(FormResponseHistoryEntity.class),
+                        mock(AcademicProgramTypeEntity.class),
                         goalContent,
                         null,
                         null,

@@ -542,8 +542,9 @@ class FormControllerTest {
 
         List<FormSummaryResponse> forms = formService.getForms(null, null);
 
-        assertThat(forms).hasSize(3);
-        assertThat(forms).allSatisfy(form -> assertThat(form.responseCount()).isEqualTo(3));
+        assertThat(forms)
+                .hasSize(3)
+                .allSatisfy(form -> assertThat(form.responseCount()).isEqualTo(3));
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
     }
 

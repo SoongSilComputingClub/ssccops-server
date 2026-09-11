@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.event.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -267,7 +268,7 @@ class EventDuplicateControllerTest {
         Long copyId = duplicate(sourceId);
 
         ArgumentCaptor<CopyObjectRequest> captor = ArgumentCaptor.forClass(CopyObjectRequest.class);
-        verify(r2Client, org.mockito.Mockito.times(2)).copyObject(captor.capture());
+        verify(r2Client, times(2)).copyObject(captor.capture());
         List<CopyObjectRequest> requests = captor.getAllValues();
         assertThat(requests)
                 .allSatisfy(

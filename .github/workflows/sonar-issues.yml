@@ -1,0 +1,43 @@
+# ============================================================================
+# SonarQube 지적 위치 조회 (ssccops#284) — 수동 실행
+# ============================================================================
+# Actions → 이 워크플로 → Run workflow → 규칙 키를 넣는다. 분석은 돌리지 않고 서버에 이미
+# 있는 결과만 읽어 job 요약에 파일·줄·메시지를 찍는다. sonar-report.sh 가 «어느 규칙이
+# 몇 건인지»를 보여주면, 여기서 «그 규칙이 어디인지»를 한 번 본다.
+#
+# 서버는 CI 밖에서 닿지 않으므로(Force user authentication · 401) 이 자리가 유일한 조회 경로다.
+# ============================================================================
+name: Sonar Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      rules:
+        description: "규칙 키 (쉼표로 이음 · 예: java:S6809,java:S2638)"
+        required: true
+        type: string
+      new_only:
+        description: "New Code 기간의 지적만 (게이트의 new_violations 가 보는 창)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  issues:
+    name: Issues
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Read project key
+        run: echo "PROJECT_KEY=$(grep -o "sonar.projectKey', '[^']*" build.gradle | sed "s/.*, '//")" >> "$GITHUB_ENV"
+
+      - name: List issue locations
+        env:
+          RULES: ${{ inputs.rules }}
+          NEW_ONLY: ${{ inputs.new_only }}
+        run: bash .github/scripts/sonar-issues.sh

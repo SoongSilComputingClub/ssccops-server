@@ -680,8 +680,9 @@ class WorkServiceImplSearchTest {
         createWork("업무 1", WorkType.EVENT, EARLY, null);
         createWork("업무 2", WorkType.EVENT, LATE, null);
         String cursor = search(condition().size(1).build()).page().nextCursor();
+        WorkSearchCondition otherSort = condition().size(1).cursor(cursor).sort("startAt").build();
 
-        assertThatThrownBy(() -> search(condition().size(1).cursor(cursor).sort("startAt").build()))
+        assertThatThrownBy(() -> search(otherSort))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.INVALID_CURSOR);
@@ -689,7 +690,9 @@ class WorkServiceImplSearchTest {
 
     @Test
     void malformedCursorIsRejected() {
-        assertThatThrownBy(() -> search(condition().cursor("!!not-a-cursor!!").build()))
+        WorkSearchCondition malformed = condition().cursor("!!not-a-cursor!!").build();
+
+        assertThatThrownBy(() -> search(malformed))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.INVALID_CURSOR);
@@ -698,7 +701,9 @@ class WorkServiceImplSearchTest {
     // 정의서 원본의 한글 표기(기획·진행)는 저장 코드가 아니다
     @Test
     void unknownStatusCodeIsRejected() {
-        assertThatThrownBy(() -> search(condition().workStatus("기획").build()))
+        WorkSearchCondition unknownStatus = condition().workStatus("기획").build();
+
+        assertThatThrownBy(() -> search(unknownStatus))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(CommonErrorCode.INVALID_CODE_VALUE);
@@ -706,7 +711,9 @@ class WorkServiceImplSearchTest {
 
     @Test
     void unknownTypeCodeIsRejected() {
-        assertThatThrownBy(() -> search(condition().workType("FESTIVAL").build()))
+        WorkSearchCondition unknownType = condition().workType("FESTIVAL").build();
+
+        assertThatThrownBy(() -> search(unknownType))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(CommonErrorCode.INVALID_CODE_VALUE);
@@ -715,7 +722,9 @@ class WorkServiceImplSearchTest {
     // 오타 난 정렬을 기본값으로 떨어뜨리면 클라이언트는 서버가 정렬해 준 줄 안다
     @Test
     void unknownSortIsRejected() {
-        assertThatThrownBy(() -> search(condition().sort("createdDate").build()))
+        WorkSearchCondition unknownSort = condition().sort("createdDate").build();
+
+        assertThatThrownBy(() -> search(unknownSort))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(CommonErrorCode.INVALID_CODE_VALUE);

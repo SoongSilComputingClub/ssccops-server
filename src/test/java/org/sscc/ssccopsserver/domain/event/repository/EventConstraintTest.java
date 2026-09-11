@@ -134,15 +134,11 @@ class EventConstraintTest {
                 EventParticipantEntity.register(
                         event, creator, EventParticipantStatus.CONFIRMED, null, creator));
 
-        assertThatThrownBy(
-                        () ->
-                                eventParticipantRepository.saveAndFlush(
-                                        EventParticipantEntity.register(
-                                                event,
-                                                creator,
-                                                EventParticipantStatus.WAITLISTED,
-                                                null,
-                                                creator)))
+        EventParticipantEntity duplicate =
+                EventParticipantEntity.register(
+                        event, creator, EventParticipantStatus.WAITLISTED, null, creator);
+
+        assertThatThrownBy(() -> eventParticipantRepository.saveAndFlush(duplicate))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

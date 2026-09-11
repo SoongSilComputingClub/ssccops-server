@@ -25,6 +25,14 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
  *
  * 목록(PublicEventSummaryResponse)에는 넣지 않았다 — 목록에서 곧장 신청하는 경로가 없다.
  *
+ * **mltplRspnsYn(연결 폼의 다중 응답 허용 여부)도 같은 자리에 싣는다** (#340). 공개 앱이 "이미
+ * 냈는데 또 낼 수 있는가"를 판단해 신청 버튼을 그리려면 이 플래그가 필요한데, 행사 상세는 익명
+ * SSR이라(OG 미리보기 · wave2 D7) 폼을 조회할 수 없고, 로그인한 뒤 폼 전체(문항 포함)를 받아
+ * 플래그 하나를 꺼내는 것은 무겁다. 여러 건을 받는지는 접수 기간처럼 공개해도 새는 것이 없는
+ * 값이다 — 이미 receiptStatus(연결 폼의 접수 상태)가 같은 방식으로 실려 나간다. 폼이 없는
+ * 공지 성격 행사는 formId·receiptStatus와 함께 null이다. 폼의 나머지(제목·문항·응답 수)는
+ * 여전히 여기 없다.
+ *
  * 본문(mtxtCn)은 md 원문 그대로다 — 렌더링·sanitize는 공개 앱의 안전 렌더러 책임이고 원시
  * HTML은 허용하지 않는다(D12). 서버가 여기서 HTML을 벗기지 않는 것은 저장된 것과 서빙되는 것이
  * 갈리면 운영자가 편집기에서 본 문서와 방문자가 보는 문서가 달라지기 때문이다.
@@ -39,6 +47,7 @@ public record PublicEventDetailResponse(
         EventPhase eventPhase,
         FormReceiptStatus receiptStatus,
         Long formId,
+        Boolean mltplRspnsYn,
         OffsetDateTime eventBgngDt,
         OffsetDateTime eventEndDt,
         String plcNm,
@@ -60,6 +69,7 @@ public record PublicEventDetailResponse(
                 eventPhase,
                 receiptStatus,
                 event.getForm() == null ? null : event.getForm().getId(),
+                event.getForm() == null ? null : event.getForm().isMultipleResponseAllowed(),
                 PublicEventSummaryResponse.toOffsetDateTime(event.getBeginAt()),
                 PublicEventSummaryResponse.toOffsetDateTime(event.getEndAt()),
                 event.getPlaceName(),

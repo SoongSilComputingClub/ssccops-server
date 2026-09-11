@@ -120,6 +120,8 @@ class MyApplicationControllerTest {
                 .andExpect(jsonPath("$.data[0].plcNm").value("학생회관"))
                 .andExpect(jsonPath("$.data[0].applicationStatus").value("CONFIRMED"))
                 .andExpect(jsonPath("$.data[0].eventPtcpId").value(participantId))
+                // 응답 화면 주소(/f/{formId}/mine/{formRspnsId})를 만들 두 식별자가 함께 실린다 (#340)
+                .andExpect(jsonPath("$.data[0].formId").value(form.getId()))
                 .andExpect(jsonPath("$.data[0].formRspnsId").isNumber())
                 .andExpect(jsonPath("$.data[0].submittedAt").exists());
     }

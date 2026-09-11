@@ -22,6 +22,15 @@ import com.fasterxml.jackson.databind.exc.InvalidFormatException;
 
 import lombok.extern.slf4j.Slf4j;
 
+/*
+ * 재정의한 handle*(HttpRequestMethodNotSupported · MethodArgumentNotValid · HttpMessageNotReadable ·
+ * MaxUploadSizeExceeded)에 @Nullable을 붙이지 않는 것은 계약 위반이 아니다 (#357 · Sonar S2638).
+ * spring-webmvc 6.2.15의 ResponseEntityExceptionHandler는 네 메서드 모두 반환에
+ * @org.springframework.lang.Nullable을 달고 있고(javap로 확인), 재정의가 "null을 돌려줄 수도
+ * 있다"를 "언제나 값이 있다"로 좁히는 것은 호출자에게 더 강한 보장이라 허용되는 방향이다.
+ * 여기 네 메서드는 실제로 null을 돌려주지 않는다. 애노테이션을 되살리면 되레 "null이 나갈 수
+ * 있다"는 거짓 신호가 된다.
+ */
 @Slf4j
 @RestControllerAdvice(annotations = {RestController.class})
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {

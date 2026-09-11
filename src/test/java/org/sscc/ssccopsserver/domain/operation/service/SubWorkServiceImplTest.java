@@ -257,8 +257,9 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThatThrownBy(
-                        () -> subWorkService.createSubWork(request(approvalFreeTypeId), registrant))
+        SubWorkCreateRequest request = request(approvalFreeTypeId);
+
+        assertThatThrownBy(() -> subWorkService.createSubWork(request, registrant))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
                         "errorCode", OperationErrorCode.SUB_WORK_TYPE_INACTIVE);
@@ -595,7 +596,9 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThatThrownBy(() -> subWorkService.getSubWork(created.subWorkId(), registrant))
+        Long subWorkId = created.subWorkId();
+
+        assertThatThrownBy(() -> subWorkService.getSubWork(subWorkId, registrant))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
@@ -978,7 +981,9 @@ class SubWorkServiceImplTest {
         entityManager.flush();
         entityManager.clear();
 
-        assertThatThrownBy(() -> transition(created.subWorkId(), TransitionAction.START, null))
+        Long subWorkId = created.subWorkId();
+
+        assertThatThrownBy(() -> transition(subWorkId, TransitionAction.START, null))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
@@ -1154,7 +1159,9 @@ class SubWorkServiceImplTest {
                 .orElseThrow()
                 .softDelete(NOW.toInstant());
 
-        assertThatThrownBy(() -> updateChecklistItem(created.subWorkId(), itemId, true))
+        Long subWorkId = created.subWorkId();
+
+        assertThatThrownBy(() -> updateChecklistItem(subWorkId, itemId, true))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);
@@ -1287,10 +1294,9 @@ class SubWorkServiceImplTest {
                 new SubWorkUpdateRequest(
                         "삭제된 건 수정", ownerId, START, END, null, null, null, null, null);
 
-        assertThatThrownBy(
-                        () ->
-                                subWorkService.updateSubWork(
-                                        created.subWorkId(), request, registrant))
+        Long subWorkId = created.subWorkId();
+
+        assertThatThrownBy(() -> subWorkService.updateSubWork(subWorkId, request, registrant))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.SUB_WORK_NOT_FOUND);

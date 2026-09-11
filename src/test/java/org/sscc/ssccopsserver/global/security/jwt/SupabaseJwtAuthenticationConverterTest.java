@@ -97,7 +97,9 @@ class SupabaseJwtAuthenticationConverterTest {
 
     @Test
     void rejectsJwtWithNonUuidSubject() {
-        assertThatThrownBy(() -> converter.convert(jwt("not-a-uuid")))
+        Jwt nonUuidSubject = jwt("not-a-uuid");
+
+        assertThatThrownBy(() -> converter.convert(nonUuidSubject))
                 .isInstanceOf(InvalidBearerTokenException.class);
     }
 

@@ -367,7 +367,9 @@ class FormJsonPersistenceTest {
                 .executeUpdate();
         entityManager.clear();
 
-        assertThatThrownBy(() -> formRepository.findById(saved.getId()).orElseThrow())
+        Long formId = saved.getId();
+
+        assertThatThrownBy(() -> formRepository.findById(formId))
                 .isInstanceOf(GeneralException.class)
                 .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
                 .isEqualTo(FormErrorCode.FORM_CONTENT_MALFORMED);

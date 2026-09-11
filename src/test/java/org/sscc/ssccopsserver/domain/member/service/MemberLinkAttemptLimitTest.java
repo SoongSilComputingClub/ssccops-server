@@ -76,20 +76,20 @@ class MemberLinkAttemptLimitTest {
     @Test
     void repeatedFailuresLockTheAccountButNotOtherAccounts() {
         saveRosterMember();
-        UUID guesser = UUID.randomUUID();
+        AuthenticatedUser guesser = user(UUID.randomUUID());
 
         for (int attempt = 0; attempt < MemberLinkAttemptLimiter.MAX_FAILURES; attempt++) {
             // 학번을 바꿔 가며 명부를 훑는 모양 그대로다
             MemberLinkRequest guess =
                     new MemberLinkRequest("2019%04d".formatted(attempt), NAME, PHONE);
-            assertThatThrownBy(() -> memberService.link(user(guesser), guess))
+            assertThatThrownBy(() -> memberService.link(guesser, guess))
                     .isInstanceOf(GeneralException.class)
                     .extracting(ex -> ((GeneralException) ex).getErrorCode())
                     .isEqualTo(MemberErrorCode.MEMBER_LINK_FAILED);
         }
 
         MemberLinkRequest correct = new MemberLinkRequest(STUDENT_NUMBER, NAME, PHONE);
-        assertThatThrownBy(() -> memberService.link(user(guesser), correct))
+        assertThatThrownBy(() -> memberService.link(guesser, correct))
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(MemberErrorCode.TOO_MANY_LINK_ATTEMPTS);

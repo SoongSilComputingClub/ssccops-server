@@ -20,6 +20,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepos
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
@@ -54,7 +55,8 @@ class MemberServiceImplTest {
                 new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                 authorityPolicy,
                 new MemberLinkAttemptLimiter(Clock.systemDefaultZone()),
-                Clock.systemDefaultZone());
+                Clock.systemDefaultZone(),
+                new AuditLog());
     }
 
     @Test

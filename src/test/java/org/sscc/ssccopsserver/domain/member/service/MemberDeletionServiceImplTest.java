@@ -13,6 +13,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberDeletionQueryReposi
 import org.sscc.ssccopsserver.domain.member.repository.MemberReferenceConstraints;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 /*
  * 플래그가 꺼진 회원 하드 삭제 (#361 · ADR-0021).
@@ -35,7 +36,8 @@ class MemberDeletionServiceImplTest {
     @Test
     void deleteIs404FeatureDisabledWhenFlagIsOff() {
         MemberDeletionServiceImpl service =
-                new MemberDeletionServiceImpl(memberRepository, deletionQueryRepository, false);
+                new MemberDeletionServiceImpl(
+                        memberRepository, deletionQueryRepository, false, new AuditLog());
 
         assertThatThrownBy(() -> service.delete(1L, 2L))
                 .isInstanceOf(GeneralException.class)
@@ -48,7 +50,8 @@ class MemberDeletionServiceImplTest {
     @Test
     void previewIs404FeatureDisabledWhenFlagIsOff() {
         MemberDeletionServiceImpl service =
-                new MemberDeletionServiceImpl(memberRepository, deletionQueryRepository, false);
+                new MemberDeletionServiceImpl(
+                        memberRepository, deletionQueryRepository, false, new AuditLog());
 
         assertThatThrownBy(() -> service.preview(1L))
                 .isInstanceOf(GeneralException.class)
@@ -62,7 +65,8 @@ class MemberDeletionServiceImplTest {
     @Test
     void deletingSelfIs400BeforeTouchingTheDatabase() {
         MemberDeletionServiceImpl service =
-                new MemberDeletionServiceImpl(memberRepository, deletionQueryRepository, true);
+                new MemberDeletionServiceImpl(
+                        memberRepository, deletionQueryRepository, true, new AuditLog());
 
         assertThatThrownBy(() -> service.delete(7L, 7L))
                 .isInstanceOf(GeneralException.class)

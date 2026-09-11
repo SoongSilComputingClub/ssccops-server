@@ -66,6 +66,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
@@ -144,7 +145,8 @@ class ApprovalServiceImplTest {
                         new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(FIXED_CLOCK),
-                        FIXED_CLOCK);
+                        FIXED_CLOCK,
+                        new AuditLog());
         WorkService workService =
                 new WorkServiceImpl(
                         operationRepository,
@@ -172,6 +174,7 @@ class ApprovalServiceImplTest {
                         new SubWorkOwnershipPolicy(authorityPolicy),
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
+                        new AuditLog(),
                         entityManager.getEntityManager());
         approvalService =
                 new ApprovalServiceImpl(

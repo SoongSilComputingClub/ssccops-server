@@ -14,6 +14,9 @@ import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
 import lombok.RequiredArgsConstructor;
@@ -54,6 +57,7 @@ import lombok.extern.slf4j.Slf4j;
 public class RequireAuthorityAspect {
 
     private final AuthorityPolicy authorityPolicy;
+    private final AuditLog auditLog;
 
     @Before(
             "@annotation(org.sscc.ssccopsserver.global.security.authorization.RequireAuthority)"
@@ -92,6 +96,13 @@ public class RequireAuthorityAspect {
                     required.value().code(),
                     authorityPolicy.capabilityListOf(memberId),
                     joinPoint.getSignature().toShortString());
+            auditLog.record(
+                    AuditEvent.failure(
+                                    AuditAction.AUTHZ_DENY,
+                                    MemberErrorCode.AUTHORITY_REQUIRED.getCode())
+                            .target(joinPoint.getSignature().toShortString())
+                            .decision(required.value().code())
+                            .build());
             throw new GeneralException(MemberErrorCode.AUTHORITY_REQUIRED);
         }
     }

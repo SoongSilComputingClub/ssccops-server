@@ -38,6 +38,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -98,6 +101,7 @@ public class MemberImportServiceImpl implements MemberImportService {
 
     // 가입일이 비어 있는 행에 넣을 이관일. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
+    private final AuditLog auditLog;
 
     @Override
     @Transactional(readOnly = true)
@@ -165,6 +169,12 @@ public class MemberImportServiceImpl implements MemberImportService {
             }
         }
 
+        // 감사: 명부 가져오기는 «몇 명»만 — 개별 회원의 이력은 이관 실행기가 남긴다
+        auditLog.record(
+                AuditEvent.success(AuditAction.MEMBER_IMPORT)
+                        .target("csv")
+                        .decision("rows=" + csv.rows().size())
+                        .build());
         return new MemberImportExecutionResponse(
                 MemberImportExecutionSummary.of(rows, reimportDuplicates), rows);
     }

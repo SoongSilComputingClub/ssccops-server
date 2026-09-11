@@ -36,6 +36,9 @@ import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import software.amazon.awssdk.core.exception.SdkException;
 
@@ -110,6 +113,8 @@ public class EventServiceImpl implements EventService {
 
     /** 삭제 시각(del_dt)의 출처. Instant.now()를 직접 부르면 테스트에서 고정할 수 없다 (ClockConfig) */
     private final Clock clock;
+
+    private final AuditLog auditLog;
 
     /*
      * 행사 목록. 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1로 2회다 — 행사마다
@@ -304,6 +309,12 @@ public class EventServiceImpl implements EventService {
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다
         eventRepository.flush();
 
+        auditLog.record(
+                AuditEvent.success(AuditAction.EVENT_STATUS_CHANGE)
+                        .target(eventId)
+                        .decision(request.action())
+                        .after(event.getStatus())
+                        .build());
         return toDetail(event);
     }
 

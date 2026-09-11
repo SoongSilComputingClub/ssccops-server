@@ -37,6 +37,9 @@ import org.sscc.ssccopsserver.domain.form.repository.FormResponseCount;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -96,6 +99,7 @@ public class FormServiceImpl implements FormService {
      * 확인할 수 없다 (global/config/ClockConfig · OperationEntity.softDelete 선례).
      */
     private final Clock clock;
+    private final AuditLog auditLog;
 
     /*
      * 폼 목록. 쿼리는 폼 1 + 라벨 1 + 응답 집계 1로 3회다 — 폼마다 라벨을 조회하거나 응답을
@@ -416,6 +420,12 @@ public class FormServiceImpl implements FormService {
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다
         formRepository.flush();
 
+        auditLog.record(
+                AuditEvent.success(AuditAction.FORM_STATUS_CHANGE)
+                        .target(formId)
+                        .decision(request.action())
+                        .after(form.getStatus())
+                        .build());
         return FormStatusChangeResponse.of(form, formReceiptPolicy.receiptStatusOf(form));
     }
 

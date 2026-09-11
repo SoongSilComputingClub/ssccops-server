@@ -160,12 +160,28 @@ SMELLS=$(issue_count CODE_SMELL)
 # facets=rules 는 위 요청에 이미 얹혀 오므로 추가 왕복이 없다.
 #
 # **PR 코멘트가 아니라 job 요약에만 넣는다** — 규칙이 수십 개라 코멘트에 실으면 리뷰가 묻힌다.
-RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
-  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] ]
-  | sort_by(-.count) | .[:15]
-  | if length == 0 then empty
-    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
-    end')
+# ----------------------------------------------------------------------------
+# 규칙 표 하나를 만드는 함수 (ssccops#284 — 리포트 보강).
+#
+# 표가 넷이 됐다(전체·취약점·버그·새 코드). 같은 jq 를 네 벌 두면 열을 하나 더할 때 한 곳을
+# 빠뜨리고, 실제로 그 자리(이름 열)를 더하려다 이렇게 됐다.
+#
+# **규칙 이름을 함께 찍는다.** `java:S8924` 같은 키만 남기면 신규 규칙은 사전에 없어 읽을 수
+# 없었다 — 이번 정리에서 세 규칙(S8924·S8786·S7763)이 그랬다. 이름은 RULE_NAMES_JSON 에서
+# 찾고, 못 찾으면 키만 남긴다(리포트는 이름이 없어도 살아야 한다).
+#
+# 인자: $1 issues JSON · $2 최대 줄 수. 표는 네 요청이 다 돌아온 뒤 아래에서 만든다.
+# ----------------------------------------------------------------------------
+rules_table() {
+  # 기본값을 따옴표로 감싼다 — `${X:-{}}` 는 값이 있을 때 첫 `}` 에서 닫혀 `}` 가 하나 남는다
+  echo "$1" | jq -r --argjson names "${RULE_NAMES_JSON:-"{}"}" --argjson n "$2" '
+    [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) ]
+    | sort_by(-.count) | .[:$n]
+    | if length == 0 then empty
+      else ("| 규칙 | 이름 | 건수 |", "|---|---|---|"),
+           (.[] | "| `\(.val)` | \($names[.val] // "") | \(.count) |")
+      end'
+}
 
 # 취약점만의 규칙 분포 (ssccops#233).
 #
@@ -179,12 +195,34 @@ RULES_TABLE=$(echo "$ISSUES_JSON" | jq -r '
 VULN_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&types=VULNERABILITY&ps=1&facets=rules")
 
-VULN_RULES_TABLE=$(echo "$VULN_ISSUES_JSON" | jq -r '
-  [ (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) ]
-  | sort_by(-.count) | .[:15]
-  | if length == 0 then empty
-    else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
-    end')
+# 버그만의 규칙 분포 (ssccops#284). 취약점 표와 같은 이유·같은 방식이다 — web 의 버그 41건이
+# 어느 규칙인지 전체 표에서는 갈리지 않았다(a11y 규칙 둘이 41건씩 나란히 있었다).
+BUG_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&types=BUG&ps=1&facets=rules")
+
+# 새 코드 기간의 규칙 분포 (ssccops#284). 게이트가 보는 것은 `new_violations` 인데 리포트는
+# 전체 누적만 보여줘, 게이트가 71 이라 할 때 그 71 이 무엇인지 알 수 없었다.
+# `inNewCodePeriod=true` 는 프로젝트의 New Code 기준선을 그대로 쓴다 — 게이트와 같은 창이다.
+NEW_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+  "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&inNewCodePeriod=true&ps=1&facets=rules")
+
+# 네 표에 나오는 규칙 키를 모아 이름을 한 번에 받는다. 요청 하나가 늘고, 실패해도 표는 키만
+# 남긴 채 찍힌다.
+RULE_KEYS=$(jq -rn --argjson a "$ISSUES_JSON" --argjson b "$VULN_ISSUES_JSON" --argjson c "$BUG_ISSUES_JSON" --argjson d "$NEW_ISSUES_JSON" '
+  [ ($a, $b, $c, $d) | (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) | .val ]
+  | unique | join(",")' 2>/dev/null || true)
+RULE_NAMES_JSON="{}"
+if [ -n "$RULE_KEYS" ]; then
+  RULE_NAMES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
+    "$SONAR_HOST_URL/api/rules/search?rule_keys=$RULE_KEYS&f=name&ps=200" \
+    | jq -c '[ (.rules // [])[] | { (.key): .name } ] | add // {}' 2>/dev/null || echo "{}")
+  [ -z "$RULE_NAMES_JSON" ] && RULE_NAMES_JSON="{}"
+fi
+
+RULES_TABLE=$(rules_table "$ISSUES_JSON" 15)
+VULN_RULES_TABLE=$(rules_table "$VULN_ISSUES_JSON" 15)
+BUG_RULES_TABLE=$(rules_table "$BUG_ISSUES_JSON" 15)
+NEW_RULES_TABLE=$(rules_table "$NEW_ISSUES_JSON" 15)
 
 # 보안 핫스팟은 세지 않는다 (ssccops#239 종결).
 #
@@ -278,6 +316,34 @@ if [ -n "$VULN_RULES_TABLE" ]; then
 
   echo "--- 취약점 규칙별 분포 ---"
   echo "$VULN_RULES_TABLE"
+fi
+
+# 버그만의 규칙 분포 (ssccops#284). 버그가 없으면 찍지 않는다.
+if [ -n "$BUG_RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 버그 규칙별 분포"
+    echo
+    echo "$BUG_RULES_TABLE"
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  echo "--- 버그 규칙별 분포 ---"
+  echo "$BUG_RULES_TABLE"
+fi
+
+# 새 코드 기간의 규칙 분포 (ssccops#284). 게이트의 new_violations 가 가리키는 것이 이 표다.
+if [ -n "$NEW_RULES_TABLE" ]; then
+  {
+    echo
+    echo "### 새 코드 규칙별 분포"
+    echo
+    echo "$NEW_RULES_TABLE"
+    echo
+    echo "> 게이트의 \`new_violations\` 가 세는 것이 이 표다 — New Code 기준선 이후 들어온 지적만."
+  } >> "$GITHUB_STEP_SUMMARY"
+
+  echo "--- 새 코드 규칙별 분포 ---"
+  echo "$NEW_RULES_TABLE"
 fi
 
 # 규칙별 분포는 job 요약에 붙인다 (ssccops#237).

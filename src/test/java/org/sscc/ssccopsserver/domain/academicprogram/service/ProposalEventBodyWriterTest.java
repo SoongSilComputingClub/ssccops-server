@@ -53,8 +53,11 @@ class ProposalEventBodyWriterTest {
     void omitsSectionsWhoseAnswerWasLeftBlank() {
         String body = ProposalEventBodyWriter.write(draft(null, null, CURRICULUM));
 
-        assertThat(body).doesNotContain("## 준비물").doesNotContain("## 일정");
-        assertThat(body).contains("## 활동 소개").contains("## 커리큘럼");
+        assertThat(body)
+                .doesNotContain("## 준비물")
+                .doesNotContain("## 일정")
+                .contains("## 활동 소개")
+                .contains("## 커리큘럼");
     }
 
     /* 파서가 답을 null로 굳히지만, 공백만 남은 값이 들어와도 같은 판단이어야 한다 */

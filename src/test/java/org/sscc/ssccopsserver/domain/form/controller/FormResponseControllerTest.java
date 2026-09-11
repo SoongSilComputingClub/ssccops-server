@@ -315,9 +315,10 @@ class FormResponseControllerTest {
         List<FormResponseSummaryResponse> responses =
                 formResponseService.getResponses(form.getId(), null);
 
-        assertThat(responses).hasSize(8);
         // 회원 정보가 실제로 채워졌는지까지 함께 본다 — 비어 있으면 조인 없이도 쿼리 2회다
-        assertThat(responses).allSatisfy(item -> assertThat(item.member().mbrNm()).isNotBlank());
+        assertThat(responses)
+                .hasSize(8)
+                .allSatisfy(item -> assertThat(item.member().mbrNm()).isNotBlank());
         assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
     }
 

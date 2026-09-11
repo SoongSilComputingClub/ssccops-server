@@ -2,6 +2,10 @@ package org.sscc.ssccopsserver.global.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 import javax.sql.DataSource;
 
 import org.junit.jupiter.api.Test;
@@ -11,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.sscc.ssccopsserver.domain.member.repository.MemberReferenceConstraints;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -196,6 +201,67 @@ class FlywayMigrationValidateTest {
                 .contains("UNIQUE INDEX")
                 .contains("(form_id)")
                 .contains("WHERE (del_dt IS NULL)");
+    }
+
+    /*
+     * 회원 본인 데이터 FK에만 ON DELETE CASCADE가 붙었는지 본다 (#361 · V9 · ADR-0021).
+     *
+     * 하드 삭제의 경계는 코드가 아니라 이 제약들이다 — cascade가 빠진 곳이 있으면 응답 있는
+     * 회원이 409로 막히고, 행위자 참조에 cascade가 붙으면 회원을 지울 때 **남의** 폼·행사가
+     * 함께 사라진다. 후자가 훨씬 나쁘므로 20개가 그대로 NO ACTION인지를 함께 못 박는다.
+     * H2(테스트)는 엔티티의 @OnDelete로 같은 제약을 만들지만 V9와 어노테이션이 갈리면
+     * 테스트는 초록인데 dev는 다르게 동작하므로 PostgreSQL에서 다시 본다.
+     */
+    @Test
+    void memberOwnDataCascadesAndActorReferencesDoNot() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        Map<String, String> rules = new HashMap<>();
+        jdbc.query(
+                "SELECT rc.constraint_name, rc.delete_rule"
+                        + " FROM information_schema.referential_constraints rc"
+                        + " WHERE rc.constraint_schema = 'public'",
+                rs -> {
+                    rules.put(rs.getString(1), rs.getString(2));
+                });
+
+        List<String> cascading =
+                List.of(
+                        "fkldq8y4cffwc5bkk42lq0fmhvd", // mbr_grd_hstry.mbr_id
+                        "fka1aso9jn3i6nhqoh3mg1hiyip", // mbr_stts_hstry.mbr_id
+                        "fkssqlpq3chlo7d1rciu5wguvt1", // mbr_chg_hstry.mbr_id
+                        "fka229oo73t8twd2by22omue4jt", // mbr_role_rel.mbr_id
+                        "fkbtp6dhj8bntedf10yc81a0620", // form_rspns_hstry.mbr_id
+                        "fktd4dqicsmwfngwhocoak92b6n", // event_ptcp.mbr_id
+                        "fk27ofrsdwuss5ecdkl8uwwgvdb", // sub_work_aprv.mbr_id
+                        "fkpejqbv1u3b1utku2f1k7xvche", // sub_work_aprv_vote.mbr_id
+                        "fkfo0xp7208swp62tbiw1pl4nmy", // sub_work_rjct.mbr_id
+                        "fk51eb6sl115o38xmcux4l66ne9", // form_rspns_rvw_hstry.form_rspns_id
+                        "fk2yfmj6dd4h4l2phh0smwi0kb9", // event_ptcp.form_rspns_id
+                        "fkqka61prj9r2o70ii0o0u0xgbv"); // atndc.event_ptcp_id
+        for (String name : cascading) {
+            assertThat(rules.get(name)).as("본인 데이터 FK %s는 cascade여야 한다", name).isEqualTo("CASCADE");
+        }
+
+        // 행위자 참조 — 서비스가 409로 번역하는 표와 같은 목록이며 하나라도 cascade면 남의 기록이 지워진다
+        for (MemberReferenceConstraints.Reference reference : MemberReferenceConstraints.BLOCKING) {
+            assertThat(rules.get(reference.constraintName()))
+                    .as(
+                            "행위자 참조 FK %s(%s)는 NO ACTION이어야 한다",
+                            reference.constraintName(), reference.label())
+                    .isEqualTo("NO ACTION");
+        }
+
+        // mbr을 가리키는 FK는 29개이고 그중 cascade는 본인 데이터 9개뿐이다
+        Integer cascadingToMember =
+                jdbc.queryForObject(
+                        "SELECT count(*) FROM information_schema.referential_constraints rc"
+                                + " JOIN information_schema.table_constraints tc"
+                                + " ON tc.constraint_name = rc.unique_constraint_name"
+                                + " WHERE rc.constraint_schema = 'public' AND tc.table_name = 'mbr'"
+                                + " AND rc.delete_rule = 'CASCADE'",
+                        Integer.class);
+        assertThat(cascadingToMember).as("mbr을 가리키는 cascade FK").isEqualTo(9);
     }
 
     /*

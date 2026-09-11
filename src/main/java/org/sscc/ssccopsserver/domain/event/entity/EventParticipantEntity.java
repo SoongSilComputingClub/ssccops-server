@@ -16,6 +16,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -67,7 +69,10 @@ public class EventParticipantEntity {
     private EventEntity event;
 
     /** 참가 회원(mbr.mbr_id). 명단의 주인은 바뀌지 않으므로 updatable = false로 잠근다 */
+    // 회원 본인 데이터 — 회원이 지워지면 참가도 함께 지워진다 (V9 · ADR-0021). 출석(atndc)이
+    // 뒤따른다. rgtr_mbr_id(등록 처리자)는 행위자 참조라 cascade가 없다.
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "mbr_id", nullable = false, updatable = false)
     private MemberEntity member;
 
@@ -79,7 +84,10 @@ public class EventParticipantEntity {
      * 신청 근거가 된 폼 응답(form_rspns_hstry.form_rspns_id). 전화 접수 등 수동 등록이면
      * NULL이다 — 폼 없는 회원 대상 행사의 참가자가 정상이라 optional이다.
      */
+    // 응답에 딸린 행 — 응답이 지워지면(회원 삭제의 cascade) 참가도 함께 간다 (V9 · ADR-0021).
+    // mbr_id 쪽 cascade와 같은 행을 가리키므로 어느 쪽이 먼저든 결과는 같다.
     @ManyToOne(fetch = FetchType.LAZY)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "form_rspns_id", updatable = false)
     private FormResponseHistoryEntity formResponse;
 

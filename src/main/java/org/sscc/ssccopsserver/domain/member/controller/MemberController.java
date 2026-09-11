@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -21,6 +22,7 @@ import org.sscc.ssccopsserver.domain.member.dto.AssignableMemberResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberBulkChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberBulkGradeChangeRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberBulkStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.member.dto.MemberDeletionPreviewResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberDetailResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGenerationResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberGradeChangeRequest;
@@ -37,6 +39,7 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberUpdateRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberBulkChangeService;
 import org.sscc.ssccopsserver.domain.member.service.MemberChangeService;
+import org.sscc.ssccopsserver.domain.member.service.MemberDeletionService;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
@@ -79,6 +82,12 @@ public class MemberController {
      * 일괄은 트랜잭션이 없어야 한 명의 실패가 앞선 성공을 되돌리지 않는다.
      */
     private final MemberBulkChangeService memberBulkChangeService;
+
+    /*
+     * 하드 삭제도 별도 빈이다 (#361 · ADR-0021). **임시** 기능이라 플래그로 닫히고 폐기 조건이
+     * 정해져 있어, 회원을 만들고 읽는 빈에 섞지 않는다 — 근거는 MemberDeletionService 주석.
+     */
+    private final MemberDeletionService memberDeletionService;
 
     @Operation(
             summary = "회원가입",
@@ -381,5 +390,55 @@ public class MemberController {
             @Valid @RequestBody MemberBulkStatusChangeRequest request,
             @CurrentMember MemberEntity changer) {
         return ApiResponse.success(memberBulkChangeService.changeStatuses(request, changer));
+    }
+
+    /*
+     * 회원 삭제 미리보기 (#361 · ADR-0021). 지워질 본인 데이터의 건수와 삭제를 막을 참조를 내린다.
+     * 확인 창이 회원명을 직접 입력하게 하는 것과 함께, 되돌릴 수 없는 삭제의 확인 절차다.
+     *
+     * 플래그가 꺼져 있으면 404 FEATURE_DISABLED — 없는 회원의 404 NOT_FOUND와 코드가 다르다
+     * (MemberErrorCode.FEATURE_DISABLED 주석). 웹은 자기 플래그로 버튼을 숨기지만 두 값이 갈릴 수
+     * 있어 서버가 코드로 구별해 준다.
+     */
+    @Operation(
+            summary = "회원 삭제 미리보기 (임시)",
+            description =
+                    "회원을 하드 삭제하면 함께 지워질 응답·참가·이력 건수와, 삭제를 막을 참조(폼 작성자 등)의 목록을 내린다. blockedBy가 비어"
+                            + " 있으면 지울 수 있다. 기능 플래그(ssccops.member.hard-delete.enabled)가 꺼져 있으면 404"
+                            + " FEATURE_DISABLED, 없는 회원은 404 NOT_FOUND다. ADR-0021의 임시 기능이다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @GetMapping("/{memberId}/deletion-preview")
+    public ApiResponse<MemberDeletionPreviewResponse> previewDeletion(@PathVariable Long memberId) {
+        return ApiResponse.success(memberDeletionService.preview(memberId));
+    }
+
+    /*
+     * 회원 하드 삭제 (#361 · ADR-0021). **임시 기능**이다 — 연동 실패로 생긴 중복 계정(명부 행 옆의
+     * 새 TEMP 계정)을 지우려고 열었고, 정리가 끝나면 플래그를 끈다.
+     *
+     * 지워지는 것은 본인 데이터(응답·참가·이력·역할·승인/투표/반려)이고 그 경계는 코드가 아니라
+     * V9의 ON DELETE CASCADE가 정한다. 남의 것에 한 일(폼·행사 작성, 검토, 변경, 담당…)이 하나라도
+     * 있으면 DB가 막고 409 MEMBER_REFERENCED로 답한다 — 남의 기록이 사라지는 일이 없다.
+     *
+     * 요청자 본인은 400이다(CANNOT_DELETE_SELF 주석). 소프트 삭제(폼 #329 · 행사 #347)와 달리
+     * 되살리기가 없다 — 목적이 «치우기»가 아니라 «없었던 것으로 만들기»라서다(ADR-0021 참고 절).
+     * 구글 계정은 건드리지 않으므로 그 사람이 다시 로그인하면 가입 화면 → 연결 화면이 복구 경로다.
+     */
+    @Operation(
+            summary = "회원 하드 삭제 (임시)",
+            description =
+                    "회원 행과 본인 데이터(폼 응답·행사 참가·등급/상태/정보 변경 이력·역할 배정·하위 업무"
+                            + " 승인/투표/반려, 그리고 응답의 검토 이력·참가의 출석)를 DB cascade로 함께 지운다."
+                            + " 되돌릴 수 없다. 이 회원이 남의 기록의 작성자·검토자·변경자·담당자로 남아 있으면"
+                            + " 409 MEMBER_REFERENCED(메시지에 어느 참조인지)로 거절한다 — deletion-preview의"
+                            + " blockedBy가 미리 알려 준다. 자기 자신은 400 CANNOT_DELETE_SELF,"
+                            + " 플래그가 꺼져 있으면 404 FEATURE_DISABLED, 없는 회원은 404 NOT_FOUND다."
+                            + " ADR-0021의 임시 기능이며 환경변수 SSCCOPS_MEMBER_HARD_DELETE_ENABLED로 켠다.")
+    @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
+    @DeleteMapping("/{memberId}")
+    public ApiResponse<Void> deleteMember(
+            @PathVariable Long memberId, @CurrentMember MemberEntity requester) {
+        memberDeletionService.delete(memberId, requester.getId());
+        return ApiResponse.successWithNoData();
     }
 }

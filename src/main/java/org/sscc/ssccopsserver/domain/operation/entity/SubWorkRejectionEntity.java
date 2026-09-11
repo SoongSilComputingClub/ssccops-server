@@ -12,6 +12,8 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 import lombok.AccessLevel;
@@ -45,7 +47,9 @@ public class SubWorkRejectionEntity {
     @JoinColumn(name = "sub_work_id", nullable = false, updatable = false)
     private SubWorkEntity subWork;
 
+    // 회원 본인 데이터 — 회원이 지워지면 함께 지워진다 (V9 · ADR-0021).
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     @JoinColumn(name = "mbr_id", nullable = false, updatable = false)
     private MemberEntity rejector;
 

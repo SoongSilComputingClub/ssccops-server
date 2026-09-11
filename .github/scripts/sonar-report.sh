@@ -206,18 +206,24 @@ BUG_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
 NEW_ISSUES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/issues/search?componentKeys=$PROJECT_KEY&resolved=false&inNewCodePeriod=true&ps=1&facets=rules")
 
-# 네 표에 나오는 규칙 키를 모아 이름을 한 번에 받는다. 요청 하나가 늘고, 실패해도 표는 키만
-# 남긴 채 찍힌다.
+# 네 표에 나오는 규칙 키를 모아 이름을 받는다. 실패해도 표는 키만 남긴 채 찍힌다.
+#
+# **키마다 `api/rules/show` 를 한 번씩 부른다.** 처음엔 `api/rules/search?rule_keys=` 한 번으로
+# 받으려 했는데 이 서버(26.8.0)는 그 파라미터를 조용히 무시해 이름 열이 통째로 비었다 —
+# 모르는 파라미터를 오류로 만들지 않는 것은 #237 에서 `projectKeys` 로 밟은 것과 같은 성질이다.
+# 규칙은 많아야 수십 개라 왕복이 그만큼 늘어도 초 단위다. sonar-issues.sh 가 같은 호출을 쓴다.
+# `tr -d '\r'` 은 Windows jq 가 줄 끝에 CR 을 붙여 키가 `S1082\r` 이 되던 것을 로컬 스텁 실행에서
+# 밟아 둔 것이다 — CI(Linux)에서는 없어도 되지만 키가 곧 조회 인자라 값싼 보험이다.
 RULE_KEYS=$(jq -rn --argjson a "$ISSUES_JSON" --argjson b "$VULN_ISSUES_JSON" --argjson c "$BUG_ISSUES_JSON" --argjson d "$NEW_ISSUES_JSON" '
   [ ($a, $b, $c, $d) | (.facets // [])[] | select(.property=="rules") | (.values // [])[] | select(.count > 0) | .val ]
-  | unique | join(",")' 2>/dev/null || true)
+  | unique | .[]' 2>/dev/null | tr -d '\r' || true)
 RULE_NAMES_JSON="{}"
-if [ -n "$RULE_KEYS" ]; then
-  RULE_NAMES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
-    "$SONAR_HOST_URL/api/rules/search?rule_keys=$RULE_KEYS&f=name&ps=200" \
-    | jq -c '[ (.rules // [])[] | { (.key): .name } ] | add // {}' 2>/dev/null || echo "{}")
-  [ -z "$RULE_NAMES_JSON" ] && RULE_NAMES_JSON="{}"
-fi
+for RULE_KEY in $RULE_KEYS; do
+  RULE_NAME=$(curl -s -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/rules/show?key=$RULE_KEY" \
+    | jq -r '.rule.name // empty' 2>/dev/null || true)
+  [ -z "$RULE_NAME" ] && continue
+  RULE_NAMES_JSON=$(jq -cn --argjson m "$RULE_NAMES_JSON" --arg k "$RULE_KEY" --arg v "$RULE_NAME" '$m + {($k): $v}')
+done
 
 RULES_TABLE=$(rules_table "$ISSUES_JSON" 15)
 VULN_RULES_TABLE=$(rules_table "$VULN_ISSUES_JSON" 15)

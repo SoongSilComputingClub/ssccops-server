@@ -186,50 +186,22 @@ VULN_RULES_TABLE=$(echo "$VULN_ISSUES_JSON" | jq -r '
     else ("| 규칙 | 건수 |", "|---|---|"), (.[] | "| `\(.val)` | \(.count) |")
     end')
 
-# 보안 핫스팟 (ssccops#233 · ssccops#239).
+# 보안 핫스팟은 세지 않는다 (ssccops#239 종결).
 #
-# 이 리포트가 각주로 "세지 않는다"고 적어 두었던 값이다. 보안 점검을 하면서 보안 핫스팟을
-# 빼 두는 것은 앞뒤가 맞지 않아 실제로 센다.
+# 한때 여기서 `api/hotspots/search` 를 따로 불렀고(ssccops#233 · #295), 그 값이 오래 `?` 였다가
+# 403 으로 밝혀져 "토큰에 권한을 주면 돌아온다" 로 남겨 두었다. 그런데 이 서버(Community Build
+# 26.8.0)의 대시보드가 답을 먼저 했다 —
 #
-# **프로젝트 필터 이름이 issues API 와 다르다** — 이쪽은 `projectKey`(단수)이고
-# api/issues/search 는 `componentKeys` 다. SonarQube 는 모르는 파라미터를 오류로 만들지 않고
-# 조용히 무시하므로(ssccops#237 에서 `projectKeys` 로 밟았다) 이름이 틀리면 인스턴스 전체가
-# 돌아온다. 값이 총계와 동떨어지면 그것부터 의심할 것.
+#     The concept of Security Hotspots is deprecated. Security Hotspot findings now appear as
+#     security issues or vulnerabilities in the Issues page.
 #
-# **상태 코드를 함께 받는다** (ssccops#239). 이 값이 오래 `?` 로 나왔는데, `?` 는
-# `.paging.total` 이 없을 때의 폴백이라 **왜 없는지를 말해 주지 않았다.** 파라미터 이름이
-# 틀린 것인지 엔드포인트가 사라진 것인지(`/api/hotspots/*` 는 deprecated 계열이다) 구분이
-# 되지 않아, 응답을 CI 로그에 한 번 찍어 확인했다. 답은 둘 다 아니었다:
+# **핫스팟이 이슈 모델로 합쳐졌다.** 별도 API 가 답하는 것은 옛 개념의 빈 목록이고(양쪽
+# 프로젝트 모두 0), 실제 지적은 위 `api/issues/search` 의 취약점 수에 이미 들어 있다. 그러니
+# 권한을 푸는 것이 아니라 **호출을 걷어내는 것**이 맞다 — 권한을 풀어 0 을 받아 봐야 "취약점
+# 수가 보안 지적의 전부가 아니다" 라는 각주가 거짓이 된다.
 #
-#     HTTP 403  {"errors":[{"msg":"Insufficient privileges"}]}
-#
-# **엔드포인트도 파라미터도 멀쩡하고 토큰이 못 읽는 것이다.** 같은 토큰으로 issues·measures·
-# qualitygates 질의는 전부 통하므로 토큰이 죽은 것도 아니다 — 핫스팟만 별도 권한을 요구한다.
-# 그러니 **여기서 고칠 수 있는 것은 없다.** SonarQube 에서 이 토큰에 프로젝트 Browse 권한을
-# 주면 숫자가 저절로 돌아온다.
-#
-# 대신 **물음표 하나만 남기지 않는다** — 값을 못 얻었으면 못 얻은 이유를 적는다. 물음표는
-# 매 실행마다 같은 질문을 다시 하게 만들었고, 그 질문의 답이 위에 있다.
-HOTSPOTS_RAW=$(curl -s -w '\n%{http_code}' -u "$SONAR_TOKEN:" \
-  "$SONAR_HOST_URL/api/hotspots/search?projectKey=$PROJECT_KEY&status=TO_REVIEW&ps=1")
-HOTSPOTS_CODE=$(printf '%s' "$HOTSPOTS_RAW" | tail -n1)
-HOTSPOTS_JSON=$(printf '%s' "$HOTSPOTS_RAW" | sed '$d')
-
-HOTSPOTS=""
-if [ "$HOTSPOTS_CODE" = "200" ]; then
-  HOTSPOTS=$(echo "$HOTSPOTS_JSON" | jq -r '.paging.total // empty' 2>/dev/null || true)
-fi
-
-if [ -n "$HOTSPOTS" ]; then
-  HOTSPOTS_NOTE="> **보안 핫스팟은 취약점 수에 포함되지 않는다** — 별도 API(\`api/hotspots/search\`)라 따로 센다. 취약점 수가 보안 지적의 전부가 아니다."
-else
-  HOTSPOTS_ERR=$(echo "$HOTSPOTS_JSON" | jq -r '.errors[0].msg // empty' 2>/dev/null || true)
-  HOTSPOTS="세지 못했다 (HTTP ${HOTSPOTS_CODE}${HOTSPOTS_ERR:+ — ${HOTSPOTS_ERR}})"
-  HOTSPOTS_NOTE="> **보안 핫스팟을 세지 못했다** — \`api/hotspots/search\` 가 위 상태로 답했다. \`403 Insufficient privileges\` 면 CI 토큰에 이 프로젝트 Browse 권한이 없다는 뜻이고(같은 토큰으로 나머지 질의는 통한다), SonarQube 에서 권한을 주면 숫자가 돌아온다 (ssccops#239).
->
-> 어느 쪽이든 **보안 핫스팟은 위 취약점 수에 포함되지 않는다** — 취약점 수가 보안 지적의 전부가 아니다."
-  echo "::warning::보안 핫스팟을 세지 못했다 (HTTP $HOTSPOTS_CODE ${HOTSPOTS_ERR:-}). 토큰 권한을 확인할 것 (ssccops#239)."
-fi
+# 이 줄을 리포트에서 함께 지운다. `?` 든 `세지 못했다` 든 `0` 이든, 없는 개념의 자리를 남겨
+# 두면 매 실행마다 같은 질문("이건 왜 이러지")을 다시 하게 만든다.
 
 MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
   "$SONAR_HOST_URL/api/measures/component?component=$PROJECT_KEY&metricKeys=coverage,duplicated_lines_density")
@@ -255,7 +227,6 @@ ${ICON} **Quality Gate ${RESULT}**
 - 버그: ${BUGS}
 - 취약점: ${VULNS}
 - 코드 스멜: ${SMELLS}
-- 보안 핫스팟(검토 대기): ${HOTSPOTS}
 
 ### 측정값
 - 커버리지: ${COVERAGE}%
@@ -265,7 +236,7 @@ Dashboard: ${DASHBOARD_URL}
 
 > **이 수치는 프로젝트 기본 브랜치 기준이다** — 이 서버는 Community Build 라 브랜치를 가르지 못한다(ssccops#234). 분석은 develop push 한 곳에서만 돌므로 곧 develop 의 상태다.
 >
-${HOTSPOTS_NOTE}
+> **보안 핫스팟은 따로 세지 않는다** — 이 서버 버전에서 핫스팟은 이슈로 합쳐져 위 취약점 수에 들어 있다 (ssccops#239).
 >
 > Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
 EOF

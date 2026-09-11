@@ -1,39 +1,74 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!--
+  로그 출력 (ssccops#298 · ADR-0024).
+
+  모양은 EcsJsonEncoder 한 곳이 정한다 — stdout JSON 과 Logstash TCP 가 같은 클래스를 쓴다.
+  필드 이름·중첩 규칙이 왜 그런지는 그 클래스 주석에 있다.
+
+  세 appender:
+    STDOUT_TEXT  — dev·local·test. 사람이 읽는 한 줄
+    STDOUT_JSON  — prod. Coolify Runtime Logs 가 보는 것
+    LOGSTASH     — LOGSTASH_HOST 가 있을 때만. 어느 프로파일이든 붙는다 (dev 에서 Kibana 를 먼저 검증한다)
+
+  LOGSTASH 는 프로파일이 아니라 환경변수로 켠다. 프로파일로 가르면 local 에서 Logstash 를 붙여 볼 수
+  없고, 반대로 무조건 등록하면 Logstash 가 없는 환경에서 5초마다 재접속 경고가 stderr 에 쌓인다.
+  조건은 logback 1.5.22 의 IsPropertyDefinedCondition 이라 Janino 가 필요 없다 — <condition> 이
+  <if> 의 자식이 아니라 **바로 앞 형제**인 것이 그 문법이다 (옛 condition 속성은 Janino 를
+  요구하고 deprecated 다).
+-->
 <configuration>
     <springProperty name="APP_NAME" source="spring.application.name" defaultValue="ssccops-server"/>
     <springProperty name="APP_ENV" source="spring.profiles.active" defaultValue="local"/>
 
-    <!-- prod: JSON format (Alloy/Loki) -->
-    <appender name="STDOUT_JSON" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-            <fieldNames>
-                <timestamp>ts</timestamp>
-                <level>level</level>
-                <logger>logger</logger>
-                <message>msg</message>
-            </fieldNames>
-            <customFields>{"service":"${APP_NAME}","env":"${APP_ENV}"}</customFields>
-            <includeMdcKeyName>traceId</includeMdcKeyName>
-            <includeMdcKeyName>spanId</includeMdcKeyName>
-        </encoder>
-    </appender>
-
-    <!-- dev: Text format (readability) -->
-    <appender name="STDOUT_TEXT" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
-
     <springProfile name="prod">
+        <appender name="STDOUT_JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="org.sscc.ssccopsserver.global.logging.EcsJsonEncoder">
+                <serviceName>${APP_NAME}</serviceName>
+                <environment>${APP_ENV}</environment>
+            </encoder>
+        </appender>
         <root level="INFO">
             <appender-ref ref="STDOUT_JSON"/>
         </root>
     </springProfile>
 
     <springProfile name="!prod">
+        <appender name="STDOUT_TEXT" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
         <root level="DEBUG">
             <appender-ref ref="STDOUT_TEXT"/>
         </root>
     </springProfile>
+
+    <!--
+      Logstash 가 내려가 있어도 요청 처리는 멈추지 않는다 — appender 가 비동기이고 링 버퍼(8192줄)
+      까지만 들고 있다가 넘치면 버린다. 그래서 «보냈으니 반드시 보존된다»가 아니다 (ADR-0024).
+      keepAlive 는 유휴 연결이 중간 장비에서 끊기는 것을 막는다.
+    -->
+    <condition class="ch.qos.logback.core.boolex.IsPropertyDefinedCondition">
+        <key>LOGSTASH_HOST</key>
+    </condition>
+    <if>
+        <then>
+            <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+                <destination>${LOGSTASH_HOST}:${LOGSTASH_PORT:-5000}</destination>
+                <reconnectionDelay>5 second</reconnectionDelay>
+                <keepAliveDuration>5 minutes</keepAliveDuration>
+                <ringBufferSize>8192</ringBufferSize>
+                <!-- 종료 때 못 보낸 줄을 기다리는 시간. 기본 1분인데, Logstash 가 없는 채로 내려가는
+                     컨테이너가 1분을 붙들면 배포가 그만큼 늦는다. 살아 있으면 ms 단위로 끝난다 -->
+                <shutdownGracePeriod>5 seconds</shutdownGracePeriod>
+                <encoder class="org.sscc.ssccopsserver.global.logging.EcsJsonEncoder">
+                    <serviceName>${APP_NAME}</serviceName>
+                    <environment>${APP_ENV}</environment>
+                </encoder>
+            </appender>
+            <root>
+                <appender-ref ref="LOGSTASH"/>
+            </root>
+        </then>
+    </if>
 </configuration>

@@ -29,6 +29,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthorityAspect;
@@ -84,7 +85,8 @@ class DenialLayerLoggingTest {
         authenticate(performer);
 
         try (LogCapture logs = LogCapture.of(RequireAuthorityAspect.class)) {
-            RequireAuthorityAspect aspect = new RequireAuthorityAspect(authorityPolicy);
+            RequireAuthorityAspect aspect =
+                    new RequireAuthorityAspect(authorityPolicy, new AuditLog());
             JoinPoint joinPoint = joinPointOf("approvalInbox");
 
             assertThatThrownBy(() -> aspect.checkAuthority(joinPoint))
@@ -108,7 +110,7 @@ class DenialLayerLoggingTest {
         authenticate(performer);
 
         try (LogCapture logs = LogCapture.of(RequireAuthorityAspect.class)) {
-            new RequireAuthorityAspect(authorityPolicy)
+            new RequireAuthorityAspect(authorityPolicy, new AuditLog())
                     .checkAuthority(joinPointOf("approvalInbox"));
 
             assertThat(logs.warnMessages()).isEmpty();
@@ -123,7 +125,8 @@ class DenialLayerLoggingTest {
     @Test
     void unauthenticatedAndNotSignedUpAreNotLogged() throws Exception {
         try (LogCapture logs = LogCapture.of(RequireAuthorityAspect.class)) {
-            RequireAuthorityAspect aspect = new RequireAuthorityAspect(authorityPolicy);
+            RequireAuthorityAspect aspect =
+                    new RequireAuthorityAspect(authorityPolicy, new AuditLog());
             JoinPoint joinPoint = joinPointOf("approvalInbox");
 
             assertThatThrownBy(() -> aspect.checkAuthority(joinPoint))

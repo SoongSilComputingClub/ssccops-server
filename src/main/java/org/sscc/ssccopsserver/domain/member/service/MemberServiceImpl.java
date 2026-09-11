@@ -54,6 +54,9 @@ import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 
 import lombok.RequiredArgsConstructor;
@@ -137,6 +140,7 @@ public class MemberServiceImpl implements MemberService {
 
     // 전산 가입일(sys_join_ymd) 산출 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
+    private final AuditLog auditLog;
 
     /*
      * 회원 생성과 가입 이력이 한 트랜잭션이다. 회원만 남고 이력이 없으면 회원 상세의 변경이력이
@@ -201,6 +205,9 @@ public class MemberServiceImpl implements MemberService {
 
         MemberEntity saved = saveOrTranslateConflict(member);
         recordInitialHistories(saved, grade, status);
+        // 서버가 아는 첫 인증 사건 — 로그인은 Supabase 쪽이라 여기가 «누가 들어왔는가»의 시작이다
+        auditLog.record(
+                AuditEvent.success(AuditAction.MEMBER_SIGNUP).target(saved.getId()).build());
 
         if (bootstrapRole == null) {
             /*
@@ -252,6 +259,7 @@ public class MemberServiceImpl implements MemberService {
          * 되는 질문이라, 화면에 필요해지면 테이블 등재를 별도 TASK로 세운다.
          */
         log.info("이관 회원 계정 연결 완료: mbrId={}, authUserId={}", member.getId(), authUserId);
+        auditLog.record(AuditEvent.success(AuditAction.MEMBER_LINK).target(member.getId()).build());
 
         Long memberId = member.getId();
         return MemberProfileResponse.of(
@@ -520,7 +528,14 @@ public class MemberServiceImpl implements MemberService {
                 trimToNull(request.phoneNumber()),
                 trimToNull(request.email()));
         flushOrTranslateStudentNumberConflict();
-        profileChangeRecorder.record(member, before, MemberProfileSnapshot.of(member), changer);
+        MemberProfileSnapshot after = MemberProfileSnapshot.of(member);
+        profileChangeRecorder.record(member, before, after, changer);
+        // 감사: 바뀐 필드 **이름**만 — 값(전화·이메일·이름)은 mbr_chg_hstry가 갖고 로그에는 안 실린다
+        auditLog.record(
+                AuditEvent.success(AuditAction.MEMBER_PROFILE_UPDATE)
+                        .target(memberId)
+                        .changedFields(before.changedFieldNames(after))
+                        .build());
 
         return MemberDetailResponse.of(
                 member,

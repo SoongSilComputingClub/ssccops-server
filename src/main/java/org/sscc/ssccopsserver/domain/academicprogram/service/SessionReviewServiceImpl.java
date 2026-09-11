@@ -28,6 +28,9 @@ import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepositor
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -48,6 +51,7 @@ public class SessionReviewServiceImpl implements SessionReviewService {
     private final AttendanceRepository attendanceRepository;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final Clock clock;
+    private final AuditLog auditLog;
 
     /*
      * 승인·수정요청. 검사 순서는 넓은 것부터다 — 활동(404) → 회차(404) → 전이 가능 여부(409) →
@@ -80,6 +84,12 @@ public class SessionReviewServiceImpl implements SessionReviewService {
                         request.reason(),
                         Instant.now(clock)));
 
+        auditLog.record(
+                AuditEvent.success(AuditAction.ACADEMIC_SESSION_TRANSITION)
+                        .target(sessionId)
+                        .decision(request.transition())
+                        .change(before, session.getStatus())
+                        .build());
         return SessionTransitionResponse.of(session.getId(), before, session.getStatus());
     }
 

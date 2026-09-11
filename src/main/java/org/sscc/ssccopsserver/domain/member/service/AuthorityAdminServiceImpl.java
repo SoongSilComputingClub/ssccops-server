@@ -29,6 +29,9 @@ import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -53,6 +56,7 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
     private final AuthorityPolicy authorityPolicy;
     private final RoleManageSelfLockGuard roleManageSelfLockGuard;
     private final EntityManager entityManager;
+    private final AuditLog auditLog;
 
     /*
      * 권한 전량을 질의 한 번으로 받아 메모리에서 트리로 엮는다. 노드마다 자식을 다시 조회하면
@@ -237,6 +241,16 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
         result.addAll(added);
         result.sort(Comparator.comparing(relation -> relation.getAuthority().getCode()));
 
+        // 인가 범위가 바뀐 사건. 직접 부여의 최종 목록을 after에 — 코드값이라 실어도 된다
+        auditLog.record(
+                AuditEvent.success(AuditAction.ROLE_AUTHORITY_CHANGE)
+                        .target(roleId)
+                        .after(
+                                result.stream()
+                                        .map(relation -> relation.getAuthority().getCode())
+                                        .sorted()
+                                        .collect(java.util.stream.Collectors.joining(",")))
+                        .build());
         return toRoleAuthorityResponse(role, result);
     }
 

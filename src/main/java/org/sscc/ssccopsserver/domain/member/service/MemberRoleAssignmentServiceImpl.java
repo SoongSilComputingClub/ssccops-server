@@ -17,6 +17,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -48,6 +51,7 @@ public class MemberRoleAssignmentServiceImpl implements MemberRoleAssignmentServ
     private final MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     private final RoleManageSelfLockGuard roleManageSelfLockGuard;
     private final Clock clock;
+    private final AuditLog auditLog;
 
     /*
      * 목록. current=true는 인가가 보는 것과 **같은 질의**(findValidByMemberIds)를 쓴다 — 화면이
@@ -113,8 +117,13 @@ public class MemberRoleAssignmentServiceImpl implements MemberRoleAssignmentServ
             demoteOtherRepresentatives(memberId, null, today);
         }
 
-        return MemberRoleAssignmentResponse.of(
-                memberRoleAssignmentRepository.saveAndFlush(assignment), today);
+        MemberRoleAssignmentEntity saved = memberRoleAssignmentRepository.saveAndFlush(assignment);
+        auditLog.record(
+                AuditEvent.success(AuditAction.MEMBER_ROLE_GRANT)
+                        .target(memberId)
+                        .decision(role.getId())
+                        .build());
+        return MemberRoleAssignmentResponse.of(saved, today);
     }
 
     /*
@@ -173,6 +182,15 @@ public class MemberRoleAssignmentServiceImpl implements MemberRoleAssignmentServ
         roleManageSelfLockGuard.verifyRequesterKeepsRoleManage(
                 requesterId, selfLockBaseDate(memberId, requesterId, request.roleEndYmd(), today));
 
+        // 종료일을 넣는 것이 «떼는 것»이다 — 대표 여부만 바꾼 요청은 감사 대상이 아니다
+        if (request.roleEndYmd() != null) {
+            auditLog.record(
+                    AuditEvent.success(AuditAction.MEMBER_ROLE_REVOKE)
+                            .target(memberId)
+                            .decision(assignment.getRole().getId())
+                            .after(request.roleEndYmd())
+                            .build());
+        }
         return MemberRoleAssignmentResponse.of(assignment, today);
     }
 

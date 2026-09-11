@@ -28,6 +28,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryReposi
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -63,6 +66,7 @@ public class MemberChangeServiceImpl implements MemberChangeService {
 
     // 적용 일자의 기본값·미래 판정 기준. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
+    private final AuditLog auditLog;
 
     @Override
     @Transactional
@@ -92,6 +96,12 @@ public class MemberChangeServiceImpl implements MemberChangeService {
                         appliedDate,
                         trimToNull(request.grdChgRsnCn()),
                         changer));
+        // 감사: 코드값만 남긴다 — 사유 문장은 이름이 들어올 수 있어 싣지 않는다 (ADR-0024)
+        auditLog.record(
+                AuditEvent.success(AuditAction.MEMBER_GRADE_CHANGE)
+                        .target(memberId)
+                        .change(previousGrade.getCode(), newGrade.getCode())
+                        .build());
 
         /*
          * 등급 변경에는 경고가 없다 — 조직을 떠나는 전이가 아니기 때문이다. 그런데도 필드를
@@ -127,6 +137,11 @@ public class MemberChangeServiceImpl implements MemberChangeService {
                         expectedEndDate,
                         trimToNull(request.sttsChgRsnCn()),
                         changer));
+        auditLog.record(
+                AuditEvent.success(AuditAction.MEMBER_STATUS_CHANGE)
+                        .target(memberId)
+                        .change(previousStatus.getCode(), newStatus.getCode())
+                        .build());
 
         return new MemberStatusChangeResponse(
                 memberService.getMemberDetail(memberId), warningsOf(memberId, statusCode));

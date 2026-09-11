@@ -42,6 +42,9 @@ import org.sscc.ssccopsserver.domain.member.service.MemberChangeService;
 import org.sscc.ssccopsserver.domain.member.service.MemberDeletionService;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
@@ -88,6 +91,7 @@ public class MemberController {
      * 정해져 있어, 회원을 만들고 읽는 빈에 섞지 않는다 — 근거는 MemberDeletionService 주석.
      */
     private final MemberDeletionService memberDeletionService;
+    private final AuditLog auditLog;
 
     @Operation(
             summary = "회원가입",
@@ -202,8 +206,19 @@ public class MemberController {
                             + " 현재 역할은 역할 시작일 <= 오늘 <= 종료일(NULL이면 무기한)인 배정이다.")
     @RequireAuthority(AuthorityCode.MEMBER_MANAGE)
     @GetMapping("/{memberId}")
-    public ApiResponse<MemberDetailResponse> getMember(@PathVariable Long memberId) {
-        return ApiResponse.success(memberService.getMemberDetail(memberId));
+    public ApiResponse<MemberDetailResponse> getMember(
+            @PathVariable Long memberId, @CurrentMember MemberEntity viewer) {
+        MemberDetailResponse detail = memberService.getMemberDetail(memberId);
+        /*
+         * 개인정보 조회 감사 (ADR-0024). 서비스가 아니라 여기인 것은 getMemberDetail을 등급·상태
+         * 변경 응답 조립이 내부에서도 부르기 때문이다 — «봤다»는 사건은 HTTP 조회 하나다.
+         * 본인 조회는 남기지 않는다.
+         */
+        if (!viewer.getId().equals(memberId)) {
+            auditLog.record(
+                    AuditEvent.success(AuditAction.MEMBER_DETAIL_READ).target(memberId).build());
+        }
+        return ApiResponse.success(detail);
     }
 
     /*

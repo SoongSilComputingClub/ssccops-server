@@ -56,6 +56,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
@@ -119,7 +120,8 @@ class WorkServiceImplTest {
                         new MemberProfileChangeRecorder(memberChangeHistoryRepository),
                         authorityPolicy,
                         new MemberLinkAttemptLimiter(Clock.systemDefaultZone()),
-                        Clock.systemDefaultZone());
+                        Clock.systemDefaultZone(),
+                        new AuditLog());
         workService =
                 new WorkServiceImpl(
                         operationRepository,

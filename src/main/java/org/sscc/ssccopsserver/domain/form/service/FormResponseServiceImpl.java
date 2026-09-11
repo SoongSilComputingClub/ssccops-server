@@ -41,6 +41,9 @@ import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -93,6 +96,8 @@ public class FormResponseServiceImpl implements FormResponseService {
 
     /** 제출 일시의 기준 시각. 접수 마감 판정(FormReceiptPolicy)과 같은 시계를 쓴다 */
     private final Clock clock;
+
+    private final AuditLog auditLog;
 
     /*
      * 응답자용 폼 조회.
@@ -657,6 +662,11 @@ public class FormResponseServiceImpl implements FormResponseService {
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (updateDraft 주석과 같은 이유)
         formResponseHistoryRepository.flush();
 
+        auditLog.record(
+                AuditEvent.success(AuditAction.FORM_RESPONSE_REVIEW)
+                        .target(formResponseId)
+                        .decision(request.rspnsSttsCd())
+                        .build());
         return FormResponseSummaryResponse.of(response, responseTitleOf(response));
     }
 

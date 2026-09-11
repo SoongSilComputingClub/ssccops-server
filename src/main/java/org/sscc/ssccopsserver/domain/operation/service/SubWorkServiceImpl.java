@@ -67,6 +67,9 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -101,6 +104,7 @@ public class SubWorkServiceImpl implements SubWorkService {
 
     // 상태 전이·투표 일시 등 '지금'이 필요한 자리. 테스트에서 고정할 수 있도록 주입받는다
     private final Clock clock;
+    private final AuditLog auditLog;
 
     /*
      * 수정(updateSubWork)이 mdfcn_dt를 바로 응답에 실어야 해서 필요하다 — @LastModifiedDate는
@@ -553,6 +557,12 @@ public class SubWorkServiceImpl implements SubWorkService {
                     SubWorkRejectionEntity.record(
                             subWork, performer, history, request.reason(), occurredAt));
         }
+        // 감사: 어느 전이였는지만. 사유 문장(request.reason)은 사람이 쓴 글이라 싣지 않는다
+        auditLog.record(
+                AuditEvent.success(AuditAction.SUBWORK_TRANSITION)
+                        .target(subWorkId)
+                        .decision(action)
+                        .build());
 
         return SubWorkTransitionResponse.of(
                 subWork,
@@ -614,6 +624,11 @@ public class SubWorkServiceImpl implements SubWorkService {
                         subWork, approvalSequence);
         int requiredCount = subWork.getSubWorkType().getMinAgreeCount();
 
+        auditLog.record(
+                AuditEvent.success(AuditAction.SUBWORK_APPROVAL_VOTE)
+                        .target(subWorkId)
+                        .decision(choice)
+                        .build());
         return new SubWorkVoteResponse(
                 subWork.getId(),
                 choice,

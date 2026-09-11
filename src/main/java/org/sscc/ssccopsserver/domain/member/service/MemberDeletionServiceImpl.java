@@ -15,6 +15,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberDeletionQueryReposi
 import org.sscc.ssccopsserver.domain.member.repository.MemberReferenceConstraints;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -44,14 +47,17 @@ public class MemberDeletionServiceImpl implements MemberDeletionService {
     private final MemberRepository memberRepository;
     private final MemberDeletionQueryRepository deletionQueryRepository;
     private final boolean enabled;
+    private final AuditLog auditLog;
 
     public MemberDeletionServiceImpl(
             MemberRepository memberRepository,
             MemberDeletionQueryRepository deletionQueryRepository,
-            @Value("${ssccops.member.hard-delete.enabled:false}") boolean enabled) {
+            @Value("${ssccops.member.hard-delete.enabled:false}") boolean enabled,
+            AuditLog auditLog) {
         this.memberRepository = memberRepository;
         this.deletionQueryRepository = deletionQueryRepository;
         this.enabled = enabled;
+        this.auditLog = auditLog;
     }
 
     @Override
@@ -97,6 +103,16 @@ public class MemberDeletionServiceImpl implements MemberDeletionService {
              */
             Optional<MemberReferenceConstraints.Reference> blocked =
                     MemberReferenceConstraints.resolve(ex);
+            // 막힌 시도도 감사 대상이다 — «누가 누구를 지우려 했는가». 롤백 경로라 즉시 쓰인다
+            auditLog.record(
+                    AuditEvent.failure(
+                                    AuditAction.MEMBER_DELETE,
+                                    MemberErrorCode.MEMBER_REFERENCED.getCode())
+                            .target(memberId)
+                            .decision(
+                                    blocked.map(MemberReferenceConstraints.Reference::label)
+                                            .orElse(null))
+                            .build());
             if (blocked.isEmpty()) {
                 log.warn(
                         "회원 {} 삭제를 막은 제약을 번역하지 못했다 — MemberReferenceConstraints와 V9를"
@@ -113,6 +129,7 @@ public class MemberDeletionServiceImpl implements MemberDeletionService {
                             + ")");
         }
         log.info("회원 {} 하드 삭제 — 요청자 {} (ADR-0021 임시 기능)", memberId, requesterId);
+        auditLog.record(AuditEvent.success(AuditAction.MEMBER_DELETE).target(memberId).build());
     }
 
     private void requireEnabled() {

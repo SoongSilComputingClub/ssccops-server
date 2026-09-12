@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.global.audit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -146,6 +148,47 @@ class AuditLogTest {
         JsonNode json = onlyLine();
         assertThat(json.at("/user/id").asText()).isEqualTo(authUserId.toString());
         assertThat(json.at("/user/signed_up").asBoolean()).isFalse();
+    }
+
+    /*
+     * 채널(#384 · ADR-0026) — OAuth 2.1 서버가 발급한 토큰에는 client_id가 있다. 그 값이 client.id로
+     * 남고, 웹 로그인 토큰(클레임 없음)에서는 client 객체 자체가 나가지 않는다.
+     */
+    @Test
+    void oauthClientIdBecomesChannel() throws Exception {
+        MemberEntity member = org.mockito.Mockito.mock(MemberEntity.class);
+        org.mockito.Mockito.when(member.getId()).thenReturn(42L);
+        Jwt jwt =
+                Jwt.withTokenValue("raw-access-token-value")
+                        .header("alg", "none")
+                        .subject(UUID.randomUUID().toString())
+                        .claim("client_id", "3f1c2a9e-claude")
+                        .issuedAt(Instant.now())
+                        .expiresAt(Instant.now().plusSeconds(60))
+                        .build();
+        SecurityContextHolder.getContext()
+                .setAuthentication(
+                        new SupabaseAuthenticationToken(
+                                new AuthenticatedUser(
+                                        UUID.randomUUID(), null, null, "google", member),
+                                jwt));
+
+        auditLog.record(AuditEvent.success(AuditAction.MEMBER_GRADE_CHANGE).target(7L).build());
+
+        JsonNode json = onlyLine();
+        assertThat(json.at("/user/id").asText()).isEqualTo("42");
+        assertThat(json.at("/client/id").asText()).isEqualTo("3f1c2a9e-claude");
+        // 토큰 원문은 어디에도 없다
+        assertThat(encode(captured.list.get(0))).doesNotContain("raw-access-token-value");
+    }
+
+    @Test
+    void webTokenWithoutClientIdHasNoClientField() throws Exception {
+        authenticateAsMember(42L);
+
+        auditLog.record(AuditEvent.success(AuditAction.MEMBER_GRADE_CHANGE).target(7L).build());
+
+        assertThat(onlyLine().has("client")).isFalse();
     }
 
     /*

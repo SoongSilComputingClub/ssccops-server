@@ -2,7 +2,9 @@ package org.sscc.ssccopsserver.global.audit;
 
 import static net.logstash.logback.argument.StructuredArguments.kv;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,6 +13,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -46,6 +49,7 @@ public class AuditLog {
     static final String DATASET = "ssccops.audit";
 
     private static final Logger audit = LoggerFactory.getLogger(LOGGER_NAME);
+    private static final String CLIENT_ID_CLAIM = "client_id";
     private static final Logger log = LoggerFactory.getLogger(AuditLog.class);
 
     public void record(AuditEvent event) {
@@ -53,24 +57,29 @@ public class AuditLog {
             // 행위자·IP는 지금 스레드에서 읽어 둔다 — 커밋 뒤에는 요청 컨텍스트가 없을 수 있다
             Map<String, Object> user = actor();
             Map<String, Object> source = source();
+            Map<String, Object> client = channel();
             if (event.outcome() == AuditEvent.Outcome.SUCCESS
                     && TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(
                         new TransactionSynchronization() {
                             @Override
                             public void afterCommit() {
-                                write(event, user, source);
+                                write(event, user, source, client);
                             }
                         });
                 return;
             }
-            write(event, user, source);
+            write(event, user, source, client);
         } catch (RuntimeException ex) {
             log.warn("감사 로그를 남기지 못했다: {} — {}", event.action().code(), ex.toString());
         }
     }
 
-    private void write(AuditEvent event, Map<String, Object> user, Map<String, Object> source) {
+    private void write(
+            AuditEvent event,
+            Map<String, Object> user,
+            Map<String, Object> source,
+            Map<String, Object> client) {
         try {
             Map<String, Object> ecsEvent = new LinkedHashMap<>();
             ecsEvent.put("dataset", DATASET);
@@ -94,22 +103,18 @@ public class AuditLog {
             putIfPresent(auditFields, "decision", event.decision());
 
             String message = event.message() != null ? event.message() : event.action().code();
-            if (event.errorCode() != null) {
-                audit.info(
-                        message,
-                        kv("event", ecsEvent),
-                        kv("user", user),
-                        kv("source", source),
-                        kv("audit", auditFields),
-                        kv("error", Map.of("code", event.errorCode())));
-            } else {
-                audit.info(
-                        message,
-                        kv("event", ecsEvent),
-                        kv("user", user),
-                        kv("source", source),
-                        kv("audit", auditFields));
+            List<Object> arguments = new ArrayList<>();
+            arguments.add(kv("event", ecsEvent));
+            arguments.add(kv("user", user));
+            if (client != null) {
+                arguments.add(kv("client", client));
             }
+            arguments.add(kv("source", source));
+            arguments.add(kv("audit", auditFields));
+            if (event.errorCode() != null) {
+                arguments.add(kv("error", Map.of("code", event.errorCode())));
+            }
+            audit.info(message, arguments.toArray());
         } catch (RuntimeException ex) {
             log.warn("감사 로그를 남기지 못했다: {} — {}", event.action().code(), ex.toString());
         }
@@ -131,6 +136,28 @@ public class AuditLog {
             user.put("id", "system");
         }
         return user;
+    }
+
+    /*
+     * 채널 — 이 행위가 어느 클라이언트로 들어왔는가 (#384 · ADR-0026). Supabase OAuth 2.1 서버가
+     * 발급한 토큰(MCP · Claude)에는 `client_id` 클레임이 있고 웹 로그인 토큰에는 없다. 같은 회원이
+     * 같은 일을 웹에서 했는지 Claude가 했는지를 이것으로 가른다. 없으면 필드 자체를 내지 않는다 —
+     * «웹»이라는 값을 지어내면 그것이 두 번째 사실이 된다. 값은 OAuth client id(식별자)뿐이고
+     * 토큰·시크릿은 싣지 않는다(ADR-0024). 나중에 API Key가 생기면 같은 `client` 객체에
+     * `api_key_id`가 들어갈 자리다.
+     */
+    private static Map<String, Object> channel() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getCredentials() instanceof Jwt jwt)) {
+            return null;
+        }
+        String clientId = jwt.getClaimAsString(CLIENT_ID_CLAIM);
+        if (clientId == null || clientId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> client = new LinkedHashMap<>();
+        client.put("id", clientId);
+        return client;
     }
 
     private static Map<String, Object> source() {

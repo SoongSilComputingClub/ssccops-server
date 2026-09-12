@@ -10,6 +10,7 @@ spring:
         jwt:
           # 테스트는 SecurityMockMvcRequestPostProcessors.jwt()로 디코더를 우회하므로 실제 네트워크 호출 없음
           jwk-set-uri: http://localhost/auth/v1/.well-known/jwks.json
+          issuer-uri: http://localhost/auth/v1
   jpa:
     defer-datasource-initialization: true # Hibernate가 스키마를 만든 뒤 시드가 실행되도록 순서 보장
     hibernate:

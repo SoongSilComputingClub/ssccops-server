@@ -10,6 +10,8 @@ spring:
       resourceserver:
         jwt:
           jwk-set-uri: ${PROD_SUPABASE_URL}/auth/v1/.well-known/jwks.json
+          # issuer·audience 검증(#383 · ADR-0026). 같은 env에서 파생한다 — 새 env 없음
+          issuer-uri: ${PROD_SUPABASE_URL}/auth/v1
 
   jpa:
     hibernate:

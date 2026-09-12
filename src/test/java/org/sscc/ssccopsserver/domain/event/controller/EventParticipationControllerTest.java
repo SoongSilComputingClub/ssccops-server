@@ -58,6 +58,8 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
+import com.jayway.jsonpath.JsonPath;
+
 /*
  * 행사 신청 목록·참가자 명단 API(ssccops#146) 통합 검증.
  *
@@ -126,8 +128,9 @@ class EventParticipationControllerTest {
     /* ── 신청 목록 ────────────────────────────────────────── */
 
     /*
-     * 신청 목록은 연결 폼의 응답 목록이다 — 폼 응답 목록 API와 같은 스키마이며 규칙을
-     * 복제하지 않고 위임한다.
+     * 신청 목록은 연결 폼의 응답 목록이다 — application은 폼 응답 목록 API와 같은 스키마이며
+     * 규칙을 복제하지 않고 위임한다. 명단에 오르기 전에는 participant가 null이다 (#378) —
+     * 서버가 "미등록" 같은 대체값을 만들지 않는다.
      */
     @Test
     void applicationsReturnLinkedFormResponses() throws Exception {
@@ -139,7 +142,9 @@ class EventParticipationControllerTest {
         mockMvc.perform(authorized(get(EVENTS + "/" + eventId + "/applications"), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(2))
-                .andExpect(jsonPath("$.data[0].member.mbrNm").exists());
+                .andExpect(jsonPath("$.data[0].application.member.mbrNm").exists())
+                .andExpect(jsonPath("$.data[0].participant").isEmpty())
+                .andExpect(jsonPath("$.data[1].participant").isEmpty());
 
         mockMvc.perform(
                         authorized(
@@ -147,6 +152,74 @@ class EventParticipationControllerTest {
                                 managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.length()").value(1));
+    }
+
+    /*
+     * 명단 등록 여부는 응답으로 잇는다 (#378). 응답 기반으로 확정 등록하면 그 응답에만
+     * CONFIRMED가 붙고 다른 응답은 그대로 null이다.
+     *
+     * 두 응답의 제출 일시가 같으므로 목록은 식별자 내림차순이다 — 먼저 만든(등록될) 응답이
+     * 뒤([1])에 온다.
+     */
+    @Test
+    void applicationsCarryConfirmedParticipantAfterRegistration() throws Exception {
+        FormEntity form = saveOpenForm();
+        Long eventId = saveEvent("RECRUIT", "신청 받는 행사", form, null);
+        Long registered =
+                saveResponse(form, saveMember("등록될 신청자", MemberStatusCode.ENROLLED), true);
+        saveResponse(form, saveMember("대기 신청자", MemberStatusCode.ENROLLED), true);
+
+        Long participantId = registerFromResponse(eventId, registered);
+
+        mockMvc.perform(authorized(get(EVENTS + "/" + eventId + "/applications"), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].participant").isEmpty())
+                .andExpect(jsonPath("$.data[1].application.formRspnsId").value(registered))
+                .andExpect(jsonPath("$.data[1].participant.eventPtcpId").value(participantId))
+                .andExpect(jsonPath("$.data[1].participant.ptcpSttsCd").value("CONFIRMED"));
+    }
+
+    /*
+     * 취소도 CANCELLED 그대로 실린다 (#378). 취소는 명단의 기록이고(D16) "다시 올릴 수 있는가"는
+     * 등록 API의 409가 답한다 — 목록이 취소를 null로 지우면 화면이 등록 버튼을 그렸다가 409를
+     * 맞는다.
+     */
+    @Test
+    void applicationsCarryCancelledParticipantAfterCancellation() throws Exception {
+        FormEntity form = saveOpenForm();
+        Long eventId = saveEvent("RECRUIT", "신청 받는 행사", form, null);
+        Long responseId =
+                saveResponse(form, saveMember("취소될 신청자", MemberStatusCode.ENROLLED), true);
+
+        Long participantId = registerFromResponse(eventId, responseId);
+        changeStatus(eventId, participantId, "CANCELLED").andExpect(status().isOk());
+
+        mockMvc.perform(authorized(get(EVENTS + "/" + eventId + "/applications"), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].participant.eventPtcpId").value(participantId))
+                .andExpect(jsonPath("$.data[0].participant.ptcpSttsCd").value("CANCELLED"));
+    }
+
+    /*
+     * 응답 없이 수동 등록(전화·현장 접수)한 참가자는 어느 응답에도 붙지 않는다 (#378). 회원으로
+     * 이으면 같은 사람이 낸 응답에 붙겠지만, 이 목록의 질문은 "이 응답으로 올렸는가"다.
+     */
+    @Test
+    void applicationsIgnoreManuallyRegisteredParticipants() throws Exception {
+        FormEntity form = saveOpenForm();
+        Long eventId = saveEvent("RECRUIT", "신청 받는 행사", form, null);
+        MemberEntity applicant = saveMember("신청자", MemberStatusCode.ENROLLED);
+        saveResponse(form, applicant, true);
+
+        // 같은 회원을 응답이 아니라 수동으로 올린다
+        registerConfirmed(eventId, applicant).andExpect(status().isCreated());
+
+        mockMvc.perform(authorized(get(EVENTS + "/" + eventId + "/applications"), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].participant").isEmpty());
     }
 
     /*
@@ -455,6 +528,25 @@ class EventParticipationControllerTest {
         changeStatus(eventId, participantId, nextStatus)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_PARTICIPANT_STATUS_TRANSITION"));
+    }
+
+    /** 응답 기반 확정 등록. 신청 목록이 붙일 명단 행의 식별자를 돌려준다 */
+    private Long registerFromResponse(Long eventId, Long responseId) throws Exception {
+        String body =
+                mockMvc.perform(
+                                authorized(
+                                                post(EVENTS + "/" + eventId + "/participants"),
+                                                managerToken)
+                                        .content(
+                                                """
+                                                {"formRspnsId": %d, "ptcpSttsCd": "CONFIRMED"}
+                                                """
+                                                        .formatted(responseId)))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(body).read("$.data.participant.eventPtcpId", Long.class);
     }
 
     private ResultActions registerConfirmed(Long eventId, MemberEntity member) throws Exception {

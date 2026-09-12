@@ -15,13 +15,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
+import org.sscc.ssccopsserver.domain.event.dto.EventApplicationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantMutationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantRegisterRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.event.service.EventParticipationService;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -62,14 +62,19 @@ public class EventParticipationController {
     @Operation(
             summary = "행사 신청 목록 조회",
             description =
-                    "연결된 폼의 응답 목록을 그대로 내려준다(폼 응답 목록 API와 같은 규칙·같은 응답 스키마)."
+                    "연결된 폼의 응답 목록에 명단 등록 여부를 얹어 내려준다. 항목은"
+                            + " { application, participant }이며 application은 폼 응답 목록 API와 같은"
+                            + " 규칙·같은 스키마이고, participant는 그 응답으로 명단에 오른 행"
+                            + " { eventPtcpId, ptcpSttsCd } 또는 **명단에 없으면 null**이다(취소도"
+                            + " CANCELLED 그대로 실린다 — 다시 올릴 수 있는지는 등록 API의 409가 답한다)."
+                            + " 응답 없이 수동 등록한 참가자는 어느 항목에도 붙지 않는다."
                             + " statusCode를 생략하면 작성 중(DRAFT)을 뺀 전부이며, 정렬은 제출 일시 내림차순이다."
                             + " **폼이 연결되지 않은 행사는 빈 목록이 아니라 409 EVENT_HAS_NO_FORM이다** —"
                             + " 빈 배열은 '아직 신청이 없다'로 읽히지만 실제로는 신청을 받을 수단이 없다."
                             + " 수락·거절 심사는 이 경로가 아니라 폼 응답 검토 API"
                             + " (POST /v1/forms/{formId}/responses/{formRspnsId}/reviews)를 쓴다.")
     @GetMapping("/applications")
-    public ApiResponse<List<FormResponseSummaryResponse>> getApplications(
+    public ApiResponse<List<EventApplicationResponse>> getApplications(
             @PathVariable Long eventId, @RequestParam(required = false) ResponseStatus statusCode) {
         return ApiResponse.success(eventParticipationService.getApplications(eventId, statusCode));
     }

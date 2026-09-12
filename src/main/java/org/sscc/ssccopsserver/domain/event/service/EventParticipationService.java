@@ -3,12 +3,12 @@ package org.sscc.ssccopsserver.domain.event.service;
 import java.util.List;
 
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
+import org.sscc.ssccopsserver.domain.event.dto.EventApplicationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantMutationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantRegisterRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
-import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /*
@@ -32,8 +32,11 @@ public interface EventParticipationService {
      * 신청을 받을 수단 자체가 없다.
      *
      * statusCode의 기본값도 폼 쪽 규칙 그대로다(작성 중을 뺀 전부).
+     *
+     * 항목마다 **명단 등록 여부**(participant)를 함께 싣는다 (#378). 명단에 없으면 null이고
+     * 취소도 CANCELLED 그대로다 — "이미 올렸다"를 웹이 명단과 맞춰 보지 않고 서버가 답한다.
      */
-    List<FormResponseSummaryResponse> getApplications(Long eventId, ResponseStatus statusCode);
+    List<EventApplicationResponse> getApplications(Long eventId, ResponseStatus statusCode);
 
     /** 참가자 명단. 상태 필터는 선택이며 미지정은 전체(취소 포함)다 — 명단은 영구 보존이다(D16) */
     List<EventParticipantResponse> getParticipants(Long eventId, EventParticipantStatus statusCode);

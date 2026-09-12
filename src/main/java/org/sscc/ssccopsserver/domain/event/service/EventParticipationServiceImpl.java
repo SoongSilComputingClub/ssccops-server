@@ -4,12 +4,16 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
+import org.sscc.ssccopsserver.domain.event.dto.EventApplicationParticipant;
+import org.sscc.ssccopsserver.domain.event.dto.EventApplicationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantMutationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantRegisterRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantResponse;
@@ -17,6 +21,7 @@ import org.sscc.ssccopsserver.domain.event.dto.EventParticipantStatusChangeReque
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantWarningResponse;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
+import org.sscc.ssccopsserver.domain.event.repository.EventApplicationParticipation;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -57,15 +62,37 @@ public class EventParticipationServiceImpl implements EventParticipationService 
      */
     private final FormResponseService formResponseService;
 
+    /*
+     * 명단 등록 여부는 응답 목록을 받은 뒤 **한 번의 질의**로 얹는다 (#378). 응답마다 명단을
+     * 물으면 N+1이고(DB-13), 폼 응답 목록 질의에 조인을 섞으면 위임하는 뜻이 사라진다 — 그
+     * 질의는 폼 도메인의 것이라 event_ptcp를 알 수 없다.
+     *
+     * 응답 → 참가자는 formRspnsId로 잇는다. (event, member) UNIQUE와 응답의 단일 회원 덕에
+     * 한 응답에 명단 행은 최대 하나라 toMap이 안전하다. 왜 회원이 아니라 응답인지는
+     * EventParticipantRepository.findAllApplicationParticipationsByEvent에 있다.
+     */
     @Override
-    public List<FormResponseSummaryResponse> getApplications(
-            Long eventId, ResponseStatus statusCode) {
+    public List<EventApplicationResponse> getApplications(Long eventId, ResponseStatus statusCode) {
         EventEntity event = findEvent(eventId);
         FormEntity form = event.getForm();
         if (form == null) {
             throw new GeneralException(EventErrorCode.EVENT_HAS_NO_FORM);
         }
-        return formResponseService.getResponses(form.getId(), statusCode);
+        List<FormResponseSummaryResponse> applications =
+                formResponseService.getResponses(form.getId(), statusCode);
+        Map<Long, EventApplicationParticipant> participantByResponseId =
+                eventParticipantRepository.findAllApplicationParticipationsByEvent(event).stream()
+                        .collect(
+                                Collectors.toMap(
+                                        EventApplicationParticipation::getFormRspnsId,
+                                        EventApplicationParticipant::from));
+        return applications.stream()
+                .map(
+                        application ->
+                                new EventApplicationResponse(
+                                        application,
+                                        participantByResponseId.get(application.formRspnsId())))
+                .toList();
     }
 
     /*

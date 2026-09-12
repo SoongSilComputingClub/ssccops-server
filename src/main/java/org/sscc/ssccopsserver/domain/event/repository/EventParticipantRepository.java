@@ -90,6 +90,26 @@ public interface EventParticipantRepository extends JpaRepository<EventParticipa
     List<MyApplicationParticipation> findAllByMemberAndEventIdIn(
             @Param("member") MemberEntity member, @Param("eventIds") Collection<Long> eventIds);
 
+    /*
+     * 신청 목록의 명단 등록 여부 (#378 · ssccops#307). 신청이 몇 건이든 질의는 하나다 — 응답마다
+     * "명단에 있나"를 물으면 그대로 N+1이다 (DB-13 · findAllByMemberAndEventIdIn과 같은 자리).
+     *
+     * **응답으로 잇는다**(form_rspns_id). 모집 선발(RecruitmentApplicationResponse)이 회원으로
+     * 잇는 것과 갈리는데, 그쪽은 반려 뒤 새 신청(#192)으로 같은 회원의 응답이 여러 줄이라
+     * 재선발이 붙은 응답을 골라야 했고, 이쪽 등록 API는 근거를 updatable = false로 잠가 "이
+     * 응답으로 올렸다"가 곧 사실이다 — 수동 등록(근거 없음) 참가자는 어느 응답에도 붙지 않는
+     * 것이 맞으므로 form_rspns_id가 있는 행만 받는다. 행사 단위라 응답이 다른 폼일 수는 없다.
+     *
+     * 상태를 가리지 않는다 — 취소(CANCELLED)도 명단의 기록이며(D16) "다시 올릴 수 있는가"는
+     * 등록 API의 409가 답한다.
+     */
+    @Query(
+            "select r.id as formRspnsId, p.id as eventPtcpId, p.status as ptcpSttsCd"
+                    + " from EventParticipantEntity p join p.formResponse r"
+                    + " where p.event = :event")
+    List<EventApplicationParticipation> findAllApplicationParticipationsByEvent(
+            @Param("event") EventEntity event);
+
     /** 중복 등록 선조회. UNIQUE(uk_event_ptcp_event_member)가 최종 방어선이다 */
     boolean existsByEventAndMember(EventEntity event, MemberEntity member);
 

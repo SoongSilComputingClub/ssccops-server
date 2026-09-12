@@ -399,6 +399,26 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **도구는 서비스를 직접 부르지 않고 `RestClient`로 `http://localhost:${PORT}/v1/…`를 자기 호출한다**(ADR-0027 · #385). 인가(`@RequireAuthority`)·검증(`@Valid`)·미가입 차단(`@CurrentMember`)·감사가 전부 컨트롤러 계층에 있어서다 — 서비스를 직접 부르면 1층 인가가 빠지고, 빠뜨린 도구는 조용히 열린 채 배포된다. 포트는 `server.port`(= `PORT`)이며 **8080을 가정하지 않는다**(Coolify가 dev 80 · prod 3000을 넣는다). 입력·출력 타입은 기존 Request/Response record 그대로다 — 도구 스키마를 따로 쓰면 ssccops#305(서버·웹 계약 갈림)가 재현된다.
 - **도구 실행 스레드에 SecurityContext가 있다 — 실제로 쟀다**(`McpToolExecutionContextTest` · 실제 포트 + MCP Java 클라이언트). Spring AI가 SERVLET+SYNC 조합에 `immediateExecution(true)`를 걸어 도구가 `POST /mcp` 요청 스레드(`http-nio-*`)에서 동기로 돌기 때문에 필터체인이 넣은 인증이 `SecurityContextHolder`에 그대로 보인다. 그 조건이 없으면 MCP SDK가 `Schedulers.boundedElastic()`으로 넘겨 비어 있다 — 라이브러리 내부 결정이라 버전이 오르며 바뀔 수 있다. **그래서 `McpServerConfig`가 전송 빈을 직접 만들어 `contextExtractor`로 Authorization 헤더를 `McpTransportContext`에도 담는다**(키 `authorization`, 도구 메서드가 `McpSyncServerExchange`를 받아 `exchange.transportContext().get(...)`). 도구 쪽 클라이언트는 SecurityContext의 `SupabaseAuthenticationToken.getCredentials()`(Jwt)를 먼저 보고 없으면 전송 컨텍스트를 본다. 전송 빈을 직접 만드는 것은 자동 구성이 `@ConditionalOnMissingBean`이라 허용된 길이며 나머지 값(엔드포인트·keepAlive·disallowDelete)은 같은 프로퍼티에서 읽는다.
 - **Streamable HTTP는 세션이 있고 메모리에 있다.** 재배포마다 끊기며 클라이언트가 재연결한다(ADR-0027이 감수한 대가). SSE 전송은 쓰지 않는다(스펙 폐기 예정). 리소스·프롬프트·completion capability는 껐다 — 켜 두면 빈 목록을 광고한다. `spring.ai.mcp.server.streamable-http.mcp-endpoint`와 `McpProtectedResource.MCP_PATH`는 같은 값이어야 한다.
+- **1차 도구 9종은 `global/mcp/tool/OperationTools` 하나다** (#385). 읽기 7 + 하위 업무 전이·체크리스트. **update·create·삭제·회원·폼·역할 도구는 없다** — 운영 도메인 PATCH가 전체 교체라(분석 문서 F2) 모델의 부분 호출이 본문·완료 기준·외부 링크를 지운다. 도구 이름과 REST 짝:
+
+  | 도구 | REST | 권한 | 출력 타입 |
+  |---|---|---|---|
+  | `list_operations` | `GET /v1/operations` | `WORK_MANAGE` | `OperationHubResponse` |
+  | `get_work` | `GET /v1/works/{id}` | `WORK_READ` | `WorkDetailResponse` |
+  | `list_sub_works` | `GET /v1/sub-works` (조건 = `SubWorkSearchCondition` 그대로) | `WORK_READ` | `McpListResult<SubWorkSummaryResponse>` |
+  | `get_sub_work` | `GET /v1/sub-works/{id}` | `WORK_READ` | `SubWorkDetailResponse` |
+  | `list_meetings` | `GET /v1/meetings` | `MEETING_READ` | `List<MeetingListItemResponse>` |
+  | `get_meeting` | `GET /v1/meetings/{id}` | `MEETING_READ` | `MeetingDetailResponse` |
+  | `get_me` | `GET /v1/auth/session` | 인증만 | `AuthSessionResponse` |
+  | `transition_sub_work` | `POST /v1/sub-works/{id}/transitions` (`SubWorkTransitionRequest`) | 서버 3층 판정 | `SubWorkTransitionResponse` |
+  | `check_sub_work_item` | `PATCH /v1/sub-works/{id}/checklist/{itemId}` (`SubWorkChecklistItemUpdateRequest`) | 담당자 | `SubWorkChecklistItemUpdateResponse` |
+
+  - **공통 클라이언트는 `global/mcp/client/McpRestClient` 한 곳이다.** 주소 `http://localhost:{local.server.port ?: server.port}`(웹 서버가 뜬 뒤 스프링이 넣는 실제 포트 — RANDOM_PORT 테스트도 이것) · 연결 2s · 읽기 10s(Rate limit이 없는 서버라 도구 루프가 API를 붙드는 시간을 여기서 자른다) · Bearer는 `BearerTokenSource`(SecurityContext의 Jwt → 전송 컨텍스트 순) · `ApiResponse` 봉투는 여기서만 벗긴다 · `success:false`면 `McpToolException(code, message)`로 — mcp-annotations가 도구 예외를 `isError=true` + 근본 원인 메시지로 바꾸므로 **메시지가 곧 모델이 읽는 전부**다. `FORBIDDEN`·`SIGNUP_REQUIRED`는 «재시도해도 결과는 같습니다 — 사용자에게 알리고 멈추세요»를 문장에 박는다(세 층의 403이 전부 `FORBIDDEN` 하나라 모델에게 줄 수 있는 것이 그것뿐이고, 없으면 인자를 바꿔 가며 되풀이한다). 나머지는 `[code] message`. 상태 코드로 던지지 않고 `exchange`로 본문을 읽는 것은 4xx에도 ApiResponse가 실려 오기 때문이다.
+  - **목록은 커서를 최대 3페이지(`MAX_PAGES`)까지만 따라간다.** `McpListResult{items, pagesFetched, hasMore, nextCursor, totalCount}`로 돌려주고 항목 타입은 REST record 그대로다. 검색 조건 record는 Jackson으로 Map으로 바꿔 쿼리에 싣는다(필드 이름 = 파라미터 이름 · null 제외 · 컬렉션은 같은 이름 반복). **값은 URI 템플릿 변수로 넣는다** — 문자열로 이어 붙이면 `+09:00`의 `+`가 서버에서 공백이 된다.
+  - **개인정보는 `ToolOutputRedactor`가 JSON 트리에서 이름으로 걷어낸다** — `phoneNumber` · `email` · `studentNumber`(깊이 무관, `MemberSummaryResponse`가 담당자·등록자·발표자 자리마다 중첩되어 있어서다). 이름(`name`)은 남긴다 — 담당자가 누구인지 없이는 운영 도구가 성립하지 않는다. 도구마다 출력용 뷰 record를 만들지 않은 것은 응답 record에 필드가 늘 때 한쪽만 늘어 갈리고 새 도구가 뷰를 빠뜨리면 조용히 새기 때문이다. 걷힌 필드는 출력에 `"phoneNumber":null`처럼 값 없는 키로 남는다(mcp-annotations 직렬화는 null을 빼지 않는다). 키를 더하면 이 표도 고친다.
+  - **도구 호출 로그는 도구 이름·대상 id만** INFO로(`OperationTools`). 전이 사유 같은 인자 본문은 싣지 않는다 — ADR-0024의 값 미탑재 원칙이다. 감사 로그는 REST를 지나며 기존 지점이 그대로 찍히고 `client.id`로 웹과 갈린다.
+  - **`McpTransportContext` 인자는 입력 스키마에 나타나지 않는다**(mcp-annotations가 `McpSyncServerExchange`·`McpTransportContext`·`CallToolRequest`·`McpMeta`를 특수 인자로 뺀다). `@McpToolParam(required=false)`가 선택 인자, 이름은 `-parameters` 컴파일 플래그(Boot 플러그인 기본)에서 온다. 기존 record 인자(`SubWorkSearchCondition` 등)는 victools가 스키마를 만든다 — `@Min/@Max`는 스키마에 반영되지 않으므로 서버의 400 메시지가 곧 안내다.
+  - 테스트: `McpRestClientTest`(JDK HttpServer로 REST를 흉내 — 봉투·오류 변환·3페이지·타임아웃·Bearer 우선순위) · `ToolOutputRedactorTest` · `OperationToolsIntegrationTest`(실제 포트 + MCP 클라이언트 · 이 클래스만의 H2에 가입 API로 SUPER·역할 없음·미가입 세 신원을 만들어 `get_me`·`list_sub_works`·403·SIGNUP_REQUIRED·404를 본다). **HttpServer 기본 executor는 단일 스레드**라 느린 핸들러 테스트가 다음 테스트를 물고 늘어진다 — `setExecutor` 필수.
 - **로컬에서 붙여 보기**: `./gradlew bootRun` 뒤 Claude Code에서 `claude mcp add --transport http ssccops http://localhost:8080/mcp --header "Authorization: Bearer <Supabase 액세스 토큰>"`. dev·prod는 헤더 없이 URL만 넣으면 401 → 메타데이터 → Supabase 동의 화면(ssccops#315 · #316)으로 이어진다.
 - 테스트 함정: `@McpTool` 빈은 어느 컨텍스트에서든 스캐너가 등록한다 — 테스트 전용 도구는 `@TestConfiguration` + `@Import`로 그 테스트에만 둔다. MCP 클라이언트의 초기화 실패는 예외를 두 겹으로 감싸므로 401 본문은 원인 사슬을 따라가야 보인다.
 

@@ -16,6 +16,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
+import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
+import org.sscc.ssccopsserver.global.mcp.McpProtectedResource;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,8 +32,14 @@ class CustomAuthenticationEntryPointTest {
 
     @BeforeEach
     void setUp() throws IOException {
-        authenticationEntryPoint = new CustomAuthenticationEntryPoint();
+        authenticationEntryPoint =
+                new CustomAuthenticationEntryPoint(
+                        new McpProtectedResource(
+                                new AppPublicBaseUrl("https://api.test.local"),
+                                "https://example.supabase.co/auth/v1"));
         request = mock(HttpServletRequest.class);
+        when(request.getRequestURI()).thenReturn("/v1/auth/session");
+        when(request.getContextPath()).thenReturn("");
         response = mock(HttpServletResponse.class);
         stringWriter = new StringWriter();
         objectMapper = new ObjectMapper();

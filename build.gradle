@@ -83,6 +83,10 @@ dependencyManagement {
         mavenBom 'io.opentelemetry:opentelemetry-bom:1.44.1'
         mavenBom 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.11.0-alpha'
         mavenBom 'software.amazon.awssdk:bom:2.29.29'
+        // Spring AI — MCP 서버 (#384 · ADR-0027). **1.1.x 라인에 머문다.** 2.0.x는 Boot 4 ·
+        // Framework 7 · Java 21이 필요해 이 서버(Boot 3.5 · Java 17)에서는 로드조차 되지 않는다.
+        // Boot 4 이관은 별도 Epic이다 — 그때까지 이 줄을 2.0으로 올리지 말 것.
+        mavenBom 'org.springframework.ai:spring-ai-bom:1.1.8'
     }
 }
 
@@ -122,6 +126,15 @@ dependencies {
 
     // Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
+
+    // MCP 서버 — Streamable HTTP `/mcp` (#384 · ADR-0027). 도구는 서비스를 직접 부르지 않고
+    // RestClient로 자기 REST를 호출한다(인가·검증·감사가 컨트롤러 한 곳에 있어서다).
+    // 리소스 서버 메타데이터(RFC 9728)는 org.springaicommunity:mcp-server-security 0.0.6을
+    // 쓰지 않고 손으로 뒀다 — 그 configurer는 withIssuerLocation으로 JwtDecoder를 새로 만들어
+    // 우리 supabaseJwtDecoder(ES256 목록 · iss/aud 검증기)를 밀어내고, EntryPoint 위임이
+    // 본문 없는 BearerTokenAuthenticationEntryPoint로 굳어 있어 ApiResponse 포맷과 갈리며,
+    // resource URL을 요청 Host에서 조립해 프록시 뒤에서는 forwarded 헤더 설정이 또 필요하다.
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
 
     // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
     // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.

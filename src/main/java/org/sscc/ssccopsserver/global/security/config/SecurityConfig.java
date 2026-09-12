@@ -23,6 +23,7 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.sscc.ssccopsserver.global.mcp.McpProtectedResource;
 import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtAuthenticationConverter;
 import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtValidators;
 
@@ -203,6 +204,18 @@ public class SecurityConfig {
                      * 같다** — 그 응답이 익명에게 나가도 되는지가 유일한 질문이다.
                      */
                     auth.requestMatchers("/public/v1/**").permitAll();
+                    /*
+                     * OAuth 보호 자원 메타데이터 (#384 · RFC 9728 · ADR-0026). MCP 클라이언트가
+                     * 401을 받은 뒤 «어느 인가 서버로 가라»를 읽는 문서라 토큰이 있을 수 없다.
+                     * 서비스 데이터가 아니라 설정에서 온 상수 세 개(자원 URL · issuer · 스코프)뿐
+                     * 이므로 위 /public/v1 규칙(익명 접근은 그 접두사뿐)과 갈리지 않는다 —
+                     * 헬스 프로브·Swagger와 같은 부류다. `/mcp` 자체는 아래 anyRequest에 걸려
+                     * 인증이 필요하다.
+                     */
+                    auth.requestMatchers(
+                                    McpProtectedResource.METADATA_PATH,
+                                    McpProtectedResource.METADATA_PATH + "/**")
+                            .permitAll();
                     // 나머지는 인증만 요구한다. 무엇을 할 수 있는지는 @RequireAuthority가 본다
                     auth.anyRequest().authenticated();
                 });

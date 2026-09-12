@@ -39,6 +39,33 @@ spring:
       max-file-size: 16MB
       max-request-size: 16MB
 
+  # MCP 서버 (#384 · ADR-0026 · ADR-0027). Claude(claude.ai · Desktop · Claude Code)가
+  # `https://<host>/mcp`로 붙는다. 인증은 웹과 같은 Supabase JWT(OAuth 2.1 서버가 발급) —
+  # 필터체인이 `/mcp`를 anyRequest().authenticated()로 이미 막고, 미인증 401에는
+  # `WWW-Authenticate: Bearer resource_metadata=…`가 붙는다(CustomAuthenticationEntryPoint).
+  #
+  # STREAMABLE(Streamable HTTP · 세션 있음)이지 SSE가 아니다 — SSE 전송은 MCP 스펙에서 폐기
+  # 예정이고 Claude 커넥터의 기본이 Streamable HTTP다. 세션은 메모리에 있어 재배포마다 끊긴다
+  # (클라이언트가 재연결한다 — ADR-0027이 감수한 대가). 리소스·프롬프트·completion은 쓰지 않으므로
+  # capabilities에서 끈다 — 켜 두면 빈 목록을 광고한다.
+  ai:
+    mcp:
+      server:
+        name: ssccops
+        version: 0.1.0
+        type: SYNC
+        protocol: STREAMABLE
+        instructions: >-
+          SSCC 운영관리 시스템. 도구는 로그인한 운영진 본인의 권한으로 동작하며,
+          «권한이 없습니다»·«가입이 필요합니다» 응답은 재시도해도 바뀌지 않는다 — 사용자에게 알리고 멈춘다.
+        streamable-http:
+          mcp-endpoint: /mcp
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+
 server:
   port: ${PORT:8080}
 

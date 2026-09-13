@@ -27,8 +27,8 @@ name: Deploy History
 #   DEV_APP_PUBLIC_BASE_URL  · PROD_APP_PUBLIC_BASE_URL  (예: https://api.example.org — 끝 슬래시 없이)
 # 비어 있으면 폴링을 건너뛰고 unverified 로 남긴다(워크플로는 실패하지 않는다 — 기록은 남아야 한다).
 #
-# 한계 — 메타 레포(ssccops)가 private 이라 GITHUB_TOKEN 으로는 cross-repo Parent 를 못 읽는다.
-# 그때 parent_issue·adr_refs 는 null 로 남는다. 읽으려면 그 레포 read 권한이 있는 토큰을
+# 한계 — GITHUB_TOKEN 은 다른 레포(메타 ssccops, public 이어도)의 sub_issues GraphQL 을 못 읽어 Parent 가 null 로 온다.
+# 그때는 PR 본문 «근거» 줄(ssccops#N · ADR-NNNN, pr-guard 강제)로 parent_issue·adr_refs 를 채운다(#418). 그래도 읽으려면 그 레포 read 권한이 있는 토큰을
 # secrets.DEPLOY_HISTORY_TOKEN 으로 넣으면 되지만 **필수는 아니다**(있으면 쓰고 없으면 GITHUB_TOKEN).
 # image digest 는 Coolify 가 밖으로 내지 않아 싣지 않는다.
 
@@ -204,7 +204,7 @@ jobs:
       - name: Collect PRs, issues and ADRs
         id: collect
         env:
-          # 메타 레포가 private 이라 GITHUB_TOKEN 으로는 Parent 를 못 읽는다. 선택 시크릿이 있으면 쓴다
+          # GITHUB_TOKEN 으로는 다른 레포의 Parent 를 못 읽는다(없으면 PR 본문 «근거»로 보완). 선택 시크릿이 있으면 쓴다
           GH_TOKEN: ${{ secrets.DEPLOY_HISTORY_TOKEN || github.token }}
           REPO: ${{ github.repository }}
           BASE: ${{ steps.previous.outputs.base }}

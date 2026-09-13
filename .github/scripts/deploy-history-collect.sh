@@ -8,7 +8,7 @@
 #
 # 출력 원소: {number, title, issue, parent_issue, adr_refs}
 #   issue        — PR 제목 `[#N]` 의 N (이 레포의 Sub-task). 없으면 null
-#   parent_issue — `owner/repo#N` (GraphQL sub_issues 의 parent, cross-repo). 못 읽으면 null —
+#   parent_issue — `owner/repo#N` (GraphQL sub_issues 의 parent, cross-repo). 못 읽으면 PR 본문 «근거»의 ssccops#N —
 #                  메타 레포가 private 이라 GITHUB_TOKEN 으로는 null 이 정상이다
 #   adr_refs     — Parent 본문의 ADR-NNNN 전부 (중복 제거·정렬)
 #
@@ -78,6 +78,14 @@ for n in "${PR_NUMBERS[@]+"${PR_NUMBERS[@]}"}"; do
       adr_refs=$( (jq -r '.body // ""' <<< "$parent" | grep -oE 'ADR-[0-9]{4}' || true) | sort -u | jq -R . | jq -sc .)
     fi
   fi
+  # Parent 를 못 읽었으면(GITHUB_TOKEN 은 다른 레포의 sub_issues 를 못 본다) PR 본문의 «근거» 줄을 쓴다 —
+  # pr-guard 가 `ssccops#N` 또는 `ADR-NNNN` 을 강제하므로 여기엔 늘 무언가 있다 (#418, 웹 #444 와 같은 규칙)
+  body=$(api "repos/$REPO/pulls/$n" --jq '.body // ""' 2>/dev/null || true)
+  if [ -z "$parent_issue" ]; then
+    bn=$(printf '%s' "$body" | grep -oE '(SoongSilComputingClub/)?ssccops#[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)
+    [ -n "$bn" ] && parent_issue="SoongSilComputingClub/ssccops#$bn"
+  fi
+  adr_refs=$( ( (jq -r '.[]' <<< "$adr_refs"; printf '%s' "$body" | grep -oE 'ADR-[0-9]{4}' || true) | sort -u | jq -R . | jq -sc .) )
   RESULT=$(jq -c \
     --argjson number "$n" --arg title "$title" --arg issue "$issue" \
     --arg parent_issue "$parent_issue" --argjson adr_refs "$adr_refs" \

@@ -416,7 +416,10 @@ scripts/deploy-history.sh list web dev 20         # 웹 레코드도 같은 브�
   `user.email` 같은 값이 공개 엔드포인트로 나가지 않게 `gitProperties.keys`로 좁혔다). `ActuatorInfoTest`가 경로를 못 박는다.
   **`Dockerfile`은 `.git`을 복사하지 않는다**(#422) — Coolify 빌드 컨텍스트에 `.git`이 없어 `COPY .git .git`이 빌드를 죽였고(#413 뒤 dev
   배포 5건 연속 실패) COPY는 없는 경로를 건너뛰지 못한다. 배포 빌드에서는 Coolify가 빌드 인자로 주는 `SOURCE_COMMIT`(Actions면 `GITHUB_SHA`)로
-  `generateGitProperties`가 `git.commit.id`만 쓴다(`git.branch`·`git.commit.time`은 없다). 그것도 없으면(로컬 `docker compose`) git 없이 뜬다 —
+  `generateGitProperties`가 `git.commit.id`만 쓴다(`git.branch`·`git.commit.time`은 없다). **그 인자는 Coolify 앱 설정 Advanced → Build →
+  «Source commit availability»가 `Available during build`일 때만 들어간다**(#424 — 기본값 `Runtime only`는 커밋마다 값이 바뀌어 Docker 캐시를
+  깨기 때문에 빌드에서 뺀 것. v4.3.16 `include_source_commit_in_build`). dev·prod api 둘 다 켜 두었고, **새 환경을 만들면 이 토글부터** —
+  꺼져 있으면 빌드는 성공하는데 `/actuator/info`에 `git`이 없고 레코드가 전부 `unverified`다(2026-09-14 실측). 그것도 없으면(로컬 `docker compose`) git 없이 뜬다 —
   부팅은 막지 않고 레코드가 `unverified`가 될 뿐. 로컬 `bootRun`·테스트는 `.git`이 있으니 JGit이 넷을 다 쓴다.
 - Parent를 그래도 못 읽으면 PR 본문 «근거» 줄(`ssccops#N`·`ADR-NNNN`, pr-guard 강제)로 채운다(#418). `image_digest`는 Coolify가
   밖으로 내지 않아 싣지 않는다. 실제 이벤트 전에 돌려 보려면 `workflow_dispatch`(환경·ref 입력)다. 두 레포가 같은 브랜치에 쓰므로

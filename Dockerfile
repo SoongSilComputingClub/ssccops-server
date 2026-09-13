@@ -18,7 +18,9 @@ RUN ./gradlew dependencies --no-daemon || true
 # «정말 이 커밋이 떠 있는가»를 확인하는 값, ssccops#340)를 위해 `COPY .git .git` 을 넣었는데 **Coolify 의
 # 빌드 컨텍스트에는 `.git` 이 없어** 그 줄에서 빌드가 죽었고 dev 배포가 5건 연속 실패했다(COPY 는
 # 없는 경로를 건너뛰지 못한다). 대신 Coolify 가 빌드 인자로 넣는 SOURCE_COMMIT 을 ARG 로 받아 RUN 의
-# 환경으로 넘기면 build.gradle(generateGitProperties)이 그 값으로 git.commit.id 를 쓴다 — 로컬
+# 환경으로 넘기면 build.gradle(generateGitProperties)이 그 값으로 git.commit.id 를 쓴다. 그 인자는 Coolify
+# 앱 설정 «Source commit availability = Available during build» 일 때만 온다(#424 · 기본값은 캐시 보존을 위해
+# 빌드에서 뺀다) — 로컬
 # `docker compose` 처럼 그 인자도 없으면 git 정보 없이 뜨고 레코드는 unverified 가 된다(부팅은 막지
 # 않는다). git.branch · git.commit.time 은 이 경로에서 나오지 않는다 — sha 하나면 확인에는 충분하다.
 COPY src src

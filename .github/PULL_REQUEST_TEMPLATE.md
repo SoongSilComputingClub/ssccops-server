@@ -9,6 +9,17 @@
 
 - closed: #
 
+## 📎 근거
+
+<!--
+이 변경이 **어느 결정에서 왔는가** — 메타 이슈(`ssccops#N`) 또는 ADR(`ADR-NNNN`). 둘 다면 둘 다.
+`pr-guard.yml`이 본문에서 `근거` 줄의 이 패턴을 찾아 없으면 실패시킨다(#410 · ssccops#340).
+배포 이력(deploy-history 브랜치)이 PR → Sub-task → Parent → ADR로 취합되는데, Sub-task가 없는
+PR은 그 사슬이 끊기므로 여기 적힌 것이 «왜 배포됐나»의 답이 된다. 릴리스 PR·dependabot은 면제.
+-->
+
+- 근거: ssccops#
+
 ---
 
 ## 🎯 목적

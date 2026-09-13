@@ -341,7 +341,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - 브랜치: 이슈 생성 시 `issue-branch-creator.yml`이 제목 앞 태그(`[FEAT]`/`[FIX]`/`[REFACTOR]`/`[CHORE]`)를 읽어 `{type}/#{이슈번호}-{슬러그}` 형식으로 자동 생성. 직접 만들어야 한다면 같은 형식을 따르며, **남의 작업 브랜치가 아니라 `develop`에서 딴다** — #235가 작업 중이던 다른 브랜치 위에서 갈라져 나오는 바람에 문서 한 줄짜리 PR이 남의 61개 파일을 함께 머지했다.
 - 커밋 메시지: 이슈가 있으면 `#{이슈번호} {type}({scope}): 설명`, 없으면 `{type}({scope}): 설명`. 타입은 `feat`/`fix`/`refactor`/`design`/`style`/`docs`/`test`/`chore`/`init`/`rename`/`remove`/`cicd`/`hotfix`. **커밋 타입과 이슈 유형은 다른 어휘다**(#238) — 커밋 타입은 위 열셋 그대로이고, **이슈 유형은 `feat`·`fix`·`refactor`·`chore` 네 가지가 전부다**(아래). 커밋에는 `docs(agents):`라고 적으면서 그 작업의 이슈는 `[CHORE]`인 것이 정상이다. **PR의 타입 라벨은 연결된 이슈의 라벨에서만 온다**(`pr-labeler.yml`) — 커밋 표기는 라벨에 아무 영향을 주지 않으므로, 표기를 지키는 이유는 `git log`가 읽히기 때문이다. 이슈를 연결하지 않은 PR에는 타입 라벨이 붙지 않는다.
 - **이슈 유형은 `feat`·`fix`·`refactor`·`chore` 네 가지뿐이다**(#238). 이슈 템플릿이 주는 것이 정본이며 라벨과 브랜치 접두어가 여기서 나온다. 문서·테스트·스타일·CI/CD 작업의 이슈는 전부 `[CHORE]`다 — `[CICD]`·`[DOCS]` 같은 옛 태그로 열어도 `issue-labeler`·`issue-branch-creator`가 `chore`로 받는다. 예전에 쓰던 `docs`·`test`·`style`·`cicd`·`rename`·`remove` 라벨은 **저장소에서 지웠다** — 남겨 두면 화면의 라벨 목록에서 고를 수 있어 다시 붙는다. 그 라벨이 붙어 있던 과거 PR에서도 함께 사라지지만, 그 작업의 유형은 커밋 메시지와 연결된 이슈에 그대로 남는다. 넷으로 못 박는 이유는 이 표가 `issue-labeler`·`issue-branch-creator`·`pr-labeler`·`pr-guard` 네 워크플로에 흩어져 있어 한 곳만 고치면 갈라지기 때문이다 — 갈라져 있던 동안 그 라벨들이 이슈에는 하나도 없고 PR에만 붙어 있었다(docs 33건·test 53건).
-- PR 제목은 `[#이슈번호] 총 작업 내용` — Squash merge 시 그대로 커밋 제목이 되므로 형식을 반드시 지킨다. **저장소 설정이 `squash_merge_commit_title = PR_TITLE`이라 커밋이 하나뿐인 PR에서도 PR 제목이 이긴다**(#238) — 기본값(`COMMIT_OR_PR_TITLE`)이던 동안에는 단일 커밋 PR에서 커밋 메시지가 제목이 되어, PR 제목을 통제해도 `git log`에는 다른 것이 박혔다. **`pr-guard.yml`이 제목·브랜치명·이슈 실재 여부를 검사해 어기면 실패시킨다**(#238) — `develop → main` 릴리스 PR과 dependabot만 면제다.
+- PR 제목은 `[#이슈번호] 총 작업 내용` — Squash merge 시 그대로 커밋 제목이 되므로 형식을 반드시 지킨다. **저장소 설정이 `squash_merge_commit_title = PR_TITLE`이라 커밋이 하나뿐인 PR에서도 PR 제목이 이긴다**(#238) — 기본값(`COMMIT_OR_PR_TITLE`)이던 동안에는 단일 커밋 PR에서 커밋 메시지가 제목이 되어, PR 제목을 통제해도 `git log`에는 다른 것이 박혔다. **`pr-guard.yml`이 제목·브랜치명·이슈 실재 여부를 검사해 어기면 실패시킨다**(#238) — `develop → main` 릴리스 PR과 dependabot만 면제다. **본문의 «근거» 줄도 본다**(#410 · ssccops#340): 템플릿의 `📎 근거` 칸에 `ssccops#<메타 이슈>` 또는 `ADR-NNNN`이 있어야 한다 — 배포 이력이 PR → Sub-task → Parent → ADR로 취합되는데 그 사슬이 끊긴 PR도 «어느 결정에서 왔나»를 스스로 말하게 하기 위해서다.
 - **머지 전략은 둘이다.** 기능·수정 PR은 **Squash and merge**로 develop에 한 커밋으로 들어가고, **`develop → main` 릴리스 PR은 일반 merge commit**이다 — 그쪽을 squash 하면 develop 전체가 main에서 커밋 하나로 뭉개져 릴리스에 무엇이 들어갔는지 사라진다. 그래서 `allow_merge_commit`은 켜 둔 것이며 끄지 말 것. 릴리스 PR에 `[#이슈번호]`가 없는 것도 정상이라 `pr-guard`가 면제한다(`head.ref != develop`). 이 가드가 생긴 이유는 어긴 제목이 문서상의 실수로 끝나지 않고 `git log`에 영구히 박히기 때문이다(#235를 되돌리는 데 배포 브랜치 강제 푸시가 필요했다).
 - **CI는 두 워크플로다.** `develop`으로 향하는 PR·푸시는 `integrate-dev.yml`, `main` 쪽은 `integrate-prod.yml`이며 둘 다 Spotless → Checkstyle → Test/JaCoCo → `bootJar`를 같은 명령으로 돈다(다르게 두면 develop에서 통과한 코드가 main에서 떨어진다).
 - **SonarQube 분석은 `develop` 푸시에서만 돌고 아무것도 막지 않는다**(ssccops#231 · #238). `SONAR_TOKEN`이 없으면 건너뛰고, Quality Gate가 실패해도 리포트만 남긴다 — 처음 켰을 때 기존 코드의 지적이 수백 건 나오는 상태에서 게이트를 잠그면 아무것도 머지할 수 없기 때문이다. **기준을 정한 뒤에 잠근다.** 리포트는 **job 요약과 job 로그(stdout) 양쪽에** 남고 스크립트는 `.github/scripts/sonar-report.sh`다 — job 요약은 UI 에서만 보이고 Actions API 로는 읽히지 않아, 로그에 없으면 기준선 숫자를 사람이 브라우저를 열어 옮겨 적기 전에는 아무도 볼 수 없다.
@@ -384,6 +384,34 @@ curl -s https://<배포 주소>/actuator/info
 
 **버전 문자열을 코드나 설정에 손으로 적지 않는다.** `management.info.env`로 따로 쓰는 방법도
 있지만 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다 — 이 절이 생긴 이유가 그것이다.
+
+### 배포 이력은 `deploy-history` 브랜치, 조회는 스크립트 (#410 · ssccops#340)
+
+**«어느 환경에 어떤 커밋이 언제 올라갔고 무엇이 들었나»는 사람이 쓰지 않는다.** `.github/workflows/deploy-history.yml`이
+릴리스 게시(prod)와 `develop` 푸시(dev)마다 orphan 브랜치 **`deploy-history`**의 `prod.jsonl`·`dev.jsonl`에 JSON 한 줄을
+append 한다 — 직전 배포 지점과 `compare`한 PR 목록(→ 제목의 `[#N]` Sub-task → cross-repo Parent → 본문의 `ADR-NNNN`),
+그리고 **`/actuator/info`의 `git.commit.id`가 푸시된 sha와 같아진 시각**(`deployed_at`, 최대 10분 폴링). 같아지지 않으면
+`status: unverified`로 남는다 — 태그는 사람이 올린 값이라 «떠 있다»의 증빙이 못 되고, 실제 응답만 증빙이다.
+
+```bash
+scripts/deploy-history.sh current prod     # 지금 prod 에 무엇이·언제·어떤 PR 로
+scripts/deploy-history.sh list dev 20
+```
+
+- 그래서 `/actuator/info`에 **git 정보가 실린다** — `com.gorylenko.gradle-git-properties`가 `git.properties`를 넣고
+  `management.info.git.mode: full`이라 `git.commit.id.{abbrev,full}`·`git.branch`·`git.commit.time`이 나온다(키는 그 넷뿐 —
+  `user.email` 같은 값이 공개 엔드포인트로 나가지 않게 `gitProperties.keys`로 좁혔다). `ActuatorInfoTest`가 경로를 못 박는다.
+  **`Dockerfile`이 `.git`을 복사하는 이유가 이것이다** — 플러그인은 JGit이라 git 바이너리는 필요 없지만 `.git`은 있어야 한다.
+  없으면 Coolify가 빌드 인자로 주는 `SOURCE_COMMIT`(Actions면 `GITHUB_SHA`)으로 최소 파일을 쓰고, 그것도 없으면 git 없이 뜬다(부팅은
+  막지 않는다 — 레코드가 `unverified`가 될 뿐).
+- **호스트는 워크플로에 없다.** repo variables `DEV_APP_PUBLIC_BASE_URL`·`PROD_APP_PUBLIC_BASE_URL`(끝 슬래시 없이)이 폴링 주소이며
+  비어 있으면 폴링 없이 `unverified`다. 비밀값은 없다 — 메타 레포(ssccops)가 private이라 `GITHUB_TOKEN`으로는 cross-repo Parent를
+  못 읽어 `parent_issue`·`adr_refs`가 null로 남는데, 그 레포 read 권한이 있는 토큰을 **선택** 시크릿 `DEPLOY_HISTORY_TOKEN`으로
+  넣으면 채워진다(없어도 돈다).
+- 저장 위치가 이 레포의 orphan 브랜치인 것은 `GITHUB_TOKEN`만으로 쓸 수 있고 develop·main 이력을 더럽히지 않아서다. 메타 레포로
+  모으는 안은 교차 레포 PAT가 필요해 기각. `image_digest`는 Coolify가 밖으로 내지 않아 싣지 않는다. 실제 이벤트 전에 돌려 보려면
+  `workflow_dispatch`(환경·ref 입력)다. 웹 레포도 같은 브랜치 이름을 쓰므로 `REPO=SoongSilComputingClub/ssccops-web`으로 같은
+  스크립트가 읽는다.
 
 ### ⚠️ 산출물 이름을 바꾸지 말 것
 

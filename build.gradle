@@ -6,6 +6,8 @@ plugins {
     id 'jacoco'
     id 'com.diffplug.spotless' version '6.25.0'
     id 'org.sonarqube' version '7.3.1.8318'
+    // /actuator/info 에 git sha 를 싣는다 (#410 · ssccops#340). 아래 gitProperties 블록 참고
+    id 'com.gorylenko.gradle-git-properties' version '2.4.2'
 }
 
 group = 'org.sscc'
@@ -57,6 +59,43 @@ java {
 // 그러면 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다.
 springBoot {
     buildInfo()
+}
+
+// git.properties 를 산출물에 넣는다 → /actuator/info 가 git.branch · git.commit.id(abbrev·full) ·
+// git.commit.time 을 돌려준다 (#410 · ssccops#340). build-info 가 «어느 버전인가»에 답한다면 이것은
+// «정확히 어느 커밋인가»에 답한다 — deploy-history.yml 이 배포 뒤 이 값을 폴링해 푸시된 sha 와
+// 같은지 확인하고, 같아야 레코드가 `deployed` 가 된다. 태그·버전은 사람이 올리는 값이라 «떠 있는
+// 것»의 증빙이 못 된다.
+//
+// 플러그인은 JGit 이라 git 바이너리가 없는 Docker 빌더에서도 `.git` 만 있으면 된다 — 그래서
+// Dockerfile 이 `.git` 을 복사한다. 그래도 `.git` 이 없는 빌드(Coolify 가 언젠가 컨텍스트에서 빼면)에
+// 대비해 실패시키지 않고(failOnNoGitDirectory=false) Coolify·Actions 가 주는 커밋 env
+// (SOURCE_COMMIT · GITHUB_SHA)로 최소 파일을 쓴다. 둘 다 없으면 파일이 없고 /actuator/info 에
+// git 이 빠진다 — 그때 deploy-history 레코드는 `unverified` 로 남는다(고장이 아니라 «확인 못 함»).
+//
+// 키를 넷으로 좁힌 것은 user.email 같은 값이 공개 엔드포인트로 나가지 않게 하기 위해서다.
+gitProperties {
+    failOnNoGitDirectory = false
+    keys = ['git.branch', 'git.commit.id', 'git.commit.id.abbrev', 'git.commit.time']
+    dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXX"
+    dateFormatTimeZone = 'UTC'
+}
+
+tasks.named('generateGitProperties') {
+    doLast {
+        def out = layout.buildDirectory.file('resources/main/git.properties').get().asFile
+        if (out.exists()) {
+            return
+        }
+        def sha = System.getenv('SOURCE_COMMIT') ?: System.getenv('GITHUB_SHA')
+        if (!sha) {
+            logger.warn('git.properties 를 만들지 못했다 — .git 도 SOURCE_COMMIT/GITHUB_SHA 도 없다')
+            return
+        }
+        out.parentFile.mkdirs()
+        out.text = "git.commit.id=${sha}\ngit.commit.id.abbrev=${sha.take(7)}\n"
+        logger.lifecycle("git.properties 를 env 의 커밋으로 썼다: ${sha}")
+    }
 }
 
 // 산출물 이름에서 버전을 뺀다. Dockerfile 이 이 파일을 이름으로 집어 오므로, 고정해 두지

@@ -193,6 +193,12 @@ management:
     web:
       exposure:
         include: health,info,prometheus,metrics,loggers
+  # /actuator/info 의 git 정보를 전부 낸다 (#410). 기본 simple 은 commit.id 를 abbrev 하나로
+  # 뭉개는데, deploy-history.yml 은 full 로 푸시된 sha 와 정확히 비교하고 abbrev 는 표시에 쓴다.
+  # 무엇이 나가는지는 build.gradle 의 gitProperties.keys 가 정한다(네 키뿐).
+  info:
+    git:
+      mode: full
   endpoint:
     health:
       show-details: always

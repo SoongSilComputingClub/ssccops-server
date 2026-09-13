@@ -288,6 +288,7 @@ class OperationToolsIntegrationTest {
         return connect(authUserId, null);
     }
 
+    /* 서버가 stateless(#393)라 initialize는 클라이언트 쪽 의례일 뿐이다 — 세션 id는 오가지 않는다 */
     private McpSyncClient connect(UUID authUserId, String forwardedFor) {
         HttpClientStreamableHttpTransport transport =
                 HttpClientStreamableHttpTransport.builder("http://localhost:" + port)

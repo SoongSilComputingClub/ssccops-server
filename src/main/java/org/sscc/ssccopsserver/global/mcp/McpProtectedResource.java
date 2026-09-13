@@ -30,7 +30,10 @@ import org.sscc.ssccopsserver.global.config.AppPublicBaseUrl;
 @Component
 public class McpProtectedResource {
 
-    /** MCP 엔드포인트 경로. `spring.ai.mcp.server.streamable-http.mcp-endpoint`와 같아야 한다. */
+    /**
+     * MCP 엔드포인트 경로. `spring.ai.mcp.server.streamable-http.mcp-endpoint`와 같아야 한다(stateless 자동 구성도 이
+     * 프로퍼티를 읽는다).
+     */
     public static final String MCP_PATH = "/mcp";
 
     public static final String METADATA_PATH = "/.well-known/oauth-protected-resource";

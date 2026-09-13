@@ -19,7 +19,7 @@ import io.modelcontextprotocol.common.McpTransportContext;
  *    바뀔 수 있다. `McpServerConfig`가 Authorization 헤더를 `McpTransportContext`에 담아 두므로
  *    SecurityContext가 비어 있으면 거기서 꺼낸다.
  *
- * 둘 다 없으면 도구 오류다 — 토큰 없이 자기 호출을 하면 401이 돌아오고 그 401은 «MCP 세션은
+ * 둘 다 없으면 도구 오류다 — 토큰 없이 자기 호출을 하면 401이 돌아오고 그 401은 «MCP 요청은
  * 인증됐는데 도구가 인증 실패»라는 이상한 모양으로 모델에게 보인다. 여기서 끊어야 원인이 읽힌다.
  */
 @Component
@@ -39,6 +39,6 @@ public class BearerTokenSource {
                 return value;
             }
         }
-        throw new McpToolException("UNAUTHENTICATED", "이 MCP 세션에서 인증 토큰을 찾지 못했습니다. 연결을 다시 맺어 주세요.");
+        throw new McpToolException("UNAUTHENTICATED", "이 MCP 요청에서 인증 토큰을 찾지 못했습니다. 연결을 다시 맺어 주세요.");
     }
 }

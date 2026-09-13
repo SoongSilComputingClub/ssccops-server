@@ -44,9 +44,13 @@ spring:
   # 필터체인이 `/mcp`를 anyRequest().authenticated()로 이미 막고, 미인증 401에는
   # `WWW-Authenticate: Bearer resource_metadata=…`가 붙는다(CustomAuthenticationEntryPoint).
   #
-  # STREAMABLE(Streamable HTTP · 세션 있음)이지 SSE가 아니다 — SSE 전송은 MCP 스펙에서 폐기
-  # 예정이고 Claude 커넥터의 기본이 Streamable HTTP다. 세션은 메모리에 있어 재배포마다 끊긴다
-  # (클라이언트가 재연결한다 — ADR-0027이 감수한 대가). 리소스·프롬프트·completion은 쓰지 않으므로
+  # STATELESS(Streamable HTTP · 세션 없음)다 (#393). 처음엔 STREAMABLE(세션 있음)이었는데 세션이
+  # 메모리에 있어 재배포마다 끊겼고, 2026-09-13 dev 실측으로 Claude Code가 옛 Mcp-Session-Id로
+  # 404를 받으면 재초기화 없이 «failed to connect»로 굳는 것을 봤다. 도구는 요청마다 Bearer로
+  # 신원을 받고 서버에 상태가 없으므로(ADR-0027) 세션이 필요 없다 — STATELESS는 세션을 내지도
+  # 요구하지도 않아 재배포와 무관하다. SSE 전송은 쓰지 않는다(MCP 스펙에서 폐기 예정). 엔드포인트
+  # 프로퍼티(streamable-http.mcp-endpoint)는 stateless 자동 구성도 같은 것을 읽는다. 전송 빈 자체는
+  # McpServerConfig가 만든다(contextExtractor·오류 본문). 리소스·프롬프트·completion은 쓰지 않으므로
   # capabilities에서 끈다 — 켜 두면 빈 목록을 광고한다.
   ai:
     mcp:
@@ -54,7 +58,7 @@ spring:
         name: ssccops
         version: 0.1.0
         type: SYNC
-        protocol: STREAMABLE
+        protocol: STATELESS
         instructions: >-
           SSCC 운영관리 시스템. 도구는 로그인한 운영진 본인의 권한으로 동작하며,
           «권한이 없습니다»·«가입이 필요합니다» 응답은 재시도해도 바뀌지 않는다 — 사용자에게 알리고 멈춘다.

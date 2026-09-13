@@ -463,17 +463,36 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   | 개정안 제7조(2,136자) 잘림 | 아니오(상한 코앞) | 아니오 |
 
   **768은 실제로 나온다** — ssccops#322가 고른 값이 전제가 아니라 사실이 됐고, #396의
-  `vector(768)`은 둘 중 어느 모델을 골라도 같다(되돌리기는 환경변수 한 줄).
+  `vector(768)`은 둘 중 어느 모델을 골라도 같다(되돌리기는 환경변수 한 줄). 표의 다섯 줄은
+  공식 문서와 그대로 일치한다(입력 상한 8,192 vs 2,048 · «gemini-embedding-2 introduces
+  automatic renormalization for non-default dimensions» vs «you must manually normalize
+  non-3072 dimensions» · «the `task_type` parameter is not supported»).
+
+  **둘 다 무료 티어다** — pricing의 Gemini Embedding 2는 전 입력 유형이 «Free of charge»이고
+  (유료는 텍스트 $0.20/1M) Flash 3.x는 전부 «Free of charge»다. 다만 **`gemini-embedding-001`은
+  이제 pricing 페이지에 없다** — 값만 바꾸면 되는 선택지이긴 하지만 공식 문서가 가리키는 곳은 2다.
+  모델 목록 문서는 Embedding 2의 ID를 `gemini-embedding-2-preview`로 적는데 API는
+  `gemini-embedding-2`도 함께 내주며 여기서는 후자를 고정한다.
   ⚠️ **채팅 모델 ID는 늙는다** — 처음 기본값이던 `gemini-2.5-flash`는 모델 목록에 여전히
-  보이는데도 새 키로 부르면 404 «no longer available to new users»다.
+  보이는데도 새 키로 부르면 404 «no longer available to new users»다. 문서상 최신 stable은
+  `gemini-3.8-flash`이고 3.6을 쓰는 것은 **실제로 답하는 것을 확인한 유일한 모델**이라서다 —
+  옮기려면 `./gradlew geminiCheck -Pargs="--chat-model=…"`가 먼저다.
+  출처: [pricing](https://ai.google.dev/gemini-api/docs/pricing) ·
+  [models](https://ai.google.dev/gemini-api/docs/models) ·
+  [embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
 - ⚠️ **`task-type`은 지금 아무 일도 하지 않는다 — 이유가 둘 겹친다.** ① Spring AI 1.1.8이
   싣지 않는다(`GoogleGenAiTextEmbeddingModel`이 `EmbedContentConfig`에 넣는 것은
   `outputDimensionality` 하나뿐이고 `taskType`·`title`·`autoTruncate`는 읽지도 않는다 —
   SDK와 Gemini API는 셋 다 지원한다). ② **`gemini-embedding-2`는 애초에 `task-type`으로
-  결과가 달라지지 않는다**(SDK로 직접 걸어도 DOCUMENT와 QUERY가 같은 벡터다. 001은 다르다).
-  그래서 「적재 `RETRIEVAL_DOCUMENT` · 질의 `RETRIEVAL_QUERY`」 비대칭 임베딩을 실제로 걸려면
+  **`task_type` 파라미터 자체를 지원하지 않는다**(SDK로 직접 걸어도 DOCUMENT와 QUERY가 같은
+  벡터이고 공식 문서도 «the `task_type` parameter is not supported»라고 적는다. 001은 다르다).
+  그래서 「적재 `RETRIEVAL_DOCUMENT` · 질의 `RETRIEVAL_QUERY`」를 실제로 걸려면
   `EmbeddingModel`을 감싸야 하는데, **그 일은 001로 되돌릴 때만 의미가 있다.** yaml의 그 줄을
   지우지 않는 것은 이 조건을 그 자리에 적어 두기 위해서다.
+  **비대칭 자체를 포기한 것은 아니다** — 2에서 Google이 제시하는 대체 경로는 파라미터가 아니라
+  **프롬프트에 과업 설명을 넣는 것**이다(«include task instructions directly in the prompt»).
+  적재·질의 텍스트 앞에 서로 다른 한 줄을 붙이는 일이라 Spring AI가 무엇을 싣든 우리가 할 수
+  있고, 골든셋(§14.2)이 필요하다고 말하면 그때 청커·질의 쪽에서 건다.
 - ⚠️ **모델 클래스의 `dimensions()`를 믿지 말 것.** 모델 이름 상수표를 먼저 보고
   `gemini-embedding-001`에 **3072**을 돌려준다 — 실제 벡터가 768일 때도 그렇다. 이름이 표에
   없으면(`gemini-embedding-2`가 그렇다) 진짜 한 번 불러 그 길이를 캐시하므로 지금은 768이
@@ -492,8 +511,10 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   것은 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 되기 때문이다.
   **`gemini-embedding-001`의 입력 상한은 2,048 토큰**이라 조 단위 청크가 긴 조에서 닿는다
   (개정안 제7조가 2,136자다) — 넘으면 오류가 아니라 조용히 잘려 조문 뒷부분이 검색되지 않는다.
-- **아직 실측하지 않은 것 하나** — 무료 티어 임베딩의 RPM·TPM·RPD다. **공개 문서에 그 수치가
-  없고**(공식 rate-limits 문서가 «AI Studio에서 확인하라»고만 한다) 이 도구도 알아내지 못한다.
+- **아직 실측하지 않은 것 하나** — 무료 티어의 RPM·TPM·RPD다. **공개 문서에 그 수치가 없다**:
+  공식 rate-limits 문서는 «Rate limits depend on a variety of factors (such as your usage tier)
+  and can be viewed in Google AI Studio»라고만 하고 모델별 Free Tier 표를 싣지 않는다(2026-09-13
+  확인. 그 페이지의 표는 Batch API enqueued token 한도이며 우리가 쓰는 값이 아니다).
   전역 레이트 리밋(§11)의 `N`이 그 값이므로 콘솔에서 읽어 ssccops#324에 적는다.
 
 ## 커밋 · 브랜치 · PR 컨벤션

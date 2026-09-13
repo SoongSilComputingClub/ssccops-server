@@ -95,6 +95,14 @@ spring:
             # 404 «no longer available to new users» 를 돌려줬다 — 모델 목록에는 여전히
             # 보이는데 새 키로는 부를 수 없다. `./gradlew geminiCheck` 6단계가 쓸 수 있는
             # Flash 계열을 먼저 찍고 실제로 한 번 물어본다(3.6-flash 는 «서울»을 답했다).
+            #
+            # **Flash 3.x 는 전부 무료 티어 "Free of charge" 다**(공식 pricing). 3.6 을 고른
+            # 것은 **실제로 답하는 것을 확인한 유일한 모델**이어서이고, 문서상 최신 stable 은
+            # `gemini-3.8-flash` 다 — 옮기려면 이 줄이 아니라 `./gradlew geminiCheck
+            # -Pargs="--chat-model=gemini-3.8-flash"` 가 먼저다(목록에 보이는 것과 부를 수
+            # 있는 것이 다르다는 사실이 2.5-flash 에서 이미 드러났다).
+            #   https://ai.google.dev/gemini-api/docs/pricing
+            #   https://ai.google.dev/gemini-api/docs/models
             model: ${GEMINI_CHAT_MODEL:gemini-3.6-flash}
         embedding:
           text:
@@ -118,6 +126,14 @@ spring:
               #
               # 되돌리는 것은 환경변수 한 줄이다 — 둘 다 768차원이라 #396 의 `vector(768)`
               # 과 재적재 계획은 어느 쪽을 골라도 같다.
+              #
+              # **둘 다 무료 티어다.** 공식 pricing 의 Gemini Embedding 2 는 전 입력 유형이
+              # "Free of charge" 이며(유료는 텍스트 $0.20/1M), **001 은 이제 그 페이지에 아예
+              # 없다** — 값만 바꾸면 되는 선택지이긴 하지만 공식 문서가 가리키는 곳은 2 다.
+              # 모델 목록 문서의 ID 는 `gemini-embedding-2-preview` 로 적혀 있는데 API 는
+              # `gemini-embedding-2` 도 함께 내주며(실측) 여기서는 후자를 고정한다.
+              #   https://ai.google.dev/gemini-api/docs/pricing
+              #   https://ai.google.dev/gemini-api/docs/embeddings
               model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-2}
 
               # pgvector 의 HNSW/IVFFlat 인덱스는 **2,000차원까지만** 걸린다. 이 모델의 기본
@@ -149,12 +165,20 @@ spring:
               #      taskType·title·autoTruncate 는 읽지도 않는다(SDK 와 Gemini API 는 셋 다
               #      지원한다). 001 에서 SDK 로 직접 부르면 DOCUMENT ≠ QUERY 인데 이 클래스를
               #      거치면 같은 벡터가 나온다.
-              #   ② **gemini-embedding-2 는 애초에 task-type 으로 결과가 달라지지 않는다.**
-              #      SDK 로 직접 걸어도 DOCUMENT 와 QUERY 가 같은 벡터다.
+              #   ② **gemini-embedding-2 는 task-type 파라미터 자체를 지원하지 않는다.** SDK 로
+              #      직접 걸어도 DOCUMENT 와 QUERY 가 같은 벡터이고, 공식 문서도 그렇게 말한다
+              #      ("the `task_type` parameter is not supported" ·
+              #      https://ai.google.dev/gemini-api/docs/embeddings).
               #
               # 그래서 ①을 고치는 일(EmbeddingModel 을 감싸기)은 **001 로 되돌릴 때만** 의미가
               # 있다. 줄을 남겨 두는 것은 그 조건을 여기 적어 두기 위해서다 — 지우면 다음
               # 사람이 "비대칭을 왜 안 걸었지?"를 처음부터 다시 조사한다.
+              #
+              # **비대칭 자체를 포기한 것은 아니다.** 2 에서 Google 이 제시하는 대체 경로는
+              # 파라미터가 아니라 **프롬프트에 과업 설명을 넣는 것**이다("include task
+              # instructions directly in the prompt"). 즉 적재·질의 텍스트 앞에 서로 다른 한
+              # 줄을 붙이는 일이라 Spring AI 가 무엇을 싣든 상관없이 우리가 할 수 있다 —
+              # 골든셋(§14.2)이 필요하다고 말하면 그때 청커·질의 쪽에서 건다.
               task-type: RETRIEVAL_DOCUMENT
 
               # `auto-truncate` 를 넣지 말 것 — Spring AI 가 읽지 않을뿐더러, 값이 전달되는

@@ -1,6 +1,7 @@
 name: PR Guard
 
-# PR 제목·브랜치명·이슈 연결이 컨벤션을 지키는지 검사한다 (#238).
+# PR 제목·브랜치명·이슈 연결이 컨벤션을 지키는지 검사한다 (#238). 본문의 «근거»(ssccops#N ·
+# ADR-NNNN)도 본다 (#410) — 배포 이력이 PR 에서 결정까지 거슬러 올라가는 사슬의 첫 고리다.
 #
 # 이 저장소는 **Squash and merge만** 쓰므로 PR 제목이 그대로 커밋 제목이 된다. 즉 여기서
 # 놓친 위반은 문서상의 실수로 끝나지 않고 develop의 `git log`에 영구히 박히며, 되돌리려면
@@ -49,6 +50,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -uo pipefail
 
@@ -88,6 +90,16 @@ jobs:
             if ! gh issue view "$NO" --repo "$REPO" --json number >/dev/null 2>&1; then
               fail "#${NO} 은 이 저장소에 없는 이슈입니다. 번호를 확인하거나 이슈를 먼저 여십시오."
             fi
+          fi
+
+          # ── 본문에 «근거» — ssccops#N 또는 ADR-NNNN ──────────────────────────
+          # 배포 이력(#410 · ssccops#340)이 PR → Sub-task → Parent → ADR 로 취합된다. 그 사슬은
+          # 제목의 [#N]에서 시작하는데, «이 변경이 어느 결정에서 왔는가»를 PR 자신이 한 줄로
+          # 말해 두면 사슬이 끊긴 PR(Parent 없는 Sub-task 등)도 답을 갖는다. 템플릿의 «근거» 칸을
+          # 채우지 않은 것(`ssccops#` 뒤에 번호 없음)은 여기서 걸린다.
+          if ! printf '%s' "$PR_BODY" | grep -qE '근거.*(ssccops#[0-9]+|ADR-[0-9]{4})'; then
+            fail "PR 본문에 «근거» 줄이 없습니다 — 템플릿의 '📎 근거' 칸에 'ssccops#<메타 이슈>' 또는 'ADR-NNNN'을 적으십시오.
+          예: '- 근거: ssccops#340' · '- 근거: ADR-0024'"
           fi
 
           if [ "$FAILED" -ne 0 ]; then

@@ -425,6 +425,57 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **로컬에서 붙여 보기**: `./gradlew bootRun` 뒤 Claude Code에서 `claude mcp add --transport http ssccops http://localhost:8080/mcp --header "Authorization: Bearer <Supabase 액세스 토큰>"`. dev·prod는 헤더 없이 URL만 넣으면 401 → 메타데이터 → Supabase 동의 화면(ssccops#315 · #316)으로 이어진다.
 - 테스트 함정: `@McpTool` 빈은 어느 컨텍스트에서든 스캐너가 등록한다 — 테스트 전용 도구는 `@TestConfiguration` + `@Import`로 그 테스트에만 둔다. MCP 클라이언트의 초기화 실패는 예외를 두 겹으로 감싸므로 401 본문은 원인 사슬을 따라가야 보인다.
 
+## 규정 도우미 (RAG) — Gemini 배선 (#395 · Epic ssccops#321)
+
+아직 **배선뿐이다.** 도메인(`domain/assistant`)·스키마(`V10`)·기능 플래그는 #396 이후이며,
+지금 레포에 있는 것은 모델 두 개를 부를 수 있게 해 놓은 것과 그것을 실제 키로 재 보는 도구다.
+
+- **스타터 둘** — `spring-ai-starter-model-google-genai`(채팅) · `…-google-genai-embedding`.
+  **BOM 줄은 늘지 않았다**(MCP가 이미 쓰는 `spring-ai-bom:1.1.8`). **2.0.x로 올리지 말 것** —
+  Boot 4 · Framework 7 · Java 21이 필요하다(MCP 절에서 못 박은 자리와 같다).
+  `spring-ai-starter-model-vertex-ai-gemini`가 **아닌** 이유는 그쪽이 GCP 프로젝트·결제 계정을
+  요구하는데 이 기능의 전제가 「비용 0」이기 때문이다. 이 스타터는 같은 코드에서 두 백엔드를
+  고르며 `…embedding.vertex-ai`의 기본값이 `false`라 **AI Studio 무료 키 하나로 선다** —
+  **그 값을 켜지 말 것**(켜는 순간 project-id·location을 요구한다).
+- **프로퍼티 이름의 정본은 jar의 `spring-configuration-metadata.json`이지 docs.spring.io가
+  아니다.** 공개 문서는 `…embedding.text.dimensions`라고 적는데 1.1.8에 그런 키는 없다
+  (`…embedding.text.options.dimensions`다). 값을 더할 때도 문서가 아니라 jar를 확인할 것.
+- **키가 없으면 배선이 서지 않는다** — `global/config/GeminiWiringEnvironmentPostProcessor`
+  (`META-INF/spring.factories`로 등록. EnvironmentPostProcessor는 Boot 3에서도 자동 구성
+  imports가 아니라 이 파일이다). 프로퍼티로 끄지 않는 이유는 **`GoogleGenAiEmbeddingConnection
+  AutoConfiguration`에 조건이 아예 없어서**다 — `spring.ai.model.embedding.text=none`으로도
+  그 빈은 만들어지고, 키가 비면 Vertex AI 경로로 흘러 `project-id must be set!`에서 죽는다.
+  실제로 그 상태에서는 **규정 도우미와 무관한 모든 테스트와 부팅이 함께 실패한다**(확인함).
+  그래서 셋(`spring.ai.model.chat` · `spring.ai.model.embedding.text` · 제외 목록)을 **한 가지
+  사실**에서 함께 끈다. `AppPublicBaseUrl`(#216)처럼 부팅을 세우지 않는 것은 이 값에는 「비어
+  있을 정당한 이유가 없다」가 성립하지 않기 때문이다 — 키를 발급받지 않은 기여자 로컬·테스트·
+  아직 키를 넣지 않은 배포가 전부 정당하다. 대신 **조용히 끄지 않는다**(부팅 로그 한 줄).
+- ⚠️ **`task-type`이 1.1.8에서는 요청에 실리지 않는다.** `GoogleGenAiTextEmbeddingModel`이
+  `EmbedContentConfig`에 넣는 것은 `outputDimensionality` 하나뿐이고 `taskType`·`title`·
+  `autoTruncate`는 읽지도 않는다(바이트코드 확인 — SDK와 Gemini API는 셋 다 지원한다).
+  그래서 「적재는 `RETRIEVAL_DOCUMENT` · 질의는 `RETRIEVAL_QUERY`」라는 비대칭 임베딩은
+  **프로퍼티로도 옵션 덮어쓰기로도 성립하지 않으며**, 성립하지 않는다는 사실이 어디에도 남지
+  않는다(골든셋 hit@5만 이유 없이 낮게 나온다). `application.yaml`의 그 줄은 지금 **의도의
+  선언**이다. 실제로 걸려면 `EmbeddingModel`을 우리가 감싸야 하고 그것은 미결이다.
+- ⚠️ **모델 클래스의 `dimensions()`는 설정한 차원을 모른다.** 모델 이름으로 찾는 상수표를 보고
+  `gemini-embedding-001`에 **3072**을 돌려준다 — 실제 벡터가 768일 때도 그렇다. #396에서
+  PgVectorStore가 차원을 스스로 정하게 두면 그 3072이 들어가므로
+  **`spring.ai.vectorstore.pgvector.dimensions`를 명시할 것.**
+- ⚠️ **자른 벡터는 정규화돼 있지 않다.** 지금 무해한 것은 오직
+  `spring.ai.vectorstore.pgvector.distance-type`의 기본값이 `cosine-distance`이고 **코사인이
+  스케일 불변**이기 때문이다 — **`euclidean`·`inner-product`로 바꾸는 순간 검색이 조용히
+  망가진다.** 바꿔야 한다면 저장 전 정규화가 먼저다.
+- **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-2.5-flash`) ·
+  `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-001`). 교체가 환경변수 하나가 되게 한다.
+- **`./gradlew geminiCheck`** (`src/test/.../tools/GeminiCheck`, R2Check와 같은 자리) — 실제
+  키로 차원·`task-type` 전달 여부·정규화·긴 조문 잘림을 재 본다. `./gradlew test`에 섞지 않은
+  것은 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 되기 때문이다.
+  **`gemini-embedding-001`의 입력 상한은 2,048 토큰**이라 조 단위 청크가 긴 조에서 닿는다
+  (개정안 제7조가 2,136자다) — 넘으면 오류가 아니라 조용히 잘려 조문 뒷부분이 검색되지 않는다.
+- **아직 실측하지 않았다** — 768이 실제로 나오는지, 무료 티어 임베딩의 RPM·TPM·RPD가 얼마인지
+  (**공개 문서에 그 수치가 없다** — AI Studio 콘솔에서 읽어야 한다). 키를 넣고 위 도구를 한 번
+  돌리는 것이 #396(`V10`의 `vector(N)`)의 선행 조건이다.
+
 ## 커밋 · 브랜치 · PR 컨벤션
 
 `.github/workflows/`가 강제하는 것과 사람이 지켜야 하는 규칙이 나뉜다 (자세한 배경은 로컬 전용 `private-workspace/CONTRIBUTING.md` 참고 — git에는 포함되지 않음):

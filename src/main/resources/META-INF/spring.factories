@@ -1,0 +1,8 @@
+# EnvironmentPostProcessor 는 자동 구성(AutoConfiguration.imports)이 아니라 여전히 이 파일로
+# 등록한다 — 스프링 부트 3 에서도 그렇다. 자동 구성 클래스를 여기 적지 말 것.
+#
+# GeminiWiringEnvironmentPostProcessor (#395): Gemini API 키가 없을 때 채팅·임베딩 자동 구성을
+# 끈다. 끄지 않으면 키 없는 환경(테스트·기여자 로컬·아직 키를 넣지 않은 배포)에서 **부팅이
+# 실패한다** — 자세한 이유는 그 클래스의 주석에 있다.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+  org.sscc.ssccopsserver.global.config.GeminiWiringEnvironmentPostProcessor

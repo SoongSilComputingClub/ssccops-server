@@ -70,6 +70,70 @@ spring:
           prompt: false
           completion: false
 
+    # ── Gemini (규정 도우미 RAG · #395 · ssccops#322) ──────────────────────────
+    #
+    # **여기 있는 프로퍼티 이름의 정본은 jar 의 spring-configuration-metadata.json 이지
+    # docs.spring.io 가 아니다.** 공개 문서는 `…embedding.text.dimensions` 라고 적는데
+    # 1.1.8 에는 그런 키가 없다(`…embedding.text.options.dimensions` 다). 문서가 다른 버전을
+    # 가리키고 있으니 값을 더할 때도 문서가 아니라 jar 를 확인할 것:
+    #   unzip -p ~/.gradle/caches/**/spring-ai-autoconfigure-model-google-genai-1.1.8.jar \
+    #           META-INF/spring-configuration-metadata.json | python3 -m json.tool
+    #
+    # **api-key 는 프로필마다 다른 환경변수에서 온다**(local: GEMINI_API_KEY · dev·prod:
+    # DEV_/PROD_ 접두). 채팅과 임베딩이 **각각 다른 커넥션 프로퍼티**를 쓰므로 두 벌이다.
+    # **키가 없으면 이 배선은 서지 않는다** — 어떻게 꺼지는지는 GeminiWiringEnvironmentPostProcessor.
+    #
+    # **`…embedding.vertex-ai` 를 건드리지 않는다**(기본 false). 켜는 순간 project-id·location 을
+    # 요구하고, 그 길은 GCP 결제 계정이라 「비용 0」이라는 이 기능의 전제가 깨진다.
+    google:
+      genai:
+        chat:
+          options:
+            # 교체가 환경변수 하나가 되게 한다 — 모델 ID 를 코드에 박지 않는다.
+            model: ${GEMINI_CHAT_MODEL:gemini-2.5-flash}
+        embedding:
+          text:
+            options:
+              # gemini-embedding-001 의 **입력 상한이 2,048 토큰**이다. 한글은 대략 1토큰이
+              # 1~1.5자라 1,400~2,000자쯤에서 잘리는데, 조 단위 청크(§5.3)가 긴 조에서 거기
+              # 닿는다(개정안 제7조가 2,136자다). 넘으면 오류가 아니라 **조용히 잘려** 조문
+              # 뒷부분이 검색되지 않는다. `./gradlew geminiCheck` 가 실제로 잘리는지 본다.
+              model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-001}
+
+              # pgvector 의 HNSW/IVFFlat 인덱스는 **2,000차원까지만** 걸린다. 이 모델의 기본
+              # 출력은 3072이라 그대로 두면 나중에 재적재 없이는 인덱스를 못 건다(ssccops#322).
+              # 이 값이 #396 `V10` 의 `vector(N)` 이다.
+              #
+              # ⚠️ **모델 클래스의 `dimensions()` 는 이 값을 모른다.** 그쪽은 모델 이름으로 찾는
+              # 상수표(GoogleGenAiTextEmbeddingModelName)를 보고 gemini-embedding-001 에
+              # **3072** 을 돌려준다 — 실제 벡터 길이는 768인데도 그렇다. PgVectorStore 가
+              # 차원을 스스로 정하게 두면 그 3072이 들어가므로, #396 에서
+              # `spring.ai.vectorstore.pgvector.dimensions` 를 **명시**할 것.
+              #
+              # ⚠️ **자른 벡터는 정규화돼 있지 않다.** Google 문서는 gemini-embedding-001 을
+              # 3072 밖으로 자르면 **수동 정규화가 필요**하다고 하고 Spring AI 는 하지 않는다
+              # (모델 클래스에 정규화 코드가 없다). 지금 무해한 것은 오직
+              # `spring.ai.vectorstore.pgvector.distance-type` 의 기본값이 `cosine-distance`
+              # 이고 **코사인이 스케일 불변**이라 랭킹이 바뀌지 않기 때문이다 —
+              # **`euclidean`·`inner-product` 로 바꾸는 순간 검색이 조용히 망가진다.**
+              # 바꿔야 한다면 벡터를 저장 전에 정규화하는 일이 먼저다.
+              dimensions: 768
+
+              # 적재는 문서, 질의는 RETRIEVAL_QUERY 로 거는 **비대칭 임베딩**이 검색 품질의
+              # 표준 처방이다. 프로퍼티가 하나뿐이라 질의 쪽은 코드에서 덮어써야 한다.
+              #
+              # ⚠️ **1.1.8 에서 이 값은 요청에 실리지 않는다.**
+              # GoogleGenAiTextEmbeddingModel 이 EmbedContentConfig 에 넣는 것은
+              # outputDimensionality 하나뿐이고 taskType·title·autoTruncate 는 읽지도 않는다
+              # (바이트코드 확인 · SDK 와 Gemini API 는 셋 다 지원한다). 그래서 지금은 적재도
+              # 질의도 API 기본값으로 나가며, 이 줄은 **의도의 선언**이지 동작이 아니다.
+              # 실제로 실리는지는 `./gradlew geminiCheck` 의 4단계가 확진한다.
+              task-type: RETRIEVAL_DOCUMENT
+
+              # `auto-truncate` 를 넣지 말 것 — Spring AI 가 읽지 않을뿐더러, 값이 전달되는
+              # 경로가 생기더라도 Gemini Developer API 는 그 파라미터를 거절한다
+              # ("autoTruncate parameter is not supported in Gemini API", google-genai 1.37.0).
+
 server:
   port: ${PORT:8080}
 

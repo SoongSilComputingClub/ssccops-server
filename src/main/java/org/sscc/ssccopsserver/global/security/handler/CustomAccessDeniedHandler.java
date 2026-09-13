@@ -15,6 +15,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.extern.slf4j.Slf4j;
 
+/*
+ * 403은 WARN 그대로이고 경로·메서드·UA를 `RequestLogFields`로 싣는다 (#389 · ssccops#319) —
+ * 세 층의 403(미가입·권한 부족·인가 규칙)이 응답 코드로는 `FORBIDDEN` 하나라 로그에서는 경로가
+ * 곧 단서다.
+ */
 @Slf4j
 @Component
 public class CustomAccessDeniedHandler implements AccessDeniedHandler {
@@ -26,7 +31,9 @@ public class CustomAccessDeniedHandler implements AccessDeniedHandler {
             AccessDeniedException accessDeniedException)
             throws IOException {
 
-        log.warn("Access denied: {}", accessDeniedException.getMessage());
+        log.warn(
+                "Access denied: {}",
+                RequestLogFields.args(accessDeniedException.getMessage(), request));
 
         // ApiResponse 형식으로 응답 작성
         response.setStatus(CommonErrorCode.FORBIDDEN.getHttpStatus().value());

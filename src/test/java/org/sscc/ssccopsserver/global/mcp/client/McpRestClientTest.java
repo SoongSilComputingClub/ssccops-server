@@ -43,6 +43,7 @@ class McpRestClientTest {
     private static HttpServer server;
     private static final List<String> receivedPaths = new CopyOnWriteArrayList<>();
     private static final List<String> receivedAuthorizations = new CopyOnWriteArrayList<>();
+    private static final List<String> receivedForwardedFor = new CopyOnWriteArrayList<>();
 
     private static final String MEMBER_JSON =
             "{\"memberId\":3,\"name\":\"김도현\",\"phoneNumber\":\"010-1234-5678\","
@@ -68,6 +69,8 @@ class McpRestClientTest {
                                             : "?" + exchange.getRequestURI().getRawQuery()));
                     receivedAuthorizations.add(
                             exchange.getRequestHeaders().getFirst("Authorization"));
+                    receivedForwardedFor.add(
+                            exchange.getRequestHeaders().getFirst("X-Forwarded-For"));
                     route(exchange);
                 });
         server.start();
@@ -82,6 +85,7 @@ class McpRestClientTest {
     void setUp() {
         receivedPaths.clear();
         receivedAuthorizations.clear();
+        receivedForwardedFor.clear();
         SecurityContextHolder.clearContext();
         ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
         client =
@@ -128,6 +132,32 @@ class McpRestClientTest {
         client.get(context, "/v1/members/3", MemberSummaryResponse.class);
 
         assertThat(receivedAuthorizations).containsExactly("Bearer sc-token");
+    }
+
+    /*
+     * #390 — 자기 호출은 localhost라 안쪽 요청의 remoteAddr가 루프백이다. 원 요청의 체인이 가공 없이
+     * 그대로 실려야 AuditLog가 첫 값을 클라이언트로 고른다.
+     */
+    @Test
+    @DisplayName("원 요청의 X-Forwarded-For 체인이 자기 호출 헤더에 그대로 실린다")
+    void forwardsClientIpChainUnchanged() {
+        McpTransportContext withIp =
+                McpTransportContext.create(
+                        Map.of(
+                                "authorization", "Bearer ctx-token",
+                                "x-forwarded-for", "203.0.113.7, 10.0.0.1"));
+
+        client.get(withIp, "/v1/members/3", MemberSummaryResponse.class);
+
+        assertThat(receivedForwardedFor).containsExactly("203.0.113.7, 10.0.0.1");
+    }
+
+    @Test
+    @DisplayName("전송 컨텍스트에 IP가 없으면 X-Forwarded-For를 지어내지 않는다")
+    void omitsForwardedForWhenUnknown() {
+        client.get(context, "/v1/members/3", MemberSummaryResponse.class);
+
+        assertThat(receivedForwardedFor).containsExactly((String) null);
     }
 
     @Test

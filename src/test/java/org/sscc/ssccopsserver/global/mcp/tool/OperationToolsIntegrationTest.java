@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,9 +22,21 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
+import org.sscc.ssccopsserver.global.logging.EcsJsonEncoder;
 import org.sscc.ssccopsserver.global.mcp.McpProtectedResource;
+import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jayway.jsonpath.JsonPath;
+
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
@@ -52,10 +65,19 @@ class OperationToolsIntegrationTest {
 
     @LocalServerPort private int port;
     @Autowired private MockMvc mockMvc;
+    @Autowired private SubWorkTypeRepository subWorkTypeRepository;
+
+    private Long founderId;
 
     @BeforeAll
     void signUpMembers() throws Exception {
-        mockMvc.perform(signup(FOUNDER, body("김도현", "20200001"))).andExpect(status().isCreated());
+        String founder =
+                mockMvc.perform(signup(FOUNDER, body("김도현", "20200001")))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        founderId = JsonPath.parse(founder).read("$.data.memberId", Long.class);
         mockMvc.perform(signup(PLAIN_MEMBER, body("이서연", "20200002")))
                 .andExpect(status().isCreated());
     }
@@ -107,8 +129,12 @@ class OperationToolsIntegrationTest {
     @DisplayName("list_sub_works — SUPER는 200(빈 목록), 역할 없는 회원은 «권한 없음»으로 끝난다")
     void listSubWorksHonoursAuthorization() {
         try (McpSyncClient client = connect(FOUNDER)) {
+            // keyword로 좁힌다 — 같은 H2를 쓰는 전이 테스트(#390)가 하위 업무를 하나 만들어 두므로
             McpSchema.CallToolResult result =
-                    call(client, "list_sub_works", Map.of("condition", Map.of("size", 5)));
+                    call(
+                            client,
+                            "list_sub_works",
+                            Map.of("condition", Map.of("size", 5, "keyword", "없는-검색어")));
 
             assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
             assertThat(text(result)).contains("\"items\":[]").contains("\"hasMore\":false");
@@ -147,12 +173,132 @@ class OperationToolsIntegrationTest {
         }
     }
 
+    /*
+     * #390 — 도구의 자기 호출은 localhost라 안쪽 요청의 remoteAddr가 127.0.0.1이다. 원 MCP 요청의
+     * X-Forwarded-For가 자기 호출에 실려야 감사 로그의 source.ip가 실제 클라이언트가 된다. 감사 줄은
+     * AuditPointsTest와 같은 방식(AUDIT 로거의 ListAppender + 실제 인코더)으로 잡는다.
+     */
+    @Test
+    @DisplayName("transition_sub_work — 감사 이벤트의 source.ip는 MCP 요청이 보낸 X-Forwarded-For의 첫 값이다")
+    void transitionAuditCarriesClientIp() throws Exception {
+        Long subWorkId = createSubWork();
+        ListAppender<ILoggingEvent> captured = new ListAppender<>();
+        Logger auditLogger = (Logger) LoggerFactory.getLogger(AuditLog.LOGGER_NAME);
+        EcsJsonEncoder encoder = new EcsJsonEncoder();
+        encoder.setContext((LoggerContext) LoggerFactory.getILoggerFactory());
+        encoder.start();
+        captured.start();
+        auditLogger.addAppender(captured);
+        try (McpSyncClient client = connect(FOUNDER, "203.0.113.7, 10.0.0.1")) {
+            McpSchema.CallToolResult result =
+                    call(
+                            client,
+                            "transition_sub_work",
+                            Map.of(
+                                    "subWorkId",
+                                    subWorkId,
+                                    "request",
+                                    Map.of("transition", "START")));
+
+            assertThat(result.isError()).as(text(result)).isNotEqualTo(Boolean.TRUE);
+        } finally {
+            auditLogger.detachAppender(captured);
+            captured.stop();
+        }
+
+        ObjectMapper mapper = new ObjectMapper();
+        List<Map<String, Object>> lines =
+                captured.list.stream()
+                        .map(event -> asJson(mapper, encoder, event))
+                        .filter(
+                                line ->
+                                        "subwork.transition"
+                                                .equals(section(line, "event").get("action")))
+                        .toList();
+        encoder.stop();
+        assertThat(lines).as("subwork.transition audit lines").hasSize(1);
+        assertThat(section(lines.get(0), "source")).containsEntry("ip", "203.0.113.7");
+    }
+
+    private static Map<String, Object> asJson(
+            ObjectMapper mapper, EcsJsonEncoder encoder, ILoggingEvent event) {
+        try {
+            return mapper.readValue(
+                    encoder.encode(event), new TypeReference<Map<String, Object>>() {});
+        } catch (java.io.IOException ex) {
+            throw new IllegalStateException(ex);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> section(Map<String, Object> line, String name) {
+        Object value = line.get(name);
+        assertThat(value).as(name).isInstanceOf(Map.class);
+        return (Map<String, Object>) value;
+    }
+
+    /* 부모 업무와 하위 업무를 REST로 만든다 — 담당자는 SUPER 본인이라 START 전이가 담당자 판정을 지난다 */
+    private Long createSubWork() throws Exception {
+        String work =
+                mockMvc.perform(
+                                post("/v1/works")
+                                        .header("Authorization", "Bearer " + FOUNDER)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                """
+                                                {
+                                                  "title": "2026 동아리 박람회",
+                                                  "itemType": "EVENT",
+                                                  "ownerId": %d
+                                                }
+                                                """
+                                                        .formatted(founderId)))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long workId = JsonPath.parse(work).read("$.data.workId", Long.class);
+        Long typeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
+        String subWork =
+                mockMvc.perform(
+                                post("/v1/sub-works")
+                                        .header("Authorization", "Bearer " + FOUNDER)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                """
+                                                {
+                                                  "workId": %d,
+                                                  "title": "부스 배치도 확정",
+                                                  "subWorkTypeId": %d,
+                                                  "ownerId": %d,
+                                                  "dueAt": "2099-01-01T23:59:00+09:00",
+                                                  "content": "박람회 부스 위치와 동선을 확정한다"
+                                                }
+                                                """
+                                                        .formatted(workId, typeId, founderId)))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(subWork).read("$.data.subWorkId", Long.class);
+    }
+
     private McpSyncClient connect(UUID authUserId) {
+        return connect(authUserId, null);
+    }
+
+    private McpSyncClient connect(UUID authUserId, String forwardedFor) {
         HttpClientStreamableHttpTransport transport =
                 HttpClientStreamableHttpTransport.builder("http://localhost:" + port)
                         .endpoint(McpProtectedResource.MCP_PATH)
                         .customizeRequest(
-                                builder -> builder.header("Authorization", "Bearer " + authUserId))
+                                builder -> {
+                                    builder.header("Authorization", "Bearer " + authUserId);
+                                    if (forwardedFor != null) {
+                                        builder.header("X-Forwarded-For", forwardedFor);
+                                    }
+                                })
                         .build();
         McpSyncClient client =
                 McpClient.sync(transport).requestTimeout(Duration.ofSeconds(20)).build();

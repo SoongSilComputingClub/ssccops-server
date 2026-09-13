@@ -22,6 +22,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
+import org.sscc.ssccopsserver.global.mcp.McpServerConfig;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JavaType;
@@ -39,6 +40,8 @@ import io.modelcontextprotocol.common.McpTransportContext;
  *
  * 여기서 한 번에 하는 것 셋:
  * - **Bearer pass-through** — 요청의 토큰을 그대로 싣는다(`BearerTokenSource`). 신원이 곧 사용자다.
+ *   원 요청의 클라이언트 IP(`X-Forwarded-For`)도 같이 싣는다(#390) — 없으면 감사 로그의 `source.ip`가
+ *   루프백으로 남는다.
  * - **봉투 벗기기** — `ApiResponse{success,code,message,data,page}`에서 `data`만 돌려주고
  *   `success:false`면 `code`+`message`를 도구 오류로 옮긴다. 도구마다 봉투를 열면 오류 변환이
  *   자리마다 갈린다(분석 문서 F6).
@@ -185,6 +188,11 @@ public class McpRestClient {
                             .uri(template.template(), template.variables())
                             .header(HttpHeaders.AUTHORIZATION, authorization)
                             .accept(MediaType.APPLICATION_JSON);
+            // 원 요청의 클라이언트 IP를 그대로 — 없으면 헤더도 없다(안쪽 요청의 remoteAddr가 남는다)
+            String forwardedFor = forwardedFor(context);
+            if (forwardedFor != null) {
+                request.header(McpServerConfig.FORWARDED_FOR_HEADER, forwardedFor);
+            }
             if (body != null) {
                 request.contentType(MediaType.APPLICATION_JSON).body(body);
             }
@@ -260,6 +268,20 @@ public class McpRestClient {
                     }
                 });
         return query;
+    }
+
+    /*
+     * 자기 호출은 localhost라 안쪽 요청의 remoteAddr가 127.0.0.1이고, 그러면 AuditLog의 source.ip가
+     * 언제나 루프백이다 (#390). McpServerConfig가 원 MCP 요청의 X-Forwarded-For(없으면 remoteAddr)를
+     * 전송 컨텍스트에 실어 두므로 그 값을 같은 이름의 헤더로 넘긴다. 체인은 가공하지 않는다 — 첫 값이
+     * 클라이언트라는 판정은 AuditLog 한 곳의 것이다.
+     */
+    private static String forwardedFor(McpTransportContext context) {
+        if (context == null) {
+            return null;
+        }
+        Object value = context.get(McpServerConfig.FORWARDED_FOR_CONTEXT_KEY);
+        return value instanceof String text && !text.isBlank() ? text : null;
     }
 
     private static String resolveBaseUrl(Environment environment) {

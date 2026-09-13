@@ -8,8 +8,9 @@
 #
 # 출력 원소: {number, title, issue, parent_issue, adr_refs}
 #   issue        — PR 제목 `[#N]` 의 N (이 레포의 Sub-task). 없으면 null
-#   parent_issue — `owner/repo#N` (GraphQL sub_issues 의 parent, cross-repo). 못 읽으면 PR 본문 «근거»의 ssccops#N —
-#                  메타 레포가 private 이라 GITHUB_TOKEN 으로는 null 이 정상이다
+#   parent_issue — `owner/repo#N` (GraphQL sub_issues 의 parent, cross-repo). 못 읽으면 PR 본문 «근거»의 ssccops#N.
+#                  메타 레포가 private 이라 GITHUB_TOKEN 으로는 null 이다 — 워크플로는 sscc-devops App 토큰(메타
+#                  issues:read)을 GH_TOKEN 으로 넘겨 직접 읽는다(#420). 로컬에서는 gh 로그인 계정이 읽는다
 #   adr_refs     — Parent 본문의 ADR-NNNN 전부 (중복 제거·정렬)
 #
 # 커밋→PR 은 `commits/{sha}/pulls` API 다 — squash 커밋은 merge commit 이 아니라 부모가 하나라

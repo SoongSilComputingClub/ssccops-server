@@ -386,33 +386,40 @@ curl -s https://<배포 주소>/actuator/info
 **버전 문자열을 코드나 설정에 손으로 적지 않는다.** `management.info.env`로 따로 쓰는 방법도
 있지만 같은 사실이 두 벌이 되어 다음 릴리스에 한쪽만 오른다 — 이 절이 생긴 이유가 그것이다.
 
-### 배포 이력은 `deploy-history` 브랜치, 조회는 스크립트 (#410 · ssccops#340)
+### 배포 이력은 메타 레포 `deploy-history` 브랜치, 조회는 스크립트 (#410 · #420 · ssccops#340 · ssccops#344)
 
 **«어느 환경에 어떤 커밋이 언제 올라갔고 무엇이 들었나»는 사람이 쓰지 않는다.** `.github/workflows/deploy-history.yml`이
-릴리스 게시(prod)와 `develop` 푸시(dev)마다 orphan 브랜치 **`deploy-history`**의 `prod.jsonl`·`dev.jsonl`에 JSON 한 줄을
-append 한다 — 직전 배포 지점과 `compare`한 PR 목록(→ 제목의 `[#N]` Sub-task → cross-repo Parent → 본문의 `ADR-NNNN`),
-그리고 **`/actuator/info`의 `git.commit.id`가 푸시된 sha와 같아진 시각**(`deployed_at`, 최대 10분 폴링). 같아지지 않으면
+릴리스 게시(prod)와 `develop` 푸시(dev)마다 **메타 레포(`ssccops`)의 orphan 브랜치 `deploy-history`**에 있는
+`server-prod.jsonl`·`server-dev.jsonl`에 JSON 한 줄을 append 한다(웹 레포는 같은 브랜치의 `web-*.jsonl` — 이력은 한 곳이다,
+[ADR-0033](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0033-deploy-history-in-meta-repo-via-app-token.md)) —
+직전 배포 지점과 `compare`한 PR 목록(→ 제목의 `[#N]` Sub-task → cross-repo Parent → 본문의 `ADR-NNNN`), 그리고
+**`/actuator/info`의 `git.commit.id`가 푸시된 sha와 같아진 시각**(`deployed_at`, 최대 10분 폴링). 같아지지 않으면
 `status: unverified`로 남는다 — 태그는 사람이 올린 값이라 «떠 있다»의 증빙이 못 되고, 실제 응답만 증빙이다.
 
 ```bash
-scripts/deploy-history.sh current prod     # 지금 prod 에 무엇이·언제·어떤 PR 로
-scripts/deploy-history.sh list dev 20
+scripts/deploy-history.sh current server prod     # 지금 prod 에 무엇이·언제·어떤 PR 로
+scripts/deploy-history.sh list web dev 20         # 웹 레코드도 같은 브랜치
 ```
 
+- **쓰기 토큰은 조직 GitHub App `sscc-devops`다.** 워크플로가 `actions/create-github-app-token`으로 1시간짜리 설치 토큰을
+  받되 `repositories: ssccops`로 좁힌다 — 그 토큰이 메타 브랜치 push와 cross-repo Parent 조회(메타 레포가 **private**이라
+  `GITHUB_TOKEN`으로는 null이었다) 둘 다 한다. 이 레포에는 쓰지 않으므로 `permissions.contents`는 `read`다. 처음(#410)에는
+  이 레포의 orphan 브랜치였다 — 교차 레포 PAT를 두 레포에 두기 싫어서였는데, 조직 앱 토큰은 사람에 안 묶이고 비밀이 조직
+  시크릿 하나라 저울이 바뀌었다(감수하는 것: 앱 설치가 all repos라 contents:write 상향이 Coolify가 쓰는 같은 앱의 키에도 미친다).
+- **호스트·앱 정보는 조직 변수·시크릿이고 레포에는 없다.** `vars.SSCCOPS_DEPLOY_HISTORY_APP_ID` · `secrets.SSCCOPS_DEPLOY_HISTORY_APP_KEY`
+  (Actions 전용으로 하나 더 발급한 PEM) · `vars.SSCCOPS_DEPLOY_HISTORY_ENV`(**.env 모양 여러 줄** — 이 워크플로는 `SERVER_DEV_URL`·
+  `SERVER_PROD_URL`만 읽고 웹은 `WEB_*`를 읽는다. 끝 슬래시 없이). 변수 8개를 두 레포에 넣던 것을 한 덩어리로 만든 것이며,
+  파서는 CR·주석·빈 줄·따옴표를 무시한다. URL이 비면 폴링 없이 `unverified`, 앱 변수·시크릿이 비면 **워크플로가 실패한다** —
+  조용히 자기 레포에 쓰는 길을 남기지 않는다.
 - 그래서 `/actuator/info`에 **git 정보가 실린다** — `com.gorylenko.gradle-git-properties`가 `git.properties`를 넣고
   `management.info.git.mode: full`이라 `git.commit.id.{abbrev,full}`·`git.branch`·`git.commit.time`이 나온다(키는 그 넷뿐 —
   `user.email` 같은 값이 공개 엔드포인트로 나가지 않게 `gitProperties.keys`로 좁혔다). `ActuatorInfoTest`가 경로를 못 박는다.
   **`Dockerfile`이 `.git`을 복사하는 이유가 이것이다** — 플러그인은 JGit이라 git 바이너리는 필요 없지만 `.git`은 있어야 한다.
   없으면 Coolify가 빌드 인자로 주는 `SOURCE_COMMIT`(Actions면 `GITHUB_SHA`)으로 최소 파일을 쓰고, 그것도 없으면 git 없이 뜬다(부팅은
   막지 않는다 — 레코드가 `unverified`가 될 뿐).
-- **호스트는 워크플로에 없다.** repo variables `DEV_APP_PUBLIC_BASE_URL`·`PROD_APP_PUBLIC_BASE_URL`(끝 슬래시 없이)이 폴링 주소이며
-  비어 있으면 폴링 없이 `unverified`다. 비밀값은 없다 — 메타 레포(ssccops)가 private이라 `GITHUB_TOKEN`으로는 cross-repo Parent를
-  못 읽어 `parent_issue`·`adr_refs`가 null로 남는데, 그 레포 read 권한이 있는 토큰을 **선택** 시크릿 `DEPLOY_HISTORY_TOKEN`으로
-  넣으면 채워진다(없어도 돈다).
-- 저장 위치가 이 레포의 orphan 브랜치인 것은 `GITHUB_TOKEN`만으로 쓸 수 있고 develop·main 이력을 더럽히지 않아서다. 메타 레포로
-  모으는 안은 교차 레포 PAT가 필요해 기각. `image_digest`는 Coolify가 밖으로 내지 않아 싣지 않는다. 실제 이벤트 전에 돌려 보려면
-  `workflow_dispatch`(환경·ref 입력)다. 웹 레포도 같은 브랜치 이름을 쓰므로 `REPO=SoongSilComputingClub/ssccops-web`으로 같은
-  스크립트가 읽는다.
+- Parent를 그래도 못 읽으면 PR 본문 «근거» 줄(`ssccops#N`·`ADR-NNNN`, pr-guard 강제)로 채운다(#418). `image_digest`는 Coolify가
+  밖으로 내지 않아 싣지 않는다. 실제 이벤트 전에 돌려 보려면 `workflow_dispatch`(환경·ref 입력)다. 두 레포가 같은 브랜치에 쓰므로
+  push가 밀리면 다시 받아 다시 붙인다(파일이 달라 충돌은 없다).
 
 ### ⚠️ 산출물 이름을 바꾸지 말 것
 

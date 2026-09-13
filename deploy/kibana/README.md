@@ -7,6 +7,7 @@ Logstash(`../logstash`)가 stream에 쓰기 시작한 뒤 Kibana가 알아야 �
 |---|---|
 | `setup.sh` | ILM · 인덱스 템플릿 · Data View · Kibana 역할 · 저장 객체 import. idempotent |
 | `saved-objects.ndjson` | 대시보드 2(감사 · 일반) + 패널. Kibana Saved Objects export 형식 |
+| `log-schema.md` | **로그 필드 표준표(SSOT)** — 필드 · ECS 경로 · 타입 · 어느 줄에 · 값 규칙 · 싣지 않는 것 (ssccops#341) |
 
 ## 보존 (ILM)
 

@@ -376,7 +376,7 @@ public class MemberServiceImpl implements MemberService {
      * @Transactional이 프록시를 타지 않는다 (#357 · Sonar S6809). **일부러 둔다** — 세 호출자
      * 모두 자기 메서드에 @Transactional이 있어 이 조회는 그 트랜잭션에 참여할 뿐이고, 읽기라
      * readOnly 여부가 달라져도 결과가 같다. 자기 주입(@Lazy self)으로 프록시를 태우는 것은 이
-     * 빈이 이미 순환 주입으로 한 번 갈라진 자리(MemberChangeService, AGENTS.md)라 고리를 다시
+     * 빈이 이미 순환 주입으로 한 번 갈라진 자리(MemberChangeService, domain/member/AGENTS.md)라 고리를 다시
      * 들이는 셈이고, 얻는 것이 없다.
      */
     @Override

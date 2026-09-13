@@ -333,7 +333,7 @@ class EventDuplicateControllerTest {
     /*
      * 그 밖의 R2 실패는 502이며 **트랜잭션 안이라 폼 사본·행사 사본이 함께 되돌아간다.** 되돌아가는
      * 것 자체는 @Transactional 테스트에서 관측할 수 없다(롤백이 테스트 끝에 한 번 일어난다) —
-     * 여기서 못 박는 것은 응답 코드와, 실패하는 요청이 마지막이라는 사실이다(AGENTS.md ·
+     * 여기서 못 박는 것은 응답 코드와, 실패하는 요청이 마지막이라는 사실이다(domain/event/AGENTS.md ·
      * 이어지는 요청은 UnexpectedRollbackException을 만난다).
      */
     @Test

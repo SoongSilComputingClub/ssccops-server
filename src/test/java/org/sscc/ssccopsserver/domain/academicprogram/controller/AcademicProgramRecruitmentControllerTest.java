@@ -78,11 +78,11 @@ import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
  *
  * 선발이 한 트랜잭션인지는 여기서 확인하지 않는다. 테스트에 @Transactional이 걸려 있으면
  * 롤백이 실제로 일어나지 않아 초록인 채 결함이 살아 있게 되므로, 그 규칙만
- * AcademicProgramRecruitmentRollbackTest가 트랜잭션 없이 확인한다(AGENTS.md).
+ * AcademicProgramRecruitmentRollbackTest가 트랜잭션 없이 확인한다(domain/academicprogram/AGENTS.md).
  *
  * 실패를 기대하는 요청은 테스트마다 마지막에 한 번만 부른다 — 서비스가 @Transactional이라
  * 예외가 테스트 트랜잭션을 rollback-only로 표시하고, 그 뒤 이어지는 요청은
- * UnexpectedRollbackException을 만난다(AGENTS.md).
+ * UnexpectedRollbackException을 만난다(domain/academicprogram/AGENTS.md).
  */
 @SpringBootTest
 @AutoConfigureMockMvc

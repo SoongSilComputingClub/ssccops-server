@@ -9,7 +9,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramAppro
  * 승인 이력 목록(#139)의 동적 조건 부분. SessionRepositoryCustom과 같은 이유로 존재한다 —
  * 지점·회차 두 필터와 커서가 서로 독립적으로 조합되므로 파생 쿼리 메서드 이름으로는 표현이
  * 늘어나고, 열거형 필터에 NULL을 넣고 `:point is null`로 분기하면 Hibernate가 타입을 추론하지
- * 못한다(AGENTS.md).
+ * 못한다(domain/form/AGENTS.md).
  */
 public interface AcademicProgramApprovalRepositoryCustom {
 

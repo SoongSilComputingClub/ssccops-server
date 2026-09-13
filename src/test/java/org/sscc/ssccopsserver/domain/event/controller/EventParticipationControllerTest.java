@@ -69,7 +69,7 @@ import com.jayway.jsonpath.JsonPath;
  *
  * **실패하는 요청은 언제나 성공하는 요청 뒤에 둔다.** 트랜잭션을 건 컨트롤러 테스트에서
  * 실패 요청은 참여 트랜잭션을 rollback-only로 표시하므로, 그 뒤에 오는 쓰기 요청은
- * UnexpectedRollbackException을 만난다 (AGENTS.md · RoleAuthoritySelfLockTest와 같은 이유).
+ * UnexpectedRollbackException을 만난다 (domain/event/AGENTS.md · RoleAuthoritySelfLockTest와 같은 이유).
  */
 @SpringBootTest
 @AutoConfigureMockMvc

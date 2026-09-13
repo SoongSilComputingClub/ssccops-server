@@ -217,6 +217,9 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Actions 의 기본 셸은 `bash -e` 다 — oasdiff 가 1 로 끝나는 순간 스크립트가 죽어 요약도 라벨 판정도
+          # 없이 «exit code 1» 만 남는다(DoD 검증 PR #416 에서 실제로 그랬다). 종료 코드를 받아 판단하려면 끈다.
+          set +e
           set -uo pipefail
           SEVERITY=head/config/oasdiff/severity-levels.txt
           oasdiff breaking base.json head.json --fail-on ERR --severity-levels "$SEVERITY" -f markup > report.md

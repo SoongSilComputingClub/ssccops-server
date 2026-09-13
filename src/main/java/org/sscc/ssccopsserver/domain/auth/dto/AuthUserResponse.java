@@ -9,10 +9,9 @@ import org.sscc.ssccopsserver.global.security.AuthenticatedUser;
  * 미리 채운다. 가입 이후에는 회원 정보(member)가 정본이므로 표시에 쓰지 않는다 —
  * 소셜 계정 이메일과 회원 이메일이 달라질 수 있다.
  */
-public record AuthUserResponse(String id, String email, String name, String provider) {
+public record AuthUserResponse(String id, String email, String name) {
 
     public static AuthUserResponse from(AuthenticatedUser user) {
-        return new AuthUserResponse(
-                user.authUserId().toString(), user.email(), user.name(), user.provider());
+        return new AuthUserResponse(user.authUserId().toString(), user.email(), user.name());
     }
 }

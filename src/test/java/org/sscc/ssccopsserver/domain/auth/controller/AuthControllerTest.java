@@ -80,8 +80,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.member").isEmpty())
                 .andExpect(jsonPath("$.data.authUser.id").value(AUTH_USER_ID.toString()))
                 .andExpect(jsonPath("$.data.authUser.email").value(AUTH_USER_ID + "@sscc.org"))
-                .andExpect(jsonPath("$.data.authUser.name").value("테스트"))
-                .andExpect(jsonPath("$.data.authUser.provider").value("google"));
+                .andExpect(jsonPath("$.data.authUser.name").value("테스트"));
     }
 
     // 사이드바가 대표 역할을 표시하므로 현재 역할(종료일 없는 배정)만 담겨야 한다

@@ -450,21 +450,41 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   사실**에서 함께 끈다. `AppPublicBaseUrl`(#216)처럼 부팅을 세우지 않는 것은 이 값에는 「비어
   있을 정당한 이유가 없다」가 성립하지 않기 때문이다 — 키를 발급받지 않은 기여자 로컬·테스트·
   아직 키를 넣지 않은 배포가 전부 정당하다. 대신 **조용히 끄지 않는다**(부팅 로그 한 줄).
-- ⚠️ **`task-type`이 1.1.8에서는 요청에 실리지 않는다.** `GoogleGenAiTextEmbeddingModel`이
-  `EmbedContentConfig`에 넣는 것은 `outputDimensionality` 하나뿐이고 `taskType`·`title`·
-  `autoTruncate`는 읽지도 않는다(바이트코드 확인 — SDK와 Gemini API는 셋 다 지원한다).
-  그래서 「적재는 `RETRIEVAL_DOCUMENT` · 질의는 `RETRIEVAL_QUERY`」라는 비대칭 임베딩은
-  **프로퍼티로도 옵션 덮어쓰기로도 성립하지 않으며**, 성립하지 않는다는 사실이 어디에도 남지
-  않는다(골든셋 hit@5만 이유 없이 낮게 나온다). `application.yaml`의 그 줄은 지금 **의도의
-  선언**이다. 실제로 걸려면 `EmbeddingModel`을 우리가 감싸야 하고 그것은 미결이다.
-- ⚠️ **모델 클래스의 `dimensions()`는 설정한 차원을 모른다.** 모델 이름으로 찾는 상수표를 보고
-  `gemini-embedding-001`에 **3072**을 돌려준다 — 실제 벡터가 768일 때도 그렇다. #396에서
-  PgVectorStore가 차원을 스스로 정하게 두면 그 3072이 들어가므로
+- **모델은 `gemini-embedding-2` · `gemini-3.6-flash`다** (2026-09-13 `./gradlew geminiCheck`
+  실측). 임베딩 기본값이 `gemini-embedding-001`이 아닌 이유는 아래 표다.
+
+  | | `gemini-embedding-001` | **`gemini-embedding-2`** |
+  |---|---|---|
+  | 입력 상한 | 2,048 토큰 | **8,192 토큰** |
+  | `dimensions=768` 요청 | 768 | 768 |
+  | 그 벡터의 노름 | **0.5819**(비정규화) | **1.0000**(정규화) |
+  | `dimensions` 미지정 | 3072(노름 1.0) | 3072(노름 1.0) |
+  | `task-type`이 결과를 바꾸나 | 예 | **아니오** |
+  | 개정안 제7조(2,136자) 잘림 | 아니오(상한 코앞) | 아니오 |
+
+  **768은 실제로 나온다** — ssccops#322가 고른 값이 전제가 아니라 사실이 됐고, #396의
+  `vector(768)`은 둘 중 어느 모델을 골라도 같다(되돌리기는 환경변수 한 줄).
+  ⚠️ **채팅 모델 ID는 늙는다** — 처음 기본값이던 `gemini-2.5-flash`는 모델 목록에 여전히
+  보이는데도 새 키로 부르면 404 «no longer available to new users»다.
+- ⚠️ **`task-type`은 지금 아무 일도 하지 않는다 — 이유가 둘 겹친다.** ① Spring AI 1.1.8이
+  싣지 않는다(`GoogleGenAiTextEmbeddingModel`이 `EmbedContentConfig`에 넣는 것은
+  `outputDimensionality` 하나뿐이고 `taskType`·`title`·`autoTruncate`는 읽지도 않는다 —
+  SDK와 Gemini API는 셋 다 지원한다). ② **`gemini-embedding-2`는 애초에 `task-type`으로
+  결과가 달라지지 않는다**(SDK로 직접 걸어도 DOCUMENT와 QUERY가 같은 벡터다. 001은 다르다).
+  그래서 「적재 `RETRIEVAL_DOCUMENT` · 질의 `RETRIEVAL_QUERY`」 비대칭 임베딩을 실제로 걸려면
+  `EmbeddingModel`을 감싸야 하는데, **그 일은 001로 되돌릴 때만 의미가 있다.** yaml의 그 줄을
+  지우지 않는 것은 이 조건을 그 자리에 적어 두기 위해서다.
+- ⚠️ **모델 클래스의 `dimensions()`를 믿지 말 것.** 모델 이름 상수표를 먼저 보고
+  `gemini-embedding-001`에 **3072**을 돌려준다 — 실제 벡터가 768일 때도 그렇다. 이름이 표에
+  없으면(`gemini-embedding-2`가 그렇다) 진짜 한 번 불러 그 길이를 캐시하므로 지금은 768이
+  나오지만 **모델을 바꾸면 답이 달라지는 값**이다. #396에서
   **`spring.ai.vectorstore.pgvector.dimensions`를 명시할 것.**
-- ⚠️ **자른 벡터는 정규화돼 있지 않다.** 지금 무해한 것은 오직
+- ⚠️ **정규화는 모델에 달려 있다.** `gemini-embedding-2`는 768로 잘라도 노름이 1.0이지만
+  **001은 0.58이다**(Google 문서가 001을 3072 밖으로 자르면 수동 정규화가 필요하다고 한 그대로이고
+  Spring AI는 하지 않는다). 001로 되돌리면 무해한 것은 오직
   `spring.ai.vectorstore.pgvector.distance-type`의 기본값이 `cosine-distance`이고 **코사인이
   스케일 불변**이기 때문이다 — **`euclidean`·`inner-product`로 바꾸는 순간 검색이 조용히
-  망가진다.** 바꿔야 한다면 저장 전 정규화가 먼저다.
+  망가진다.**
 - **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-2.5-flash`) ·
   `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-001`). 교체가 환경변수 하나가 되게 한다.
 - **`./gradlew geminiCheck`** (`src/test/.../tools/GeminiCheck`, R2Check와 같은 자리) — 실제
@@ -472,9 +492,9 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   것은 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 되기 때문이다.
   **`gemini-embedding-001`의 입력 상한은 2,048 토큰**이라 조 단위 청크가 긴 조에서 닿는다
   (개정안 제7조가 2,136자다) — 넘으면 오류가 아니라 조용히 잘려 조문 뒷부분이 검색되지 않는다.
-- **아직 실측하지 않았다** — 768이 실제로 나오는지, 무료 티어 임베딩의 RPM·TPM·RPD가 얼마인지
-  (**공개 문서에 그 수치가 없다** — AI Studio 콘솔에서 읽어야 한다). 키를 넣고 위 도구를 한 번
-  돌리는 것이 #396(`V10`의 `vector(N)`)의 선행 조건이다.
+- **아직 실측하지 않은 것 하나** — 무료 티어 임베딩의 RPM·TPM·RPD다. **공개 문서에 그 수치가
+  없고**(공식 rate-limits 문서가 «AI Studio에서 확인하라»고만 한다) 이 도구도 알아내지 못한다.
+  전역 레이트 리밋(§11)의 `N`이 그 값이므로 콘솔에서 읽어 ssccops#324에 적는다.
 
 ## 커밋 · 브랜치 · PR 컨벤션
 

@@ -43,7 +43,7 @@ import com.google.genai.types.Model;
  * 실행:
  *   ./gradlew geminiCheck
  *   ./gradlew geminiCheck -Pargs="--models=gemini-embedding-001,gemini-embedding-2"
- *   ./gradlew geminiCheck -Pargs="--file=private-workspace/rag/규정.md --chat-model=gemini-2.5-flash"
+ *   ./gradlew geminiCheck -Pargs="--file=private-workspace/rag/규정.md --chat-model=gemini-3.6-flash"
  *
  * 값은 환경변수에서 읽는다(.env 가 있으면 Gradle 이 주입한다):
  *   GEMINI_API_KEY · GEMINI_CHAT_MODEL · GEMINI_EMBEDDING_MODEL
@@ -99,10 +99,10 @@ public final class GeminiCheck {
                                         List.of(
                                                 envOrDefault(
                                                         "GEMINI_EMBEDDING_MODEL",
-                                                        "gemini-embedding-001")));
+                                                        "gemini-embedding-2")));
         String chatModel =
                 option(argList, "--chat-model")
-                        .orElseGet(() -> envOrDefault("GEMINI_CHAT_MODEL", "gemini-2.5-flash"));
+                        .orElseGet(() -> envOrDefault("GEMINI_CHAT_MODEL", "gemini-3.6-flash"));
         Path textFile = Path.of(option(argList, "--file").orElse(DEFAULT_TEXT_FILE));
 
         System.out.println();
@@ -283,9 +283,26 @@ public final class GeminiCheck {
 
     /* ── 6단계 ─────────────────────────────────────────────────────────── */
 
+    /**
+     * 설정한 채팅 모델 ID 가 실제로 답하는가.
+     *
+     * <p>쓸 수 있는 Flash 계열을 먼저 찍는다 — 2단계와 같은 이유다. **모델 ID 는 늙는다**: 2026-09-13 실측에서 `gemini-2.5-flash`
+     * 가 "no longer available to new users" 404 를 돌려줬다. 그 실패는 이름을 아는 사람에게만 고칠 수 있는 종류라, 도구가 대안을 함께
+     * 보여 주지 않으면 다음 사람이 다시 추측한다.
+     */
     private static void checkChat(Client client, String chatModel) {
         System.out.println();
         System.out.println("[6/6] 채팅 — " + chatModel);
+
+        System.out.println("  쓸 수 있는 Flash 계열:");
+        for (Model model : client.models.list(ListModelsConfig.builder().build())) {
+            String name = model.name().orElse("");
+            if (name.contains("flash")
+                    && model.supportedActions().orElseGet(List::of).contains("generateContent")) {
+                System.out.println("    " + name);
+            }
+        }
+
         String answer =
                 client.models.generateContent(chatModel, "한 단어로만 답하세요: 대한민국의 수도는?", null).text();
         System.out.println("  응답: " + (answer == null ? "(없음)" : answer.strip()));

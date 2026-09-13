@@ -414,9 +414,10 @@ scripts/deploy-history.sh list web dev 20         # 웹 레코드도 같은 브�
 - 그래서 `/actuator/info`에 **git 정보가 실린다** — `com.gorylenko.gradle-git-properties`가 `git.properties`를 넣고
   `management.info.git.mode: full`이라 `git.commit.id.{abbrev,full}`·`git.branch`·`git.commit.time`이 나온다(키는 그 넷뿐 —
   `user.email` 같은 값이 공개 엔드포인트로 나가지 않게 `gitProperties.keys`로 좁혔다). `ActuatorInfoTest`가 경로를 못 박는다.
-  **`Dockerfile`이 `.git`을 복사하는 이유가 이것이다** — 플러그인은 JGit이라 git 바이너리는 필요 없지만 `.git`은 있어야 한다.
-  없으면 Coolify가 빌드 인자로 주는 `SOURCE_COMMIT`(Actions면 `GITHUB_SHA`)으로 최소 파일을 쓰고, 그것도 없으면 git 없이 뜬다(부팅은
-  막지 않는다 — 레코드가 `unverified`가 될 뿐).
+  **`Dockerfile`은 `.git`을 복사하지 않는다**(#422) — Coolify 빌드 컨텍스트에 `.git`이 없어 `COPY .git .git`이 빌드를 죽였고(#413 뒤 dev
+  배포 5건 연속 실패) COPY는 없는 경로를 건너뛰지 못한다. 배포 빌드에서는 Coolify가 빌드 인자로 주는 `SOURCE_COMMIT`(Actions면 `GITHUB_SHA`)로
+  `generateGitProperties`가 `git.commit.id`만 쓴다(`git.branch`·`git.commit.time`은 없다). 그것도 없으면(로컬 `docker compose`) git 없이 뜬다 —
+  부팅은 막지 않고 레코드가 `unverified`가 될 뿐. 로컬 `bootRun`·테스트는 `.git`이 있으니 JGit이 넷을 다 쓴다.
 - Parent를 그래도 못 읽으면 PR 본문 «근거» 줄(`ssccops#N`·`ADR-NNNN`, pr-guard 강제)로 채운다(#418). `image_digest`는 Coolify가
   밖으로 내지 않아 싣지 않는다. 실제 이벤트 전에 돌려 보려면 `workflow_dispatch`(환경·ref 입력)다. 두 레포가 같은 브랜치에 쓰므로
   push가 밀리면 다시 받아 다시 붙인다(파일이 달라 충돌은 없다).

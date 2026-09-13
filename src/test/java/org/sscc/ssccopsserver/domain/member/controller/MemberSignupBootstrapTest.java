@@ -133,7 +133,7 @@ class MemberSignupBootstrapTest {
      * 멀쩡히 배정되지만 그 역할이 아무 권한도 열지 못하는 상태다.
      *
      * 실패하는 요청 하나로 끝낸다. 트랜잭션이 rollback-only로 표시되므로 뒤에 요청을 더 보내면
-     * UnexpectedRollbackException을 만난다 (AGENTS.md).
+     * UnexpectedRollbackException을 만난다 (domain/member/AGENTS.md).
      */
     @Test
     void signupFailsWhenTheBootstrapRoleGrantsNothing() throws Exception {

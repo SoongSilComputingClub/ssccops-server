@@ -84,7 +84,7 @@ import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignReques
  *
  * 실패를 기대하는 요청은 테스트마다 마지막에 한 번만 부른다 — 서비스가 @Transactional이라
  * 예외가 테스트 트랜잭션을 rollback-only로 표시하고, 그 뒤 이어지는 요청은
- * UnexpectedRollbackException을 만난다(AGENTS.md).
+ * UnexpectedRollbackException을 만난다(domain/academicprogram/AGENTS.md).
  */
 @SpringBootTest
 @AutoConfigureMockMvc

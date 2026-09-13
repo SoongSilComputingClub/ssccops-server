@@ -39,7 +39,10 @@ import lombok.RequiredArgsConstructor;
  * 외부 링크를 지운다. 생성·삭제·회원·폼·역할도 1차 범위 밖이다.
  *
  * `McpTransportContext` 인자는 입력 스키마에 나타나지 않는다(mcp-annotations가 특수 인자로 뺀다) —
- * SecurityContext가 비었을 때의 예비 경로로 Bearer를 꺼내는 데 쓴다(`BearerTokenSource`).
+ * SecurityContext가 비었을 때의 예비 경로로 Bearer를 꺼내는 데 쓴다(`BearerTokenSource`). stateless
+ * 서버(#393)에서 도구가 받을 수 있는 컨텍스트 인자는 이것뿐이다 — `McpSyncServerExchange`는 세션이
+ * 있는 서버의 것이라 stateless 콜백(`SyncStatelessMcpToolMethodCallback`)이 특수 인자로 빼지 않고
+ * 일반 입력으로 취급한다. 도구 메서드에 그 타입을 쓰지 말 것.
  *
  * 로그는 **도구 이름과 대상 id만** INFO로 남긴다. 인자 본문(사유 문장 등)은 싣지 않는다 —
  * ADR-0024의 값 미탑재 원칙이 일반 로그에도 적용된다. 감사 로그 자체는 REST를 지나며 기존 지점이

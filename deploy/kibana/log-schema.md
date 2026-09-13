@@ -64,6 +64,17 @@
 **개인정보가 실릴 자리가 없다** — `AuditEvent`가 식별자·필드 이름·코드값·결정 분류만 받는다. `AuditLogTest`가 출력에
 전화·이메일 모양이 없는지 본다. 새 감사 지점에서 값을 실어 보내는 인자를 열지 말 것.
 
+## 기동 — 배포 시점 (`BuildVersionLogger`, #426)
+
+`event.dataset` 없음(→ `ssccops.application`). 컨테이너가 뜰 때 한 줄. `service.version`이 모든 줄에 있으므로 이 줄이 Kibana의
+«배포 주석»이다 — `event.action:"app.start"`로 고른다. `labels.git_commit`은 deploy-history 레코드의 `git_sha`(ADR-0033)와 같은 값.
+
+| 필드 | ECS 타입 | 언제 | 값 규칙 | 예시 |
+|---|---|---|---|---|
+| `event.action` | keyword | 항상 | 고정 `app.start` — application 데이터셋에서 `event.action`을 내는 유일한 줄 | `app.start` |
+| `labels.git_commit` | keyword | `git.properties`가 있을 때만 | 전체 sha 40자. 없으면 `labels` 객체 자체가 없다(빈 값을 지어내지 않는다) | `a92eed61cdeb…` |
+| `message` | text | 항상 | `ssccops-server {version} 기동 — 프로필 {p} · 빌드 {time} · 커밋 {sha7}` / 빌드 정보 없으면 그 사실 | |
+
 ## 인증·인가 거절 — 401 · 403 (`RequestLogFields`)
 
 `event.dataset` 없음(→ `ssccops.application`). `message`는 `Authentication failed: …` / `Access denied: …`.

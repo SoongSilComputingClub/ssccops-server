@@ -1,6 +1,8 @@
 package org.sscc.ssccopsserver.global.logging;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
 
 import net.logstash.logback.composite.loggingevent.ArgumentsJsonProvider;
 import net.logstash.logback.composite.loggingevent.LoggingEventFormattedTimestampJsonProvider;
@@ -29,11 +31,19 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
  * logback은 encoder 정의를 공유할 수 없어 XML로 하면 같은 블록이 둘이 된다. 클래스 하나를
  * 양쪽에서 가리키면 갈라질 자리가 없고, Spring 없이 인코더만 단위 테스트할 수 있다.
  *
- * 무엇을 내는가:
+ * 무엇을 내는가 — 필드 표준표는 deploy/kibana/log-schema.md 가 정본이다 (#411 · ssccops#341):
  *   @timestamp · message · log.level · log.logger · process.thread.name ·
- *   service.name · service.environment · trace.id · span.id(MDC에 있을 때만) ·
+ *   service.name · service.environment · service.version(build-info 가 있을 때만) ·
+ *   trace.id · span.id(MDC에 있을 때만) ·
  *   error.type · error.message · error.stack_trace(예외가 있을 때만) ·
  *   그리고 StructuredArguments로 넘긴 것 전부(감사 로그의 event·user·audit이 이 길로 온다)
+ *
+ * `service.version`은 스프링의 BuildProperties 가 아니라 **같은 파일(META-INF/build-info.properties)을
+ * 직접 읽는다.** 이 클래스는 logback 컴포넌트라 스프링 컨텍스트보다 먼저 만들어지고 빈을 주입받을 수
+ * 없다. `<springProperty>`로 넘기는 길도 있지만 그 값의 출처가 또 설정이 되어(management.info 나
+ * 별도 프로퍼티) 버전이 두 벌이 된다 — 파일 하나가 /actuator/info·BuildVersionLogger·이 인코더의
+ * 공통 출처다. 파일이 없으면(bootJar 를 거치지 않은 IDE 실행) 키 자체를 내지 않는다 — 지어낸 값
+ * («unknown»)은 Kibana 에서 버전처럼 세어진다.
  *
  * `event.dataset`은 여기서 박지 않는다. 일반 로그는 Logstash가 `ssccops.application`을 기본값으로
  * 채우고, 감사 로그는 AuditLog가 인자로 `event` 객체를 싣는다 — 인코더가 `event`를 먼저 내면
@@ -41,8 +51,13 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
  */
 public class EcsJsonEncoder extends LoggingEventCompositeJsonEncoder {
 
+    static final String BUILD_INFO = "META-INF/build-info.properties";
+
     private String serviceName = "ssccops-server";
     private String environment = "local";
+
+    /** null 이면 start() 에서 build-info 를 읽는다. 빈 문자열은 «내지 않는다»는 뜻 */
+    private String serviceVersion;
 
     public void setServiceName(String serviceName) {
         this.serviceName = serviceName;
@@ -50,6 +65,10 @@ public class EcsJsonEncoder extends LoggingEventCompositeJsonEncoder {
 
     public void setEnvironment(String environment) {
         this.environment = environment;
+    }
+
+    public void setServiceVersion(String serviceVersion) {
+        this.serviceVersion = serviceVersion;
     }
 
     @Override
@@ -64,6 +83,10 @@ public class EcsJsonEncoder extends LoggingEventCompositeJsonEncoder {
 
         providers.addMessage(new MessageJsonProvider());
 
+        if (serviceVersion == null) {
+            serviceVersion = readBuildVersion();
+        }
+
         // 고정 구조는 패턴 하나로 — omitEmptyFields 가 MDC 없는 trace/span 을 통째로 뺀다
         LoggingEventPatternJsonProvider pattern = new LoggingEventPatternJsonProvider();
         pattern.setOmitEmptyFields(true);
@@ -76,7 +99,11 @@ public class EcsJsonEncoder extends LoggingEventCompositeJsonEncoder {
                         + "\","
                         + "\"environment\":\""
                         + environment
-                        + "\"},"
+                        + "\""
+                        + (serviceVersion.isEmpty()
+                                ? ""
+                                : ",\"version\":\"" + serviceVersion + "\"")
+                        + "},"
                         + "\"trace\":{\"id\":\"%mdc{trace_id}\"},"
                         + "\"span\":{\"id\":\"%mdc{span_id}\"}"
                         + "}");
@@ -103,6 +130,24 @@ public class EcsJsonEncoder extends LoggingEventCompositeJsonEncoder {
 
         setProviders(providers);
         super.start();
+    }
+
+    /*
+     * build-info.properties 의 build.version. 없거나 못 읽으면 빈 문자열(= 키를 내지 않는다).
+     * 클래스로더는 이 클래스의 것이다 — logback 이 컨텍스트 클래스로더 없이 초기화되는 경로가 있다.
+     */
+    static String readBuildVersion() {
+        try (InputStream in =
+                EcsJsonEncoder.class.getClassLoader().getResourceAsStream(BUILD_INFO)) {
+            if (in == null) {
+                return "";
+            }
+            Properties properties = new Properties();
+            properties.load(in);
+            return properties.getProperty("build.version", "").trim();
+        } catch (IOException | RuntimeException ex) {
+            return "";
+        }
     }
 
     /*

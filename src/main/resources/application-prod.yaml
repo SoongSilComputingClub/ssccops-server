@@ -13,6 +13,17 @@ spring:
           # issuer·audience 검증(#383 · ADR-0026). 같은 env에서 파생한다 — 새 env 없음
           issuer-uri: ${PROD_SUPABASE_URL}/auth/v1
 
+  # Gemini API 키 (규정 도우미 RAG · #395). 채팅과 임베딩이 서로 다른 커넥션 프로퍼티를 쓰므로
+  # 같은 값을 두 곳에 넣는다. **비어 있어도 부팅은 된다** — 값이 없으면 Gemini 배선 전체가
+  # 서지 않는다(GeminiWiringEnvironmentPostProcessor). 그래야 키를 발급받지 않은 기여자 로컬과
+  # 아직 키를 넣지 않은 배포가 «규정 도우미가 없는 서버»로 그대로 돌아간다.
+  ai:
+    google:
+      genai:
+        api-key: ${PROD_GEMINI_API_KEY:}
+        embedding:
+          api-key: ${PROD_GEMINI_API_KEY:}
+
   jpa:
     hibernate:
       # 정식 버전 전까지 한시적으로 update다. none일 때는 엔티티가 늘 때마다 배포 전에

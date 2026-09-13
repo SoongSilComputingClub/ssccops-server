@@ -70,6 +70,121 @@ spring:
           prompt: false
           completion: false
 
+    # ── Gemini (규정 도우미 RAG · #395 · ssccops#322) ──────────────────────────
+    #
+    # **여기 있는 프로퍼티 이름의 정본은 jar 의 spring-configuration-metadata.json 이지
+    # docs.spring.io 가 아니다.** 공개 문서는 `…embedding.text.dimensions` 라고 적는데
+    # 1.1.8 에는 그런 키가 없다(`…embedding.text.options.dimensions` 다). 문서가 다른 버전을
+    # 가리키고 있으니 값을 더할 때도 문서가 아니라 jar 를 확인할 것:
+    #   unzip -p ~/.gradle/caches/**/spring-ai-autoconfigure-model-google-genai-1.1.8.jar \
+    #           META-INF/spring-configuration-metadata.json | python3 -m json.tool
+    #
+    # **api-key 는 프로필마다 다른 환경변수에서 온다**(local: GEMINI_API_KEY · dev·prod:
+    # DEV_/PROD_ 접두). 채팅과 임베딩이 **각각 다른 커넥션 프로퍼티**를 쓰므로 두 벌이다.
+    # **키가 없으면 이 배선은 서지 않는다** — 어떻게 꺼지는지는 GeminiWiringEnvironmentPostProcessor.
+    #
+    # **`…embedding.vertex-ai` 를 건드리지 않는다**(기본 false). 켜는 순간 project-id·location 을
+    # 요구하고, 그 길은 GCP 결제 계정이라 「비용 0」이라는 이 기능의 전제가 깨진다.
+    google:
+      genai:
+        chat:
+          options:
+            # 교체가 환경변수 하나가 되게 한다 — 모델 ID 를 코드에 박지 않는다.
+            #
+            # ⚠️ **모델 ID 는 늙는다.** 기본값이 gemini-2.5-flash 였는데 2026-09-13 실측에서
+            # 404 «no longer available to new users» 를 돌려줬다 — 모델 목록에는 여전히
+            # 보이는데 새 키로는 부를 수 없다. `./gradlew geminiCheck` 6단계가 쓸 수 있는
+            # Flash 계열을 먼저 찍고 실제로 한 번 물어본다(3.6-flash 는 «서울»을 답했다).
+            #
+            # **Flash 3.x 는 전부 무료 티어 "Free of charge" 다**(공식 pricing). 3.6 을 고른
+            # 것은 **실제로 답하는 것을 확인한 유일한 모델**이어서이고, 문서상 최신 stable 은
+            # `gemini-3.8-flash` 다 — 옮기려면 이 줄이 아니라 `./gradlew geminiCheck
+            # -Pargs="--chat-model=gemini-3.8-flash"` 가 먼저다(목록에 보이는 것과 부를 수
+            # 있는 것이 다르다는 사실이 2.5-flash 에서 이미 드러났다).
+            #   https://ai.google.dev/gemini-api/docs/pricing
+            #   https://ai.google.dev/gemini-api/docs/models
+            model: ${GEMINI_CHAT_MODEL:gemini-3.6-flash}
+        embedding:
+          text:
+            options:
+              # **001 이 아니라 2 다** (2026-09-13 `./gradlew geminiCheck` 실측).
+              # 이 키로 쓸 수 있는 임베딩 모델은 셋이고(001 · 2-preview · 2) 둘을 재 봤다:
+              #
+              #   |                        | gemini-embedding-001 | gemini-embedding-2 |
+              #   |------------------------|----------------------|--------------------|
+              #   | 입력 상한               | 2,048 토큰            | **8,192 토큰**      |
+              #   | dimensions=768 요청     | 768                  | 768                |
+              #   | 그 벡터의 노름           | **0.5819** (비정규화)  | **1.0000** (정규화) |
+              #   | dimensions 미지정       | 3072 (노름 1.0)       | 3072 (노름 1.0)     |
+              #   | task-type 이 결과를 바꾸나 | 예                   | **아니오**          |
+              #   | 개정안 제7조(2,136자) 잘림 | 아니오                | 아니오              |
+              #
+              # 세 가지가 함께 사라진다: ① 조 단위 청크가 상한에 닿을 걱정(§5.3 — 001 은
+              # 제7조가 이미 상한의 코앞이라 조가 조금만 길어지면 **조용히 잘린다**),
+              # ② 자른 벡터를 손으로 정규화해야 하는 조건(아래), ③ 비대칭 임베딩 문제
+              # (task-type 이 결과를 바꾸지 않으므로 적재·질의를 가를 것이 없다).
+              #
+              # 되돌리는 것은 환경변수 한 줄이다 — 둘 다 768차원이라 #396 의 `vector(768)`
+              # 과 재적재 계획은 어느 쪽을 골라도 같다.
+              #
+              # **둘 다 무료 티어다.** 공식 pricing 의 Gemini Embedding 2 는 전 입력 유형이
+              # "Free of charge" 이며(유료는 텍스트 $0.20/1M), **001 은 이제 그 페이지에 아예
+              # 없다** — 값만 바꾸면 되는 선택지이긴 하지만 공식 문서가 가리키는 곳은 2 다.
+              # 모델 목록 문서의 ID 는 `gemini-embedding-2-preview` 로 적혀 있는데 API 는
+              # `gemini-embedding-2` 도 함께 내주며(실측) 여기서는 후자를 고정한다.
+              #   https://ai.google.dev/gemini-api/docs/pricing
+              #   https://ai.google.dev/gemini-api/docs/embeddings
+              model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-2}
+
+              # pgvector 의 HNSW/IVFFlat 인덱스는 **2,000차원까지만** 걸린다. 이 모델의 기본
+              # 출력은 3072이라 그대로 두면 나중에 재적재 없이는 인덱스를 못 건다(ssccops#322).
+              # 이 값이 #396 `V10` 의 `vector(N)` 이다.
+              #
+              # ⚠️ **모델 클래스의 `dimensions()` 를 믿지 말 것.** 그쪽은 모델 이름으로 찾는
+              # 상수표(GoogleGenAiTextEmbeddingModelName)를 먼저 보고 gemini-embedding-001 에
+              # **3072** 을 돌려준다 — 실제 벡터 길이가 768인데도 그렇다. 이름이 표에 없으면
+              # (gemini-embedding-2 가 그렇다) 진짜 한 번 불러 보고 그 길이를 캐시하므로
+              # 지금은 768이 나오지만, **모델을 바꾸면 답이 달라지는 값**이다. #396 에서
+              # `spring.ai.vectorstore.pgvector.dimensions` 를 **명시**할 것.
+              #
+              # ⚠️ **정규화는 모델에 달려 있다** (2026-09-13 실측 · 위 표). gemini-embedding-2 는
+              # 768로 잘라도 노름이 1.0000 이지만, **001 은 0.5819 다** — Google 문서가 001 을
+              # 3072 밖으로 자르면 수동 정규화가 필요하다고 한 그대로이고 Spring AI 는 하지
+              # 않는다(모델 클래스에 정규화 코드가 없다). 001 로 되돌리면 그 상태에서 무해한
+              # 것은 오직 `spring.ai.vectorstore.pgvector.distance-type` 의 기본값이
+              # `cosine-distance` 이고 **코사인이 스케일 불변**이기 때문이다 —
+              # **`euclidean`·`inner-product` 로 바꾸는 순간 검색이 조용히 망가진다.**
+              dimensions: 768
+
+              # 적재는 문서, 질의는 RETRIEVAL_QUERY 로 거는 **비대칭 임베딩**이 검색 품질의
+              # 표준 처방이다. **지금 이 줄은 아무 일도 하지 않으며, 두 가지 이유가 겹친다**
+              # (둘 다 2026-09-13 `./gradlew geminiCheck` 4단계로 확인):
+              #
+              #   ① Spring AI 1.1.8 이 싣지 않는다. GoogleGenAiTextEmbeddingModel 이
+              #      EmbedContentConfig 에 넣는 것은 outputDimensionality 하나뿐이고
+              #      taskType·title·autoTruncate 는 읽지도 않는다(SDK 와 Gemini API 는 셋 다
+              #      지원한다). 001 에서 SDK 로 직접 부르면 DOCUMENT ≠ QUERY 인데 이 클래스를
+              #      거치면 같은 벡터가 나온다.
+              #   ② **gemini-embedding-2 는 task-type 파라미터 자체를 지원하지 않는다.** SDK 로
+              #      직접 걸어도 DOCUMENT 와 QUERY 가 같은 벡터이고, 공식 문서도 그렇게 말한다
+              #      ("the `task_type` parameter is not supported" ·
+              #      https://ai.google.dev/gemini-api/docs/embeddings).
+              #
+              # 그래서 ①을 고치는 일(EmbeddingModel 을 감싸기)은 **001 로 되돌릴 때만** 의미가
+              # 있다. 줄을 남겨 두는 것은 그 조건을 여기 적어 두기 위해서다 — 지우면 다음
+              # 사람이 "비대칭을 왜 안 걸었지?"를 처음부터 다시 조사한다.
+              #
+              # **비대칭 자체를 포기한 것은 아니다.** 2 에서 Google 이 제시하는 대체 경로는
+              # 파라미터가 아니라 **프롬프트에 과업 설명을 넣는 것**이다("include task
+              # instructions directly in the prompt"). 즉 적재·질의 텍스트 앞에 서로 다른 한
+              # 줄을 붙이는 일이라 Spring AI 가 무엇을 싣든 상관없이 우리가 할 수 있다 —
+              # 골든셋(§14.2)이 필요하다고 말하면 그때 청커·질의 쪽에서 건다.
+              task-type: RETRIEVAL_DOCUMENT
+
+              # `auto-truncate` 를 넣지 말 것 — Spring AI 가 읽지 않을뿐더러, 값이 전달되는
+              # 경로가 생기더라도 Gemini Developer API 는 그 파라미터를 거절한다
+              # ("autoTruncate parameter is not supported in Gemini API", google-genai 1.37.0).
+
 server:
   port: ${PORT:8080}
 

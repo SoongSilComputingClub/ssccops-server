@@ -100,6 +100,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V7__add_form_del_dt.sql` | `form.del_dt`. 폼 소프트 삭제 표시 컬럼 (#329) |
 | `V8__add_event_del_dt.sql` | `event.del_dt`. 행사 소프트 삭제 표시 컬럼이며, `uk_event_form`을 살아 있는 행사끼리만 거는 부분 유니크 인덱스로 바꾼다 (#347) |
 | `V9__cascade_member_own_data.sql` | 회원 본인 데이터 FK 9개(+ 딸린 3개)에 `ON DELETE CASCADE`. 임시 회원 하드 삭제의 경계이며 행위자 참조 20개는 손대지 않는다 (#361 · ADR-0021) |
+| `V10__create_assistant_tables.sql` | `vector` 확장 · `vector_store`(Spring AI가 이름을 정한다) · `rag_doc`. 규정 도우미(RAG)의 스키마이며 **`FlywayMigrationValidateTest`의 Testcontainers 이미지가 `pgvector/pgvector:pg17`로 바뀐 이유**다 (#396 · ADR-0028·0029) |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**
@@ -166,6 +167,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그. **아직 스키마·배선뿐이다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사
@@ -243,10 +245,14 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **로컬에서 붙여 보기**: `./gradlew bootRun` 뒤 Claude Code에서 `claude mcp add --transport http ssccops http://localhost:8080/mcp --header "Authorization: Bearer <Supabase 액세스 토큰>"`. dev·prod는 헤더 없이 URL만 넣으면 401 → 메타데이터 → Supabase 동의 화면(ssccops#315 · #316)으로 이어진다.
 - 테스트 함정: `@McpTool` 빈은 어느 컨텍스트에서든 스캐너가 등록한다 — 테스트 전용 도구는 `@TestConfiguration` + `@Import`로 그 테스트에만 둔다. MCP 클라이언트의 초기화 실패는 예외를 두 겹으로 감싸므로 401 본문은 원인 사슬을 따라가야 보인다.
 
-## 규정 도우미 (RAG) — Gemini 배선 (#395 · Epic ssccops#321)
+## 규정 도우미 (RAG) — Gemini 배선 (#395 · #396 · Epic ssccops#321)
 
-아직 **배선뿐이다.** 도메인(`domain/assistant`)·스키마(`V10`)·기능 플래그는 #396 이후이며,
-지금 레포에 있는 것은 모델 두 개를 부를 수 있게 해 놓은 것과 그것을 실제 키로 재 보는 도구다.
+**도메인 규칙의 정본은 [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md)다** —
+판본 테이블·두 축 상태·청크 저장소 포트·기능 플래그·`V10` 스키마가 거기 있다. 이 절은 **모델
+쪽 배선**, 즉 «Gemini를 어떻게 붙였고 무엇을 실측했는가»만 남긴다.
+
+아직 **스키마와 배선뿐이다.** 업로드(#399)·파서(#397·#398)·색인 워커(#400)·질의(#403)는
+없으며, 기능 플래그 `ssccops.assistant.enabled`는 기본이 **꺼짐**이다.
 
 - **스타터 둘** — `spring-ai-starter-model-google-genai`(채팅) · `…-google-genai-embedding`.
   **BOM 줄은 늘지 않았다**(MCP가 이미 쓰는 `spring-ai-bom:1.1.8`). **2.0.x로 올리지 말 것** —
@@ -265,7 +271,9 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   그 빈은 만들어지고, 키가 비면 Vertex AI 경로로 흘러 `project-id must be set!`에서 죽는다.
   실제로 그 상태에서는 **규정 도우미와 무관한 모든 테스트와 부팅이 함께 실패한다**(확인함).
   그래서 셋(`spring.ai.model.chat` · `spring.ai.model.embedding.text` · 제외 목록)을 **한 가지
-  사실**에서 함께 끈다. `AppPublicBaseUrl`(#216)처럼 부팅을 세우지 않는 것은 이 값에는 「비어
+  사실**에서 함께 끈다. **제외 목록에는 #396부터 `PgVectorStoreAutoConfiguration`도 들어간다** —
+  그쪽은 `EmbeddingModel` 빈을 생성자로 요구하는데 조건은 `spring.ai.vectorstore.type` 하나뿐이라
+  임베딩이 꺼진 것을 알지 못한다(덤으로 H2 테스트가 실제 PostgreSQL 없이 뜬다). `AppPublicBaseUrl`(#216)처럼 부팅을 세우지 않는 것은 이 값에는 「비어
   있을 정당한 이유가 없다」가 성립하지 않기 때문이다 — 키를 발급받지 않은 기여자 로컬·테스트·
   아직 키를 넣지 않은 배포가 전부 정당하다. 대신 **조용히 끄지 않는다**(부팅 로그 한 줄).
 - **모델은 `gemini-embedding-2` · `gemini-3.6-flash`다** (2026-09-13 `./gradlew geminiCheck`
@@ -314,16 +322,17 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - ⚠️ **모델 클래스의 `dimensions()`를 믿지 말 것.** 모델 이름 상수표를 먼저 보고
   `gemini-embedding-001`에 **3072**을 돌려준다 — 실제 벡터가 768일 때도 그렇다. 이름이 표에
   없으면(`gemini-embedding-2`가 그렇다) 진짜 한 번 불러 그 길이를 캐시하므로 지금은 768이
-  나오지만 **모델을 바꾸면 답이 달라지는 값**이다. #396에서
-  **`spring.ai.vectorstore.pgvector.dimensions`를 명시할 것.**
+  나오지만 **모델을 바꾸면 답이 달라지는 값**이다. 그래서 #396이
+  **`spring.ai.vectorstore.pgvector.dimensions: 768`을 명시해 두었다** — 비워 두면 저장소가
+  부팅 중에 그 값을 묻고, 3072이 나오면 `V10`의 `vector(768)`과 어긋나 적재가 통째로 실패한다.
 - ⚠️ **정규화는 모델에 달려 있다.** `gemini-embedding-2`는 768로 잘라도 노름이 1.0이지만
   **001은 0.58이다**(Google 문서가 001을 3072 밖으로 자르면 수동 정규화가 필요하다고 한 그대로이고
   Spring AI는 하지 않는다). 001로 되돌리면 무해한 것은 오직
   `spring.ai.vectorstore.pgvector.distance-type`의 기본값이 `cosine-distance`이고 **코사인이
   스케일 불변**이기 때문이다 — **`euclidean`·`inner-product`로 바꾸는 순간 검색이 조용히
   망가진다.**
-- **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-2.5-flash`) ·
-  `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-001`). 교체가 환경변수 하나가 되게 한다.
+- **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.6-flash`) ·
+  `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-2`). 교체가 환경변수 하나가 되게 한다.
 - **`./gradlew geminiCheck`** (`src/test/.../tools/GeminiCheck`, R2Check와 같은 자리) — 실제
   키로 차원·`task-type` 전달 여부·정규화·긴 조문 잘림을 재 본다. `./gradlew test`에 섞지 않은
   것은 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 되기 때문이다.

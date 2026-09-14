@@ -7,10 +7,12 @@ import java.util.Optional;
 /*
  * 회원 하드 삭제를 **막는** 참조의 표 (#361 · ADR-0021).
  *
- * mbr을 가리키는 FK 29개 중 본인 데이터 9개는 V9가 ON DELETE CASCADE로 바꿨고, 나머지 20개
- * — 이 회원이 남의 것에 한 일(작성자·검토자·변경자·담당자·발급자…) — 는 NO ACTION 그대로다.
- * 그 20개에 학술 활동의 원본 기획안(acdm_actv.form_rspns_id → form_rspns_hstry, 2차)을 더한
- * 21개가 여기 있다. 삭제가 FK 위반으로 실패하면 이 표가 제약 이름을 사람 표기로 번역하고,
+ * mbr을 가리키는 FK 30개 중 본인 데이터 9개는 V9가 ON DELETE CASCADE로 바꿨고, 나머지 21개
+ * — 이 회원이 남의 것에 한 일(작성자·검토자·변경자·담당자·발급자·등록자…) — 는 NO ACTION
+ * 그대로다. 그 21개에 학술 활동의 원본 기획안(acdm_actv.form_rspns_id → form_rspns_hstry, 2차)을
+ * 더한 22개가 여기 있다. **mbr을 가리키는 FK를 더하면 이 표도 함께 는다** — 빠뜨리면 그 참조가
+ * 막는 삭제는 «번역되지 않은 409»가 되고, 미리보기는 «막는 것이 없다»고 답한 뒤 삭제가 실패한다
+ * (rag_doc.rgtr_mbr_id가 V10에서 그렇게 들어왔다). 삭제가 FK 위반으로 실패하면 이 표가 제약 이름을 사람 표기로 번역하고,
  * 삭제 미리보기의 blockedBy는 같은 표의 matchSql로 무엇이 막을지를 미리 센다.
  *
  * ── 왜 표를 코드에 두는가 ─────────────────────────────────────
@@ -35,7 +37,7 @@ public final class MemberReferenceConstraints {
     /**
      * 막는 참조 하나.
      *
-     * @param constraintName V1·V2·V5의 제약 이름(PostgreSQL 기준)
+     * @param constraintName V1·V2·V5·V10의 제약 이름(PostgreSQL 기준)
      * @param table 참조하는 테이블
      * @param column 참조하는 컬럼
      * @param label 화면에 보여줄 표기
@@ -58,7 +60,7 @@ public final class MemberReferenceConstraints {
 
     private static final String P = ":memberId";
 
-    /** 삭제를 막는 참조 21개. 순서는 미리보기 blockedBy의 순서다 — 운영진이 자주 마주칠 것을 앞에 */
+    /** 삭제를 막는 참조 22개. 순서는 미리보기 blockedBy의 순서다 — 운영진이 자주 마주칠 것을 앞에 */
     public static final List<Reference> BLOCKING =
             List.of(
                     new Reference(
@@ -196,7 +198,13 @@ public final class MemberReferenceConstraints {
                             "shr_lnk",
                             "iss_mbr_id",
                             "공유 링크 발급자",
-                            "FROM shr_lnk WHERE iss_mbr_id = " + P));
+                            "FROM shr_lnk WHERE iss_mbr_id = " + P),
+                    new Reference(
+                            "fk_rag_doc_rgtr_mbr",
+                            "rag_doc",
+                            "rgtr_mbr_id",
+                            "규정 문서 등록자",
+                            "FROM rag_doc WHERE rgtr_mbr_id = " + P));
 
     private MemberReferenceConstraints() {}
 

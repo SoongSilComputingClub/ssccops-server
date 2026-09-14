@@ -24,6 +24,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
+import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 
@@ -33,9 +34,15 @@ import org.sscc.ssccopsserver.support.MemberFixture;
  * 애스펙트 쪽 테스트(RequireAuthorityAspectTest)는 "거절이 어떤 응답이 되는가"를 보고,
  * 여기서는 "누가 무엇을 할 수 있는가"만 본다 — 규칙이 한 곳(AuthorityPolicy)에 있으므로
  * 판정 자체는 여기서 한 번만 검증한다.
+ *
+ * @DataJpaTest는 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다
+ * (WorkServiceImplTest가 같은 이유로 들여오는 것과 같은 자리). 없으면 @CreatedDate가 동작하지
+ * 않아 role_authrt_rel.crt_dt NOT NULL 위반으로 권한 부여가 통째로 실패한다 — 전체 테스트를
+ * 함께 돌릴 때는 다른 @SpringBootTest가 먼저 도는 순서에서 우연히 통과해, **테스트 클래스가
+ * 하나 늘어 순서가 바뀌는 날 CI에서 한꺼번에 터진다**(#399에서 실제로 그렇게 드러났다).
  */
 @DataJpaTest
-@Import({AuthorityPolicy.class, ClockConfig.class})
+@Import({JpaAuditingConfig.class, AuthorityPolicy.class, ClockConfig.class})
 @ActiveProfiles("test")
 class AuthorityPolicyTest {
 

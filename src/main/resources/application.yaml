@@ -29,11 +29,13 @@ spring:
     baseline-on-migrate: true
     baseline-version: 1
 
-  # 회원 명부 CSV 이관(#84). 업무 상한은 5MB이며 그 판정은 MemberImportServiceImpl이 한다 —
-  # 여기서 5MB로 끊으면 서블릿 계층이 먼저 걸러 도메인 오류 코드(INVALID_CSV_FILE)가 붙지 않은
-  # 응답이 나가고, 위저드가 무엇이 잘못됐는지 안내하지 못한다. 그래서 이 값은 상한보다 **높게**
-  # 두어 정상 경로가 서비스에 닿게 하고, 스프링 부트 기본값(1MB)이 3MB짜리 정상 명부를 500으로
-  # 떨어뜨리는 것만 막는다. 무한정 받지 않도록 요청 전체는 16MB로 묶는다.
+  # 멀티파트 업로드의 **바깥 상한**이다. 업무 상한은 도메인이 따로 끊는다 — 회원 명부 CSV
+  # 이관은 5MB(MemberImportServiceImpl · #84), 규정 문서 업로드는 10MB(RagDocumentServiceImpl ·
+  # #399). 여기서 업무 상한과 같은 값으로 끊으면 서블릿 계층이 먼저 걸러 도메인 오류 코드
+  # (INVALID_CSV_FILE · RAG_DOCUMENT_TOO_LARGE)가 붙지 않은 응답이 나가고, 화면이 무엇이
+  # 잘못됐는지 안내하지 못한다. 그래서 이 값은 업무 상한보다 **높게** 두어 정상 경로가 서비스에
+  # 닿게 하고, 스프링 부트 기본값(1MB)이 3MB짜리 정상 명부를 500으로 떨어뜨리는 것만 막는다.
+  # 무한정 받지 않도록 요청 전체도 16MB로 묶는다.
   servlet:
     multipart:
       max-file-size: 16MB

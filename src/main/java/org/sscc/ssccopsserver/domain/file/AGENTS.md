@@ -4,12 +4,13 @@
 
 ## 무엇이 있나
 
-- `FileReferenceEntity`(`file_rfrnc`) · `FileReferenceService` · `FilePresigner` · `FileEraser` · `FileCopier` · 코드 `ImageFileType`·`FileTargetType`. 컨트롤러가 없다 — 이 도메인은 다른 도메인의 서비스가 부르는 쪽이다.
+- `FileReferenceEntity`(`file_rfrnc`) · `FileReferenceService` · `FilePresigner` · `FileEraser` · `FileCopier` · `FileUploader` · 코드 `ImageFileType`·`FileTargetType`. 컨트롤러가 없다 — 이 도메인은 다른 도메인의 서비스가 부르는 쪽이다.
 - 하지 않는 것: 접근 제어 · 읽기 주소 조립 · 대상당 건수 제한(아래 «올라오지 않는 것» 항목).
 
 ## 규칙
 
 - `domain/file` — **파일이 버킷의 어디에 있는가**를 아는 유일한 도메인 (#220). 여기 있는 것은 다섯뿐이다: `file_rfrnc` 행(`entity/FileReferenceEntity` · `service/FileReferenceService`), 서명(`service/FilePresigner`), 업로드 허용 형식(`code/ImageFileType`), 삭제(`service/FileEraser` · #234), 복사(`service/FileCopier` · ssccops#198).
+  - **`FileUploader`는 서버가 가진 바이트를 그대로 PUT 하는 유일한 자리다** (#399). 다른 업로드 경로가 전부 presigned PUT인 것은 서버가 버퍼링하면 동시 업로드가 메모리를 요청 수만큼 먹기 때문인데(#107), **규정 문서에서는 그 근거가 성립하지 않는다 — 파싱하려면 어차피 내용을 읽어야 한다**(요청 안에서 파싱하고 그 자리에서 400을 돌려주는 것이 그 업로드의 계약이다). 그래서 **쓰는 자리가 좁아야 한다**: 큰 파일이 여럿 몰리는 경로에 끌어다 쓰면 #107이 그대로 되살아나고, 그런 자리는 presigned PUT이 정답이다. 시점은 `FileCopier`와 같은 쪽(트랜잭션 안)이다.
   - **`FileEraser`는 커밋 뒤에 지우고 `FileCopier`는 트랜잭션 안에서 복사한다.** 방향이 반대로 보이지만 같은 규칙이다 — **잘못된 데이터보다 고아가 낫다.** 삭제는 되돌릴 수 없어 롤백된 변경 뒤에 "DB는 옛 상태인데 파일만 없는" 조합을 남기면 안 되고, 복사는 실패했을 때 그대로 롤백돼야 "본문이 없는 오브젝트를 가리키는 사본"이 커밋되지 않는다(성공한 뒤 DB가 롤백되면 남는 것은 아무도 참조하지 않는 오브젝트, 즉 비용뿐이다). 복사는 **서버 측 `CopyObject`**이며 바이트가 서버를 거치지 않는다 — 내려받아 다시 올리면 멀티파트를 두지 않은 이유(#107)가 복제 경로에서 되살아난다. **원본이 없는 것은 실패가 아니다**(`false` 반환): 서버는 PUT을 관측하지 않아 본문의 참조가 실물을 가리킨다는 보장이 애초에 없고, 원본에서 이미 깨진 이미지가 행사 복제를 통째로 막으면 운영자는 그것을 본문에서 찾아 지우기 전까지 아무것도 못 한다.
   - **`file_rfrnc`는 학술 전용이 아니다.** #137이 회차 출석 인증사진용으로 만들었고 `sesn_id` NOT NULL + UNIQUE가 도메인을 가르고 있었는데, 파일이 붙는 자리가 늘 때마다 테이블을 새로 만들지 않으려고 소유자를 **`trgt_se_cd`(대상_구분_코드) + `trgt_id`(대상_ID)** 두 값으로 열었다. 전제는 #200이 이미 깔아 두었다 — 저장 값이 조립된 URL이 아니라 **오브젝트 키**라 도메인 중립이다. 대상을 늘리는 일은 `FileTargetType`에 한 줄과 표준코드 시트에 한 줄이며, 지금 코드값은 `SESSION`(학술 회차 인증사진)과 `RAG_DOCUMENT`(규정 문서 원본, #402) 둘이다.
   - **FK를 걸지 않는다.** 대상 테이블이 여럿이라 걸 수 없고, 배타적 FK(`sesn_id`·`event_id`·… + CHECK)로 가면 대상이 하나 늘 때마다 스키마와 데이터사전이 바뀐다(`ddl-auto: update`가 nullable 전환을 반영하지 않아 그때마다 dev·prod 수동 ALTER가 붙는다). 대가는 고아 행이고 **정리는 각 도메인의 책임**이다 — 애초에 이 행은 실물을 가리킨다는 보장이 없다(서버가 PUT을 관측하지 않는다).
@@ -23,7 +24,7 @@
 
 - 학술: 회차 출석 인증사진(`FileTargetType.SESSION`) — 자격 판정은 `SessionFileReferenceViewer`가 끝낸 뒤 `FilePresigner`를 부른다. 대상당 1건 잠금은 학술이 `sesn` 행에 건다.
 - 행사: 본문 이미지는 `FilePresigner`·`ImageFileType`만 쓰고 `file_rfrnc`를 쓰지 않는다. 복제는 `FileCopier`, 삭제는 `FileEraser`.
-- 규정 도우미: 업로드된 규정 문서 원본(`FileTargetType.RAG_DOCUMENT` · 키 접두사 `rag-documents/`, #402). «누가 볼 수 있는가»는 `RAG_DOCUMENT_MANAGE`이고 그 판정은 `assistant`가 한다 — 이 도메인은 여전히 묻지 않는다. 실제로 쓰는 코드는 업로드(#399)부터다.
+- 규정 도우미: 업로드된 규정 문서 원본(`FileTargetType.RAG_DOCUMENT` · 키 접두사 `rag-documents/`, #402). «누가 볼 수 있는가»는 `RAG_DOCUMENT_MANAGE`이고 그 판정은 `assistant`가 한다 — 이 도메인은 여전히 묻지 않는다. **업로드(#399)가 `FileUploader`로 바이트를 올리고 `FileReferenceService.upsert`로 참조를 남긴다** — 키(`rag-documents/{ragDocId}/{uuid}.{ext}`)를 조립하는 자리는 `assistant`의 서비스 한 곳이다(접두사만 여기 `FileTargetType`이 갖는다).
 - `S3Client`·`S3Presigner` 빈은 `global/config/R2Config`(루트 AGENTS.md).
 
 ## 테스트 함정

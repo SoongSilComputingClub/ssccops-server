@@ -2,9 +2,9 @@
 
 이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
 
-**스키마·배선(#396)과 구조화 파서(#397)까지 왔다** (Epic ssccops#321). 업로드(#399) ·
-일반 문서 추출기(#398) · 색인 워커(#400) · 목록·적용 전환(#401) · 질의(#403)는 아직 없다 —
-그 이슈들이 여기 규칙 위에 얹힌다. 결정은
+**스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398)까지 왔다**
+(Epic ssccops#321). 업로드(#399) · 색인 워커(#400) · 목록·적용 전환(#401) · 질의(#403)는 아직
+없다 — 그 이슈들이 여기 규칙 위에 얹힌다. 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
 
@@ -13,8 +13,11 @@
 - 엔티티: `RagDocumentEntity`(`rag_doc`) — 문서 판본. 코드 enum 셋(`RagDocumentType` ·
   `RagIndexStatus` · `RagApplyStatus`)과 오류 코드 `AssistantErrorCode`.
 - 서비스: 포트 `RagChunkStore`와 그 구현 `PgVectorRagChunkStore` · 기능 플래그 `AssistantFeature` ·
-  구조화 파서 `RegulationParser`와 청커 `RegulationChunker` · 메타 key 상수 `RagChunkMetadata`.
-- 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`)다.
+  구조화 파서 `RegulationParser`와 청커 `RegulationChunker` · 평문 추출기 `GenericTextExtractor`와
+  그 SAX 핸들러 `PageContentHandler` · 두 갈래가 합류하는 `DocumentChunker` · 메타 key 상수 `RagChunkMetadata`.
+- 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`) ·
+  평문 쪽은 `dto/Extracted*`(`Document` · `Page`)와 `dto/GenericChunk`다.
+- 확장자 표는 `code/RagDocumentFormat` 한 곳이다 — 유형(`STRUCTURED`/`GENERIC`)과 파서를 함께 가른다.
 - 빈 배선은 `global/config/AssistantConfig`(`ChatClient` · `RagChunkStore`)다.
 - **컨트롤러가 없다.** 지금 이 도메인에는 열린 경로가 하나도 없다.
 - 벡터 청크는 `vector_store`에 들어가며 **그 테이블에는 엔티티가 없다** — 스키마도 이름도
@@ -142,6 +145,60 @@
   **그 한 메서드가 key 이름을 아는 유일한 자리**다(`RagChunkMetadata` · `ragDocId`만 포트가 갖는다).
   값이 `null`인 key는 넣지 않는다 — jsonb에 든 `null`은 필터에서 «있음»으로 세어진다.
 
+## 평문 추출과 고정 길이 청킹 — 페이지가 인용의 전부다 (#398 · 기획안 §5.4)
+
+받아 온 `.pdf`·`.docx`를 Tika로 **평문 + 페이지 경계**로 뽑는 것이 `GenericTextExtractor`,
+그것을 600자·overlap 100자로 자르는 것이 `DocumentChunker`다. 의존성을 어떻게 골랐는지는 루트
+`AGENTS.md`의 «Tika» 절에 있다.
+
+- **확장자 표는 `RagDocumentFormat` 한 곳이다.** 같은 표에 두 질문이 걸린다 — 업로드(#399)는
+  «어느 유형인가», 추출기는 «어느 파서로 여는가». 유형 enum에 얹으면 뒤의 질문에 답할 수 없어
+  추출기가 확장자를 한 번 더 읽고, **그 순간 표가 두 벌이 된다.** 모르는 확장자는 400이다.
+- ⚠️ **DOCX에는 페이지가 없다 — 실측이 기획안의 전제를 뒤집었다** (2026-09-14). 명시적 페이지
+  나눔(`w:br w:type="page"`)조차 Tika에서 줄바꿈 하나로 나오고 OOXML 추출기에는 페이지를 여는
+  코드가 없다. 워드가 화면에 그릴 때 계산하는 값이라 **파일에 없는 것이므로 라이브러리를 바꿔도
+  답이 같다.** 그래서 DOCX 청크에는 `page` 메타가 **붙지 않고** 인용이 문서명까지만 간다 —
+  「전부 1쪽」으로 채우지 않는 것은 9쪽의 문장에 `p.1`을 달면 운영진이 그 쪽을 열었을 때 문장이
+  없기 때문이다(평문에서 조항 인용을 흉내 내지 않기로 한 것과 같은 줄기다). PDF만 페이지가 있다.
+- **페이지는 «있다/없다»를 형식이 아니라 추출 결과에서 읽는다**(`ExtractedDocument.paginated()` —
+  1쪽의 번호가 `null`인가). 위의 실측이 우리가 정한 규칙이 아니라 라이브러리의 사실이므로,
+  바뀌면 이 값이 따라 바뀌는 편이 맞다.
+- **파서를 확장자로 고정한다 — `AutoDetectParser`가 아니다.** 자동 감지는 클래스패스의 모든
+  파서를 후보로 올리는데 코퍼스에 올라오는 것은 외부에서 받아 온 파일이다. 확장자와 내용이
+  어긋난 파일(`.pdf`로 이름만 바꾼 zip)은 열리지 않아 400이 되고 **그것이 맞는 결과다.**
+  내장 문서도 재귀 파싱하지 않는다(`ParseContext`에 `Parser`를 넣지 않으면 Tika가 `EmptyParser`를 쓴다).
+- ⚠️ **OCR을 명시적으로 끈다**(`PDFParserConfig`의 기본값이 `AUTO`다). 켜 두면 tesseract가 깔린
+  환경에서만 조용히 OCR이 도는데, **환경에 따라 코퍼스의 내용이 달라지는 것은 그 자체로 고장**이고
+  인식 오류가 규정 조문을 바꾸면 그 답을 근거로 사람의 자격을 판단한다. 스캔본은 400으로 거절하고
+  운영진이 텍스트 PDF를 구해 오는 것이 경로다.
+- **텍스트가 한 글자도 없으면 400 `RAG_DOCUMENT_PARSE_FAILED`**(구조화 계약 위반과 같은 코드 ·
+  사유는 `detail`이다 · #150). 「빈 문서를 통과시키고 청크 0개로 색인 완료」를 두지 않는 것은 그것이
+  화면에 «색인 완료»로 뜨는데 무엇을 물어도 답하지 못하는 상태이고, 원인이 파일에 있다는 신호가
+  아무 데도 남지 않기 때문이다.
+- **글자 수 상한을 두지 않는다.** `BodyContentHandler()`의 기본 10만 자는 넘으면 조용히 잘리고,
+  그러면 뒷부분의 조항만 영영 검색되지 않는데 아무도 알아채지 못한다. 앞에 업로드 10MB가 있다(#399).
+- **600자 · overlap 100자** — 600은 **새 내용의 목표**이고 overlap은 그 위에 얹히므로 조각은 최대
+  700자다. 조 단위(450)보다 큰 것은 여기 끊을 경계가 없어서다. overlap을 두는 것은 고정 길이가
+  문장을 끊기 때문이며(조 경계는 문장 경계라 #397에는 필요 없던 값이다) 대가는 청크 수가 약 1/6
+  늘어나는 것이다. **문단 경계에서 끊고**, 문단 하나가 혼자 목표보다 길면 문장 경계에서 쪼갠다 —
+  조 단위 청커가 긴 항을 그대로 두는 것과 갈리는 지점인데 거기서는 청크가 조를 온전히 담는 것이
+  인용의 뜻이지만 여기서는 길이가 곧 규칙이다.
+- **쪽을 넘는 청크는 시작 쪽만 단다.** 두 쪽을 다 적으면 인용이 길어지는데 운영진이 확인하러 여는
+  것은 시작 쪽 하나다. **넘어온 overlap이 쪽을 정하게 두지 않는다** — 그러면 앞 청크와 같은 쪽을
+  가리키면서 내용은 대부분 다음 쪽인 청크가 생긴다. 그래서 «어느 청크도 가리키지 않는 쪽»이 정상으로
+  존재한다(골든셋의 6쪽이 그렇다).
+- **두 파싱 결과가 `DocumentChunker`에서 같은 `Document[]`로 나간다.** 색인 워커(#400)는 청킹
+  규칙이 둘이라는 사실을 몰라도 되며, 무엇보다 `toDocument(ragDocId, applyStatus)`를 부르는 자리가
+  갈래마다 생기면 **메타를 빠뜨린 고아 청크**가 나올 여지가 생긴다. **조 단위 규칙은
+  `RegulationChunker`에 그대로 둔다** — 여기의 600·100은 검색 품질에 매여 자주 움직이는 값이고,
+  그 손이 「조 1개 = 청크 1개」쪽으로 새는 순간 인용이 조 경계를 넘는다.
+- **문서명이 `GENERIC` 임베딩 텍스트 맨 앞에 붙는다** — `2026 지원금 집행 지침 · p.12`. 조 단위는
+  「제2장 회원 · 제7조」가 맥락을 말하지만 600자 조각에는 그런 것이 없어, 그 조각이 학칙인지 지침인지가
+  본문에 없을 수 있다. 표시명은 운영진이 고치는 값이라 **재색인 때 다시 찍힌다**(`applyStatus`와 같다).
+- **알려진 한계** — 쪽마다 반복되는 머리글·꼬리글이 본문에 섞인다(골든셋의 «2026 SSCC 동아리 회칙»이
+  6쪽 전부에 있다). 반복 줄을 지우는 것은 휴리스틱이고, 잘못 지우면 조문이 사라진다 — 검색 품질이
+  이것 때문에 무너진다고 골든셋(§14.2)이 말하면 그때 본다.
+
 ## 스키마 — `V10__create_assistant_tables.sql`
 
 - **스타터가 만들게 두지 않는다** — `spring.ai.vectorstore.pgvector.initialize-schema: false`.
@@ -189,6 +246,13 @@
 
 ## 테스트 함정
 
+- **`GENERIC` 골든셋도 실제 문서 한 벌이다** — `src/test/resources/rag/regulation-current.pdf`는
+  `private-workspace/2026년도_학술분과_SSCC_동아리회칙.pdf`에서 **문서 정보·XMP를 지운** 사본이다
+  (본문·쪽 나눔은 원본 그대로 · **이 레포가 공개라 작성자 이름을 싣지 않는다**). `GenericGoldenSetTest`가
+  쪽 6 · 청크 11 · 쪽 배치 `1,1,1,2,2,3,3,4,4,5,5` · 인접 청크가 50~100자를 공유함을 못 박는다.
+  **이 문서를 코퍼스에 올리는 것이 아니다**(ssccops#323 — 개정안과 내용이 어긋나 근거가 흐려진다).
+  나머지 픽스처 둘은 `guideline-sample.docx`(지어낸 세칙 4KB · 쪽이 없는 형식의 증인)와
+  `scanned-no-text.pdf`(이미지만 있는 2쪽 · 빈 추출 400의 증인)다.
 - **파서 골든셋은 실제 문서 한 벌이다** — `src/test/resources/rag/regulation-2026-amendment.md`는
   `private-workspace/rag/회칙개정_2026_개정안전문.md`의 바이트 사본이고 **파일명만 ASCII다**(CI 러너의
   로캘이 C면 한글 파일명이 클래스패스 조회에서 깨진다). `RegulationGoldenSetTest`가 조 36(본칙 31 ·

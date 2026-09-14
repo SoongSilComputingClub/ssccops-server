@@ -25,6 +25,14 @@ public final class RagChunkMetadata {
     /** 판본 안에서의 청크 순번(0부터). 같은 조가 둘로 갈렸을 때 원문 순서를 되살리는 값이다 */
     public static final String SEQUENCE = "sequence";
 
+    /*
+     * 인용의 `p.12` — 그 청크가 **처음으로 담는 새 내용**의 페이지 (#398 · 기획안 §5.4).
+     *
+     * 청크가 페이지 경계를 넘으면 시작 페이지 하나만 적는다 — 둘을 다 적으면 인용이 길어지고
+     * 운영진이 확인하러 여는 것은 시작 페이지다. **페이지가 없는 형식(DOCX)에는 key 자체가 없다.**
+     */
+    public static final String PAGE = "page";
+
     /** `제2장 회원` · `부칙` — 개정 마커를 뗀 장 제목 */
     public static final String CHAPTER = "chapter";
 

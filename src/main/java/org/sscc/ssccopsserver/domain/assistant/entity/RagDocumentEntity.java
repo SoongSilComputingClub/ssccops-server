@@ -245,6 +245,28 @@ public class RagDocumentEntity {
     }
 
     /**
+     * 적용 상태를 바꾼다 — 화면의 {@code PATCH …/apply-status}가 들어오는 문 (#401).
+     *
+     * <p><b>어느 값으로 불러도 받고 거절은 전이표가 한다.</b> 요청이 고른 값을 서비스가 먼저 걸러 내면 표가 두 벌이 되고, «되돌리는 길이 없다»는 사실이
+     * 그때부터 두 곳에 적히기 시작한다 — {@code SUPERSEDED}가 종착점인 것도 {@code DRAFT}로 내려올 수 없는 것도 {@link
+     * RagApplyStatus} 한 곳이 말한다.
+     *
+     * <p><b>같은 {@code doc_cd}의 기존 시행본을 내리는 것은 이 메서드가 하지 않는다</b> — 다른 행을 읽어야 하므로, 전환을 수행하는 서비스가 그 행을
+     * 잠그고 {@link #supersede()}로 내린 뒤 이것을 부른다(엔티티 하나가 자기 테이블을 질의하지 않는다).
+     *
+     * @param effectiveFrom {@code EFFECTIVE}로 올릴 때만 쓰인다. 나머지 전이에서는 무시된다 — 시행일은 «시행 중이 된 판본»의 값이고,
+     *     내려간 판본의 것은 «언제부터 언제까지 유효했나»로 그대로 남는다
+     */
+    public void changeApplyStatus(RagApplyStatus next, LocalDate effectiveFrom) {
+        switch (next) {
+            case EFFECTIVE -> makeEffective(effectiveFrom);
+            case SUPERSEDED -> supersede();
+                // 어디에서도 갈 수 없다 — 그 사실도 전이표가 말하게 둔다(여기서 따로 던지지 않는다)
+            case DRAFT -> requireApplyTransition(RagApplyStatus.DRAFT);
+        }
+    }
+
+    /**
      * 시행 중으로 올린다. {@code DRAFT → EFFECTIVE}.
      *
      * <p><b>색인이 끝나 있어야 한다</b>(409) — 아니면 «시행 중인데 검색되지 않는 문서»가 되어 도우미가 근거 없이 침묵한다.

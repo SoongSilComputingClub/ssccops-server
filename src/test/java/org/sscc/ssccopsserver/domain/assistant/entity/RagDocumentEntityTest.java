@@ -138,6 +138,30 @@ class RagDocumentEntityTest {
                 AssistantErrorCode.INVALID_RAG_APPLY_STATUS_TRANSITION);
     }
 
+    /*
+     * 전환 API가 들어오는 문(#401)이 **어느 값으로 불려도 전이표에 물어본다.**
+     *
+     * 요청이 고른 값을 서비스가 먼저 걸러 내면 «되돌리는 길이 없다»가 두 곳에 적히기 시작한다 —
+     * `DRAFT`로 내려오는 길이 없다는 사실도 여기 한 번만 적혀 있어야 한다.
+     */
+    @Test
+    void applyStatusChangeAsksTheTransitionTableForEveryTarget() {
+        RagDocumentEntity document = indexed();
+
+        document.changeApplyStatus(RagApplyStatus.EFFECTIVE, LocalDate.of(2026, 3, 2));
+        assertThat(document.getApplyStatus()).isEqualTo(RagApplyStatus.EFFECTIVE);
+        assertThat(document.getEffectiveFrom()).isEqualTo(LocalDate.of(2026, 3, 2));
+
+        // 시행일은 EFFECTIVE로 올릴 때만 쓰인다 — 내려가도 «언제까지 유효했나»가 그대로 남는다
+        document.changeApplyStatus(RagApplyStatus.SUPERSEDED, LocalDate.of(2026, 9, 1));
+        assertThat(document.getApplyStatus()).isEqualTo(RagApplyStatus.SUPERSEDED);
+        assertThat(document.getEffectiveFrom()).isEqualTo(LocalDate.of(2026, 3, 2));
+
+        assertRejects(
+                () -> indexed().changeApplyStatus(RagApplyStatus.DRAFT, null),
+                AssistantErrorCode.INVALID_RAG_APPLY_STATUS_TRANSITION);
+    }
+
     private static void assertRejects(ThrowingCallable call, ErrorCode expected) {
         assertThatThrownBy(call)
                 .isInstanceOf(GeneralException.class)

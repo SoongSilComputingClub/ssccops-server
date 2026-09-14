@@ -31,6 +31,28 @@ public interface RagDocumentRepository extends JpaRepository<RagDocumentEntity, 
     Optional<Short> findMaxVersion(@Param("documentCode") String documentCode);
 
     /**
+     * 목록 — <b>전량을 최신 업로드 순으로</b> (#401 · 기획안 §13.2).
+     *
+     * <p>페이징이 없는 것은 이 표가 «문서 종류 × 판본»이라 행이 수십 단위이기 때문이다(클래스 주석 · {@code V10} 하단). 정렬이 식별자 내림차순인 것은
+     * <b>방금 올린 행이 표 맨 위에 즉시 보여야</b> 하기 때문이다 — 업로드 응답이 201 + {@code PENDING}인 이유와 같은 자리이며(#399), 색인이
+     * 끝나기를 기다리는 동안 운영진이 보는 것이 그 행이다.
+     */
+    List<RagDocumentEntity> findAllByOrderByIdDesc();
+
+    /**
+     * 문서명 부분 일치 — <b>검색은 클라이언트가 아니라 서버가 한다</b> (#401 · 기획안 §13.2).
+     *
+     * <p>클라이언트 필터링을 택하지 않은 것은 그것이 «목록을 통째로 내려받은 뒤»에만 성립하기 때문이다. 지금은 행이 수십 개라 둘 다 되지만, 그 조건이 깨지는 날
+     * 화면과 서버를 함께 고쳐야 한다 — 여기서 거르면 문서가 몇 건이든 같은 코드다.
+     *
+     * <p>찾는 값이 {@code doc_cd}가 아니라 {@code doc_nm}인 것은 운영진이 화면에서 읽는 값이 표시명이기 때문이다. 대소문자를 가리지 않는다.
+     */
+    List<RagDocumentEntity> findAllByNameContainingIgnoreCaseOrderByIdDesc(String name);
+
+    /** 요약 3값 중 «색인 완료» (#401). 등록 문서 수는 {@code count()}이고 총 청크는 {@link #sumActiveChunkCount()}다 */
+    long countByIndexStatus(RagIndexStatus indexStatus);
+
+    /**
      * 같은 문서에서 그 적용 상태인 판본을 <b>잠그고</b> 읽는다. {@code EFFECTIVE}로 부르면 «지금 유효한 판본»이며, 적용 전환(#401)이 새 판본을
      * 올리기 전에 이것을 내린다.
      *

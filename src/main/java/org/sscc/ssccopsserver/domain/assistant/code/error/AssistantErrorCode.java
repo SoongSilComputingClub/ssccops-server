@@ -114,7 +114,20 @@ public enum AssistantErrorCode implements ErrorCode {
      * 반영됐다고 뜨는데 답변만 달라지지 않는, 아무도 원인을 찾지 못하는 종류의 고장이다.
      */
     RAG_DOCUMENT_NOT_INDEXED(
-            HttpStatus.CONFLICT, "RAG_DOCUMENT_NOT_INDEXED", "색인이 끝난 판본만 시행 중으로 올릴 수 있습니다.");
+            HttpStatus.CONFLICT, "RAG_DOCUMENT_NOT_INDEXED", "색인이 끝난 판본만 시행 중으로 올릴 수 있습니다."),
+
+    /*
+     * 404 — 그 판본이 없다 (#401).
+     *
+     * **삭제가 하드라 «없음»이 정상 상태다**(ADR-0029). 화면이 목록을 들고 있는 동안 다른
+     * 운영진이 지웠으면 상세·재색인·전환·삭제가 전부 이 코드로 온다 — `del_dt`가 없으므로
+     * «지워진 문서»와 «처음부터 없던 식별자»를 가르는 값이 서버에 남아 있지 않고, 가를 수
+     * 있다 해도 화면이 할 일이 «목록을 다시 받는다»로 같다.
+     *
+     * **기능 플래그 off의 404(`ASSISTANT_DISABLED`)와 코드를 나눈다** — 웹이 그것을 «문서가
+     * 사라졌다»로 읽으면 안 되기 때문이며, 그 이유는 그쪽 주석에 있다.
+     */
+    RAG_DOCUMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "RAG_DOCUMENT_NOT_FOUND", "규정 문서를 찾을 수 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

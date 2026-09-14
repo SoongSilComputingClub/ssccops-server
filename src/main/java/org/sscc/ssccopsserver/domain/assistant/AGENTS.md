@@ -124,9 +124,16 @@
   삭제는 이 행이 있으면 409로 막히며, 그 문구와 미리보기의 `blockedBy`는
   `MemberReferenceConstraints`가 준다 — **거기 한 줄이 빠지면 미리보기가 «막는 것 없음»이라고
   답한 뒤 삭제가 번역되지 않은 409로 실패한다.**
-- 권한 `RAG_DOCUMENT_MANAGE`와 `FileTargetType.RAG_DOCUMENT`는 **#402가 세운다.** 코퍼스를
+- 권한 `RAG_DOCUMENT_MANAGE`와 `FileTargetType.RAG_DOCUMENT`는 **#402가 세웠다.** 코퍼스를
   바꾸는 조작에만 붙고 질의는 인증만 요구한다 — 코퍼스 변경은 모든 답변의 근거를 갈아치우는
-  조작이고, 프롬프트 인젝션 완화의 첫째 층이다(ADR-0029).
+  조작이고, 프롬프트 인젝션 완화의 첫째 층이다(ADR-0029). **코퍼스 컨트롤러(#399·#401)는 클래스
+  레벨 `@RequireAuthority(RAG_DOCUMENT_MANAGE)`이고 질의 컨트롤러(#403)와 나뉜다** — 한 클래스에
+  두면 핸들러마다 붙이게 되고 하나 빠뜨리는 순간 코퍼스가 열린다.
+  - 시드는 `V11`이며 **`SUPER` 직속 + 회장·부회장·총무 명시 부여**다. `EXECUTIVE`의 자식이
+    아닌 것은 그러면 좁히는 쪽이 화면 조작이 아니라 마이그레이션이 되기 때문이다(#101이
+    `SUB_WORK_TYPE_MANAGE`에서 치른 값). 넓히는 것도 좁히는 것도 역할별 권한 화면이다(#65).
+  - 화면이 «RAG › 설정» 메뉴를 그릴 재료는 `MemberProfileResponse.capabilities`이며 같은
+    `AuthorityPolicy` 펼침을 쓰므로 **버튼과 실제 판정이 갈리지 않는다** — 따로 내리지 말 것.
 
 ## 테스트 함정
 

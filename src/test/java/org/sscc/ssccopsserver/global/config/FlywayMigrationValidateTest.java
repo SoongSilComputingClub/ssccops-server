@@ -298,6 +298,42 @@ class FlywayMigrationValidateTest {
     }
 
     /*
+     * 시드 마이그레이션이 V3 하나가 아니다 (#402의 V11). 새 파일이 실제로 도는지는 여기서만
+     * 확인된다 — test 프로필은 Flyway가 꺼져 있어 spring.sql.init이 대신 읽기 때문이다.
+     *
+     * SUPER 직속이라야 최고관리자가 이 권한을 포함한다(AuthorityPolicy에 SUPER 특별 취급 분기가
+     * 없다, #71). 부여는 EXECUTIVE를 가진 세 역할까지이며, 여기가 늘어나면 국장·국원이 회칙
+     * 코퍼스를 갈아치울 수 있게 된다 — 넓히는 것은 배포가 아니라 역할별 권한 화면이다(#65).
+     */
+    @Test
+    void ragDocumentManageIsSeededUnderSuperAndGrantedToExecutiveRoles() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT up_authrt_cd FROM authrt"
+                                        + " WHERE authrt_cd = 'RAG_DOCUMENT_MANAGE'",
+                                String.class))
+                .as("규정 문서 관리 권한의 상위 (#402)")
+                .isEqualTo("SUPER");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT sys_yn FROM authrt WHERE authrt_cd = 'RAG_DOCUMENT_MANAGE'",
+                                Boolean.class))
+                .as("코드가 가리키는 권한이라 삭제·코드 변경이 막혀야 한다")
+                .isTrue();
+
+        assertThat(
+                        jdbc.queryForList(
+                                "SELECT r.role_nm FROM role_authrt_rel x"
+                                        + " JOIN role r ON r.role_id = x.role_id"
+                                        + " WHERE x.authrt_cd = 'RAG_DOCUMENT_MANAGE'",
+                                String.class))
+                .as("부여는 EXECUTIVE를 가진 세 역할까지 — 최고관리자는 트리 펼침으로 갖는다")
+                .containsExactlyInAnyOrder("회장", "부회장", "총무");
+    }
+
+    /*
      * V10의 벡터 저장소가 Spring AI가 기대하는 모양인지 본다 (#396 · ADR-0028).
      *
      * **스키마를 Flyway가 만들기로 한 대가가 이 테스트다.** 스타터의 자동 생성을 껐으므로

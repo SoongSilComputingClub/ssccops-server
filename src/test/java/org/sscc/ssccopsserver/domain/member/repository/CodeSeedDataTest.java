@@ -193,6 +193,39 @@ class CodeSeedDataTest {
         assertThat(grantedCodesOf("스터디장")).isEmpty();
     }
 
+    /*
+     * 규정 도우미 코퍼스 관리 권한 (#402 · V11). 빠지면 코퍼스 컨트롤러의 클래스 레벨
+     * @RequireAuthority가 가리킬 값이 없어 아무도 규정 문서를 올리지 못한 채 배포된다.
+     *
+     * SUPER 직속인 것이 판정의 전부다 — 최고관리자는 이 한 줄로 포함하고(AuthorityPolicy에
+     * SUPER 특별 취급 분기가 없다), EXECUTIVE 밑이 아니라서 총무에게서 떼는 일이 화면 조작으로
+     * 남는다. sys_yn = TRUE는 코드가 가리키는 권한이라는 표시이며 삭제·코드 변경을 막는다.
+     */
+    @Test
+    void seedsRagDocumentManageDirectlyUnderSuper() {
+        assertThat(authorityRepository.findById("RAG_DOCUMENT_MANAGE"))
+                .get()
+                .satisfies(
+                        authority -> {
+                            assertThat(authority.getParent().getCode()).isEqualTo("SUPER");
+                            assertThat(authority.isSystemDefined()).isTrue();
+                        });
+    }
+
+    /*
+     * 부여는 회장·부회장·총무까지다 (#402). 최고관리자는 SUPER의 자손 펼침으로 이미 갖고 있어
+     * 매핑이 없고, 국장·국원은 부여하지 않는다 — 여기에 무심코 부여를 더하면 국원 전원이
+     * 회칙 코퍼스를 갈아치울 수 있게 된다. 넓히는 것은 배포가 아니라 역할별 권한 화면이다(#65).
+     */
+    @Test
+    void grantsRagDocumentManageToExecutiveRolesOnly() {
+        assertThat(grantedCodesOf("회장")).contains("RAG_DOCUMENT_MANAGE");
+        assertThat(grantedCodesOf("부회장")).contains("RAG_DOCUMENT_MANAGE");
+        assertThat(grantedCodesOf("총무")).contains("RAG_DOCUMENT_MANAGE");
+        assertThat(grantedCodesOf("국장")).doesNotContain("RAG_DOCUMENT_MANAGE");
+        assertThat(grantedCodesOf("국원")).doesNotContain("RAG_DOCUMENT_MANAGE");
+    }
+
     private List<String> grantedCodesOf(String roleName) {
         MemberRoleEntity role =
                 memberRoleRepository.findAll().stream()

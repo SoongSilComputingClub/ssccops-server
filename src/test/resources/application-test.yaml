@@ -45,12 +45,17 @@ spring:
   # 시드가 두 벌이 되어 갈린다 — 이 저장소가 반복해서 데인 자리다. V3는 옛 data.sql을 그대로
   # 옮긴 것이라 H2에서도 돈다(ON CONFLICT 대신 WHERE NOT EXISTS로 멱등성을 보장한다).
   #
+  # **시드 마이그레이션이 늘면 여기도 는다**(#402의 V11). 순서가 곧 실행 순서이고 V11이 V3가
+  # 넣은 SUPER·역할을 참조하므로 뒤에 온다. 빠뜨리면 그 권한이 test DB에만 없어, 새 권한을
+  # 요구하는 엔드포인트의 테스트가 "data.sql이 넣어야 할 권한이 없다"로 죽는다
+  # (AuthorityFixture). SeedScript.LOCATIONS도 같은 목록이어야 한다.
+  #
   # defer-datasource-initialization이 필요한 이유는 여기가 ddl-auto: create이기 때문이다 —
   # Hibernate가 스키마를 만든 뒤에 이 스크립트가 돌아야 한다.
   sql:
     init:
       mode: always
-      data-locations: classpath:db/migration/V3__seed_reference_data.sql
+      data-locations: classpath:db/migration/V3__seed_reference_data.sql,classpath:db/migration/V11__seed_rag_document_manage_authority.sql
       # JVM 기본 문자셋으로 읽으면 한국어 Windows에서 MS949가 되어 한글 기준값이 깨진 채
       # INSERT 된다. 기동은 성공하고 '예산지출'·'최고관리자'로 시드를 찾는 코드만 빗나간다.
       encoding: UTF-8

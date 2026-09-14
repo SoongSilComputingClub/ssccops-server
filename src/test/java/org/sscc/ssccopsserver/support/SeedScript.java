@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.support;
 
+import java.util.List;
+
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
@@ -10,6 +12,9 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
  * 사본을 테스트 리소스에 두면 시드가 두 벌이 되어 갈린다 — 재실행 멱등성을 검증하는 테스트가
  * 정작 운영이 쓰는 시드를 보지 않게 된다.
  *
+ * **시드가 여러 파일이다**(#402의 V11). 순서가 곧 실행 순서이며 나중 파일이 앞 파일의 행을
+ * 참조하므로(V11의 up_authrt_cd = 'SUPER') 선언 순서를 지킨다.
+ *
  * 문자셋을 여기서 UTF-8로 못 박는 것은 부트가 그렇게 읽기 때문이다(spring.sql.init.encoding).
  * 비워 두면 populator가 JVM 기본 문자셋을 쓰는데, JDK 17에서 그 값은 아직 플랫폼을 따라가므로
  * 한국어 Windows에서는 MS949가 된다 — 그러면 재실행이 넣는 한글 기준값이 부트가 넣어 둔 것과
@@ -18,14 +23,17 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
  */
 public final class SeedScript {
 
-    /** application-test.yaml의 spring.sql.init.data-locations와 같은 파일이어야 한다. */
-    private static final String LOCATION = "db/migration/V3__seed_reference_data.sql";
+    /** application-test.yaml의 spring.sql.init.data-locations와 같은 목록·순서여야 한다. */
+    private static final List<String> LOCATIONS =
+            List.of(
+                    "db/migration/V3__seed_reference_data.sql",
+                    "db/migration/V11__seed_rag_document_manage_authority.sql");
 
     private SeedScript() {}
 
     public static ResourceDatabasePopulator populator() {
-        ResourceDatabasePopulator populator =
-                new ResourceDatabasePopulator(new ClassPathResource(LOCATION));
+        ResourceDatabasePopulator populator = new ResourceDatabasePopulator();
+        LOCATIONS.forEach(location -> populator.addScript(new ClassPathResource(location)));
         populator.setSqlScriptEncoding("UTF-8");
         return populator;
     }

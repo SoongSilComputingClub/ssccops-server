@@ -6,7 +6,12 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -14,6 +19,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
@@ -25,10 +33,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
@@ -53,12 +63,15 @@ import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
+import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 /*
- * 규정 문서 업로드 API (#399 · 상위 ssccops#326).
+ * 규정 문서 코퍼스 API — 업로드(#399)와 목록·상세·전환·재색인·삭제(#401) · 상위 ssccops#326.
  *
  * 확인의 중심은 **순서와 그 순서가 실패했을 때 남기는 것**이다 — 파싱이 R2 PUT보다 먼저라
  * 거절된 요청은 오브젝트도 행도 남기지 않아야 하고, 통과한 요청은 «대기» 배지를 그릴 수 있는
@@ -343,6 +356,215 @@ class RagDocumentControllerTest {
         verify(r2Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
     }
 
+    // ------------------------------------------------------------------ 목록 · 상세 (#401)
+
+    /*
+     * 목록은 **최신 업로드 순**이고 요약 3값이 **같은 응답에** 실린다(§10 · §13.2).
+     *
+     * 나누면 두 요청 사이에 색인이 끝나 카드와 표가 다른 시점을 가리킨다(#37). `totalChunkCount`가
+     * **활성 청크**인 것이 요점이다 — 옛 판본(`SUPERSEDED`)의 청크는 전환 때 실제로 사라지므로
+     * 세지 않으며, 그래야 이 수가 색인 워커의 상한 3,000 판정과 같은 것을 가리킨다(#400 · §8.2).
+     */
+    @Test
+    void listsNewestFirstWithCorpusSummary() throws Exception {
+        RagDocumentEntity old = indexed("REGULATION", "2025 회칙", (short) 1, 5);
+        old.makeEffective(LocalDate.of(2025, 3, 1));
+        old.supersede();
+        indexed("REGULATION", "2026 회칙", (short) 2, 12);
+        pending("GUIDE", "집행 지침");
+
+        mockMvc.perform(authorized(get(DOCUMENTS), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.documents.length()").value(3))
+                // 방금 올린 행이 맨 위다 — 색인이 끝나기를 기다리는 동안 운영진이 보는 것이 그 행이다
+                .andExpect(jsonPath("$.data.documents[0].name").value("집행 지침"))
+                .andExpect(jsonPath("$.data.documents[2].name").value("2025 회칙"))
+                .andExpect(jsonPath("$.data.summary.registeredCount").value(3))
+                .andExpect(jsonPath("$.data.summary.indexedCount").value(2))
+                .andExpect(jsonPath("$.data.summary.totalChunkCount").value(12));
+    }
+
+    /*
+     * **검색은 서버 `q`다**(§13.2) — 문서가 몇 건이든 같은 코드다.
+     *
+     * 그래도 **요약은 코퍼스 전체다.** 카드가 답하는 질문이 «지금 코퍼스에 무엇이 있나»이지
+     * «검색 결과가 몇 건인가»가 아니기 때문이며, 함께 줄면 운영진이 필터를 건 채 «등록 문서 1건»을
+     * 읽는다.
+     */
+    @Test
+    void filtersByDocumentNameButSummaryStaysWholeCorpus() throws Exception {
+        indexed("REGULATION", "2026 회칙", (short) 1, 12);
+        pending("GUIDE", "집행 지침");
+
+        mockMvc.perform(authorized(get(DOCUMENTS).param("q", "회칙"), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.documents.length()").value(1))
+                .andExpect(jsonPath("$.data.documents[0].name").value("2026 회칙"))
+                .andExpect(jsonPath("$.data.summary.registeredCount").value(2));
+    }
+
+    /*
+     * **목록 조회도 `RAG_DOCUMENT_MANAGE`를 요구한다**(#401).
+     *
+     * 코퍼스에 무엇이 올라와 있는지도 코퍼스 조작의 정보이고, 무엇보다 «읽기만 하는 핸들러는
+     * 빼도 된다»를 한 번 허용하면 클래스 레벨 애노테이션이 무의미해진다.
+     */
+    @Test
+    void rejectsListWithoutRagDocumentManageAuthority() throws Exception {
+        mockMvc.perform(authorized(get(DOCUMENTS), outsiderToken))
+                .andExpect(status().isForbidden());
+    }
+
+    /*
+     * 상세가 **원본을 다시 파싱해 조 목록을 만든다**(§10).
+     *
+     * 업로드가 만든 파싱 결과를 들고 있지 않은 것이 이 도메인의 계약이고(#399), 청크에서 되돌릴
+     * 수도 없다 — 해설을 뺐고 장 헤더를 덧붙였다. 원본 다운로드 URL은 서명만 받아 오며(#220)
+     * 남은 시간을 함께 싣는 것은 열어 둔 화면이 만료 전에 상세를 다시 부를 수 있게 하기 위해서다.
+     */
+    @Test
+    void detailParsesArticlesFromTheStoredOriginal() throws Exception {
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+                .andExpect(status().isCreated());
+        Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
+        stubDownload(VALID_MARKDOWN.getBytes(StandardCharsets.UTF_8));
+
+        mockMvc.perform(authorized(get(DOCUMENTS + "/" + ragDocId), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.document.ragDocId").value(ragDocId))
+                .andExpect(jsonPath("$.data.registrantName").value("규정관리자"))
+                .andExpect(jsonPath("$.data.articles.length()").value(1))
+                .andExpect(jsonPath("$.data.articles[0].label").value("제1조"))
+                .andExpect(jsonPath("$.data.articles[0].chapter").value("제1장 총칙"))
+                .andExpect(jsonPath("$.data.downloadUrl").exists())
+                .andExpect(jsonPath("$.data.downloadUrlExpiresInSeconds").value(900));
+    }
+
+    /*
+     * `GENERIC`에는 조가 없다 — **평문에서 «제○조»를 정규식으로 긁어 흉내 내지 않는다**(#398).
+     * 맞을 때도 틀릴 때도 있는 인용은 없는 인용보다 나쁘다. 원본을 읽지도 않는다.
+     */
+    @Test
+    void detailOfGenericDocumentHasNoArticles() throws Exception {
+        mockMvc.perform(upload(resource("rag/regulation-current.pdf"), "SCHOOL_RULE", null))
+                .andExpect(status().isCreated());
+        Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
+
+        mockMvc.perform(authorized(get(DOCUMENTS + "/" + ragDocId), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.data.document.docType").value(RagDocumentType.GENERIC.name()))
+                .andExpect(jsonPath("$.data.articles.length()").value(0));
+
+        verify(r2Client, never()).getObjectAsBytes(any(GetObjectRequest.class));
+    }
+
+    /** 없는 판본은 404다 — **삭제가 하드라 «없음»이 정상 상태**이고, 기능 플래그 off의 404와 코드가 갈린다 */
+    @Test
+    void returnsNotFoundForUnknownDocument() throws Exception {
+        mockMvc.perform(authorized(get(DOCUMENTS + "/999999"), managerToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_NOT_FOUND"));
+    }
+
+    // ------------------------------------------------------------------ 적용 전환 (#401)
+
+    /*
+     * **시행본은 문서당 하나다** — 올리면 같은 `doc_cd`의 기존 시행본이 **같은 트랜잭션에서**
+     * 내려간다(§5.5 · 대표 역할 `rprs_role_yn`이 회원당 1건인 것과 같은 모양).
+     *
+     * 규칙은 부분 유니크 인덱스와 이 판정 두 겹인데 **H2에는 그 인덱스가 없어** 여기가 유일한
+     * 방어선이다(#143의 초안 1건 제약과 같은 자리) — 그래서 이 테스트가 그 환경에서 지키는 것이다.
+     */
+    @Test
+    void promotingSupersedesThePreviousEffectiveVersion() throws Exception {
+        RagDocumentEntity previous = indexed("REGULATION", "2025 회칙", (short) 1, 5);
+        previous.makeEffective(LocalDate.of(2025, 3, 1));
+        RagDocumentEntity next = indexed("REGULATION", "2026 회칙", (short) 2, 12);
+
+        mockMvc.perform(applyStatus(next.getId(), "{\"applyStatus\":\"EFFECTIVE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.applyStatus").value(RagApplyStatus.EFFECTIVE.name()))
+                // 시행일을 비워 보내면 오늘이다 — 답변의 «시행 기준» 배지가 그 값이다
+                .andExpect(
+                        jsonPath("$.data.effectiveFrom")
+                                .value(LocalDate.now(ZoneId.of("Asia/Seoul")).toString()));
+
+        assertThat(reload(previous).getApplyStatus())
+                .as("같은 문서의 옛 시행본은 같은 트랜잭션에서 내려간다")
+                .isEqualTo(RagApplyStatus.SUPERSEDED);
+        assertThat(reload(previous).getEffectiveFrom())
+                .as("내려가도 시행일은 지우지 않는다 — «언제부터 언제까지 유효했나»가 그 값이다")
+                .isEqualTo(LocalDate.of(2025, 3, 1));
+    }
+
+    /*
+     * **`INDEXED`가 아니면 올릴 수 없다**(409). 통과시키면 «시행 중인데 검색되지 않는 문서»가 되어
+     * 도우미가 근거 없이 침묵한다 — 화면에는 반영됐다고 뜨는데 답변만 달라지지 않는, 아무도
+     * 원인을 찾지 못하는 종류의 고장이다.
+     */
+    @Test
+    void rejectsPromotionOfDocumentThatIsNotIndexed() throws Exception {
+        RagDocumentEntity waiting = pending("REGULATION", "2026 회칙");
+
+        mockMvc.perform(applyStatus(waiting.getId(), "{\"applyStatus\":\"EFFECTIVE\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_NOT_INDEXED"));
+    }
+
+    /*
+     * `DRAFT`로 되돌리는 길이 없다 — 거절하는 것은 서비스가 아니라 **전이표**다
+     * (`RagApplyStatus.canTransitionTo`). 되돌리려면 그 파일을 새 판본으로 다시 올린다.
+     */
+    @Test
+    void rejectsTransitionBackToDraft() throws Exception {
+        RagDocumentEntity document = indexed("REGULATION", "2026 회칙", (short) 1, 12);
+
+        mockMvc.perform(applyStatus(document.getId(), "{\"applyStatus\":\"DRAFT\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RAG_APPLY_STATUS_TRANSITION"));
+    }
+
+    // ------------------------------------------------------------------ 재색인 · 삭제 (#401)
+
+    /*
+     * 재색인은 **`PENDING`으로 다시 줄을 세우는 것뿐이다**(#400) — 워커가 그 상태만 집으므로
+     * 전용 경로를 만들면 색인 로직이 두 벌이 된다. 실패 사유와 청크 수도 그때 비워진다.
+     */
+    @Test
+    void reindexPutsIndexedDocumentBackToPending() throws Exception {
+        RagDocumentEntity document = indexed("REGULATION", "2026 회칙", (short) 1, 12);
+
+        mockMvc.perform(
+                        authorized(
+                                post(DOCUMENTS + "/" + document.getId() + "/reindex"),
+                                managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.indexStatus").value(RagIndexStatus.PENDING.name()))
+                .andExpect(jsonPath("$.data.failureReason").value(nullValue()));
+
+        assertThat(reload(document).getIndexStatus()).isEqualTo(RagIndexStatus.PENDING);
+    }
+
+    /*
+     * 삭제는 **하드다**(ADR-0029) — 행과 파일 참조가 함께 사라진다. R2 오브젝트와 청크는
+     * **커밋 뒤에** 지워지므로 여기서는 보이지 않는다(그 시점 규칙은 `FileEraserTest`·
+     * `RagChunkEraserTest`가 본다) — 그것이 «롤백된 삭제 뒤에 행은 있는데 파일이 없는 조합»을
+     * 만들지 않는 자리다.
+     */
+    @Test
+    void deleteRemovesRowAndFileReference() throws Exception {
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+                .andExpect(status().isCreated());
+        Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
+
+        mockMvc.perform(authorized(delete(DOCUMENTS + "/" + ragDocId), managerToken))
+                .andExpect(status().isOk());
+
+        assertThat(ragDocumentRepository.count()).isZero();
+        assertThat(fileReferenceRepository.findAll()).isEmpty();
+    }
+
     // ------------------------------------------------------------------ 도우미
 
     private MockMultipartHttpServletRequestBuilder upload(
@@ -380,6 +602,54 @@ class RagDocumentControllerTest {
             return new MockMultipartFile(
                     "file", fileName, "application/pdf", stream.readAllBytes());
         }
+    }
+
+    private static MockHttpServletRequestBuilder authorized(
+            MockHttpServletRequestBuilder builder, UUID authUserId) {
+        return builder.header("Authorization", "Bearer " + authUserId);
+    }
+
+    private MockHttpServletRequestBuilder applyStatus(Long ragDocId, String body) {
+        return authorized(
+                patch(DOCUMENTS + "/" + ragDocId + "/apply-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body),
+                managerToken);
+    }
+
+    /** 색인이 끝난 판본 — 전이는 엔티티의 것을 그대로 쓴다(테스트가 상태를 직접 심지 않는다) */
+    private RagDocumentEntity indexed(String documentCode, String name, short version, int chunks) {
+        RagDocumentEntity document = pending(documentCode, name, version);
+        document.startIndexing(Instant.now());
+        document.completeIndexing(chunks, Instant.now());
+        return ragDocumentRepository.saveAndFlush(document);
+    }
+
+    private RagDocumentEntity pending(String documentCode, String name) {
+        return pending(documentCode, name, RagDocumentEntity.FIRST_VERSION);
+    }
+
+    private RagDocumentEntity pending(String documentCode, String name, short version) {
+        return ragDocumentRepository.saveAndFlush(
+                RagDocumentEntity.register(
+                        documentCode,
+                        name,
+                        RagDocumentType.STRUCTURED,
+                        version,
+                        name + ".md",
+                        10,
+                        manager));
+    }
+
+    private RagDocumentEntity reload(RagDocumentEntity document) {
+        return ragDocumentRepository.findById(document.getId()).orElseThrow();
+    }
+
+    /** 상세의 조 목록은 R2의 원본을 다시 읽어 만든다 — 그 바이트를 여기서 준다 */
+    private void stubDownload(byte[] content) {
+        when(r2Client.getObjectAsBytes(any(GetObjectRequest.class)))
+                .thenReturn(
+                        ResponseBytes.fromByteArray(GetObjectResponse.builder().build(), content));
     }
 
     private MemberEntity saveMember(UUID authUserId, String studentNumber, String name) {

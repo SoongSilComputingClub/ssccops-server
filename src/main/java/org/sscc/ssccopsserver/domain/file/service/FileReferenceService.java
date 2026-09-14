@@ -41,6 +41,29 @@ public class FileReferenceService {
         return fileReferenceRepository.findByTargetTypeAndTargetId(targetType, targetId);
     }
 
+    /**
+     * 대상이 사라질 때 그 참조와 오브젝트를 함께 지운다 (#401).
+     *
+     * <p><b>파일 도메인이 갖는 이유는 {@link #upsert}와 같다</b> — 키를 아는 자리가 여기 하나뿐이고, 대상 도메인이 각자 지우게 하면 대상이 늘
+     * 때마다 한 곳씩 잊는다(그때 남는 것은 «행은 없는데 버킷에 있는» 오브젝트라 아무도 찾지 못한다).
+     *
+     * <p><b>오브젝트는 커밋 뒤에 지운다</b>({@link FileEraser}) — 안에서 지우면 롤백된 삭제 뒤에 «행은 있는데 파일이 없는» 조합이 남는다.
+     *
+     * <p>참조가 없으면 아무 일도 하지 않는다. 업로드가 중간에 실패해 행만 있는 대상이 정상적으로 있을 수 있고, 그것은 지울 것이 없다는 뜻이지 오류가 아니다.
+     *
+     * <p><b>소프트 삭제 도메인은 이것을 부르지 않는다</b> — 폼(#329)·행사(#347)는 되살아날 수 있어 오브젝트가 남아 있어야 한다. 부르는 쪽은 되살리기가
+     * 없는 하드 삭제다(규정 문서 · ADR-0029).
+     */
+    @Transactional
+    public void deleteByTarget(FileTargetType targetType, Long targetId) {
+        findByTarget(targetType, targetId)
+                .ifPresent(
+                        reference -> {
+                            fileReferenceRepository.delete(reference);
+                            fileEraser.eraseAfterCommit(reference.objectKey());
+                        });
+    }
+
     /*
      * 대상당 1건인 도메인의 재업로드 (#137 설계 결정 #1). 지웠다 넣지 않는 것은
      * fileReferenceId가 바뀌면 화면이 들고 있던 식별자가 무효가 되기 때문이다.

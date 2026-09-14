@@ -15,7 +15,7 @@ import org.sscc.ssccopsserver.domain.file.entity.FileReferenceEntity;
 import org.sscc.ssccopsserver.domain.file.repository.FileReferenceRepository;
 
 /*
- * 참조를 갈아 끼울 때 옛 오브젝트를 지우는 규칙 (ssccops#188).
+ * 참조를 갈아 끼울 때(ssccops#188)와 대상이 사라질 때(#401) 오브젝트를 지우는 규칙.
  *
  * 통합 테스트로는 확인할 수 없는 자리다 — 삭제가 커밋 뒤에 일어나는데 통합 테스트는
  * @Transactional이라 그 시점이 오지 않는다. 그래서 "무엇을 지우라고 했는가"를 여기서 본다.
@@ -75,6 +75,40 @@ class FileReferenceUpsertEraseTest {
 
         verify(fileEraser, never()).eraseAfterCommit(any(String.class));
         verify(repository).saveAndFlush(any(FileReferenceEntity.class));
+    }
+
+    /*
+     * **대상이 사라지면 참조와 오브젝트를 함께 지운다** (#401 · 규정 문서 하드 삭제).
+     *
+     * 대상 도메인이 각자 지우게 하지 않은 이유는 `upsert`와 같다 — 키를 아는 자리가 여기 하나뿐이고,
+     * 한 곳을 잊으면 «행은 없는데 버킷에 있는» 오브젝트가 남아 아무도 찾지 못한다.
+     */
+    @Test
+    void deletesReferenceAndErasesObject() {
+        FileReferenceEntity existing =
+                FileReferenceEntity.of(FileTargetType.RAG_DOCUMENT, TARGET_ID, OLD_KEY);
+        when(repository.findByTargetTypeAndTargetId(FileTargetType.RAG_DOCUMENT, TARGET_ID))
+                .thenReturn(Optional.of(existing));
+
+        service.deleteByTarget(FileTargetType.RAG_DOCUMENT, TARGET_ID);
+
+        verify(repository).delete(existing);
+        verify(fileEraser).eraseAfterCommit(OLD_KEY);
+    }
+
+    /*
+     * 참조가 없으면 아무 일도 하지 않는다 — 업로드가 중간에 실패해 행만 있는 대상이 정상적으로
+     * 있을 수 있고, 그것은 «지울 것이 없다»는 뜻이지 오류가 아니다.
+     */
+    @Test
+    void deleteIsQuietWhenThereIsNoReference() {
+        when(repository.findByTargetTypeAndTargetId(FileTargetType.RAG_DOCUMENT, TARGET_ID))
+                .thenReturn(Optional.empty());
+
+        service.deleteByTarget(FileTargetType.RAG_DOCUMENT, TARGET_ID);
+
+        verify(repository, never()).delete(any(FileReferenceEntity.class));
+        verify(fileEraser, never()).eraseAfterCommit(any(String.class));
     }
 
     /** 부르지 않은 것도 못 박아 둔다 — 조회 키가 어긋나면 위 단언이 통과해도 실제로는 안 지운다 */

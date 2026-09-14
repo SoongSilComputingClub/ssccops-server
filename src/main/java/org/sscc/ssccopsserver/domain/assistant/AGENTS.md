@@ -3,8 +3,8 @@
 이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
 
 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399) ·
-색인 워커(#400)까지 왔다** (Epic ssccops#321). 목록·적용 전환(#401) · 질의(#403)는 아직 없다 —
-그 이슈들이 여기 규칙 위에 얹힌다. 결정은
+색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401)까지 왔다** (Epic ssccops#321).
+질의(#403)는 아직 없다 — 그 이슈가 여기 규칙 위에 얹힌다. 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
 
@@ -15,10 +15,14 @@
 - 서비스: 포트 `RagChunkStore`와 그 구현 `PgVectorRagChunkStore` · 기능 플래그 `AssistantFeature` ·
   구조화 파서 `RegulationParser`와 청커 `RegulationChunker` · 평문 추출기 `GenericTextExtractor`와
   그 SAX 핸들러 `PageContentHandler` · 두 갈래가 합류하는 `DocumentChunker` · 메타 key 상수 `RagChunkMetadata` ·
-  업로드 `RagDocumentService`/`Impl` · 색인 워커 `RagIndexingWorker`와 그것을 돌리는
-  `RagIndexingScheduler`(#400).
-- 컨트롤러: `RagDocumentController`(`POST /v1/assistant/documents` 하나 · 클래스 레벨
+  코퍼스 `RagDocumentService`/`Impl`(업로드 #399 · 목록·상세·전환·재색인·삭제 #401) · 색인 워커
+  `RagIndexingWorker`와 그것을 돌리는 `RagIndexingScheduler`(#400) · 청크를 커밋 뒤에 지우는
+  `RagChunkEraser`(#401).
+- 컨트롤러: `RagDocumentController`(코퍼스 6핸들러 · 클래스 레벨
   `@RequireAuthority(RAG_DOCUMENT_MANAGE)`). **질의 컨트롤러(#403)와 나뉜다** — 아래 «다른 도메인».
+- 응답 record는 **한 행 한 벌**이다 — `RagDocumentResponse`가 목록의 한 행이자 업로드·재색인·
+  전환의 응답이고, 상세(`RagDocumentDetailResponse`)가 그것을 품는다. 요약 3값은
+  `RagCorpusSummaryResponse`이며 목록 응답에 함께 실린다.
 - 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`) ·
   평문 쪽은 `dto/Extracted*`(`Document` · `Page`)와 `dto/GenericChunk`다.
 - 확장자 표는 `code/RagDocumentFormat` 한 곳이다 — 유형(`STRUCTURED`/`GENERIC`)과 파서를 함께 가른다.
@@ -59,7 +63,7 @@
   트랜잭션에서 내린다)이 **유일한 방어선인 환경이 있다**(초안 1건 규칙 #143 · 폼 전속 #347과
   같은 모양). `@Table`에 조건 없는 UNIQUE를 달 수 없는 것은 그것이 같은 문서의 판본을 둘째부터
   막기 때문이다. 인덱스 모양은 `FlywayMigrationValidateTest`가 본다 — H2에 없는 제약이라
-  거기서만 검증된다. **잠금·전환 자체는 #401의 몫이다.**
+  거기서만 검증된다. 잠금·전환은 `RagDocumentServiceImpl.changeApplyStatus`다(#401 · 아래 절).
 - **판본 번호는 세지 않고 최대값 + 1이다**(`findMaxVersion`). **삭제가 하드라** 행 수와 번호가
   갈리고, 세면 이미 쓴 번호를 다시 배정해 `uk_rag_doc_doc_cd_ver`에 걸린다.
 - **`doc_cd`가 판본을 가로지르는 열쇠다 — 제목·파일명으로 대신하지 않는다**(`sys_form_cd`가
@@ -198,6 +202,90 @@
   배포 단위를 세울 이유가 없다) · 색인 상태를 `PATCH`로 여는 것(사람이 정하는 값이 아니다 —
   열면 «색인 완료»인데 청크가 없는 행이 생긴다) · 색인 실패를 오류 코드로 돌려주는 것(옛 판의
   `RAG_INGEST_FAILED` 503은 동기 적재의 코드였고 비동기가 되며 사라졌다).
+
+## 목록 · 상세 · 적용 전환 · 재색인 · 삭제 (#401 · 기획안 §5.5 · §5.6 · §10 · §13.2)
+
+화면(`RAG › 설정`)이 그리는 나머지다. 업로드와 색인만으로는 **무엇이 올라와 있는지, 어느 판본이
+지금 유효한지**를 아무도 알 수 없다.
+
+| | |
+|---|---|
+| `GET /v1/assistant/documents` | 목록 + **요약 3값** + `q` 문서명 부분 일치 |
+| `GET …/{id}` | 상세 — 조 목록(`STRUCTURED`) · 실패 사유 · 원본 다운로드 URL |
+| `PATCH …/{id}/apply-status` | `DRAFT → EFFECTIVE` · `EFFECTIVE → SUPERSEDED` |
+| `POST …/{id}/reindex` | `PENDING`으로 다시 줄을 세운다 |
+| `DELETE …/{id}` | **하드 삭제** — 행 · 청크 · R2 오브젝트 |
+
+- **요약 3값(`registeredCount`·`indexedCount`·`totalChunkCount`)은 목록 응답에 함께 실린다 —
+  별도 엔드포인트가 아니다.** 화면이 카드와 표를 언제나 함께 그리는데 나누면 두 요청 사이에
+  색인이 끝나 **카드와 표가 다른 시점을 가리킨다**(폼 상세가 `responseSummary`를 함께 내리는
+  것과 같은 자리 · #37).
+  - **`q`가 있어도 요약은 코퍼스 전체다.** 카드가 답하는 질문이 «지금 코퍼스에 무엇이 있나»이지
+    «검색 결과가 몇 건인가»가 아니다 — 함께 줄면 운영진이 필터를 건 채 «등록 문서 1건»을 읽는다.
+  - **`totalChunkCount`는 `sumActiveChunkCount()`를 그대로 쓴다**(`INDEXED && ≠ SUPERSEDED`).
+    색인 워커가 상한 3,000을 판정할 때 보는 수와 **같은 것이어야** 하기 때문이며(#400 · §8.2),
+    따로 세면 화면에 «2,900»이 떠 있는데 다른 수를 근거로 `RAG_DOCUMENT_LIMIT_EXCEEDED`가 난다.
+- **검색은 클라이언트가 아니라 서버 `q`다.** 클라이언트 필터링은 «목록을 통째로 내려받은
+  뒤»에만 성립하고, 그 전제가 깨지는 날 화면과 서버를 함께 고쳐야 한다 — 서버에서 거르면
+  문서가 몇 건이든 같은 코드다. **페이징은 없다**: 이 표는 «문서 종류 × 판본»이라 행이 수십
+  단위다(`V10` 하단). 정렬은 식별자 내림차순 — **방금 올린 행이 표 맨 위에 즉시 보여야** 한다.
+- **목록 조회도 `@RequireAuthority(RAG_DOCUMENT_MANAGE)`에서 예외가 아니다.** 코퍼스에 무엇이
+  올라와 있는지도 코퍼스 조작의 정보이고, 무엇보다 «읽기만 하는 핸들러는 빼도 된다»를 한 번
+  허용하면 그 판단을 핸들러마다 다시 해야 한다(`RoleAuthorityController`·`FormTemplateController`와
+  같은 판단 · #65).
+- **상세의 조 목록은 R2의 원본을 다시 파싱해 만든다.** 업로드가 만든 파싱 결과를 들고 있지
+  않은 것이 이 도메인의 계약이고(#399), 청크에서 되돌릴 수도 없다 — 해설을 뺐고 overlap이
+  겹치며 장 헤더를 덧붙였다. `.md`는 10MB 이하의 텍스트이고 파싱에 외부 호출이 없어 이 한 번이
+  보이지 않으며, `GENERIC`은 애초에 조가 없어 **읽지도 않는다**(평문에서 «제○조»를 흉내 내지
+  않는다 · #398).
+  - **파싱이 실패해도 상세는 뜬다.** 파서 규칙이 바뀌어 옛 판본이 더는 계약을 만족하지 않을 수
+    있는데, 그때 상세가 통째로 500이면 운영진이 그 문서를 지울 화면조차 열지 못한다 — 조 목록만
+    비고 실패 사유·원본 다운로드는 그대로 쓸모 있다.
+- **원본 다운로드 URL은 `FilePresigner`가 서명만 해 준다**(#220) — 「누가 볼 수 있는가」는 클래스
+  레벨 인가가 이미 끝냈고 서명하는 쪽은 그것을 다시 묻지 않는다. **읽기 TTL 15분을 이 화면
+  전용으로 따로 두지 않았다**(이슈의 «먼저 확인할 것»): 용도가 «원본을 확인하러 한 번 연다»라
+  그 값이 넉넉하고, 만료되면 상세를 다시 부르면 된다 — 그래서 남은 시간
+  (`downloadUrlExpiresInSeconds`)을 함께 싣는다.
+- **적용 전환이 시행본 하나를 지키는 자리다.** `EFFECTIVE`로 올리면 같은 `doc_cd`의 기존 시행본을
+  `findByDocumentCodeAndApplyStatusForUpdate`로 **잠그고** 같은 트랜잭션에서 내린다(대표 역할
+  `rprs_role_yn`이 회원당 1건인 것과 같은 모양). **H2에는 부분 유니크 인덱스가 없어 이 판정이
+  유일한 방어선인 환경이 있다**(#143).
+  - **내리는 UPDATE를 `flush`로 먼저 내보낸다.** JPA가 두 UPDATE를 커밋 시점에 내보내는 순서는
+    보장되지 않는데, 승격이 먼저 나가면 **부분 유니크 인덱스가 그 찰나에 시행본 둘을 본다.**
+  - **요청은 바꿀 값을 그대로 싣고 거절은 엔티티의 전이표가 한다**(`changeApplyStatus`). 요청
+    모양을 «`EFFECTIVE`만»으로 좁히면 «되돌릴 수 없다»가 두 곳에 적히기 시작한다.
+  - **`effectiveFrom`을 비워 보내면 오늘이다.** 답변의 «YYYY-MM-DD 시행 기준» 배지가 그 값이라
+    비면 화면이 그릴 것이 없고, «오늘 시행 중으로 올렸다»가 그 판본에 대해 서버가 아는 유일한
+    사실이다. 의결일이 따로 있으면 요청이 그 날짜를 싣는다. 내려간 판본의 시행일은 **지우지
+    않는다** — «언제부터 언제까지 유효했나»가 그 값이다.
+- **내려간 판본과 지워진 판본의 청크는 실제로 사라진다** — `RagChunkEraser`가 **커밋 뒤에**
+  지운다. 활성 청크 합계가 `SUPERSEDED`와 삭제분을 빼고 세므로(§8.2), 빼고 세면서 지우지 않으면
+  상한 3,000이 실제 저장량보다 낮은 수를 보고 판정한다. **커밋 뒤인 이유**는 `FileEraser`(#234)와
+  같다: 트랜잭션 안에서 지우고 롤백되면 «행은 시행 중인데 청크가 없는» 조합이 남는데, 그것이
+  `RAG_DOCUMENT_NOT_INDEXED`가 막으려는 것과 같은 고장이다. 저장소 빈이 없으면(키 없음) 아무
+  일도 하지 않고, 삭제 실패는 삼킨다 — 남은 청크는 검색되지 않으므로 비용이지 잘못된 답이 아니다.
+- **하드 삭제는 행 · 청크 · R2 오브젝트 셋이다.** `file_rfrnc` 행과 오브젝트는 파일 도메인의
+  `FileReferenceService.deleteByTarget`이 지운다 — 키를 아는 자리를 늘리지 않기 위해서이며
+  (`upsert`가 옛 오브젝트를 지우는 것과 같은 자리), 되살리기가 있는 소프트 삭제 도메인
+  (폼 #329 · 행사 #347)은 이것을 부르지 않는다.
+  - ⚠️ **색인 중 삭제는 고아 청크를 남길 수 있다.** 워커는 잠금 밖에서 적재하므로, 임베딩이
+    끝난 직후에 삭제가 커밋되면 상태를 적지 못한 채(#400 `transitionFrom`) 청크만 들어간다. 그
+    청크는 검색되지 않지만 지울 주체도 없다 — 인스턴스가 하나이고 드물어 감수하는 값이며,
+    막으려면 워커에 «내가 집었다»를 적는 컬럼이 필요하다(#400의 다중 인스턴스 항목과 같은 자리).
+- **재색인은 `PENDING`으로 다시 줄을 세우는 것뿐이다**(#400) — 잠그고 부르는 것은 워커가 지금 그
+  행을 집는 중일 수 있어서다. 색인 중에 눌린 재색인은 `INDEXING → PENDING`으로 성립하고, 그 뒤
+  워커가 결과를 적으려고 다시 잠그면 상태가 달라 적지 않고 넘어간다.
+- **바꾸는 네 경로가 전부 `findByIdForUpdate`로 잠그고 읽는다** — 운영진 둘이 같은 행에 닿을 수
+  있고 워커가 그 행을 집는 중일 수 있다. 없으면 404 `RAG_DOCUMENT_NOT_FOUND`이며, **삭제가
+  하드라 «없음»이 정상 상태다**(소프트 삭제 도메인처럼 «지워진 행»을 구별해 줄 값이 없다).
+- **응답 record가 한 벌인 것이 계약이다.** `RagDocumentResponse`가 목록 한 행이자 업로드·재색인·
+  전환의 응답이다 — 업로드가 201 + `PENDING`인 이유가 «화면이 그것으로 목록의 «대기» 행을 즉시
+  그린다»인데(#399), 두 record로 두면 필드가 늘 때 한쪽만 늘어 «업로드 직후의 행»과 «다시 받은
+  목록의 행»이 갈린다. 상세는 그것을 **품는다**(펼쳐 적지 않는다).
+- **기각한 길**: 요약을 별도 엔드포인트로(카드와 표가 다른 시점을 가리킨다) · 소프트 삭제
+  (`del_dt` — 목록에 영구히 남기면 이 표가 «지금 도우미가 참조하는 문서»라는 뜻을 잃는다) ·
+  검색을 클라이언트에서(문서가 늘면 목록을 통째로 내려야 한다) · 목록은 인증만 요구(위) ·
+  `PATCH`로 색인 상태도 바꾸게(사람이 정하는 값이 아니다).
 
 ## 구조화 파싱 — 줄 단위 계약 다섯 (#397 · 기획안 §5.3)
 
@@ -391,6 +479,10 @@
   있어 하나에 묶으면 그 구조가 통째로 사라진다. 그래서 전용 H2 DB에서 실제로 커밋한다
   (`AuditPointsTest`·`MemberChangeRollbackTest`와 같은 이유). 기능 플래그가 워커를 닫는지는
   컨텍스트 없이 `RagIndexingWorkerFeatureFlagTest`가 생성자로 본다.
+- **커밋 뒤에 일어나는 일은 통합 테스트가 볼 수 없다** — 그쪽은 `@Transactional`이라 그 시점이
+  오지 않는다. 그래서 청크·R2 오브젝트 삭제의 «언제»는 목으로 보는 단위 테스트가 갖는다
+  (`RagChunkEraserTest` · `FileReferenceUpsertEraseTest` · `FileEraserTest`와 같은 모양).
+  `RagDocumentControllerTest`는 «행과 참조가 사라졌는가»까지만 본다.
 - 스텁(`InMemoryRagChunkStore`)은 **유사도를 흉내 내지 않는다.** 넣은 순서대로 `topK`개를
   돌려줄 뿐이며, 순위를 지어내면 «검색이 무엇을 골랐나»를 확인하는 테스트가 스텁의 규칙을
   검증하게 된다. 검색 품질은 골든셋(#405)이 실제 스택에서 본다.

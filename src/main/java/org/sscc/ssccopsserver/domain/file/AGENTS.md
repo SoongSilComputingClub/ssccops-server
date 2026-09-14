@@ -25,7 +25,8 @@
 
 - 학술: 회차 출석 인증사진(`FileTargetType.SESSION`) — 자격 판정은 `SessionFileReferenceViewer`가 끝낸 뒤 `FilePresigner`를 부른다. 대상당 1건 잠금은 학술이 `sesn` 행에 건다.
 - 행사: 본문 이미지는 `FilePresigner`·`ImageFileType`만 쓰고 `file_rfrnc`를 쓰지 않는다. 복제는 `FileCopier`, 삭제는 `FileEraser`.
-- 규정 도우미: 업로드된 규정 문서 원본(`FileTargetType.RAG_DOCUMENT` · 키 접두사 `rag-documents/`, #402). «누가 볼 수 있는가»는 `RAG_DOCUMENT_MANAGE`이고 그 판정은 `assistant`가 한다 — 이 도메인은 여전히 묻지 않는다. **업로드(#399)가 `FileUploader`로 바이트를 올리고 `FileReferenceService.upsert`로 참조를 남기며, 색인 워커(#400)가 그 키로 `FileDownloader`를 불러 원본을 다시 읽는다** — 키(`rag-documents/{ragDocId}/{uuid}.{ext}`)를 조립하는 자리는 `assistant`의 서비스 한 곳이다(접두사만 여기 `FileTargetType`이 갖는다).
+- 규정 도우미: 업로드된 규정 문서 원본(`FileTargetType.RAG_DOCUMENT` · 키 접두사 `rag-documents/`, #402). «누가 볼 수 있는가»는 `RAG_DOCUMENT_MANAGE`이고 그 판정은 `assistant`가 한다 — 이 도메인은 여전히 묻지 않는다. **업로드(#399)가 `FileUploader`로 바이트를 올리고 `FileReferenceService.upsert`로 참조를 남기며, 색인 워커(#400)가 그 키로 `FileDownloader`를 불러 원본을 다시 읽고, 상세(#401)가 `FilePresigner.presignGet`으로 원본 다운로드 URL을 받아 간다** — 키(`rag-documents/{ragDocId}/{uuid}.{ext}`)를 조립하는 자리는 `assistant`의 서비스 한 곳이다(접두사만 여기 `FileTargetType`이 갖는다).
+  - **하드 삭제가 `FileReferenceService.deleteByTarget`의 유일한 사용처다** (#401). 행을 지우고 오브젝트를 `FileEraser`로 커밋 뒤에 지운다 — 파일 도메인이 갖는 이유는 `upsert`가 옛 오브젝트를 지우는 것과 같다(키를 아는 자리를 늘리지 않는다). **소프트 삭제 도메인은 부르지 않는다**: 폼(#329)·행사(#347)는 되살아날 수 있어 오브젝트가 남아 있어야 한다.
 - `S3Client`·`S3Presigner` 빈은 `global/config/R2Config`(루트 AGENTS.md).
 
 ## 테스트 함정

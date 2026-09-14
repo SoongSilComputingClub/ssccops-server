@@ -40,6 +40,37 @@ public enum AssistantErrorCode implements ErrorCode {
             HttpStatus.SERVICE_UNAVAILABLE, "ASSISTANT_UNAVAILABLE", "규정 도우미를 사용할 수 없습니다."),
 
     /*
+     * 429 — 적재 한도를 넘었다 (#399 · 기획안 §11).
+     *
+     * **적재에 별도 한도를 두는 것은 그 요청 하나가 나중에 임베딩을 수백 번 부르기 때문이다** —
+     * 1.2MB PDF 한 건이 184청크이고, 무료 쿼터는 API 키 단위의 공유 자원이라 한 사람이 태우면
+     * 모두가 답을 못 받는다. 공급자의 429가 아니라 **우리 코드가 먼저 끊어 우리 문구로 안내**하는
+     * 자리이며, 질의 한도(#404)도 같은 코드를 쓴다 — 화면이 할 안내가 «잠시 뒤 다시»로 같다.
+     */
+    ASSISTANT_RATE_LIMITED(
+            HttpStatus.TOO_MANY_REQUESTS, "ASSISTANT_RATE_LIMITED", "요청 한도를 초과했습니다."),
+
+    /*
+     * 400 — `.md`·`.pdf`·`.docx` 밖의 확장자다 (#399).
+     *
+     * **파싱 실패(아래)와 나눈다.** 코드를 하나로 합치면 화면이 «파일을 고쳐 다시 올리세요»
+     * 하나만 말하게 되는데, 운영진이 할 일은 한쪽이 «형식을 바꾼다»이고 다른 쪽은 «내용을
+     * 고친다»라 서로 겹치지 않는다. 판정하는 자리는 확장자 표(`RagDocumentFormat`) 한 곳이다.
+     */
+    RAG_DOCUMENT_UNSUPPORTED_TYPE(
+            HttpStatus.BAD_REQUEST, "RAG_DOCUMENT_UNSUPPORTED_TYPE", "받지 않는 파일 형식입니다."),
+
+    /*
+     * 413 — 업로드 파일이 10MB를 넘었다 (#399).
+     *
+     * **서블릿 상한(`spring.servlet.multipart.max-file-size` 16MB)이 아니라 도메인이 끊는다** —
+     * 서블릿 계층이 먼저 걸러 버리면 도메인 오류 코드가 붙지 않은 응답이 나가고 화면이 무엇이
+     * 잘못됐는지 안내하지 못한다(#84가 CSV 5MB에서 쓴 두 겹 그대로). 화면도 올리기 전에 한 번
+     * 막지만 **서버 판정이 방어선이라 둘 중 하나를 없애지 않는다**(기획안 §13.2).
+     */
+    RAG_DOCUMENT_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "RAG_DOCUMENT_TOO_LARGE", "파일이 너무 큽니다."),
+
+    /*
      * 400 — 파일이 계약을 어겨 파싱할 수 없다 (#397 · 기획안 §5.3).
      *
      * **사유마다 코드를 만들지 않는다.** 조가 하나도 없는지 · 장 없이 조가 시작하는지 ·

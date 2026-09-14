@@ -173,7 +173,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
-| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커. **업로드·색인·질의는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본). **색인 워커·질의는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사
@@ -257,9 +257,9 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 판본 테이블·두 축 상태·청크 저장소 포트·기능 플래그·`V10` 스키마·두 갈래 파싱이 거기 있다. 이 절은
 **무거운 의존성을 어떻게 골랐고 무엇을 실측했는가**만 남긴다 — 모델 쪽 배선(Gemini)과 Tika다.
 
-아직 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398)까지다.**
-업로드(#399)·색인 워커(#400)·질의(#403)는 없으며, 기능 플래그 `ssccops.assistant.enabled`는
-기본이 **꺼짐**이다.
+아직 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) ·
+업로드(#399)까지다.** 색인 워커(#400)·질의(#403)는 없으며, 기능 플래그
+`ssccops.assistant.enabled`는 기본이 **꺼짐**이다.
 
 - **스타터 둘** — `spring-ai-starter-model-google-genai`(채팅) · `…-google-genai-embedding`.
   **BOM 줄은 늘지 않았다**(MCP가 이미 쓰는 `spring-ai-bom:1.1.8`). **2.0.x로 올리지 말 것** —

@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.assistant.repository;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -46,6 +47,17 @@ public interface RagDocumentRepository extends JpaRepository<RagDocumentEntity, 
     Optional<RagDocumentEntity> findByDocumentCodeAndApplyStatusForUpdate(
             @Param("documentCode") String documentCode,
             @Param("applyStatus") RagApplyStatus applyStatus);
+
+    /**
+     * 그 회원이 {@code from} 이후에 올린 판본의 수 — <b>적재 레이트 리밋(회원당 일 10회)의 재료다</b>(#399 · 기획안 §11).
+     *
+     * <p><b>메모리 카운터가 아니라 행을 세는 것이 요점이다.</b> 세려는 것이 «요청 횟수»가 아니라 «이 사람이 오늘 색인 대기열에 얹은 문서»이고, 그 값은
+     * 재기동해도 남아 있어야 한다 — 한도를 둔 이유가 그 하나하나가 나중에 임베딩을 수백 번 부르는 것이기 때문이다(1.2MB PDF 한 건이 184청크).
+     *
+     * <p>하드 삭제(ADR-0029)가 이 수를 줄인다 — 올렸다 지우면 그만큼 다시 올릴 수 있다. <b>그것이 맞다</b>: 지워진 문서는 색인되지 않아 쿼터를 태우지
+     * 않고, 잘못 올린 파일을 지우고 고쳐 올리는 것이 이 화면의 정상 경로다.
+     */
+    long countByRegistrantIdAndCreatedAtGreaterThanEqual(Long registrantId, Instant from);
 
     /**
      * 색인 워커가 집을 줄 (#400)과 기동 복구가 되돌릴 줄(§12.4)을 같은 메서드로 찾는다.

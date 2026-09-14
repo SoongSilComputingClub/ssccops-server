@@ -2,9 +2,9 @@
 
 이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
 
-**스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398)까지 왔다**
-(Epic ssccops#321). 업로드(#399) · 색인 워커(#400) · 목록·적용 전환(#401) · 질의(#403)는 아직
-없다 — 그 이슈들이 여기 규칙 위에 얹힌다. 결정은
+**스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399)까지
+왔다** (Epic ssccops#321). 색인 워커(#400) · 목록·적용 전환(#401) · 질의(#403)는 아직 없다 —
+그 이슈들이 여기 규칙 위에 얹힌다. 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
 
@@ -14,12 +14,14 @@
   `RagIndexStatus` · `RagApplyStatus`)과 오류 코드 `AssistantErrorCode`.
 - 서비스: 포트 `RagChunkStore`와 그 구현 `PgVectorRagChunkStore` · 기능 플래그 `AssistantFeature` ·
   구조화 파서 `RegulationParser`와 청커 `RegulationChunker` · 평문 추출기 `GenericTextExtractor`와
-  그 SAX 핸들러 `PageContentHandler` · 두 갈래가 합류하는 `DocumentChunker` · 메타 key 상수 `RagChunkMetadata`.
+  그 SAX 핸들러 `PageContentHandler` · 두 갈래가 합류하는 `DocumentChunker` · 메타 key 상수 `RagChunkMetadata` ·
+  업로드 `RagDocumentService`/`Impl`.
+- 컨트롤러: `RagDocumentController`(`POST /v1/assistant/documents` 하나 · 클래스 레벨
+  `@RequireAuthority(RAG_DOCUMENT_MANAGE)`). **질의 컨트롤러(#403)와 나뉜다** — 아래 «다른 도메인».
 - 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`) ·
   평문 쪽은 `dto/Extracted*`(`Document` · `Page`)와 `dto/GenericChunk`다.
 - 확장자 표는 `code/RagDocumentFormat` 한 곳이다 — 유형(`STRUCTURED`/`GENERIC`)과 파서를 함께 가른다.
 - 빈 배선은 `global/config/AssistantConfig`(`ChatClient` · `RagChunkStore`)다.
-- **컨트롤러가 없다.** 지금 이 도메인에는 열린 경로가 하나도 없다.
 - 벡터 청크는 `vector_store`에 들어가며 **그 테이블에는 엔티티가 없다** — 스키마도 이름도
   Spring AI가 정하고 우리는 `V10`으로 옮겨 적기만 한다.
 
@@ -93,7 +95,55 @@
 - **오류 코드의 계단**: 플래그 off → 404 `ASSISTANT_DISABLED`(없는 자원의 `NOT_FOUND`와 코드를
   나눈다 — 웹의 플래그와 서버의 플래그가 갈렸을 때 «문서가 사라졌다»로 읽히면 안 된다) ·
   키가 없어 배선이 서지 않음 → 503 `ASSISTANT_UNAVAILABLE`(켜 두고 설정이 덜 된 상태라 요청의
-  잘못이 아니다) · 전이표 위반 → 400 · 색인 전 시행 → 409.
+  잘못이 아니다) · 전이표 위반 → 400 · 색인 전 시행 → 409 · **받지 않는 확장자 → 400
+  `RAG_DOCUMENT_UNSUPPORTED_TYPE` · 10MB 초과 → 413 `RAG_DOCUMENT_TOO_LARGE` · 적재 한도 초과 →
+  429 `ASSISTANT_RATE_LIMITED`**(#399). 앞의 둘을 `RAG_DOCUMENT_PARSE_FAILED`와 나눈 것은
+  운영진이 할 일이 «형식을 바꾼다»와 «내용을 고친다»로 겹치지 않기 때문이다 — 그 **안에서는**
+  사유마다 코드를 만들지 않는다(#150).
+
+## 업로드 — 요청 안에서 파싱하고 R2에 원본을 둔다 (#399 · 기획안 §2 · §9 · §11)
+
+`POST /v1/assistant/documents`(멀티파트 `file` + 폼 필드 `documentCode`·`name`) 하나다.
+**임베딩을 부르지 않는다** — 오래 걸리는 것은 그것뿐이라 그것만 워커(#400)로 뺀다.
+
+- **순서가 계약이다: 파싱 → 행 → R2 PUT.** 파싱이 PUT보다 먼저인 것은 실패했을 때 **아무것도
+  남지 않아야** 하기 때문이며, **되돌릴 수 없는 쪽을 뒤로 미루는 것**이 `FileEraser`(#234)와
+  같은 규칙이다. 행이 PUT보다 앞인 것은 키에 `ragDocId`가 들어가서인데, 한 트랜잭션이라
+  PUT이 실패하면 행도 함께 롤백된다(`FileUploader`가 `FileCopier`와 같은 쪽에 서 있는 이유).
+  - **파싱을 워커로 미루는 안을 기각한 것**은 `.md` 계약 위반이 «색인 실패»로만 드러나고, 목업에
+    미리보기 단계가 없어 운영진이 무엇이 틀렸는지 즉시 알 수 없기 때문이다.
+  - **presigned PUT으로 바이트를 안 만지는 안도 기각**이다 — 행사 이미지의 근거(#107 동시 업로드가
+    메모리를 요청 수만큼 먹는다)가 여기서는 성립하지 않는다: **파싱하려면 어차피 내용을 읽어야 한다.**
+    대신 10MB 상한과 일 10회가 동시성을 좁힌다.
+  - **파싱 결과는 버린다.** 여기서 파싱은 검증이고 **재색인의 재료는 언제나 R2의 원본**이다 —
+    청크를 넘겨 두면 파서 규칙이 바뀐 뒤의 재색인과 그때의 청크가 갈린다.
+- **상한이 두 겹이다**(#84가 CSV 5MB에서 쓴 모양). `spring.servlet.multipart.max-file-size`는
+  **16MB 그대로 두고** 도메인이 10MB로 끊는다 — 서블릿 계층이 먼저 걸러 버리면 `ApiResponse`
+  봉투도 도메인 오류 코드도 붙지 않은 응답이 나가 화면이 무엇이 잘못됐는지 안내하지 못한다.
+- **키는 `rag-documents/{ragDocId}/{uuid}.{ext}`이고 조립하는 자리는 `RagDocumentServiceImpl`
+  한 곳이다.** 원본 파일명이 키에 들어가지 않는다 — **같은 버킷에 얼굴이 찍힌 출석 인증사진이
+  있으므로**(ssccops#156) `../`가 낀 파일명이 키가 되면 그것이 곧 남의 사진이다. 확장자도
+  파일명이 아니라 형식 표(`RagDocumentFormat`)의 값을 붙인다. 참조는 `file_rfrnc`
+  (`trgt_se_cd = 'RAG_DOCUMENT'` · #220 · #402)이고 저장하는 값은 키다.
+- **새 판본은 `PENDING` + `DRAFT`로만 들어온다** — 요청이 상태를 고르지 못하는 것이 «올린 것이
+  곧바로 답변의 근거가 되지 않는다»의 전부이고 프롬프트 인젝션 완화의 한 층이다(§6.4).
+  판본 번호는 `findMaxVersion + 1`(세지 않는다 · 위 항목).
+- **`upld_mbr_id`는 `@CurrentMember`에서 온다**(#78) — 요청 본문으로 받으면 «누가 올렸는가»를
+  스스로 적어 넣을 수 있어 그 기록이 증거가 되지 못한다. `doc_ttl_nm` 기본값은 **파일명에서
+  확장자를 뗀 것**이고, `doc_cd`는 **모양만** 본다(대문자로 시작하는 20자 이내 영문·숫자·밑줄 ·
+  소문자로 보내면 대문자로 굳힌다) — 어휘는 운영 규칙이라 강제하지 않지만, 눈으로 같아 보이는 두
+  값이 다른 문서로 갈라지면 판본이 갈린다.
+- **응답은 201 + `indexStatus: PENDING`이다.** 202가 아닌 것은 **행이 실제로 생겼기 때문**이며,
+  화면은 이 응답만으로 목록의 «대기» 행을 즉시 그린다(§13.2) — 202는 «받아 두었으나 아직 아무것도
+  없다»는 뜻이라 그릴 것이 없어진다.
+- **적재 레이트 리밋은 회원당 일 10회**(§11)이고 세는 것은 요청이 아니라 **오늘 그 회원 이름으로
+  들어간 행**이다(`countByRegistrantIdAndCreatedAtGreaterThanEqual` · 하루 경계는 주입된 `Clock`).
+  메모리 카운터가 아닌 것은 재기동해도 남아야 하기 때문이고, 한도를 둔 이유는 그 요청 하나가
+  나중에 임베딩을 수백 번 부르기 때문이다(1.2MB PDF 한 건이 184청크). 하드 삭제가 이 수를
+  줄이는 것은 **맞다** — 지워진 문서는 색인되지 않아 쿼터를 태우지 않는다.
+- **같은 `doc_cd`에 동시 업로드가 겹치면 둘째가 `uk_rag_doc_doc_cd_ver`에 걸려 500이고 아무것도
+  남지 않는다.** 잠그지 않은 것은 첫 판본에 잠글 행이 없어 반쪽짜리 방어가 되고, 일 10회 한도
+  아래에서 실제로 겹칠 일이 없어서다.
 
 ## 구조화 파싱 — 줄 단위 계약 다섯 (#397 · 기획안 §5.3)
 
@@ -227,7 +277,8 @@
 
 ## 다른 도메인과 닿는 곳
 
-- **나가는 방향만 있다** — `assistant → member`(등록자) · `assistant → file`(원본 파일, #399부터).
+- **나가는 방향만 있다** — `assistant → member`(등록자) · `assistant → file`(원본 파일 —
+  `FileUploader`로 올리고 `FileReferenceService`로 참조를 남긴다, #399).
   반대로 다른 도메인이 이 도메인을 부를 일은 없어야 한다(`DomainCycleTest`가 본다).
 - `rag_doc.rgtr_mbr_id`는 **행위자 참조**라 `ON DELETE CASCADE`가 아니다(#361 · V9). 회원 하드
   삭제는 이 행이 있으면 409로 막히며, 그 문구와 미리보기의 `blockedBy`는
@@ -266,6 +317,16 @@
 - **키가 없는 컨텍스트가 뜨는지는 `AssistantWiringTest`가 본다.** pgvector 자동 구성이 제외되지
   않으면 «규정 도우미와 아무 상관 없는 모든 테스트»가 함께 죽는다 — 그 제외는
   `GeminiWiringEnvironmentPostProcessor`가 임베딩 키 하나에서 파생해 건다.
+- **`application-test.yaml`은 기능 플래그를 켜지 않는다** — «test 프로필도 켜지 않는다»가
+  `AssistantWiringTest`가 지키는 사실이다. 플래그가 필요한 통합 테스트는
+  `@SpringBootTest(properties = "ssccops.assistant.enabled=true")`로 켜되, **이미 다른 이유로
+  자기 컨텍스트를 갖는 클래스에서만** 그렇게 한다 — `RagDocumentControllerTest`는 `S3Client`를
+  `@MockitoBean`으로 갈아 끼우느라 어차피 컨텍스트가 하나 뜨므로 켜는 대가가 0이다. 그 조건이
+  아닌 테스트가 늘어나면 그때는 공용 프로필에서 켜는 쪽(회원 하드 삭제 #361의 판단)을 다시 본다.
+- **업로드 테스트는 `S3Client`를 `@MockitoBean`으로 갈아 끼운다**(`RagDocumentControllerTest`) —
+  진짜 빈은 R2 자격을 요구하고, 확인하려는 것은 업로드 알고리즘이 아니라 **무엇을 어느 키로
+  올리는가**다. 거절을 보는 테스트가 `putObject`가 **불리지 않았음**과 저장소가 비어 있음을 함께
+  보는 것이 「파싱이 PUT보다 먼저」를 지키는 자리다.
 - 스텁(`InMemoryRagChunkStore`)은 **유사도를 흉내 내지 않는다.** 넣은 순서대로 `topK`개를
   돌려줄 뿐이며, 순위를 지어내면 «검색이 무엇을 골랐나»를 확인하는 테스트가 스텁의 규칙을
   검증하게 된다. 검색 품질은 골든셋(#405)이 실제 스택에서 본다.

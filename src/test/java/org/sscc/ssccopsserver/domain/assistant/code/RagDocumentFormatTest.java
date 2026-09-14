@@ -38,13 +38,18 @@ class RagDocumentFormatTest {
         assertThat(RagDocumentFormat.fromFileName("Rules.DocX")).isEqualTo(RagDocumentFormat.DOCX);
     }
 
-    /** 모르는 확장자는 400이고 사유가 «무엇을 받는가»를 말한다 — 사유마다 코드를 만들지 않는다(#150) */
+    /*
+     * 모르는 확장자는 400 `RAG_DOCUMENT_UNSUPPORTED_TYPE`이고 사유가 «무엇을 받는가»를 말한다.
+     *
+     * **파싱 실패와 코드가 갈린다** (#399) — 운영진이 할 일이 한쪽은 «형식을 바꾼다»이고 다른
+     * 쪽은 «내용을 고친다»라 겹치지 않는다. 그 안에서 확장자마다 코드를 나누지는 않는다(#150).
+     */
     @Test
     void rejectsUnknownExtension() {
         assertThatThrownBy(() -> RagDocumentFormat.fromFileName("학칙.hwp"))
                 .isInstanceOf(GeneralException.class)
                 .hasFieldOrPropertyWithValue(
-                        "errorCode", AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED)
+                        "errorCode", AssistantErrorCode.RAG_DOCUMENT_UNSUPPORTED_TYPE)
                 .hasMessageContaining(".pdf")
                 .hasMessageContaining("학칙.hwp");
 

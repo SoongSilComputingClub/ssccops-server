@@ -206,6 +206,27 @@ dependencies {
     // GeminiWiringEnvironmentPostProcessor가 임베딩 키가 없을 때 이 자동 구성도 함께 제외한다.
     implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
 
+    // Tika — 규정 도우미의 `GENERIC` 문서(PDF·DOCX) 평문 추출 (#398 · 기획안 §5.4).
+    //
+    // **`tika-parsers-standard-package`가 아니다.** 우리가 받는 것은 `.pdf`·`.docx` 둘뿐이고
+    // (확장자가 유형을 정한다 — `RagDocumentType.fromFileName`), 표준 패키지는 그 밖에 이미지·
+    // 폰트·CAD·메일 아카이브까지 30여 개 파서를 함께 싣는다. 실측(2026-09-14 · `./gradlew`
+    // 의존성 해석)으로 **jar 74개 50.06MB → 40개 46.47MB**다. 용량이 크게 줄지 않는 것은
+    // 무게의 절반이 DOCX 지원 자체(poi-ooxml-full 13.6MB)와 암호화 PDF(bouncycastle 9.6MB)라
+    // 모듈 선택으로는 건드릴 수 없기 때문이다 — **고른 이유는 용량이 아니라 파서 수**이며,
+    // 코퍼스에 올라오는 것은 외부에서 받아 온 파일이라 실행되는 파서가 적을수록 좋다.
+    //
+    // 더 줄이는 길(poi-ooxml-full → poi-ooxml-lite · jackcess·libpst 제외)은 34.86MB까지
+    // 가지만 택하지 않았다 — lite는 XmlBeans 스키마 클래스를 골라 담은 것이라 흔치 않은 모양의
+    // `.docx` 하나에서 `NoClassDefFoundError`가 나고, 그 파일은 **운영진이 올린 실제 규정 문서**다.
+    // 11MB를 아끼자고 «어떤 파일은 파싱이 죽는다»를 들이지 않는다.
+    //
+    // 버전을 명시하는 것은 어느 BOM도 Tika를 관리하지 않기 때문이다(Spring AI의 tika 리더는
+    // 이 레포가 쓰지 않는다). PDFBox 3 · POI 5.5가 여기 딸려 온다.
+    implementation 'org.apache.tika:tika-core:3.3.1'
+    implementation 'org.apache.tika:tika-parser-pdf-module:3.3.1'
+    implementation 'org.apache.tika:tika-parser-microsoft-module:3.3.1'
+
     // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
     // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
     implementation 'org.apache.commons:commons-csv:1.12.0'

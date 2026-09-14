@@ -173,7 +173,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
-| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커. **업로드·색인·질의는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커. **업로드·색인·질의는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사
@@ -254,11 +254,12 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 ## 규정 도우미 (RAG) — Gemini 배선 (#395 · #396 · Epic ssccops#321)
 
 **도메인 규칙의 정본은 [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md)다** —
-판본 테이블·두 축 상태·청크 저장소 포트·기능 플래그·`V10` 스키마가 거기 있다. 이 절은 **모델
-쪽 배선**, 즉 «Gemini를 어떻게 붙였고 무엇을 실측했는가»만 남긴다.
+판본 테이블·두 축 상태·청크 저장소 포트·기능 플래그·`V10` 스키마·두 갈래 파싱이 거기 있다. 이 절은
+**무거운 의존성을 어떻게 골랐고 무엇을 실측했는가**만 남긴다 — 모델 쪽 배선(Gemini)과 Tika다.
 
-아직 **스키마·배선(#396)과 구조화 파서(#397)뿐이다.** 업로드(#399)·일반 문서 추출기(#398)·
-색인 워커(#400)·질의(#403)는 없으며, 기능 플래그 `ssccops.assistant.enabled`는 기본이 **꺼짐**이다.
+아직 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398)까지다.**
+업로드(#399)·색인 워커(#400)·질의(#403)는 없으며, 기능 플래그 `ssccops.assistant.enabled`는
+기본이 **꺼짐**이다.
 
 - **스타터 둘** — `spring-ai-starter-model-google-genai`(채팅) · `…-google-genai-embedding`.
   **BOM 줄은 늘지 않았다**(MCP가 이미 쓰는 `spring-ai-bom:1.1.8`). **2.0.x로 올리지 말 것** —
@@ -344,6 +345,31 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   것은 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 되기 때문이다.
   **`gemini-embedding-001`의 입력 상한은 2,048 토큰**이라 조 단위 청크가 긴 조에서 닿는다
   (개정안 제7조가 2,136자다) — 넘으면 오류가 아니라 조용히 잘려 조문 뒷부분이 검색되지 않는다.
+### Tika — 표준 패키지가 아니라 모듈 셋 (#398)
+
+`tika-core` + `tika-parser-pdf-module` + `tika-parser-microsoft-module` 셋뿐이다. **버전을 명시한다**
+(3.3.1) — 어느 BOM도 Tika를 관리하지 않는다. PDFBox 3 · POI 5.5가 딸려 온다.
+
+| 2026-09-14 실측 | jar | 용량 | `app.jar` |
+|---|---|---|---|
+| `tika-parsers-standard-package` | 74 | 50.06 MB | — |
+| **모듈 셋 (택한 것)** | **40** | **46.47 MB** | 109.64 → **155.51 MB** |
+| 모듈 셋 + `poi-ooxml-lite`·jackcess·libpst 제외 | 33 | 34.86 MB | — |
+
+**용량이 크게 줄지 않는다** — 무게의 절반이 DOCX 지원 자체(`poi-ooxml-full` 13.6MB)와 암호화 PDF
+(bouncycastle 9.6MB)라 모듈 선택으로 건드릴 수 없다. **그래도 고른 이유는 용량이 아니라 파서 수**다:
+코퍼스에 올라오는 것은 외부에서 받아 온 파일이라 실행될 수 있는 파서가 적을수록 좋고, 표준 패키지는
+이미지·폰트·CAD·메일 아카이브까지 30여 개를 함께 싣는다. 그 위에 **파서를 확장자로 고정**하므로
+(`AutoDetectParser`가 아니다) 실제로 도는 것은 둘이다.
+
+**셋째 줄까지 가지 않은 것은 `poi-ooxml-lite`가 XmlBeans 스키마를 골라 담은 것이기 때문**이다 —
+흔치 않은 모양의 `.docx` 하나에서 `NoClassDefFoundError`가 나는데 그 파일은 운영진이 올린 실제 규정
+문서다. 11MB를 아끼자고 «어떤 파일은 파싱이 죽는다»를 들이지 않는다.
+
+**부팅 시간은 그대로다**(같은 조건에서 세 번 띄워 7.1s/1.36s/1.21s — 측정 전과 같다). 스프링이 이
+jar들을 스캔하지 않고 우리가 Tika의 `ServiceLoader`(= `AutoDetectParser`)를 부르지 않기 때문이며,
+**자동 감지로 바꾸면 이 값이 달라진다.**
+
 - **아직 실측하지 않은 것 하나** — 무료 티어의 RPM·TPM·RPD다. **공개 문서에 그 수치가 없다**:
   공식 rate-limits 문서는 «Rate limits depend on a variety of factors (such as your usage tier)
   and can be viewed in Google AI Studio»라고만 하고 모델별 Free Tier 표를 싣지 않는다(2026-09-13

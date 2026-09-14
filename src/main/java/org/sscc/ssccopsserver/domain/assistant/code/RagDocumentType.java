@@ -10,7 +10,8 @@ package org.sscc.ssccopsserver.domain.assistant.code;
  *
  * **요청이 유형을 신고하지 않는다 — 확장자가 정한다**(`.md` → STRUCTURED · `.pdf`·`.docx` →
  * GENERIC). 행사 이미지가 `contentType`을 받지 않기로 한 것과 같은 판단이며(#210), 판정에 쓰는
- * 값이 하나뿐이면 어긋날 수 없다. 그 매핑은 추출기가 함께 오는 #398이 갖는다.
+ * 값이 하나뿐이면 어긋날 수 없다. **그 표는 `RagDocumentFormat` 한 곳이다**(#398) — 추출기가
+ * «어느 파서로 여는가»를 같은 표에 묻기 때문에 유형 쪽에 얹으면 확장자 표가 두 벌이 된다.
  */
 public enum RagDocumentType {
 

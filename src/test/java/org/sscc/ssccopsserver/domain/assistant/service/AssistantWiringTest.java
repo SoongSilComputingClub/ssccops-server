@@ -56,6 +56,20 @@ class AssistantWiringTest {
         assertThat(assistantFeature.isEnabled()).isFalse();
     }
 
+    /*
+     * **색인 워커의 자동 실행이 test 프로필에서 꺼져 있다** (#400 · `application-test.yaml`).
+     *
+     * 켜져 있으면 이 컨텍스트가 뜨는 순간 폴링 스레드가 공용 `testdb`의 `PENDING` 행을 집고
+     * 스텁 저장소에 청크를 넣는다 — 상태가 테스트 사이로 새어 나가는 자리이며, 상태 전이는
+     * `RagIndexingWorkerTest`가 워커 메서드를 직접 불러 검증하므로 잃는 것이 없다.
+     */
+    @Test
+    void automaticIndexingIsOffInTests() {
+        assertThat(context.getBeanNamesForType(RagIndexingScheduler.class))
+                .as("ssccops.assistant.indexing.auto=false면 스케줄러 빈 자체가 서지 않는다")
+                .isEmpty();
+    }
+
     /* 포트 자리에 스텁이 들어간다 — 이것이 실제 PostgreSQL 없이 도우미를 검증하는 방법이다 */
     @Test
     void theStubFillsThePort() {

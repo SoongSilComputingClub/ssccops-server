@@ -66,4 +66,44 @@ public interface RagDocumentRepository extends JpaRepository<RagDocumentEntity, 
      * 밀린다.
      */
     List<RagDocumentEntity> findAllByIndexStatusOrderByIdAsc(RagIndexStatus indexStatus);
+
+    /**
+     * 색인 워커가 집을 후보와 기동 복구가 되돌릴 후보 — <b>식별자만</b> (#400).
+     *
+     * <p>엔티티가 아니라 식별자인 것은 이 조회가 <b>잠그지 않기 때문</b>이다. 워커는 여기서 받은 식별자를 하나씩 {@link #findByIdForUpdate}로
+     * 다시 읽어 상태를 확인한 뒤 전이한다 — 최초 가입자 부트스트랩(#71)의 «잠그고 다시 센다»와 같은 두 단계다. 엔티티를 미리 들고 다니면 잠금 대기가 풀린 뒤에도
+     * 1차 캐시의 옛 상태를 보게 되어 그 재확인이 무의미해진다.
+     *
+     * <p>정렬이 식별자 오름차순인 것은 <b>먼저 올린 문서가 먼저 색인된다</b>를 뜻한다 — 업로드 순서 말고 줄을 세울 근거가 없고, 무작위면 밀린 문서가 영영
+     * 밀린다.
+     */
+    @Query("select d.id from RagDocumentEntity d where d.indexStatus = :indexStatus order by d.id")
+    List<Long> findIdsByIndexStatus(@Param("indexStatus") RagIndexStatus indexStatus);
+
+    /**
+     * 그 판본을 <b>잠그고</b> 읽는다 — 색인 워커가 상태를 전이하기 직전에 부른다 (#400).
+     *
+     * <p>잠금이 «한 판본을 두 번 색인하지 않는다»의 자리다. 후보 조회(위)는 잠그지 않으므로 그 사이에 다른 경로가 같은 행을 집었거나(다중 인스턴스) 사람이 상태를
+     * 바꿨을 수 있고, 그래서 <b>여기서 받은 엔티티의 상태를 다시 본 뒤에만</b> 전이한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from RagDocumentEntity d where d.id = :id")
+    Optional<RagDocumentEntity> findByIdForUpdate(@Param("id") Long id);
+
+    /**
+     * <b>활성 청크 총량</b> — 색인이 끝났고 옛 판본이 아닌 문서들의 {@code chunk_cnt} 합 (#400 · 기획안 §8.2).
+     *
+     * <p>상한(3,000)을 판정하는 재료이며 «활성»의 정의가 여기 한 곳에 있다. {@code SUPERSEDED}와 삭제분을 세지 않는 것은 그때 청크가 실제로
+     * 사라지기 때문이고(§5.6 · §12.4), 그래서 <b>3,000에 닿았다는 것은 실제로 문서가 늘었다는 뜻</b>이다. 지금 색인 중인 판본은 {@code
+     * INDEXING}이라 자기 자신을 세지 않는다 — 재색인이 옛 청크 수를 이중으로 세지 않는 것이 그 덕이다.
+     *
+     * <p>행이 없으면 {@code sum}이 null이라 {@code Optional.empty()}다({@link #findMaxVersion}와 같은 모양).
+     */
+    @Query(
+            "select sum(d.chunkCount) from RagDocumentEntity d"
+                    + " where d.indexStatus ="
+                    + " org.sscc.ssccopsserver.domain.assistant.code.RagIndexStatus.INDEXED"
+                    + " and d.applyStatus <>"
+                    + " org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus.SUPERSEDED")
+    Optional<Long> sumActiveChunkCount();
 }

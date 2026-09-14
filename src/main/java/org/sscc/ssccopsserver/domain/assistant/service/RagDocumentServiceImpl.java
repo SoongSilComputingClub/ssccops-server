@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.assistant.service;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -166,20 +165,12 @@ public class RagDocumentServiceImpl implements RagDocumentService {
      */
     private void parse(RagDocumentFormat format, byte[] content, String fileName) {
         if (format.getDocumentType() == RagDocumentType.STRUCTURED) {
-            regulationParser.parse(decodeMarkdown(content));
+            // 바이트를 그대로 넘긴다 — UTF-8 디코딩과 BOM 제거는 파서의 계약이고(#400), 여기서
+            // 한 번 더 하면 검증과 색인이 같은 파일을 다르게 읽을 자리가 생긴다
+            regulationParser.parse(content);
             return;
         }
         genericTextExtractor.extract(content, fileName);
-    }
-
-    /*
-     * `.md`는 UTF-8로 읽는다. **BOM을 걷어내는 것은 첫 줄이 장 제목이기 때문이다** — 남겨 두면
-     * `﻿## 제1장 …`이 계약에 없는 제목 모양으로 읽혀, 운영진이 눈으로는 아무 문제를 찾을 수
-     * 없는 400을 받는다(윈도우 메모장이 붙인다).
-     */
-    private static String decodeMarkdown(byte[] content) {
-        String text = new String(content, StandardCharsets.UTF_8);
-        return text.startsWith("﻿") ? text.substring(1) : text;
     }
 
     /*

@@ -39,6 +39,19 @@ public enum AssistantErrorCode implements ErrorCode {
     ASSISTANT_UNAVAILABLE(
             HttpStatus.SERVICE_UNAVAILABLE, "ASSISTANT_UNAVAILABLE", "규정 도우미를 사용할 수 없습니다."),
 
+    /*
+     * 400 — 파일이 계약을 어겨 파싱할 수 없다 (#397 · 기획안 §5.3).
+     *
+     * **사유마다 코드를 만들지 않는다.** 조가 하나도 없는지 · 장 없이 조가 시작하는지 ·
+     * 조번호가 겹치는지는 «몇째 줄이 왜 걸렸는가»까지 담아야 쓸모가 있는데 그것은 코드가 아니라
+     * 값이고, 코드를 늘려도 화면은 그 전부에 같은 안내(«파일을 고쳐 다시 올리세요»)를 반복한다 —
+     * 그래서 사유는 `GeneralException.detail`에 싣는다(#150이 기획안 이관에서 정한 방식).
+     *
+     * `GENERIC` 쪽에서 텍스트가 한 글자도 추출되지 않은 경우(스캔 PDF)도 같은 코드다(#398).
+     */
+    RAG_DOCUMENT_PARSE_FAILED(
+            HttpStatus.BAD_REQUEST, "RAG_DOCUMENT_PARSE_FAILED", "문서를 읽을 수 없습니다."),
+
     /** 400 — 색인 상태 전이표(`RagIndexStatus.canTransitionTo`)를 어겼다 */
     INVALID_RAG_INDEX_STATUS_TRANSITION(
             HttpStatus.BAD_REQUEST, "INVALID_RAG_INDEX_STATUS_TRANSITION", "색인 상태를 그렇게 바꿀 수 없습니다."),

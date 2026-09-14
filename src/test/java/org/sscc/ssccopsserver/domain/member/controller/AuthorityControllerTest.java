@@ -104,6 +104,10 @@ class AuthorityControllerTest {
      * SUPER의 또 다른 자식 SUB_WORK_TYPE_MANAGE(#101)는 일부러 EXECUTIVE 밑이 아니다 —
      * 회장·부회장만 이 권한을 직접 부여받고 총무·국장은 EXECUTIVE·OPERATOR를 통해서도 닿지
      * 못해야 하므로, 자동 상속되는 자리(EXECUTIVE의 자식)에 둘 수 없다.
+     *
+     * RAG_DOCUMENT_MANAGE(#402 · V11)가 SUPER 직속인 것도 같은 이유다 — 부여는 회장·부회장·
+     * 총무로 시작하지만, EXECUTIVE의 자식으로 두면 거기서 한 역할만 빼는 일이 화면 조작이
+     * 아니라 마이그레이션이 된다.
      */
     @Test
     void returnsSeededPermissionTreeAsNestedChildren() throws Exception {
@@ -114,7 +118,7 @@ class AuthorityControllerTest {
                 .andExpect(jsonPath("$.data[0].authrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].upAuthrtCd").doesNotExist())
                 .andExpect(jsonPath("$.data[0].sysYn").value(true))
-                .andExpect(jsonPath("$.data[0].children", hasSize(3)))
+                .andExpect(jsonPath("$.data[0].children", hasSize(4)))
                 .andExpect(jsonPath("$.data[0].children[0].authrtCd").value("EXECUTIVE"))
                 .andExpect(jsonPath("$.data[0].children[0].authrtNm").value("임원"))
                 .andExpect(jsonPath("$.data[0].children[0].upAuthrtCd").value("SUPER"))
@@ -124,6 +128,10 @@ class AuthorityControllerTest {
                 .andExpect(jsonPath("$.data[0].children[2].authrtCd").value("APPROVAL"))
                 .andExpect(jsonPath("$.data[0].children[2].sysYn").value(false))
                 .andExpect(jsonPath("$.data[0].children[2].children", hasSize(5)))
+                // #402: 규정 도우미 코퍼스 관리. 코드가 가리키는 권한이라 sys_yn = true다
+                .andExpect(jsonPath("$.data[0].children[3].authrtCd").value("RAG_DOCUMENT_MANAGE"))
+                .andExpect(jsonPath("$.data[0].children[3].upAuthrtCd").value("SUPER"))
+                .andExpect(jsonPath("$.data[0].children[3].sysYn").value(true))
                 .andExpect(jsonPath("$.data[0].children[0].children", hasSize(4)))
                 // 형제 순서는 indct_seqno다
                 .andExpect(jsonPath("$.data[0].children[0].children[0].authrtCd").value("OPERATOR"))

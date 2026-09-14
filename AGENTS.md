@@ -68,7 +68,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 이 이슈가 막으려는 것(마이그레이션이 dev 배포에서 처음 검증되는 것)은 그 테스트가 막는다.
 **로컬에서 `./gradlew test`를 돌리려면 Docker가 필요하다** — 그 한 클래스 때문이다.
 
-### 시드는 마이그레이션 파일 한 벌이다
+### 시드는 마이그레이션 파일 한 벌이다 — 늘면 `test`의 목록도 함께 는다
 
 옛 `data.sql`은 **삭제됐고** `V3__seed_reference_data.sql`이 그것을 그대로 옮겨 담았다
 (`spring.sql.init`도 함께 걷어냈다 — 두 벌이 동시에 도는 상태를 만들지 않는다).
@@ -76,6 +76,11 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - `dev`·`prod`·`local`: Flyway가 넣는다.
 - `test`: Flyway가 꺼져 있으므로 `spring.sql.init.data-locations`가 **같은 파일을** 가리킨다.
   사본을 테스트 리소스에 두지 않은 것은 시드가 두 벌이 되어 갈리기 때문이다.
+
+**시드 마이그레이션이 둘 이상이면 `data-locations`와 `SeedScript.LOCATIONS`에 같은 목록·순서로
+적는다**(#402의 `V11`). 빠뜨리면 그 행이 `test` DB에만 없어, 새 권한을 요구하는 엔드포인트의
+테스트가 «`data.sql`이 넣어야 할 권한이 없다»(`AuthorityFixture`)로 죽는다 — dev·prod는 Flyway가
+넣으므로 멀쩡하다.
 
 `WHERE NOT EXISTS` 멱등성은 그대로다. 버전 마이그레이션이라 한 번만 돌지만 **baseline이 이미
 시드된 prod 덤프라 이 파일이 처음 도는 DB에도 행이 이미 있다** — 가드가 없으면 중복 키로 깨진다.
@@ -101,6 +106,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V8__add_event_del_dt.sql` | `event.del_dt`. 행사 소프트 삭제 표시 컬럼이며, `uk_event_form`을 살아 있는 행사끼리만 거는 부분 유니크 인덱스로 바꾼다 (#347) |
 | `V9__cascade_member_own_data.sql` | 회원 본인 데이터 FK 9개(+ 딸린 3개)에 `ON DELETE CASCADE`. 임시 회원 하드 삭제의 경계이며 행위자 참조 20개는 손대지 않는다 (#361 · ADR-0021) |
 | `V10__create_assistant_tables.sql` | `vector` 확장 · `vector_store`(Spring AI가 이름을 정한다) · `rag_doc`. 규정 도우미(RAG)의 스키마이며 **`FlywayMigrationValidateTest`의 Testcontainers 이미지가 `pgvector/pgvector:pg17`로 바뀐 이유**다 (#396 · ADR-0028·0029) |
+| `V11__seed_rag_document_manage_authority.sql` | `RAG_DOCUMENT_MANAGE` 권한 한 줄(`SUPER` 직속 · `sys_yn`)과 회장·부회장·총무 부여. **시드를 더할 때도 새 파일**이라는 규칙이 처음 쓰인 자리이며, `test`는 Flyway가 꺼져 있어 `data-locations`가 V3와 함께 이 파일도 가리킨다 (#402) |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**

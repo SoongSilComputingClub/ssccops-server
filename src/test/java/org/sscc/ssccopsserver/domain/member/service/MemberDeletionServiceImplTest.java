@@ -128,6 +128,6 @@ class MemberDeletionServiceImplTest {
         assertThat(MemberReferenceConstraints.BLOCKING)
                 .extracting(MemberReferenceConstraints.Reference::label)
                 .doesNotHaveDuplicates();
-        assertThat(MemberReferenceConstraints.BLOCKING).hasSize(21);
+        assertThat(MemberReferenceConstraints.BLOCKING).hasSize(22);
     }
 }

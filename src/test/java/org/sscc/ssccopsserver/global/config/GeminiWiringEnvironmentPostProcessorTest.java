@@ -14,6 +14,7 @@ import java.util.Map;
 import org.apache.commons.logging.impl.NoOpLog;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.model.google.genai.autoconfigure.embedding.GoogleGenAiEmbeddingConnectionAutoConfiguration;
+import org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration;
 import org.springframework.boot.env.EnvironmentPostProcessor;
 import org.springframework.boot.logging.DeferredLogFactory;
 import org.springframework.core.env.MapPropertySource;
@@ -28,9 +29,10 @@ import org.springframework.core.io.support.SpringFactoriesLoader.ArgumentResolve
  * 언뜻 안전해 보이지만, 실제로 죽는 곳은 규정 도우미와 아무 상관 없는 환경들이다 — 키를
  * 발급받지 않은 기여자 로컬 · 테스트 · 아직 키를 넣지 않은 dev 배포(머지가 곧 dev 배포다).
  *
- * 스타터 자동 구성 셋 중 `GoogleGenAiEmbeddingConnectionAutoConfiguration` 하나는 조건이
- * 아예 없어 프로퍼티로 끌 수 없고, 제외 목록에 넣는 것이 유일한 방법이다. 그래서 이 테스트는
- * 「selector 두 개」가 아니라 **셋 다**를 본다.
+ * 자동 구성 넷 중 둘은 프로퍼티로 끌 수 없어 제외 목록에 넣는 것이 유일한 방법이다 —
+ * `GoogleGenAiEmbeddingConnectionAutoConfiguration`(조건이 아예 없다)과
+ * `PgVectorStoreAutoConfiguration`(#396 · EmbeddingModel 빈을 생성자로 요구하는데 그 조건을
+ * 보지 않는다). 그래서 이 테스트는 「selector 두 개」가 아니라 **넷 다**를 본다.
  */
 class GeminiWiringEnvironmentPostProcessorTest {
 
@@ -38,6 +40,9 @@ class GeminiWiringEnvironmentPostProcessorTest {
 
     private static final String CONNECTION_AUTO_CONFIGURATION =
             GoogleGenAiEmbeddingConnectionAutoConfiguration.class.getName();
+
+    private static final String PGVECTOR_AUTO_CONFIGURATION =
+            PgVectorStoreAutoConfiguration.class.getName();
 
     /* 키가 없는 환경 — 테스트·기여자 로컬·아직 키를 넣지 않은 배포가 전부 여기다 */
     @Test
@@ -50,7 +55,8 @@ class GeminiWiringEnvironmentPostProcessorTest {
         assertThat(environment.getProperty(CHAT_MODEL_SELECTOR)).isEqualTo("none");
         assertThat(environment.getProperty(EMBEDDING_MODEL_SELECTOR)).isEqualTo("none");
         assertThat(environment.getProperty(AUTOCONFIGURE_EXCLUDE))
-                .contains(CONNECTION_AUTO_CONFIGURATION);
+                .contains(CONNECTION_AUTO_CONFIGURATION)
+                .contains(PGVECTOR_AUTO_CONFIGURATION);
     }
 
     /* 키가 있으면 아무것도 건드리지 않는다 — 스타터가 설계대로 돈다 */
@@ -81,7 +87,8 @@ class GeminiWiringEnvironmentPostProcessorTest {
         assertThat(environment.getProperty(CHAT_MODEL_SELECTOR)).isNull();
         assertThat(environment.getProperty(EMBEDDING_MODEL_SELECTOR)).isEqualTo("none");
         assertThat(environment.getProperty(AUTOCONFIGURE_EXCLUDE))
-                .contains(CONNECTION_AUTO_CONFIGURATION);
+                .contains(CONNECTION_AUTO_CONFIGURATION)
+                .contains(PGVECTOR_AUTO_CONFIGURATION);
     }
 
     /*
@@ -101,7 +108,8 @@ class GeminiWiringEnvironmentPostProcessorTest {
 
         assertThat(environment.getProperty(AUTOCONFIGURE_EXCLUDE))
                 .contains("com.example.SomeoneElsesAutoConfiguration")
-                .contains(CONNECTION_AUTO_CONFIGURATION);
+                .contains(CONNECTION_AUTO_CONFIGURATION)
+                .contains(PGVECTOR_AUTO_CONFIGURATION);
     }
 
     /*

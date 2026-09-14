@@ -193,6 +193,19 @@ dependencies {
     implementation 'org.springframework.ai:spring-ai-starter-model-google-genai'
     implementation 'org.springframework.ai:spring-ai-starter-model-google-genai-embedding'
 
+    // pgvector 벡터 스토어 — 규정 도우미(RAG)의 청크 저장소 (#396 · ssccops#322 · ADR-0028).
+    //
+    // **스키마는 이 스타터가 만들지 않는다.** `spring.ai.vectorstore.pgvector.initialize-schema`가
+    // false이고 `vector_store` 테이블은 `V10__create_assistant_tables.sql`이 만든다 — dev·prod는
+    // `ddl-auto: validate`라 마이그레이션이 모르는 테이블이 생기면 «baseline + 마이그레이션이 곧 DB»
+    // 라는 전제가 깨진다(ssccops#213). 스타터가 쓰는 DDL을 그 파일에 옮겨 적었다.
+    //
+    // 자동 구성(PgVectorStoreAutoConfiguration)은 **EmbeddingModel 빈을 생성자로 요구한다.**
+    // 키가 없으면 그 빈이 없으므로 VectorStore 생성이 깨지고, 그러면 규정 도우미와 무관한
+    // 환경(테스트·키 없는 기여자 로컬·아직 키를 넣지 않은 배포)이 통째로 못 뜬다 —
+    // GeminiWiringEnvironmentPostProcessor가 임베딩 키가 없을 때 이 자동 구성도 함께 제외한다.
+    implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
+
     // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
     // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
     implementation 'org.apache.commons:commons-csv:1.12.0'

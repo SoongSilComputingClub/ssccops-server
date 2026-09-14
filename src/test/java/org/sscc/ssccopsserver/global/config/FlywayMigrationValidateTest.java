@@ -18,6 +18,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.sscc.ssccopsserver.domain.member.repository.MemberReferenceConstraints;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
 /*
  * 마이그레이션 전체를 **실제 PostgreSQL 빈 DB**에 적용하고, 그 결과 스키마를 엔티티가
@@ -53,12 +54,21 @@ class FlywayMigrationValidateTest {
     /*
      * 이미지 태그를 고정한다. `postgres:latest`로 두면 어제 통과한 것이 오늘 깨질 수 있고,
      * 그 실패는 우리 변경과 무관하다 — 브랜치 자동 생성이 `libretranslate:latest`로 겪은 일과
-     * 같은 종류다(ssccops#208). 운영은 Supabase(PostgreSQL 15 계열)이며 이 스키마는
-     * 두 메이저에서 같은 뜻이라 16으로 고정한다.
+     * 같은 종류다(ssccops#208).
+     *
+     * **`postgres:16-alpine`이 아니라 `pgvector/pgvector:pg17`이다** (#396). V10이
+     * `CREATE EXTENSION IF NOT EXISTS vector`를 하는데 기본 이미지에는 그 확장이 없어 거기서
+     * 멈춘다. pg17로 오른 것은 이 이미지가 내는 태그를 따른 것이며, 운영은 Supabase이고 이
+     * 스키마는 그 사이 메이저에서 같은 뜻이다.
+     *
+     * `asCompatibleSubstituteFor`가 필요한 것은 Testcontainers가 PostgreSQLContainer에 대해
+     * 이미지 이름이 `postgres`인지를 확인하기 때문이다 — 이 이미지는 그 위에 확장만 얹은 것이다.
      */
     @SuppressWarnings("resource") // 컨테이너 수명은 Testcontainers의 ryuk이 관리한다
     private static final PostgreSQLContainer<?> POSTGRES =
-            new PostgreSQLContainer<>("postgres:16-alpine")
+            new PostgreSQLContainer<>(
+                            DockerImageName.parse("pgvector/pgvector:pg17")
+                                    .asCompatibleSubstituteFor("postgres"))
                     .withDatabaseName("ssccops_migration_test")
                     .withUsername("test")
                     .withPassword("test");
@@ -285,5 +295,90 @@ class FlywayMigrationValidateTest {
                                 Integer.class))
                 .as("승인 필요 유형에 결재 권한이 비어 있으면 아무도 승인할 수 없다 (ssccops#209)")
                 .isZero();
+    }
+
+    /*
+     * V10의 벡터 저장소가 Spring AI가 기대하는 모양인지 본다 (#396 · ADR-0028).
+     *
+     * **스키마를 Flyway가 만들기로 한 대가가 이 테스트다.** 스타터의 자동 생성을 껐으므로
+     * (`initialize-schema: false`) 컬럼 이름이 하나만 어긋나도 프레임워크가 찾지 못하는데, 그
+     * 실패는 부팅이 아니라 첫 적재에서 나온다. 차원(768)은 임베딩 모델이 내는 길이와 같아야 하며
+     * 3072이면 pgvector 인덱스 상한 2,000을 넘어 **재적재 없이는 인덱스를 못 건다.**
+     *
+     * H2에는 `vector` 타입이 없어 일반 테스트가 이 테이블을 아예 만들지 못한다 — 여기서만 본다.
+     */
+    @Test
+    void vectorStoreHasTheColumnsSpringAiExpects() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        Map<String, String> columns = new HashMap<>();
+        jdbc.query(
+                "SELECT column_name, data_type FROM information_schema.columns"
+                        + " WHERE table_schema = 'public' AND table_name = 'vector_store'",
+                rs -> {
+                    columns.put(rs.getString(1), rs.getString(2));
+                });
+
+        assertThat(columns)
+                .as("Spring AI가 이름으로 찾는 넷이다 — 하나라도 다르면 적재가 깨진다")
+                .containsOnlyKeys("id", "content", "metadata", "embedding");
+        assertThat(columns.get("id")).isEqualTo("uuid");
+        assertThat(columns.get("metadata"))
+                .as("필터가 ::jsonb로 훑으므로 json이면 행마다 캐스팅이 붙는다")
+                .isEqualTo("jsonb");
+
+        String embeddingType =
+                jdbc.queryForObject(
+                        "SELECT format_type(atttypid, atttypmod) FROM pg_attribute"
+                                + " WHERE attrelid = 'public.vector_store'::regclass"
+                                + " AND attname = 'embedding'",
+                        String.class);
+        assertThat(embeddingType)
+                .as("ssccops#322가 정한 768 — 바꾸면 되돌리기가 아니라 전량 재적재다")
+                .isEqualTo("vector(768)");
+
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'"
+                                        + " AND tablename = 'vector_store'"
+                                        + " AND indexdef ILIKE '%USING hnsw%'",
+                                Integer.class))
+                .as("인덱스를 만들지 않는 것이 결정이다 (ADR-0028) — 청크 3,000에 닿으면 다시 본다")
+                .isZero();
+    }
+
+    /*
+     * 시행 중인 판본이 문서당 하나라는 규칙이 **부분 유니크 인덱스**인지 본다 (#396 · ADR-0029).
+     *
+     * H2는 부분 인덱스를 지원하지 않아 일반 테스트가 이 규칙을 DB로는 확인할 수 없고, 엔티티에
+     * 조건 없는 UNIQUE를 달 수도 없다(달면 같은 문서의 판본이 둘째부터 아예 못 들어온다).
+     * 그래서 이 모양이 아니면 PostgreSQL에서 동시 요청을 막는 최종 방어선이 조용히 사라진다 —
+     * V8의 `uk_event_form`과 같은 자리다.
+     */
+    @Test
+    void onlyOneEffectiveRevisionPerDocumentIsAPartialUniqueIndex() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        String indexDef =
+                jdbc.queryForObject(
+                        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public'"
+                                + " AND tablename = 'rag_doc' AND indexname ="
+                                + " 'uk_rag_doc_effective'",
+                        String.class);
+        assertThat(indexDef)
+                .as("시행 중인 판본끼리만 거는 부분 유니크 인덱스여야 한다")
+                .contains("UNIQUE INDEX")
+                .contains("(doc_cd)")
+                .contains("EFFECTIVE");
+
+        // 판본 자체의 겹침은 조건 없는 UNIQUE다 — 두 규칙이 서로 다른 것을 막는다
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT count(*) FROM information_schema.table_constraints"
+                                        + " WHERE table_schema = 'public' AND table_name ="
+                                        + " 'rag_doc' AND constraint_name ="
+                                        + " 'uk_rag_doc_doc_cd_ver'",
+                                Integer.class))
+                .isEqualTo(1);
     }
 }

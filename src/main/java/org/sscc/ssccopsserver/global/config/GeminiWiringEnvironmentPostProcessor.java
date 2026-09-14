@@ -7,6 +7,7 @@ import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.springframework.ai.model.google.genai.autoconfigure.embedding.GoogleGenAiEmbeddingConnectionAutoConfiguration;
+import org.springframework.ai.vectorstore.pgvector.autoconfigure.PgVectorStoreAutoConfiguration;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -19,12 +20,12 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.util.StringUtils;
 
 /*
- * Gemini API 키가 없으면 Gemini 배선을 끈다 (#395).
+ * Gemini API 키가 없으면 규정 도우미(RAG) 배선을 끈다 (#395 · #396).
  *
  * ── 왜 코드가 필요한가 ─────────────────────────────────────────
  *
  * 두 스타터(google-genai · google-genai-embedding)의 자동 구성은 **키가 없으면 부팅을
- * 실패시킨다.** 그것도 프로퍼티로는 끌 수 없는 자리가 하나 있다:
+ * 실패시킨다.** 그것도 프로퍼티로는 끌 수 없는 자리가 둘 있다:
  *
  *   - `GoogleGenAiChatAutoConfiguration`      `spring.ai.model.chat` 조건이 붙어 있다
  *                                             (matchIfMissing=true → 기본으로 켜진다).
@@ -38,9 +39,15 @@ import org.springframework.util.StringUtils;
  *                                             흘러 Assert.hasText(projectId, "Google GenAI
  *                                             project-id must be set!") 에서 죽는다. 위 두
  *                                             프로퍼티를 `none` 으로 둬도 이 빈은 그대로 만들어진다.
+ *   - `PgVectorStoreAutoConfiguration` (#396)  **EmbeddingModel 빈을 생성자로 요구한다.** 키가
+ *                                             없으면 그 빈이 없으므로 VectorStore 생성이
+ *                                             NoSuchBeanDefinitionException 으로 깨진다. 조건은
+ *                                             `spring.ai.vectorstore.type` 하나뿐이라 임베딩이
+ *                                             꺼진 것을 알지 못한다 — 같은 사실에서 함께 끈다.
+ *                                             (덤으로 H2 테스트가 실제 PostgreSQL 없이 뜬다.)
  *
- * 그래서 이 셋을 **한 가지 사실**(키가 있는가)에서 함께 끈다. 프로퍼티 세 줄을 설정 파일에
- * 적어 두는 방법도 있지만 그러면 켤 때 세 줄을 함께 되돌려야 하고, 한 줄만 빠뜨린 상태가
+ * 그래서 이 넷을 **한 가지 사실**(키가 있는가)에서 함께 끈다. 프로퍼티 세 줄을 설정 파일에
+ * 적어 두는 방법도 있지만 그러면 켤 때 그 줄들을 함께 되돌려야 하고, 한 줄만 빠뜨린 상태가
  * 「키는 넣었는데 임베딩만 안 되는」 조용한 고장이 된다 — 같은 사실이 두 벌이 되면 한쪽만
  * 바뀐다는, 이 저장소가 반복해서 데인 자리다.
  *
@@ -81,6 +88,16 @@ public class GeminiWiringEnvironmentPostProcessor implements EnvironmentPostProc
 
     private static final String NONE = "none";
 
+    /*
+     * 임베딩 키가 없으면 함께 꺼야 하는 자동 구성. 둘 다 프로퍼티로는 끌 수 없다 — 앞의 것은
+     * 조건이 아예 없고, 뒤의 것(#396)은 `spring.ai.vectorstore.type`만 보므로 임베딩이 꺼진 것을
+     * 알지 못한 채 EmbeddingModel 을 요구한다.
+     */
+    private static final List<Class<?>> EMBEDDING_DEPENDENT_AUTO_CONFIGURATIONS =
+            List.of(
+                    GoogleGenAiEmbeddingConnectionAutoConfiguration.class,
+                    PgVectorStoreAutoConfiguration.class);
+
     private final Log log;
 
     public GeminiWiringEnvironmentPostProcessor(DeferredLogFactory logFactory) {
@@ -108,8 +125,8 @@ public class GeminiWiringEnvironmentPostProcessor implements EnvironmentPostProc
                 overrides.put(EMBEDDING_MODEL_SELECTOR, NONE);
             }
             /*
-             * 커넥션 자동 구성에는 조건이 없어 위의 selector 만으로는 꺼지지 않는다 — 제외
-             * 목록에 더하는 것이 유일한 방법이다. 이미 적힌 값이 있으면 덮어쓰지 않고 **합친다**.
+             * 커넥션·pgvector 자동 구성은 위의 selector 만으로 꺼지지 않는다 — 제외 목록에
+             * 더하는 것이 유일한 방법이다. 이미 적힌 값이 있으면 덮어쓰지 않고 **합친다**.
              */
             overrides.put(AUTOCONFIGURE_EXCLUDE, mergedExcludes(environment));
         }
@@ -132,7 +149,7 @@ public class GeminiWiringEnvironmentPostProcessor implements EnvironmentPostProc
     }
 
     /**
-     * 기존 {@code spring.autoconfigure.exclude} 에 커넥션 자동 구성을 더한 쉼표 목록.
+     * 기존 {@code spring.autoconfigure.exclude} 에 임베딩에 매인 자동 구성들을 더한 쉼표 목록.
      *
      * <p>목록 형태(`- a`)로 적혀 있으면 {@code getProperty} 로는 보이지 않으므로 {@link Binder} 로 읽는다. 우리 소스가 맨 앞이라
      * 여기서 돌려주는 값이 그대로 최종 목록이 된다 — 기존 값을 빠뜨리면 남이 제외해 둔 자동 구성이 되살아난다.
@@ -144,10 +161,11 @@ public class GeminiWiringEnvironmentPostProcessor implements EnvironmentPostProc
                                 .bind(AUTOCONFIGURE_EXCLUDE, Bindable.listOf(String.class))
                                 .orElseGet(List::of));
 
-        String connectionAutoConfiguration =
-                GoogleGenAiEmbeddingConnectionAutoConfiguration.class.getName();
-        if (!excludes.contains(connectionAutoConfiguration)) {
-            excludes.add(connectionAutoConfiguration);
+        for (Class<?> autoConfiguration : EMBEDDING_DEPENDENT_AUTO_CONFIGURATIONS) {
+            String name = autoConfiguration.getName();
+            if (!excludes.contains(name)) {
+                excludes.add(name);
+            }
         }
         return String.join(",", excludes);
     }

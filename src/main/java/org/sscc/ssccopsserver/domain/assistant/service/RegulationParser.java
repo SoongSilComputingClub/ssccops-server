@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.assistant.service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -71,6 +72,20 @@ public class RegulationParser {
 
     /** 오류 메시지에 원문 줄을 옮길 때의 상한 — 사유는 사람이 읽는 한 줄이지 파일 덤프가 아니다 */
     private static final int QUOTED_LINE_LIMIT = 40;
+
+    /**
+     * 올라온 파일의 바이트를 그대로 읽는다 — <b>계약의 대상이 문자열이 아니라 파일이기 때문</b>이다 (#400).
+     *
+     * <p>업로드(#399, 검증)와 색인 워커(#400, 적재)가 <b>같은 바이트에서 같은 트리를 얻어야</b> 하므로 디코딩을 부르는 쪽마다 두지 않는다. 한쪽만
+     * BOM을 걷어내면 같은 파일이 업로드는 통과하고 색인은 실패한다.
+     *
+     * <p><b>BOM을 걷어내는 것은 첫 줄이 장 제목이기 때문이다</b> — 남겨 두면 {@code ﻿## 제1장 …}이 계약에 없는 제목 모양으로 읽혀, 운영진이
+     * 눈으로는 아무 문제를 찾을 수 없는 400을 받는다(윈도우 메모장이 붙인다).
+     */
+    public RegulationDocument parse(byte[] content) {
+        String text = new String(content == null ? new byte[0] : content, StandardCharsets.UTF_8);
+        return parse(text.startsWith("﻿") ? text.substring(1) : text);
+    }
 
     public RegulationDocument parse(String markdown) {
         Cursor cursor = new Cursor();

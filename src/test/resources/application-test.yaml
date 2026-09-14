@@ -123,3 +123,16 @@ ssccops:
   member:
     hard-delete:
       enabled: true
+
+  # 색인 워커의 **자동 실행**을 끈다 (#400).
+  #
+  # 켜 두면 컨텍스트가 뜨자마자 RagIndexingScheduler 가 기동 복구를 돌리고 대기열을 폴링한다 —
+  # 공용 testdb 와 InMemoryRagChunkStore 를 여러 테스트가 나눠 쓰므로 그 순간 상태가 테스트
+  # 사이로 새어 나가고(남이 만든 PENDING 행이 남의 청크가 된다), 실패도 남의 스레드에서 난다.
+  #
+  # 이 값은 폴링·기동 복구만 끈다 — 상태 전이는 RagIndexingWorkerTest 가 워커 메서드를 직접
+  # 불러 검증하므로 잃는 것이 없다. 운영(local·dev·prod)에는 이 키를 두는 곳이 없어 기본값
+  # 그대로 켜져 있다(기능 플래그가 꺼져 있으면 워커의 두 메서드가 즉시 돌아온다).
+  assistant:
+    indexing:
+      auto: false

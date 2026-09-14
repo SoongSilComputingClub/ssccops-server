@@ -83,6 +83,22 @@ public enum AssistantErrorCode implements ErrorCode {
     RAG_DOCUMENT_PARSE_FAILED(
             HttpStatus.BAD_REQUEST, "RAG_DOCUMENT_PARSE_FAILED", "문서를 읽을 수 없습니다."),
 
+    /*
+     * 409 — 활성 청크 총량 상한(3,000)을 넘었다 (#400 · 기획안 §8.2).
+     *
+     * **지금 이 코드를 던지는 자리는 색인 워커 하나이고, 워커에는 돌려줄 응답이 없다** — 값은
+     * `indx_stts_cd = FAILED` + `fail_rsn_cn`으로 남고 화면은 목록에서 그것을 읽는다. 그래도
+     * `ErrorCode`로 두는 것은 **사유 문구를 지어내는 자리를 늘리지 않기 위해서**다: 코드와 문구가
+     * 한 곳에 있어야 나중에 이 한도가 동기 경로(적용 전환·재색인 요청)에서도 판정될 때 두 벌이
+     * 되지 않는다. HTTP 상태는 기획안의 오류 표가 정한 값 그대로다(§10).
+     *
+     * **한도를 코드가 거는 이유**는 업로드가 생기며 «코퍼스 크기가 고정»이라는 전제가 깨졌기
+     * 때문이다 — 코퍼스를 늘리는 일이 이제 화면 조작이고, 3,000은 Free 플랜의 디스크가 아니라
+     * 인덱스 없는 순차 스캔이 여전히 빠른 구간의 끝이다(ADR-0028).
+     */
+    RAG_DOCUMENT_LIMIT_EXCEEDED(
+            HttpStatus.CONFLICT, "RAG_DOCUMENT_LIMIT_EXCEEDED", "코퍼스가 담을 수 있는 청크 수를 넘었습니다."),
+
     /** 400 — 색인 상태 전이표(`RagIndexStatus.canTransitionTo`)를 어겼다 */
     INVALID_RAG_INDEX_STATUS_TRANSITION(
             HttpStatus.BAD_REQUEST, "INVALID_RAG_INDEX_STATUS_TRANSITION", "색인 상태를 그렇게 바꿀 수 없습니다."),

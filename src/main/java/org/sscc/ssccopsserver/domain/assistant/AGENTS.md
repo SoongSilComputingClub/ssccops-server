@@ -2,8 +2,8 @@
 
 이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
 
-**스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399)까지
-왔다** (Epic ssccops#321). 색인 워커(#400) · 목록·적용 전환(#401) · 질의(#403)는 아직 없다 —
+**스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399) ·
+색인 워커(#400)까지 왔다** (Epic ssccops#321). 목록·적용 전환(#401) · 질의(#403)는 아직 없다 —
 그 이슈들이 여기 규칙 위에 얹힌다. 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
@@ -15,7 +15,8 @@
 - 서비스: 포트 `RagChunkStore`와 그 구현 `PgVectorRagChunkStore` · 기능 플래그 `AssistantFeature` ·
   구조화 파서 `RegulationParser`와 청커 `RegulationChunker` · 평문 추출기 `GenericTextExtractor`와
   그 SAX 핸들러 `PageContentHandler` · 두 갈래가 합류하는 `DocumentChunker` · 메타 key 상수 `RagChunkMetadata` ·
-  업로드 `RagDocumentService`/`Impl`.
+  업로드 `RagDocumentService`/`Impl` · 색인 워커 `RagIndexingWorker`와 그것을 돌리는
+  `RagIndexingScheduler`(#400).
 - 컨트롤러: `RagDocumentController`(`POST /v1/assistant/documents` 하나 · 클래스 레벨
   `@RequireAuthority(RAG_DOCUMENT_MANAGE)`). **질의 컨트롤러(#403)와 나뉜다** — 아래 «다른 도메인».
 - 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`) ·
@@ -144,6 +145,59 @@
 - **같은 `doc_cd`에 동시 업로드가 겹치면 둘째가 `uk_rag_doc_doc_cd_ver`에 걸려 500이고 아무것도
   남지 않는다.** 잠그지 않은 것은 첫 판본에 잠글 행이 없어 반쪽짜리 방어가 되고, 일 10회 한도
   아래에서 실제로 겹칠 일이 없어서다.
+
+## 색인 워커 — 상태 전이 · 잠금 · 부팅 복구 · 재색인 (#400 · 기획안 §12.4)
+
+`RagIndexingWorker`가 `PENDING` 행을 집어 **R2의 원본을 다시 읽고** 청킹·임베딩해
+`vector_store`에 넣는다. 돌리는 것은 `RagIndexingScheduler`다 — 둘로 나눈 것은 테스트가
+자동 실행을 끄고 워커 메서드를 직접 부르기 때문이다(아래 «테스트 함정»).
+
+**비동기가 된 이유는 1.2MB PDF 한 건이 184청크라서**이고, 옛 기획안이 동기를 고집한 근거
+(«적재 중» 상태에서 질의가 무엇을 보는지를 또 정해야 한다)에는 **두 축이 이미 답한다** —
+검색 조건이 `INDEXED && EFFECTIVE`라 «색인 중인 문서를 질의가 보는가»는 «보지 않는다»다.
+
+| | |
+|---|---|
+| **집는 방법** | 후보는 식별자만 훑고(`findIdsByIndexStatus`), 하나씩 `PESSIMISTIC_WRITE`로 **다시 읽어 그때도 `PENDING`인 것만** `INDEXING`으로 전이한다 — 최초 가입자 부트스트랩(#71)의 «잠그고 다시 센다»와 같은 두 단계 |
+| **트랜잭션이 셋이다** | «집기 → (긴 임베딩) → 적기». 잠금은 첫 트랜잭션 안에서 끝나고 그 뒤를 `INDEXING`이라는 상태가 이어받는다 — 색인 내내 커넥션을 쥐면 한 건이 Supabase Free의 커넥션 하나를 수십 초씩 붙든다(ssccops#324). 그래서 `@Transactional`이 아니라 `TransactionTemplate`이다(`ProposalFormSeeder`와 같은 이유) |
+| **동시 실행 1건** | 스케줄러가 **단일 스레드 실행기**다. 임베딩 쿼터와 DB 커넥션 둘 다를 좁히는 값이며, 색인이 밀려 «대기»로 줄을 서는 것이 정상 동작이다(§11) |
+| **부팅 복구** | `ApplicationRunner`가 `INDEXING`에 멈춘 행을 `PENDING`으로 되돌린 **뒤에** 폴링을 켠다. 순서가 반대면 복구가 방금 집은 문서를 되돌려 같은 문서를 두 번 색인한다 — `@Scheduled`를 쓰지 않은 이유의 절반이 이것이다(나머지 절반은 풀을 남과 나누지 않는 것) |
+| **재색인** | «`PENDING`으로 다시 줄을 세우기»뿐이다. 워커가 그 상태만 집으므로 전용 경로를 만들면 색인 로직이 두 벌이 된다 |
+| **옛 청크** | **새 청크를 넣기 직전에** 지운다. 순서를 뒤집으면 중간에 실패했을 때 같은 조가 두 번 검색된다 |
+| **실패** | `FAILED` + `fail_rsn_cn`. **자동 재시도가 없다** — 실패의 대부분이 쿼터·문서 자체이고 자동 재시도는 쿼터 소진을 가속한다 |
+| **폴링 주기** | `ssccops.assistant.indexing.poll-interval`(기본 `PT10S`). 화면의 폴링은 웹 책임이고 이 값과 무관하다 |
+
+- **`indx_bgng_dt`·`indx_end_dt`와 소요 시간 로그를 남긴다** — **실측 없이 배치 크기를 조정할 수
+  없다.** 진행률(%)은 두지 않는다: 배치 단위로 임베딩을 부르므로 세밀한 진행이 나오지 않고,
+  화면이 필요로 하는 것은 «끝났는가»뿐이라 배지 셋이 그 답이다.
+- **`chunk_cnt`는 `INDEXED` 시점에 채우고, 그 직전에 활성 청크 총량(3,000)을 본다**(§8.2 ·
+  `RagIndexingWorker.MAX_ACTIVE_CHUNKS`). 넘으면 `RAG_DOCUMENT_LIMIT_EXCEEDED`가 **응답이 아니라
+  `fail_rsn_cn`으로** 남는다 — 워커에는 돌려줄 응답이 없다. 세는 자리는
+  `sumActiveChunkCount()` 한 곳이고 «활성»은 `INDEXED && 적용 상태 ≠ SUPERSEDED`다: 옛 판본과
+  삭제분은 그때 청크가 실제로 사라지므로 **3,000에 닿았다는 것은 실제로 문서가 늘었다는 뜻이다.**
+  적재 **직전에** 보는 것은 넘길 요청이라면 임베딩 수백 번을 치르기 전에 끊는 편이 맞기
+  때문이다(업로드가 일 10회 한도를 파싱 앞에서 보는 것과 같은 순서).
+- **실패하면 옛 청크가 그대로 남는다.** 지우는 것은 적재 직전 한 자리뿐이므로, 내려받기·파싱·
+  상한에서 걸린 재색인은 직전에 성공한 색인의 청크를 건드리지 않는다 — 지우는 쪽이 «재색인을
+  눌렀더니 답이 사라졌다»가 된다. 그 판본의 행은 `FAILED`이고 `chunk_cnt`는 비어 있어
+  **상한 합계에서만 잠시 빠진다.**
+- **상태를 적는 세 자리가 전부 다시 잠그고 다시 본다.** 임베딩이 도는 동안 사람이 재색인을
+  눌렀거나(#401) 문서가 하드 삭제됐을 수 있고, 전이가 성립하지 않으면 적지 않는 것이 맞다 —
+  판정은 엔티티의 전이표(`RagIndexStatus.canTransitionTo`)가 갖는다.
+- **저장소 빈이 없으면(키 없음) 대기열을 그대로 둔다.** 문서를 `FAILED`로 내리지 않는 것은
+  그것이 문서의 잘못이 아니기 때문이다 — 키를 넣으면 `PENDING`에서 그대로 이어 돌고, 내려 두면
+  운영진이 전부 손으로 재색인해야 한다.
+- **원본은 `FileDownloader`(file 도메인 · #400)로 읽는다.** 재색인의 재료가 언제나 R2의 원본이라
+  업로드가 만든 파싱 결과를 넘겨받지 않는다(#399의 계약).
+- ⚠️ **다중 인스턴스에서는 성립하지 않는다.** `INDEXING`은 «누가 하고 있다»를 말할 뿐 «누가»를
+  말하지 않아, 새로 뜬 인스턴스의 **부팅 복구가 남의 진행 중 작업을 되돌린다**
+  (`MemberLinkAttemptLimiter`가 인메모리 카운터로 안고 있는 것과 같은 자리라 그 클래스처럼
+  주석에 적어 두었다). 늘리려면 행에 «누가 집었는가»와 «언제까지 유효한가»가 필요하고 그것은
+  컬럼 추가다 — 그때 이 절과 ssccops#324를 함께 다시 본다.
+- **기각한 길**: Redis·별도 큐(색인 큐는 테이블 한 컬럼이고 워커는 같은 프로세스에 있다 — 새
+  배포 단위를 세울 이유가 없다) · 색인 상태를 `PATCH`로 여는 것(사람이 정하는 값이 아니다 —
+  열면 «색인 완료»인데 청크가 없는 행이 생긴다) · 색인 실패를 오류 코드로 돌려주는 것(옛 판의
+  `RAG_INGEST_FAILED` 503은 동기 적재의 코드였고 비동기가 되며 사라졌다).
 
 ## 구조화 파싱 — 줄 단위 계약 다섯 (#397 · 기획안 §5.3)
 
@@ -278,7 +332,8 @@
 ## 다른 도메인과 닿는 곳
 
 - **나가는 방향만 있다** — `assistant → member`(등록자) · `assistant → file`(원본 파일 —
-  `FileUploader`로 올리고 `FileReferenceService`로 참조를 남긴다, #399).
+  `FileUploader`로 올리고 `FileReferenceService`로 참조를 남기며 #399, 색인 워커가
+  `FileDownloader`로 다시 읽는다 #400).
   반대로 다른 도메인이 이 도메인을 부를 일은 없어야 한다(`DomainCycleTest`가 본다).
 - `rag_doc.rgtr_mbr_id`는 **행위자 참조**라 `ON DELETE CASCADE`가 아니다(#361 · V9). 회원 하드
   삭제는 이 행이 있으면 409로 막히며, 그 문구와 미리보기의 `blockedBy`는
@@ -327,6 +382,15 @@
   진짜 빈은 R2 자격을 요구하고, 확인하려는 것은 업로드 알고리즘이 아니라 **무엇을 어느 키로
   올리는가**다. 거절을 보는 테스트가 `putObject`가 **불리지 않았음**과 저장소가 비어 있음을 함께
   보는 것이 「파싱이 PUT보다 먼저」를 지키는 자리다.
+- **색인 워커의 자동 실행을 `test` 프로필이 끈다** — `ssccops.assistant.indexing.auto=false`
+  (`application-test.yaml`). 켜 두면 컨텍스트가 뜨자마자 폴링 스레드가 공용 `testdb`의 `PENDING`
+  행을 집어 스텁 임베딩을 부르고, **상태가 테스트 사이로 새어 나간다**(스텁 저장소도 컨텍스트와
+  함께 산다). 그 값이 꺼져 있으면 `RagIndexingScheduler` 빈 자체가 서지 않으며
+  `AssistantWiringTest`가 그 사실을 본다. **상태 전이는 워커 메서드를 직접 불러 검증한다.**
+- **`RagIndexingWorkerTest`는 `@Transactional`을 걸지 않는다** — 워커가 트랜잭션 셋으로 나뉘어
+  있어 하나에 묶으면 그 구조가 통째로 사라진다. 그래서 전용 H2 DB에서 실제로 커밋한다
+  (`AuditPointsTest`·`MemberChangeRollbackTest`와 같은 이유). 기능 플래그가 워커를 닫는지는
+  컨텍스트 없이 `RagIndexingWorkerFeatureFlagTest`가 생성자로 본다.
 - 스텁(`InMemoryRagChunkStore`)은 **유사도를 흉내 내지 않는다.** 넣은 순서대로 `topK`개를
   돌려줄 뿐이며, 순위를 지어내면 «검색이 무엇을 골랐나»를 확인하는 테스트가 스텁의 규칙을
   검증하게 된다. 검색 품질은 골든셋(#405)이 실제 스택에서 본다.

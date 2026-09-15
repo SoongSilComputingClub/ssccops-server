@@ -87,8 +87,8 @@ public class AssistantMemoryStore implements ChatMemoryRepository {
     private final Cache<String, List<Message>> conversations;
 
     public AssistantMemoryStore(
-            @Value("${ssccops.assistant.memory.max-conversations:500}") long maxConversations,
-            @Value("${ssccops.assistant.memory.ttl:PT24H}") Duration ttl,
+            @Value("${ssccops.assistant.memory.max-conversations}") long maxConversations,
+            @Value("${ssccops.assistant.memory.ttl}") Duration ttl,
             Clock clock) {
 
         this.conversations =

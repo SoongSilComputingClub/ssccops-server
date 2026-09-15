@@ -26,9 +26,14 @@ import lombok.extern.slf4j.Slf4j;
  * ── 왜 부팅을 세우지 않는가 ───────────────────────────────────
  *
  * 값이 없는 것이 정상 상태다 — `AppPublicBaseUrl`(#216)이 «비어 있을 정당한 이유가 어느 환경에도
- * 없다»로 부팅을 세운 것과 갈리는 지점이다. 설정 파일(`application-dev.yaml`·`-prod.yaml`)에
- * 이 키를 두지 않는 것은 회원 하드 삭제(#361)와 같은 판단이며, 켜는 곳은 Coolify 대시보드의
+ * 없다»로 부팅을 세운 것과 갈리는 지점이다. **프로필 설정 파일(`application-dev.yaml`·`-prod.yaml`)에
+ * 이 키를 두지 않는 것**은 회원 하드 삭제(#361)와 같은 판단이며, 켜는 곳은 Coolify 대시보드의
  * 환경변수 `SSCCOPS_ASSISTANT_ENABLED=true` 하나다(#202 — 환경변수의 정본은 Coolify다).
+ *
+ * **베이스 `application.yaml`에는 이 키가 있다**(#439). 막는 것은 «어느 프로필에 `true`를
+ * 굳히는 것»이지 «키가 존재한다고 적는 것»이 아니다 — 거기 적힌 값은 `false`이므로 어느 환경도
+ * 켜지지 않고, 켜는 곳은 여전히 환경변수 하나다. 그 선언이 있어 **기본값이 한 벌**이고(아래
+ * `@Value`에 기본값이 없는 이유다) 손잡이 목록에 이 기능의 on/off도 함께 보인다.
  *
  * **Gemini 키가 없는 것과는 다른 상태다.** 그쪽은 켜 두고 설정이 덜 된 것이라 503
  * (`ASSISTANT_UNAVAILABLE`)이고, 이쪽은 «이 서버에 규정 도우미가 없다»라 404다.
@@ -39,7 +44,7 @@ public class AssistantFeature {
 
     private final boolean enabled;
 
-    public AssistantFeature(@Value("${ssccops.assistant.enabled:false}") boolean enabled) {
+    public AssistantFeature(@Value("${ssccops.assistant.enabled}") boolean enabled) {
         this.enabled = enabled;
         log.info("규정 도우미(RAG) 기능 플래그: {}", enabled ? "켜짐" : "꺼짐");
     }

@@ -265,6 +265,18 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 닫으면 워커가 계속 임베딩을 부르는데, 끄는 이유가 대개 쿼터다). 워커의 자동 실행에는 스위치가
 하나 더 있다: `ssccops.assistant.indexing.auto`(기본 켬 · `test` 프로필만 끈다).
 
+**손잡이 18개의 선언은 `application.yaml`의 `ssccops.assistant` 블록 한 곳이다** (#439). 기본값과
+«왜 그 값인가»가 거기 있고, 자바 쪽 `@Value`는 **기본값 없이 키만 참조한다** — 두 벌로 두면
+한쪽만 바뀌기 때문이며, 그래서 yaml에서 줄을 지우면 부팅이 `Could not resolve placeholder`로
+실패한다(`ddl-auto: validate`와 같은 판단이다). 예외는 유형별 임계값 둘
+(`similarity-threshold-structured`·`-generic`)로, 그쪽은 **«값 없음»이 «공통값을 쓴다»는 뜻**이라
+선언 자체가 의미를 바꾸므로 `@Value`가 `#{null}`을 그대로 들고 있다.
+
+**값을 바꾸는 곳은 여전히 환경변수다** — dev·prod는 Coolify, 로컬은 `.env`(`.env.example`이
+변수 이름 18개를 목록으로 들고 있고 설명은 갖지 않는다). 그리고 **프로필 파일
+(`application-dev.yaml`·`-prod.yaml`)에는 이 키들을 적지 않는다**: 베이스에 `enabled: false`를
+선언한 것은 자리를 만든 것이지 켠 것이 아니며, 막는 것은 «어느 프로필에 `true`를 굳히는 것»이다.
+
 - **스타터 둘** — `spring-ai-starter-model-google-genai`(채팅) · `…-google-genai-embedding`.
   **BOM 줄은 늘지 않았다**(MCP가 이미 쓰는 `spring-ai-bom:1.1.8`). **2.0.x로 올리지 말 것** —
   Boot 4 · Framework 7 · Java 21이 필요하다(MCP 절에서 못 박은 자리와 같다).
@@ -419,7 +431,7 @@ jar들을 스캔하지 않고 우리가 Tika의 `ServiceLoader`(= `AutoDetectPar
 - **배포는 저장소가 하지 않는다** (#202). Coolify가 GitHub App으로 이 저장소를 직접 보고 있어, `develop` 푸시는 dev로 `main` 푸시는 prod로 **자동 배포**된다. 이미지도 Coolify가 레포의 멀티스테이지 `Dockerfile`로 직접 빌드하므로 GHCR을 거치지 않는다.
   - 따라서 `.github/workflows/`에는 **CI만 있다** — 예전의 `deploy-dev.yml`·`deploy-prod.yml`과 배포 전용 `Dockerfile.deploy`는 걷어냈다.
   - **환경변수의 정본은 Coolify다.** 예전에는 배포마다 Actions가 Coolify API(`envs/bulk`)로 값을 덮어썼는데, 그 구조에서는 대시보드에서 직접 넣은 값(R2 설정 등)이 다음 배포에 날아갔다. 지금은 덮어쓰는 주체가 없으므로 Coolify 대시보드에서 관리한다.
-  - **기능 플래그도 거기서 켠다.** `SSCCOPS_MEMBER_HARD_DELETE_ENABLED=true`가 회원 하드 삭제(#361 · [ADR-0021](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0021-temporary-member-hard-delete.md))를 연다 — 기본값은 `false`이고 `application-dev.yaml`·`application-prod.yaml`에는 그 키가 **없다**(임시 기능이라 설정 파일에 굳히지 않는다). 중복 계정 정리가 끝나면 변수를 지우거나 `false`로 돌린다. 웹은 `NEXT_PUBLIC_MEMBER_HARD_DELETE=true`로 버튼을 그린다.
+  - **기능 플래그도 거기서 켠다.** `SSCCOPS_MEMBER_HARD_DELETE_ENABLED=true`가 회원 하드 삭제(#361 · [ADR-0021](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0021-temporary-member-hard-delete.md))를 연다 — 기본값은 `false`이고 `application-dev.yaml`·`application-prod.yaml`에는 그 키가 **없다**(임시 기능이라 프로필 설정 파일에 굳히지 않는다). 규정 도우미 손잡이가 #439에서 베이스 `application.yaml`로 옮겨 갈 때 **이 키는 따라가지 않았다** — 곧 지울 기능이라 지금 선언해 두면 그때 다시 지워야 한다. 중복 계정 정리가 끝나면 변수를 지우거나 `false`로 돌린다. 웹은 `NEXT_PUBLIC_MEMBER_HARD_DELETE=true`로 버튼을 그린다.
 
 ## 릴리스 — 버전은 태그와 코드 양쪽에 남긴다 (ssccops#229)
 

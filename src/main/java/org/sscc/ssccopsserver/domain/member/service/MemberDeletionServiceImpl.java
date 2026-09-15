@@ -27,8 +27,12 @@ import lombok.extern.slf4j.Slf4j;
  * ── 플래그 ─────────────────────────────────────────────────
  * `ssccops.member.hard-delete.enabled`, 기본 **false**. application-dev.yml·application-prod.yml에
  * 넣지 않는다 — 배포 설정(환경변수 SSCCOPS_MEMBER_HARD_DELETE_ENABLED, Coolify)으로 켠다. 값을
- * 설정 파일에 두면 «임시»가 코드에 굳고, 끄는 일이 배포가 된다. 생성자 주입인 것은 테스트가
+ * 프로필 설정 파일에 두면 «임시»가 코드에 굳고, 끄는 일이 배포가 된다. 생성자 주입인 것은 테스트가
  * 컨텍스트 없이 off 상태를 만들기 위해서다(ProposalFormSeeder와 같은 자리).
+ *
+ * 규정 도우미 손잡이가 #439에서 베이스 `application.yaml`로 옮겨 갈 때 **이 키는 따라가지
+ * 않았다** — 중복 계정 정리가 끝나면 지울 임시 기능이라, 지금 선언해 두면 그때 다시 지워야
+ * 한다. 그래서 여기 `@Value`에는 기본값이 남아 있다(그쪽은 yaml이 기본값을 갖는다).
  *
  * ── 삭제 순서 ──────────────────────────────────────────────
  * 플래그 → 본인 → 존재 → deleteById → flush. flush를 직접 부르는 것은 FK 위반이 **이 메서드

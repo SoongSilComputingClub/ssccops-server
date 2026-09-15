@@ -81,8 +81,8 @@ public class AssistantConfig {
     @ConditionalOnExpression("'${spring.ai.model.embedding.text:}' != 'none'")
     EmbeddingModel assistantQueryEmbeddingModel(
             GoogleGenAiTextEmbeddingModel embeddingModel,
-            @Value("${ssccops.assistant.query.embedding-cache-size:1000}") long maxSize,
-            @Value("${ssccops.assistant.query.embedding-cache-ttl:P7D}") Duration ttl,
+            @Value("${ssccops.assistant.query.embedding-cache-size}") long maxSize,
+            @Value("${ssccops.assistant.query.embedding-cache-ttl}") Duration ttl,
             Clock clock) {
 
         return new QueryEmbeddingCache(embeddingModel, maxSize, ttl, clock);
@@ -106,7 +106,7 @@ public class AssistantConfig {
     @Bean
     ChatMemory assistantChatMemory(
             AssistantMemoryStore memoryStore,
-            @Value("${ssccops.assistant.memory.max-turns:20}") int maxTurns) {
+            @Value("${ssccops.assistant.memory.max-turns}") int maxTurns) {
 
         return MessageWindowChatMemory.builder()
                 .chatMemoryRepository(memoryStore)

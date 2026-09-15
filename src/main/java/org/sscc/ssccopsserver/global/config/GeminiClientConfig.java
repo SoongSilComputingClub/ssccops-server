@@ -56,7 +56,7 @@ public class GeminiClientConfig {
     @ConditionalOnExpression("'${spring.ai.model.chat:}' != 'none'")
     Client googleGenAiClient(
             @Value("${spring.ai.google.genai.api-key:}") String apiKey,
-            @Value("${ssccops.assistant.gemini.call-timeout:PT20S}") Duration callTimeout) {
+            @Value("${ssccops.assistant.gemini.call-timeout}") Duration callTimeout) {
 
         log.info("Gemini 채팅 클라이언트 — 호출 상한 {}ms", callTimeout.toMillis());
         return Client.builder()

@@ -227,6 +227,18 @@ dependencies {
     implementation 'org.apache.tika:tika-parser-pdf-module:3.3.1'
     implementation 'org.apache.tika:tika-parser-microsoft-module:3.3.1'
 
+    // Caffeine — 규정 도우미의 레이트 리밋 카운터 (#404 · 기획안 §7 · §11).
+    //
+    // **버전을 적지 않는다** — Boot BOM 이 관리한다(스프링의 캐시 추상화가 쓰는 그 구현체다).
+    // spring-boot-starter-cache 를 함께 넣지 않은 것은 @Cacheable 을 쓰지 않기 때문이다.
+    // 카운터가 필요로 하는 것은 «창이 지나면 스스로 비는 맵» 하나이고, 그 둘은 별개다.
+    //
+    // 손으로 만든 ConcurrentHashMap(MemberLinkAttemptLimiter)과 갈리는 지점은 **비우는 코드**다 —
+    // 그쪽은 항목 수가 상한을 넘을 때만 만료분을 걷어내는 purgeIfCrowded 를 직접 들고 있는데,
+    // 그 자리가 여기서는 expireAfterWrite + maximumSize 두 줄이다. 대화 메모리(#406)가 같은
+    // 빌더를 쓰기로 돼 있어(기획안 §7) 그때 늘어나는 것은 캐시 하나뿐이다.
+    implementation 'com.github.ben-manes.caffeine:caffeine'
+
     // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
     // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
     implementation 'org.apache.commons:commons-csv:1.12.0'

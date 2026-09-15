@@ -1,13 +1,17 @@
 package org.sscc.ssccopsserver.domain.assistant.service;
 
+import static java.time.ZoneOffset.UTC;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -49,7 +53,9 @@ class AssistantServiceImplTest {
     private final RagDocumentRepository ragDocumentRepository = mock(RagDocumentRepository.class);
     private final RagChunkStore ragChunkStore = mock(RagChunkStore.class);
     private final RecordingChatModel chatModel = new RecordingChatModel();
-    private final MemberEntity member = mock(MemberEntity.class);
+
+    /** 한도가 세는 축이 회원 식별자라 목도 그 값을 들고 있어야 한다 (#404) */
+    private final MemberEntity member = member(7L);
 
     private final AssistantQueryPolicy policy =
             new AssistantQueryPolicy(8, 0.5, null, null, 1000, 200);
@@ -106,6 +112,7 @@ class AssistantServiceImplTest {
                 new AssistantServiceImpl(
                         new AssistantFeature(true),
                         new AssistantQueryPolicy(8, 0.3, null, 0.9, 1000, 200),
+                        limiter(5),
                         new AssistantSuggestions(),
                         new CitationVerifier(policy),
                         ragDocumentRepository,
@@ -254,6 +261,7 @@ class AssistantServiceImplTest {
                 new AssistantServiceImpl(
                         new AssistantFeature(true),
                         policy,
+                        limiter(5),
                         new AssistantSuggestions(),
                         new CitationVerifier(policy),
                         ragDocumentRepository,
@@ -287,6 +295,61 @@ class AssistantServiceImplTest {
         verify(ragDocumentRepository, never()).findSearchable();
     }
 
+    // ------------------------------------------------------------------ 레이트 리밋
+
+    /*
+     * **한도를 넘으면 429이고 아무것도 묻지 않는다** (#404 · §11).
+     *
+     * 세는 것이 «답한 질의»가 아니라 «받아들인 질의»라는 사실이 여기 드러난다 — 첫 질의는
+     * 코퍼스가 비어 거절로 끝났는데도 한도를 한 칸 썼다. 거절도 질문 임베딩을 부르고, 무료
+     * 쿼터는 그 호출 단위로 닳는다.
+     */
+    @Test
+    void refusesWithTooManyRequestsOnceTheMemberHasSpentTheMinuteQuota() {
+        AssistantServiceImpl limited = service(true, limiter(1));
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        assertThat(limited.query(ask("정회원 승격 조건은?"), member).answered()).isFalse();
+
+        assertThatThrownBy(() -> limited.query(ask("정회원 승격 조건은?"), member))
+                .isInstanceOf(GeneralException.class)
+                .hasMessageContaining("1분에 1번");
+
+        verify(ragDocumentRepository, times(1)).findSearchable();
+    }
+
+    /*
+     * **모델에 닿지 못하는 거절은 한도를 쓰지 않는다** — 그 앞의 셋(404 · 413 · 503)이 그렇다.
+     *
+     * 한도가 지키는 것은 쿼터이고, 질문이 너무 길어 되돌려보낸 요청은 쿼터를 한 톨도 쓰지
+     * 않았다. 순서를 뒤집으면 오타 한 번이 그 사람의 한 칸을 먹는다 — 여기서는 413 뒤에도
+     * 한 칸이 남아 있음을 실제 질의로 확인한다.
+     */
+    @Test
+    void doesNotSpendQuotaOnRequestsThatNeverReachTheModel() {
+        AssistantServiceImpl limited = service(true, limiter(1));
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        assertThatThrownBy(() -> limited.query(ask("가".repeat(1001)), member))
+                .isInstanceOf(GeneralException.class)
+                .hasMessageContaining("1000자");
+
+        assertThat(limited.query(ask("정회원 승격 조건은?"), member).answered())
+                .as("413은 한 칸도 쓰지 않았으므로 아직 물을 수 있다")
+                .isFalse();
+    }
+
+    /* 한도는 **회원별**이다 — 한 사람의 연타가 남의 질의를 막지 않는다(IP당이 아닌 이유와 같은 축) */
+    @Test
+    void countsSeparatelyForEachMember() {
+        AssistantServiceImpl limited = service(true, limiter(1));
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        limited.query(ask("정회원 승격 조건은?"), member);
+
+        assertThat(limited.query(ask("정회원 승격 조건은?"), member(99L)).answered()).isFalse();
+    }
+
     // ------------------------------------------------------------------ 추천 질문
 
     /*
@@ -307,14 +370,35 @@ class AssistantServiceImplTest {
     // ------------------------------------------------------------------ 픽스처
 
     private AssistantServiceImpl service(boolean enabled) {
+        return service(enabled, limiter(5));
+    }
+
+    private AssistantServiceImpl service(boolean enabled, AssistantRateLimiter rateLimiter) {
         return new AssistantServiceImpl(
                 new AssistantFeature(enabled),
                 policy,
+                rateLimiter,
                 new AssistantSuggestions(),
                 new CitationVerifier(policy),
                 ragDocumentRepository,
                 provider(ragChunkStore),
                 provider(ChatClient.builder(chatModel).build()));
+    }
+
+    /*
+     * 분 한도만 좁히고 나머지는 넉넉히. **창이 넘어가는 규칙은 여기서 보지 않는다** — 시계를
+     * 옮겨 가며 보는 것은 `AssistantRateLimiterTest`의 몫이고, 여기서 확인하는 것은 «서비스가
+     * 한도를 어느 자리에서 보는가»다.
+     */
+    private AssistantRateLimiter limiter(int perMinute) {
+        return new AssistantRateLimiter(
+                perMinute, 1000, 1000, Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), UTC));
+    }
+
+    private MemberEntity member(long id) {
+        MemberEntity mock = mock(MemberEntity.class);
+        when(mock.getId()).thenReturn(id);
+        return mock;
     }
 
     private AssistantQueryRequest ask(String question) {

@@ -2,7 +2,9 @@ package org.sscc.ssccopsserver.domain.assistant.controller;
 
 import jakarta.validation.Valid;
 
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,7 +22,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 
 /*
- * 규정 도우미 질의 API (#403 · 기획안 §10 · §11).
+ * 규정 도우미 질의 API (#403 · #406 · 기획안 §10 · §11).
  *
  * ══ 코퍼스 컨트롤러와 나뉜 이유 ═════════════════════════════════
  *
@@ -41,11 +43,13 @@ import lombok.RequiredArgsConstructor;
  * 익명에게 열리지 않는다 — 답변 재료가 공개된 회칙이라 해도 코퍼스에 무엇이 올라올지는
  * 운영 규칙이 지키는 값이고(§11), 그 경계를 익명 경로가 넘어서면 안 된다.
  *
- * ══ 없는 핸들러 ════════════════════════════════════════════════
+ * ══ 대화 초기화가 여기 있는 이유 ═══════════════════════════════
  *
- * **`DELETE /v1/assistant/conversations/{id}`가 없다** — 대화 메모리가 Phase 2(#406)라 되돌릴
- * 상태가 없다. 지금 만들어 두면 «초기화»가 아무 일도 하지 않는데 사용자는 초기화됐다고 믿는다
- * (§13.1이 화면에서 `↺` 버튼을 그리지 않기로 한 것과 같은 판단).
+ * `DELETE /v1/assistant/conversations/{id}`는 **되돌릴 상태가 생겨서** 들어왔다(#406 · Phase 2).
+ * Phase 1에서 이 핸들러도 화면의 `↺`도 없었던 것은 «초기화»가 아무 일도 하지 않는데 사용자는
+ * 초기화됐다고 믿게 되기 때문이다(§13.1). 경로에 회원 식별자가 없는 것은 질의와 같고, 대신
+ * **대화 식별자의 앞부분이 그 자리를 대신한다** — 서버가 `{회원 식별자}:{탭 UUID}`로 발급하고
+ * 서버가 검증한다(§7.4).
  *
  * ══ 한도를 여기서 보지 않는다 ═══════════════════════════════════
  *
@@ -87,7 +91,14 @@ public class AssistantController {
                             + " 50회, 그리고 전원이 나눠 쓰는 분당 한도) message가 어느 한도인지에"
                             + " 따라 «잠시 뒤»와 «내일»을 가른다 — 무료 쿼터가 API 키 단위의 공유"
                             + " 자원이라 서버가 공급자보다 먼저 끊는다. 질문과 답변은 어디에도"
-                            + " 저장되지 않는다.")
+                            + " 저장되지 않는다. conversationId는 **서버가 발급한다** — 비워"
+                            + " 보내면 새 대화가 열리고 그 값이 응답에 실려 오며, 다음 질문에"
+                            + " 그대로 실으면 앞선 턴들이 맥락으로 들어간다(거절일 때도 실려"
+                            + " 온다). 남의 것이거나 서버가 발급하지 않은 모양이면 403"
+                            + " ASSISTANT_CONVERSATION_FORBIDDEN이니 들고 있던 값을 버리고 새"
+                            + " 대화로 다시 보내면 된다. 24시간 동안 쓰이지 않은 대화는 만료되어"
+                            + " **빈 이력으로 이어진다** — 오류가 아니라 새 대화처럼 보이는 것이"
+                            + " 정상이다. 검색은 언제나 이번 질문 하나로 한다.")
     @PostMapping("/queries")
     public ApiResponse<AssistantQueryResponse> query(
             @Valid @RequestBody AssistantQueryRequest request, @CurrentMember MemberEntity member) {
@@ -114,5 +125,29 @@ public class AssistantController {
             @CurrentMember MemberEntity member) {
 
         return ApiResponse.success(assistantService.suggestions());
+    }
+
+    /*
+     * 대화 초기화 — **없는 대화를 지우는 것도 성공이다.** 24시간 슬라이딩 만료가 지난 대화와
+     * 아직 한 번도 묻지 않은 식별자를 가를 값이 서버에 없고, 화면이 할 일은 «처음 화면으로
+     * 되돌린다»로 같다. 대신 **남의 것이면 403**이다 — 지우는 것도 남의 대화에 닿는 일이다.
+     */
+    @Operation(
+            summary = "규정 도우미 대화 초기화",
+            description =
+                    "그 대화의 이력을 지운다 — 패널의 ↺ 버튼이 부르는 자리다. **없는 대화를 지우는 것도"
+                            + " 200이다**: 24시간 동안 쓰이지 않아 만료된 대화와 아직 한 번도 묻지"
+                            + " 않은 식별자를 서버가 가를 수 없고, 화면이 할 일이 «처음 화면으로"
+                            + " 되돌린다»로 같기 때문이다. conversationId는 서버가 발급한"
+                            + " {회원 식별자}:{탭 UUID} 모양이며, 남의 것이거나 그 모양이 아니면"
+                            + " 403 ASSISTANT_CONVERSATION_FORBIDDEN이다 — 지우는 것도 남의 대화에"
+                            + " 닿는 일이라 질의와 같은 규칙을 쓴다. 기능이 꺼져 있으면 404"
+                            + " ASSISTANT_DISABLED다.")
+    @DeleteMapping("/conversations/{conversationId}")
+    public ApiResponse<Void> clearConversation(
+            @PathVariable String conversationId, @CurrentMember MemberEntity member) {
+
+        assistantService.clearConversation(conversationId, member);
+        return ApiResponse.successWithNoData();
     }
 }

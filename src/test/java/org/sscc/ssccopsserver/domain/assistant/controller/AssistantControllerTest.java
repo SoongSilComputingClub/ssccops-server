@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.startsWith;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -45,8 +47,10 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.StubChatModel;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
+import com.jayway.jsonpath.JsonPath;
+
 /*
- * 규정 도우미 질의 API (#403 · 상위 ssccops#327).
+ * 규정 도우미 질의 API (#403 · #406 · 상위 ssccops#327).
  *
  * 확인의 중심은 **인가의 계단과 응답의 모양**이다 — 질의는 코퍼스와 달리 **인증만** 요구하고,
  * 거절은 오류가 아니라 `answered: false`인 200이다. 검색·거절의 규칙 자체는 컨텍스트 없이
@@ -68,6 +72,7 @@ class AssistantControllerTest {
 
     private static final String QUERIES = "/v1/assistant/queries";
     private static final String SUGGESTIONS = "/v1/assistant/suggestions";
+    private static final String CONVERSATIONS = "/v1/assistant/conversations/";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private RagDocumentRepository ragDocumentRepository;
@@ -280,6 +285,110 @@ class AssistantControllerTest {
                 .andExpect(jsonPath("$.message").value(containsString("잠시 뒤")));
     }
 
+    // ------------------------------------------------------------------ 대화 (#406)
+
+    /*
+     * **식별자는 서버가 발급하고 응답에 실려 온다** (§7.4) — 화면은 그것을 들고 다니기만 한다.
+     *
+     * 클라이언트가 만들게 두면 남의 식별자를 넣어 **남의 대화를 읽을 수 있다.** 힙에 둔다고
+     * 이 규칙이 느슨해지지 않는다.
+     */
+    @Test
+    void handsOutAConversationIdTheWebCanKeepAskingWith() throws Exception {
+        indexedAndEffectiveRegulation();
+        ragChunkStore.add(java.util.List.of(articleChunk()));
+        chatModel.answerWith("정회원 승격은 총회의 동의가 필요합니다. [제7조 6항]");
+
+        query("정회원 승격 조건은?")
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.data.conversationId").value(startsWith(member.getId() + ":")));
+    }
+
+    /* **거절에도 실린다** — 근거를 못 찾은 첫 질문 뒤에 다시 묻는 것이 흔한 사용이다 */
+    @Test
+    void handsOutAConversationIdEvenWhenItRefuses() throws Exception {
+        query("정회원 승격 조건은?")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.answered").value(false))
+                .andExpect(
+                        jsonPath("$.data.conversationId").value(startsWith(member.getId() + ":")));
+    }
+
+    /* 같은 식별자로 다시 물으면 **앞선 턴이 맥락으로 들어간다** — 시스템 → 이력 → 이번 발췌·질문 */
+    @Test
+    void continuesTheConversationOnTheNextQuestion() throws Exception {
+        String conversationId = answeredConversation("정회원 승격 조건은?");
+
+        query("그럼 준회원은요?", conversationId).andExpect(status().isOk());
+
+        assertThat(chatModel.lastPrompt().getInstructions())
+                .as("시스템 · 앞선 질문 · 앞선 답변 · 이번 질문")
+                .hasSize(4);
+    }
+
+    /* **남의 대화는 이어 갈 수 없다** — 403이며 화면은 들고 있던 값을 버리고 새 대화로 다시 보낸다 */
+    @Test
+    void refusesToContinueSomeoneElsesConversation() throws Exception {
+        query("정회원 승격 조건은?", (member.getId() + 1) + ":" + UUID.randomUUID())
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_CONVERSATION_FORBIDDEN"));
+    }
+
+    /* 서버가 발급하지 않은 모양도 **같은 거절**이다 — 통과하는 것은 발급한 값뿐이다 */
+    @Test
+    void refusesAConversationIdTheServerDidNotIssue() throws Exception {
+        query("정회원 승격 조건은?", member.getId() + ":not-a-uuid")
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_CONVERSATION_FORBIDDEN"));
+    }
+
+    /* `↺` — 지우면 다음 질문은 맥락 없이 처음부터 답한다(§13.1) */
+    @Test
+    void clearsTheConversationOnDelete() throws Exception {
+        String conversationId = answeredConversation("정회원 승격 조건은?");
+
+        mockMvc.perform(authorized(delete(CONVERSATIONS + conversationId)))
+                .andExpect(status().isOk());
+
+        query("그럼 준회원은요?", conversationId).andExpect(status().isOk());
+
+        assertThat(chatModel.lastPrompt().getInstructions()).as("지운 뒤에는 시스템과 이번 질문뿐이다").hasSize(2);
+    }
+
+    /*
+     * **없는 대화를 지우는 것도 200이다.** 24시간 슬라이딩 만료가 지난 대화와 아직 한 번도 묻지
+     * 않은 식별자를 가를 값이 서버에 없고, 화면이 할 일이 «처음 화면으로 되돌린다»로 같다.
+     */
+    @Test
+    void deletingAConversationThatIsNotThereStillSucceeds() throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                delete(CONVERSATIONS + member.getId() + ":" + UUID.randomUUID())))
+                .andExpect(status().isOk());
+    }
+
+    /* **지우는 것도 남의 대화에 닿는 일이다** — 읽기와 같은 규칙을 쓴다 */
+    @Test
+    void refusesToClearSomeoneElsesConversation() throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                delete(
+                                        CONVERSATIONS
+                                                + (member.getId() + 1)
+                                                + ":"
+                                                + UUID.randomUUID())))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_CONVERSATION_FORBIDDEN"));
+    }
+
+    /* 초기화도 인증을 요구한다 — `/public/v1/**` 아래에 두지 않았다 */
+    @Test
+    void doesNotLetAnonymousCallersClearAnything() throws Exception {
+        mockMvc.perform(delete(CONVERSATIONS + "1:" + UUID.randomUUID()))
+                .andExpect(status().isUnauthorized());
+    }
+
     // ------------------------------------------------------------------ 추천 질문
 
     /*
@@ -306,6 +415,31 @@ class AssistantControllerTest {
                 authorized(post(QUERIES))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"question\":\"%s\"}".formatted(question)));
+    }
+
+    /** 이어 묻기 — 화면이 앞선 응답에서 받은 값을 그대로 싣는다(#406) */
+    private ResultActions query(String question, String conversationId) throws Exception {
+        return mockMvc.perform(
+                authorized(post(QUERIES))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                                "{\"question\":\"%s\",\"conversationId\":\"%s\"}"
+                                        .formatted(question, conversationId)));
+    }
+
+    /** 답한 질의 하나 — 인용까지 통과해야 대화에 남는다 */
+    private String answeredConversation(String question) throws Exception {
+        indexedAndEffectiveRegulation();
+        ragChunkStore.add(java.util.List.of(articleChunk()));
+        chatModel.answerWith("정회원 승격은 총회의 동의가 필요합니다. [제7조 6항]");
+
+        return JsonPath.read(
+                query(question)
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString(),
+                "$.data.conversationId");
     }
 
     private MockHttpServletRequestBuilder authorized(MockHttpServletRequestBuilder request) {

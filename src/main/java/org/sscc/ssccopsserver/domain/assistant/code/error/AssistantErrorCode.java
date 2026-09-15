@@ -84,6 +84,21 @@ public enum AssistantErrorCode implements ErrorCode {
             HttpStatus.PAYLOAD_TOO_LARGE, "ASSISTANT_QUESTION_TOO_LONG", "질문이 너무 깁니다."),
 
     /*
+     * 403 — 내가 이어 갈 수 있는 대화가 아니다 (#406 · 기획안 §7.4).
+     *
+     * **`conversationId`는 서버가 발급하고(`{회원 식별자}:{탭 UUID}`) 서버가 앞부분을 검증한다.**
+     * 클라이언트가 보낸 값을 그대로 키로 쓰면 남의 식별자를 넣어 **남의 대화를 읽을 수 있다** —
+     * 힙에 둔다고 이 규칙이 느슨해지지 않는다.
+     *
+     * **모양이 틀린 값과 남의 값을 가르지 않는다.** 통과하는 것은 «서버가 발급했고 지금 묻는
+     * 사람의 것»뿐이고, 갈라 봐야 화면이 할 일은 둘 다 «들고 있던 id를 버리고 새 대화로 다시
+     * 보낸다»로 같다(#150이 정한 방식). **만료와도 갈린다** — 만료된 대화는 오류가 아니라 빈
+     * 이력이며(24시간 슬라이딩 만료는 설계된 동작이다) 화면에는 새 대화처럼 보인다.
+     */
+    ASSISTANT_CONVERSATION_FORBIDDEN(
+            HttpStatus.FORBIDDEN, "ASSISTANT_CONVERSATION_FORBIDDEN", "이 대화를 이어 갈 수 없습니다."),
+
+    /*
      * 400 — `.md`·`.pdf`·`.docx` 밖의 확장자다 (#399).
      *
      * **파싱 실패(아래)와 나눈다.** 코드를 하나로 합치면 화면이 «파일을 고쳐 다시 올리세요»

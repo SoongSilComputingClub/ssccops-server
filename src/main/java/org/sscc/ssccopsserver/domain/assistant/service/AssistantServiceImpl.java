@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
@@ -66,11 +67,24 @@ import lombok.extern.slf4j.Slf4j;
  * 왕복 동안 쥐고 있을 수 없다(ssccops#324). 그래서 엔티티를 들고 나가지 않고
  * `SearchableDocument`로 옮겨 담는다.
  *
+ * ══ 대화는 생성의 맥락이고 검색의 재료가 아니다 (#406) ═════════
+ *
+ * 앞선 턴들이 프롬프트의 가운데에 들어가고(시스템 → 이력 → 이번 발췌·질문) **검색어는 언제나
+ * 이번 질문 하나**다. 담기는 것도 질문과 답변 둘뿐이라 발췌는 매 턴 새로 만든다 — 그 이유와
+ * 기각한 길은 `AssistantConversations`에 있다.
+ *
+ * **한 턴은 답했을 때만 남는다.** 거절과 오류는 이력에 닿지 않으므로, 이어 묻는 사람이 보는
+ * 맥락에는 「찾지 못했습니다」가 섞이지 않는다.
+ *
  * ══ 남기지 않는 것 ═════════════════════════════════════════════
  *
  * **질문도 답변도 어디에도 저장하지 않는다**(§9 · §11 — 질의 로그 표를 두지 않았다). 로그에도
  * 싣지 않는다: 질문에는 사람 이름이 섞여 들어올 수 있고, 로그는 Kibana에 남는다(ADR-0024).
  * 남기는 것은 «누가·몇 개의 근거로·답했는가·얼마나 걸렸는가»다.
+ *
+ * ⚠️ **대화 메모리는 그 규칙의 예외가 아니라 경계다.** 질문과 답변이 24시간 슬라이딩 만료의
+ * 힙 캐시에 머무는 것은 «이어 말하기»가 그것 없이는 성립하지 않기 때문이고, 그 값은 디스크에도
+ * 로그에도 닿지 않으며 회원 경계를 넘지 않는다(§7.4). 기록으로 남기는 것과 갈리는 지점이다.
  */
 @Slf4j
 @Service
@@ -82,6 +96,7 @@ public class AssistantServiceImpl implements AssistantService {
     private final AssistantRateLimiter rateLimiter;
     private final AssistantSuggestions assistantSuggestions;
     private final CitationVerifier citationVerifier;
+    private final AssistantConversations conversations;
     private final RagDocumentRepository ragDocumentRepository;
 
     /*
@@ -100,14 +115,15 @@ public class AssistantServiceImpl implements AssistantService {
 
         /*
          * **거절의 순서가 곧 «무엇을 아껴야 하는가»의 순서다** — 뒤로 갈수록 값비싼 자원을
-         * 건드린다. 한도(429)를 맨 뒤에 두는 것은 그 앞의 셋이 전부 **쿼터를 한 톨도 쓰지 않는
+         * 건드린다. 한도(429)를 맨 뒤에 두는 것은 그 앞의 넷이 전부 **쿼터를 한 톨도 쓰지 않는
          * 거절**이기 때문이다: 기능이 꺼져 있거나(404), 질문이 상한을 넘었거나(413), 키가 없어
-         * 배선이 서지 않은(503) 요청은 애초에 Gemini에 닿지 못하므로 그 사람의 한도를 깎을
-         * 이유가 없다. 여기를 지난 요청만이 임베딩을 부른다.
+         * 배선이 서지 않았거나(503), 남의 대화를 넣은(403 · #406) 요청은 애초에 Gemini에 닿지
+         * 못하므로 그 사람의 한도를 깎을 이유가 없다. 여기를 지난 요청만이 임베딩을 부른다.
          */
         String question = requireAskable(request.question());
         RagChunkStore chunkStore = require(ragChunkStore);
         ChatClient chatClient = require(assistantChatClient);
+        String conversationId = conversations.open(member.getId(), request.conversationId());
         rateLimiter.requireWithinQuota(member.getId());
 
         Instant startedAt = Instant.now();
@@ -118,29 +134,40 @@ public class AssistantServiceImpl implements AssistantService {
              * **새 환경의 기본 상태가 여기다**(§12.5 — 코퍼스는 업로드로만 들어온다). 시행 중인
              * 문서가 하나도 없으면 검색할 것이 없으므로 임베딩조차 부르지 않는다.
              */
-            return refuse(member, "시행 중인 규정 문서가 없다", 0);
+            return refuse(member, "시행 중인 규정 문서가 없다", 0, conversationId);
         }
 
+        /*
+         * **이번 질문 하나로 검색한다** — 이력은 생성에만 들어간다(`AssistantConversations`).
+         */
         List<RetrievedChunk> chunks = retrieve(question, searchable, chunkStore);
         if (chunks.isEmpty()) {
-            return refuse(member, "임계값을 넘는 청크가 없다", 0);
+            return refuse(member, "임계값을 넘는 청크가 없다", 0, conversationId);
         }
 
+        List<Message> history = conversations.history(conversationId);
         CitationVerifier.Verified verified =
-                citationVerifier.verify(generate(chatClient, question, chunks), chunks);
+                citationVerifier.verify(generate(chatClient, question, chunks, history), chunks);
         if (verified.citations().isEmpty()) {
             /*
              * 모델이 답은 했는데 **검증을 통과한 인용이 하나도 없다.** 근거 없는 규정 답변을
              * 내보내지 않는다 — 사용자에게는 「찾지 못했다」와 같은 문구이고(화면이 할 일이
              * 같다), 둘을 가르는 값은 이 로그에만 남는다.
              */
-            return refuse(member, "모델의 답에서 검증을 통과한 인용이 없다", chunks.size());
+            return refuse(member, "모델의 답에서 검증을 통과한 인용이 없다", chunks.size(), conversationId);
         }
+
+        /*
+         * **답한 턴만 담는다**(#406). 거절이 이력에 남으면 다음 턴의 맥락에 「찾지 못했습니다」가
+         * 섞이고, 그것이 모델에게는 이 대화의 본보기가 된다.
+         */
+        conversations.remember(conversationId, question, verified.answer());
 
         SearchableDocument primary = verified.citations().get(0).source();
         log.info(
-                "규정 도우미 답변 — mbrId={} 발췌={} 인용={} 버린인용={} 기준판본={}(v{}) 소요={}ms",
+                "규정 도우미 답변 — mbrId={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준판본={}(v{}) 소요={}ms",
                 member.getId(),
+                history.size() / 2,
                 chunks.size(),
                 verified.citations().size(),
                 verified.dropped(),
@@ -153,7 +180,20 @@ public class AssistantServiceImpl implements AssistantService {
                 verified.responses(),
                 primary.applyStatus(),
                 primary.effectiveFrom(),
-                true);
+                true,
+                conversationId);
+    }
+
+    /*
+     * 대화 초기화 — 패널의 `↺`(§13.1). **기능 플래그가 꺼져 있으면 404다**(질의와 같은 계단).
+     *
+     * 모델도 저장소도 필요 없으므로 배선 없음(503)을 보지 않는다 — 지울 것은 우리 힙에 있다.
+     */
+    @Override
+    public void clearConversation(String conversationId, MemberEntity member) {
+        assistantFeature.requireEnabled();
+        conversations.clear(member.getId(), conversationId);
+        log.info("규정 도우미 대화 초기화 — mbrId={}", member.getId());
     }
 
     @Override
@@ -232,14 +272,23 @@ public class AssistantServiceImpl implements AssistantService {
      *
      * 시스템·사용자 텍스트에 변수를 넘기지 않으므로 Spring AI의 템플릿 렌더러를 **지나지
      * 않는다**(`DefaultChatClientUtils` — 변수 맵이 비면 렌더링을 건너뛴다). 질문에 `{`가 섞여도
-     * 깨지지 않는 것이 그 덕이고, 여기에 `.param(...)`을 더하면 그 성질이 사라진다.
+     * 깨지지 않는 것이 그 덕이고, 여기에 `.param(...)`을 더하면 그 성질이 사라진다. 앞선 턴들도
+     * `Message` 그대로 실려 같은 이유로 렌더링을 지나지 않는다.
+     *
+     * 프롬프트의 순서는 **시스템 → 이력 → 이번 발췌·질문**이다(`.messages(...)`가 그 가운데에
+     * 들어간다 · #406). 이력이 비면 목록째 건너뛰므로 첫 질문의 프롬프트는 #403 그대로다.
      */
-    private String generate(ChatClient chatClient, String question, List<RetrievedChunk> chunks) {
+    private String generate(
+            ChatClient chatClient,
+            String question,
+            List<RetrievedChunk> chunks,
+            List<Message> history) {
         try {
             String answer =
                     chatClient
                             .prompt()
                             .system(AssistantPrompt.SYSTEM)
+                            .messages(history)
                             .user(AssistantPrompt.user(question, chunks))
                             .call()
                             .content();
@@ -258,10 +307,15 @@ public class AssistantServiceImpl implements AssistantService {
     /*
      * 거절 — **정해진 문구 · 빈 배열 · 판본 없음**(§6.3). 이유는 로그에만 남는다: 사용자에게
      * «모델이 근거 없는 답을 했습니다»라고 말할 이유가 없고, 화면이 할 일은 세 경우 모두 같다.
+     *
+     * **대화 식별자는 싣고 이력에는 담지 않는다** — 화면은 이 값으로 이어 물어야 하지만(#406),
+     * 「찾지 못했습니다」는 다음 턴이 기댈 맥락이 아니다.
      */
-    private AssistantQueryResponse refuse(MemberEntity member, String reason, int chunkCount) {
+    private AssistantQueryResponse refuse(
+            MemberEntity member, String reason, int chunkCount, String conversationId) {
+
         log.info("규정 도우미 거절 — mbrId={} 사유={} 발췌={}", member.getId(), reason, chunkCount);
-        return AssistantQueryResponse.unanswered(AssistantPrompt.NO_EVIDENCE);
+        return AssistantQueryResponse.unanswered(AssistantPrompt.NO_EVIDENCE, conversationId);
     }
 
     /*

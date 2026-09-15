@@ -11,16 +11,21 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.MessageType;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -59,6 +64,22 @@ class AssistantServiceImplTest {
 
     private final AssistantQueryPolicy policy =
             new AssistantQueryPolicy(8, 0.5, null, null, 1000, 200);
+
+    /*
+     * 대화는 **진짜를 쓴다** — 우리 힙에 있고 가벼우며, 확인하려는 것이 «이력이 프롬프트의
+     * 어디에 실리는가»라 목으로 두면 그 자리가 보이지 않는다(#406).
+     */
+    private final AssistantConversations conversations =
+            new AssistantConversations(
+                    MessageWindowChatMemory.builder()
+                            .chatMemoryRepository(
+                                    new AssistantMemoryStore(
+                                            500,
+                                            Duration.ofHours(24),
+                                            Clock.fixed(
+                                                    Instant.parse("2026-09-15T01:00:00Z"), UTC)))
+                            .maxMessages(40)
+                            .build());
 
     private final AssistantServiceImpl service = service(true);
 
@@ -115,6 +136,7 @@ class AssistantServiceImplTest {
                         limiter(5),
                         new AssistantSuggestions(),
                         new CitationVerifier(policy),
+                        conversations,
                         ragDocumentRepository,
                         provider(ragChunkStore),
                         provider(ChatClient.builder(chatModel).build()));
@@ -264,6 +286,7 @@ class AssistantServiceImplTest {
                         limiter(5),
                         new AssistantSuggestions(),
                         new CitationVerifier(policy),
+                        conversations,
                         ragDocumentRepository,
                         provider(null),
                         provider(null));
@@ -350,6 +373,123 @@ class AssistantServiceImplTest {
         assertThat(limited.query(ask("정회원 승격 조건은?"), member(99L)).answered()).isFalse();
     }
 
+    // ------------------------------------------------------------------ 대화 (#406)
+
+    /*
+     * **식별자는 서버가 발급하고 거절에도 실린다** (§7.4).
+     *
+     * 근거를 찾지 못한 첫 질문 뒤에 다시 묻는 것이 이 기능의 흔한 사용이라, 거절이 식별자를
+     * 빠뜨리면 그 다음 질문이 새 대화로 시작된다.
+     */
+    @Test
+    void issuesAConversationIdAndCarriesItBackEvenOnARefusal() {
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        AssistantQueryResponse refused = service.query(ask("정회원 승격 조건은?"), member);
+
+        assertThat(refused.answered()).isFalse();
+        assertThat(refused.conversationId()).startsWith("7:");
+    }
+
+    /*
+     * **앞선 턴이 프롬프트의 가운데에 들어가고 검색어에는 들어가지 않는다** (#406).
+     *
+     * 순서는 시스템 → 이력 → 이번 발췌·질문이며, 검색은 **언제나 이번 질문 하나**로 한다 —
+     * 이전 질문을 검색어에 이어 붙이면 임베딩이 두 주제 사이로 끌려가 맞는 청크가 임계값 아래로
+     * 내려가는데, 그 실패가 «근거를 찾지 못했다»로만 보인다(`AssistantConversations`).
+     */
+    @Test
+    void carriesTheEarlierTurnsIntoThePromptButNeverIntoTheSearch() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+
+        String conversationId = service.query(ask("정회원 승격 조건은?"), member).conversationId();
+        service.query(ask("그럼 준회원은요?", conversationId), member);
+
+        List<Message> prompt = chatModel.prompt.getInstructions();
+        assertThat(prompt).hasSize(4);
+        assertThat(prompt.get(0).getMessageType()).isEqualTo(MessageType.SYSTEM);
+        assertThat(prompt.get(1).getMessageType()).isEqualTo(MessageType.USER);
+        assertThat(prompt.get(1).getText()).as("앞선 질문은 발췌 없이 그대로 남는다").isEqualTo("정회원 승격 조건은?");
+        assertThat(prompt.get(2).getMessageType()).isEqualTo(MessageType.ASSISTANT);
+        assertThat(prompt.get(2).getText()).isEqualTo("정회원은 총회의 동의가 필요합니다. [제7조]");
+        assertThat(prompt.get(3).getText()).contains("[문서 발췌]").contains("그럼 준회원은요?");
+
+        ArgumentCaptor<SearchRequest> requests = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(ragChunkStore, times(2)).search(requests.capture());
+        assertThat(requests.getAllValues().get(1).getQuery())
+                .as("검색어는 이번 질문 하나다")
+                .isEqualTo("그럼 준회원은요?");
+    }
+
+    /*
+     * **거절은 이력에 담기지 않는다.** 「찾지 못했습니다」는 이어 갈 맥락이 아니고, 담으면 20턴
+     * 창을 차지하는 데다 모델에게 «이 대화에서는 이렇게 답한다»는 본보기가 된다.
+     */
+    @Test
+    void remembersOnlyTheTurnsItActuallyAnswered() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of());
+
+        String conversationId = service.query(ask("주차장 이용 규정은?"), member).conversationId();
+
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+        service.query(ask("정회원 승격 조건은?", conversationId), member);
+
+        assertThat(chatModel.prompt.getInstructions())
+                .as("거절로 끝난 첫 질문은 맥락에 없다 — 시스템과 이번 질문뿐이다")
+                .hasSize(2);
+
+        service.query(ask("그럼 준회원은요?", conversationId), member);
+        assertThat(conversations.history(conversationId)).as("답한 턴 둘만 남는다").hasSize(4);
+    }
+
+    /*
+     * **남의 대화는 이어 갈 수 없고, 그 거절은 한도를 쓰지 않는다** (§7.4).
+     *
+     * 판정이 레이트 리밋 앞에 있는 이유가 여기 드러난다 — 되돌려보낸 요청은 Gemini에 닿지
+     * 못했으므로 그 사람의 한 칸을 깎을 이유가 없다(413이 한 칸도 쓰지 않는 것과 같은 줄기).
+     */
+    @Test
+    void refusesSomeoneElsesConversationWithoutSpendingQuota() {
+        AssistantServiceImpl limited = service(true, limiter(1));
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        assertThatThrownBy(
+                        () -> limited.query(ask("정회원 승격 조건은?", "9:" + UUID.randomUUID()), member))
+                .isInstanceOf(GeneralException.class)
+                .hasMessageContaining("이어 갈 수 없습니다");
+
+        assertThat(limited.query(ask("정회원 승격 조건은?"), member).answered())
+                .as("403은 한 칸도 쓰지 않았으므로 아직 물을 수 있다")
+                .isFalse();
+    }
+
+    /* 초기화 — 지운 뒤에는 맥락 없이 처음부터 답한다(패널의 `↺` · §13.1) */
+    @Test
+    void clearsTheConversationOnRequest() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+
+        String conversationId = service.query(ask("정회원 승격 조건은?"), member).conversationId();
+        service.clearConversation(conversationId, member);
+
+        service.query(ask("그럼 준회원은요?", conversationId), member);
+
+        assertThat(chatModel.prompt.getInstructions()).as("지운 뒤에는 시스템과 이번 질문뿐이다").hasSize(2);
+    }
+
+    /* 기능이 꺼져 있으면 초기화도 404다 — 질의와 같은 계단 */
+    @Test
+    void doesNotClearWhileTheAssistantIsDisabled() {
+        assertThatThrownBy(() -> service(false).clearConversation("7:" + UUID.randomUUID(), member))
+                .isInstanceOf(GeneralException.class)
+                .hasMessageContaining("비활성화");
+    }
+
     // ------------------------------------------------------------------ 추천 질문
 
     /*
@@ -380,6 +520,7 @@ class AssistantServiceImplTest {
                 rateLimiter,
                 new AssistantSuggestions(),
                 new CitationVerifier(policy),
+                conversations,
                 ragDocumentRepository,
                 provider(ragChunkStore),
                 provider(ChatClient.builder(chatModel).build()));
@@ -402,7 +543,12 @@ class AssistantServiceImplTest {
     }
 
     private AssistantQueryRequest ask(String question) {
-        return new AssistantQueryRequest(question);
+        return new AssistantQueryRequest(question, null);
+    }
+
+    /** 이어 묻기 — 앞선 응답이 준 식별자를 그대로 싣는다(화면이 하는 일 그대로) */
+    private AssistantQueryRequest ask(String question, String conversationId) {
+        return new AssistantQueryRequest(question, conversationId);
     }
 
     private void searchable(RagDocumentEntity... documents) {

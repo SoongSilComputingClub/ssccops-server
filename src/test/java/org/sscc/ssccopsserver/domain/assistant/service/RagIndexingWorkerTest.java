@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -216,6 +217,33 @@ class RagIndexingWorkerTest {
 
         assertThat(chunkStore.chunks()).as("옛 청크가 남았다면 두 배가 된다").hasSize(first);
         assertThat(reload(document).getChunkCount()).isEqualTo(first);
+        assertThat(chunkStore.operations())
+                .as("두 바퀴의 순서 — 지우는 것이 언제나 넣기 **앞**이다 (#405 · 기획안 §14.3)")
+                .containsExactly(
+                        "delete:" + document.getId(),
+                        "add:" + first,
+                        "delete:" + document.getId(),
+                        "add:" + first);
+    }
+
+    /*
+     * **`PENDING → INDEXING → INDEXED`의 가운데가 실제로 존재한다** (#405 · 기획안 §14.3).
+     *
+     * 끝난 뒤의 상태만 보면 워커가 트랜잭션 셋으로 나뉜 이유가 검증되지 않는다 — 임베딩이 도는
+     * 동안 행이 `INDEXING`으로 **남의 눈에 보여야** 다른 폴링이 그 행을 다시 집지 않고, 기동
+     * 복구(§12.4)가 되돌릴 대상도 그 상태다. 적재 도중에 끼어들어 그때의 행을 읽는 것이
+     * 잠금 밖에서 그 사실을 볼 수 있는 유일한 자리다.
+     */
+    @Test
+    void staysInIndexingWhileTheEmbeddingRuns() {
+        RagDocumentEntity document = pendingMarkdown("REGULATION", VALID_MARKDOWN);
+        List<RagIndexStatus> seen = new ArrayList<>();
+        chunkStore.observeAdds(() -> seen.add(reload(document).getIndexStatus()));
+
+        assertThat(worker.drainQueue()).isEqualTo(1);
+
+        assertThat(seen).as("적재가 도는 동안의 상태").containsExactly(RagIndexStatus.INDEXING);
+        assertThat(reload(document).getIndexStatus()).isEqualTo(RagIndexStatus.INDEXED);
     }
 
     /*

@@ -59,7 +59,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
+import org.sscc.ssccopsserver.support.AssistantStubConfig;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
+import org.sscc.ssccopsserver.support.InMemoryRagChunkStore;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
@@ -93,7 +95,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 @SpringBootTest(properties = "ssccops.assistant.enabled=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@Import(TestJwtDecoderConfig.class)
+@Import({TestJwtDecoderConfig.class, AssistantStubConfig.class})
 @Transactional
 class RagDocumentControllerTest {
 
@@ -123,6 +125,8 @@ class RagDocumentControllerTest {
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
 
+    @Autowired private InMemoryRagChunkStore chunkStore;
+
     @MockitoBean private S3Client r2Client;
 
     private MemberEntity manager;
@@ -131,6 +135,7 @@ class RagDocumentControllerTest {
 
     @BeforeEach
     void setUp() {
+        chunkStore.clear();
         managerToken = UUID.randomUUID();
         manager = saveMember(managerToken, "20260401", "규정관리자");
         grant(manager, AuthorityCode.RAG_DOCUMENT_MANAGE);
@@ -172,6 +177,24 @@ class RagDocumentControllerTest {
         assertThat(saved.getRegistrant().getId())
                 .as("올린 회원은 요청 본문이 아니라 인증 주체에서 온다 (#78)")
                 .isEqualTo(manager.getId());
+    }
+
+    /*
+     * **업로드가 임베딩을 한 번도 부르지 않는다** (#399의 계약 · #405 · 기획안 §14.3).
+     *
+     * 요청 안에서 일어나는 것은 파싱·행 생성·R2 PUT 셋뿐이고, 오래 걸리는 것이 임베딩뿐이라
+     * 그것만 워커(#400)로 뺐다. 모델 호출이 일어나는 자리가 청크 저장소의 `add` 하나이므로
+     * **저장소가 한 번도 닿지 않았다는 사실이 곧 「임베딩 호출 0」**이다 — 응답이 201 +
+     * `PENDING`인 것도 같은 사실의 다른 면이다.
+     */
+    @Test
+    void uploadNeverReachesTheEmbedding() throws Exception {
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.indexStatus").value(RagIndexStatus.PENDING.name()));
+
+        assertThat(chunkStore.operations()).as("적재도 삭제도 없다").isEmpty();
+        assertThat(chunkStore.chunks()).isEmpty();
     }
 
     /*

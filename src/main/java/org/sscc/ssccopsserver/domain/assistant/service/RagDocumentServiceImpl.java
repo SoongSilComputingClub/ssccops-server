@@ -6,9 +6,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -86,14 +84,6 @@ public class RagDocumentServiceImpl implements RagDocumentService {
      */
     private static final int MAX_UPLOADS_PER_DAY = 10;
 
-    /*
-     * `doc_cd`의 모양. **어휘는 강제하지 않는다** — `REGULATION`·`SCHOOL_RULE`은 운영 규칙이고
-     * 표준코드 그룹으로 등재하지 않았다(ssccops#325 · 엔티티 주석). 여기서 보는 것은 모양뿐이며,
-     * 그 이유는 이 값이 판본을 묶는 열쇠라 **눈으로 같아 보이는 두 값이 다른 문서가 되면 안 되기**
-     * 때문이다. 공백·한글·하이픈을 섞어 받으면 `회칙`과 `회칙 `이 각자 1판본으로 자란다.
-     */
-    private static final Pattern DOCUMENT_CODE = Pattern.compile("[A-Z][A-Z0-9_]{0,19}");
-
     /** `doc_nm`·`orgnl_file_nm` 컬럼 길이. 조용히 자르지 않고 400으로 돌려보낸다 */
     private static final int MAX_NAME_LENGTH = 200;
 
@@ -110,12 +100,10 @@ public class RagDocumentServiceImpl implements RagDocumentService {
 
     @Override
     @Transactional
-    public RagDocumentResponse upload(
-            MultipartFile file, String documentCode, String name, MemberEntity registrant) {
+    public RagDocumentResponse upload(MultipartFile file, String name, MemberEntity registrant) {
 
         assistantFeature.requireEnabled();
 
-        String code = normalizeDocumentCode(documentCode);
         String originalFileName = requireFileName(file);
         RagDocumentFormat format = RagDocumentFormat.fromFileName(originalFileName);
         byte[] content = readContent(file);
@@ -128,26 +116,18 @@ public class RagDocumentServiceImpl implements RagDocumentService {
 
         parse(format, content, originalFileName);
 
-        short version =
-                ragDocumentRepository
-                        .findMaxVersion(code)
-                        .map(previous -> (short) (previous + 1))
-                        .orElse(RagDocumentEntity.FIRST_VERSION);
-
         /*
-         * **식별자를 먼저 받는다** — 키가 `rag-documents/{ragDocId}/…`라서다. 같은 `doc_cd`에
-         * 동시 업로드가 겹치면 둘이 같은 번호를 집어 `uk_rag_doc_doc_cd_ver`에 걸리는데, 그때는
-         * 둘째 요청이 500으로 떨어지고 아무것도 남지 않는다 — 운영진이 다시 올리면 된다. 잠금을
-         * 걸지 않은 것은 첫 판본에는 잠글 행이 없어(같은 이유로 #401의 시행본 판정도 그렇다)
-         * 반쪽짜리 방어가 되고, 일 10회 한도 아래에서 실제로 겹칠 일이 없기 때문이다.
+         * **식별자를 먼저 받는다** — 키가 `rag-documents/{ragDocId}/…`라서다. `saveAndFlush`인
+         * 것은 그 값을 지금 받아야 아래에서 키를 조립할 수 있기 때문이다.
+         *
+         * 판본 번호를 매기던 자리였다(ADR-0034 이전). 동시 업로드가 같은 번호를 집어 깨지던
+         * 문제도 그 자리와 함께 사라졌다 — 이제 행마다 식별자가 따로 나므로 겹칠 것이 없다.
          */
         RagDocumentEntity document =
                 ragDocumentRepository.saveAndFlush(
                         RagDocumentEntity.register(
-                                code,
                                 resolveName(name, originalFileName, format),
                                 format.getDocumentType(),
-                                version,
                                 originalFileName,
                                 content.length,
                                 registrant));
@@ -167,10 +147,9 @@ public class RagDocumentServiceImpl implements RagDocumentService {
         fileReferenceService.upsert(FileTargetType.RAG_DOCUMENT, document.getId(), objectKey);
 
         log.info(
-                "규정 문서 업로드 — ragDocId={} docCd={} 판본={} 형식={} 크기={}바이트",
+                "규정 문서 업로드 — ragDocId={} 이름={} 형식={} 크기={}바이트",
                 document.getId(),
-                code,
-                version,
+                document.getName(),
                 format,
                 content.length);
 
@@ -271,25 +250,24 @@ public class RagDocumentServiceImpl implements RagDocumentService {
         RagDocumentEntity document = lock(ragDocId);
         RagApplyStatus next = request.applyStatus();
 
-        Long supersededId =
-                next == RagApplyStatus.EFFECTIVE ? supersedeCurrentVersion(document) : null;
-
+        /*
+         * **다른 문서를 함께 내리지 않는다**(ADR-0034). 예전에는 `EFFECTIVE`로 올릴 때 같은
+         * `doc_cd`의 기존 시행본을 잠그고 내렸는데, 판본 관리를 걷어내며 그 경로가 사라졌다 —
+         * 시행 중인 문서는 여러 건일 수 있고, 갱신된 규정의 옛 문서를 지우는 것은 운영진의 몫이다.
+         */
         document.changeApplyStatus(next, resolveEffectiveFrom(request.effectiveFrom()));
 
         if (next == RagApplyStatus.SUPERSEDED) {
-            supersededId = document.getId();
-        }
-        if (supersededId != null) {
             /*
-             * **내려간 판본의 청크는 사라진다.** 검색 조건이 `INDEXED && EFFECTIVE`라 다시 볼
+             * **내려간 문서의 청크는 사라진다.** 검색 조건이 `INDEXED && EFFECTIVE`라 다시 볼
              * 경로가 없고, 활성 청크 합계가 `SUPERSEDED`를 빼고 세므로(§8.2) 지우지 않으면
              * 상한 3,000이 실제 저장량보다 낮은 수를 보고 판정한다. 커밋 뒤인 이유는
              * `RagChunkEraser`에 있다.
              */
-            ragChunkEraser.eraseAfterCommit(supersededId);
+            ragChunkEraser.eraseAfterCommit(document.getId());
         }
 
-        log.info("규정 문서 적용 상태 전환 — ragDocId={} → {} (내려간 판본={})", ragDocId, next, supersededId);
+        log.info("규정 문서 적용 상태 전환 — ragDocId={} → {}", ragDocId, next);
 
         return RagDocumentResponse.from(document);
     }
@@ -342,33 +320,7 @@ public class RagDocumentServiceImpl implements RagDocumentService {
         ragDocumentRepository.delete(document);
         ragChunkEraser.eraseAfterCommit(ragDocId);
 
-        log.info(
-                "규정 문서 하드 삭제 — ragDocId={} docCd={} 판본={}",
-                ragDocId,
-                document.getDocumentCode(),
-                document.getVersion());
-    }
-
-    /*
-     * 같은 `doc_cd`의 시행본을 내린다. **자기 자신이면 내리지 않는다** — 이미 `EFFECTIVE`인 행에
-     * 다시 `EFFECTIVE`를 요청한 경우이고, 그때 내려 버리면 전이표가 거절해야 할 요청이 «내렸다가
-     * 올리는» 성공으로 바뀐다.
-     *
-     * @return 내려간 판본의 식별자. 없었으면 null
-     */
-    private Long supersedeCurrentVersion(RagDocumentEntity promoted) {
-        return ragDocumentRepository
-                .findByDocumentCodeAndApplyStatusForUpdate(
-                        promoted.getDocumentCode(), RagApplyStatus.EFFECTIVE)
-                .filter(current -> !current.getId().equals(promoted.getId()))
-                .map(
-                        current -> {
-                            current.supersede();
-                            // 승격보다 먼저 DB에 닿아야 한다 — 부분 유니크 인덱스가 그 찰나를 본다
-                            ragDocumentRepository.flush();
-                            return current.getId();
-                        })
-                .orElse(null);
+        log.info("규정 문서 하드 삭제 — ragDocId={} 이름={}", ragDocId, document.getName());
     }
 
     /*
@@ -472,16 +424,6 @@ public class RagDocumentServiceImpl implements RagDocumentService {
                     AssistantErrorCode.ASSISTANT_RATE_LIMITED,
                     "하루에 올릴 수 있는 문서는 %d건입니다. 내일 다시 올려 주세요.".formatted(MAX_UPLOADS_PER_DAY));
         }
-    }
-
-    private static String normalizeDocumentCode(String documentCode) {
-        String code = documentCode == null ? "" : documentCode.trim().toUpperCase(Locale.ROOT);
-        if (!DOCUMENT_CODE.matcher(code).matches()) {
-            throw new GeneralException(
-                    CommonErrorCode.VALIDATION_FAILED,
-                    "문서 코드(documentCode)는 영문 대문자로 시작하는 20자 이내의 영문·숫자·밑줄이어야 합니다.");
-        }
-        return code;
     }
 
     /*

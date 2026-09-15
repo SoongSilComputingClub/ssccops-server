@@ -24,10 +24,8 @@ import org.sscc.ssccopsserver.domain.assistant.entity.RagDocumentEntity;
  */
 public record RagDocumentResponse(
         Long ragDocId,
-        String documentCode,
         String name,
         RagDocumentType docType,
-        Short version,
         RagIndexStatus indexStatus,
         RagApplyStatus applyStatus,
         String originalFileName,
@@ -40,10 +38,8 @@ public record RagDocumentResponse(
     public static RagDocumentResponse from(RagDocumentEntity document) {
         return new RagDocumentResponse(
                 document.getId(),
-                document.getDocumentCode(),
                 document.getName(),
                 document.getType(),
-                document.getVersion(),
                 document.getIndexStatus(),
                 document.getApplyStatus(),
                 document.getOriginalFileName(),

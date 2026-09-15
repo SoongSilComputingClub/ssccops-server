@@ -107,6 +107,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V9__cascade_member_own_data.sql` | 회원 본인 데이터 FK 9개(+ 딸린 3개)에 `ON DELETE CASCADE`. 임시 회원 하드 삭제의 경계이며 행위자 참조 20개는 손대지 않는다 (#361 · ADR-0021) |
 | `V10__create_assistant_tables.sql` | `vector` 확장 · `vector_store`(Spring AI가 이름을 정한다) · `rag_doc`. 규정 도우미(RAG)의 스키마이며 **`FlywayMigrationValidateTest`의 Testcontainers 이미지가 `pgvector/pgvector:pg17`로 바뀐 이유**다 (#396 · ADR-0028·0029) |
 | `V11__seed_rag_document_manage_authority.sql` | `RAG_DOCUMENT_MANAGE` 권한 한 줄(`SUPER` 직속 · `sys_yn`)과 회장·부회장·총무 부여. **시드를 더할 때도 새 파일**이라는 규칙이 처음 쓰인 자리이며, `test`는 Flyway가 꺼져 있어 `data-locations`가 V3와 함께 이 파일도 가리킨다 (#402) |
+| `V12__drop_rag_document_versioning.sql` | `rag_doc.doc_cd`·`doc_ver`와 제약·인덱스 둘(`uk_rag_doc_doc_cd_ver` · `uk_rag_doc_effective`). 규정 문서의 판본 관리를 걷어낸다 — 문서 한 건이 곧 그 규정이고 갱신은 «옛 것을 지우고 새로 올리기»다. **시행 중인 문서가 여러 건일 수 있게 된다** (#441 · ADR-0034) |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**
@@ -173,7 +174,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
-| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · 인용 검증 · 추천 질문) · **질의 레이트 리밋**(회원 분·일 · 전역 분 · 인메모리) · **골든셋**(스텁 임베딩 · 지표 넷 · 회귀 표) · **대화**(힙 Caffeine · 대화 500개 · 24h 슬라이딩 · 서버가 발급하는 `{회원 식별자}:{탭 UUID}` · 질의 임베딩 캐시) | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서(`rag_doc` · 판본 없음 ADR-0034) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · 인용 검증 · 추천 질문) · **질의 레이트 리밋**(회원 분·일 · 전역 분 · 인메모리) · **골든셋**(스텁 임베딩 · 지표 넷 · 회귀 표) · **대화**(힙 Caffeine · 대화 500개 · 24h 슬라이딩 · 서버가 발급하는 `{회원 식별자}:{탭 UUID}` · 질의 임베딩 캐시) | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사

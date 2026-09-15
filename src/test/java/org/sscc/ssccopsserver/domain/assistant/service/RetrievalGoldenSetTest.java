@@ -25,7 +25,6 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -436,8 +435,7 @@ class RetrievalGoldenSetTest {
      */
     @Test
     void answersEverySuggestionTheCorpusAdvertises() {
-        List<String> suggestions =
-                new AssistantSuggestions().forDocumentCodes(Set.of("REGULATION"));
+        List<String> suggestions = new AssistantSuggestions().forCorpus(true);
 
         assertThat(suggestions).hasSize(3);
         for (String suggestion : suggestions) {
@@ -576,9 +574,7 @@ class RetrievalGoldenSetTest {
             long id, String code, String name, RagDocumentType type) {
         RagDocumentEntity document = mock(RagDocumentEntity.class);
         when(document.getId()).thenReturn(id);
-        when(document.getDocumentCode()).thenReturn(code);
         when(document.getName()).thenReturn(name);
-        when(document.getVersion()).thenReturn((short) 1);
         when(document.getType()).thenReturn(type);
         when(document.getApplyStatus()).thenReturn(RagApplyStatus.EFFECTIVE);
         when(document.getEffectiveFrom()).thenReturn(LocalDate.of(2026, 3, 24));

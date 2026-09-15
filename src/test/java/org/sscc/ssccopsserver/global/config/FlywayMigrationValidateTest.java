@@ -384,37 +384,35 @@ class FlywayMigrationValidateTest {
     }
 
     /*
-     * 시행 중인 판본이 문서당 하나라는 규칙이 **부분 유니크 인덱스**인지 본다 (#396 · ADR-0029).
+     * **판본 관리의 자취가 남지 않았는지 본다** (#441 · ADR-0034 · V12).
      *
-     * H2는 부분 인덱스를 지원하지 않아 일반 테스트가 이 규칙을 DB로는 확인할 수 없고, 엔티티에
-     * 조건 없는 UNIQUE를 달 수도 없다(달면 같은 문서의 판본이 둘째부터 아예 못 들어온다).
-     * 그래서 이 모양이 아니면 PostgreSQL에서 동시 요청을 막는 최종 방어선이 조용히 사라진다 —
-     * V8의 `uk_event_form`과 같은 자리다.
+     * 이 자리에는 «시행 중인 판본은 문서당 하나»를 지키던 부분 유니크 인덱스(`uk_rag_doc_effective`)와
+     * 판본 겹침을 막던 `uk_rag_doc_doc_cd_ver`를 확인하는 테스트가 있었다. 둘 다 V12가 지웠고,
+     * 남아 있으면 **엔티티가 모르는 제약이 배포 DB에만 살아 있는 상태**가 된다 — 시행 중인 문서를
+     * 둘째로 올리는 순간 아무도 예상하지 못한 위반으로 터진다.
+     *
+     * 컬럼까지 함께 보는 것은 «컬럼은 남았는데 제약만 사라진» 어중간한 상태를 잡기 위해서다.
      */
     @Test
-    void onlyOneEffectiveRevisionPerDocumentIsAPartialUniqueIndex() {
+    void versioningLeavesNoTraceInTheSchema() {
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
 
-        String indexDef =
-                jdbc.queryForObject(
-                        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public'"
-                                + " AND tablename = 'rag_doc' AND indexname ="
-                                + " 'uk_rag_doc_effective'",
-                        String.class);
-        assertThat(indexDef)
-                .as("시행 중인 판본끼리만 거는 부분 유니크 인덱스여야 한다")
-                .contains("UNIQUE INDEX")
-                .contains("(doc_cd)")
-                .contains("EFFECTIVE");
-
-        // 판본 자체의 겹침은 조건 없는 UNIQUE다 — 두 규칙이 서로 다른 것을 막는다
         assertThat(
                         jdbc.queryForObject(
-                                "SELECT count(*) FROM information_schema.table_constraints"
-                                        + " WHERE table_schema = 'public' AND table_name ="
-                                        + " 'rag_doc' AND constraint_name ="
-                                        + " 'uk_rag_doc_doc_cd_ver'",
+                                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'"
+                                        + " AND tablename = 'rag_doc' AND indexname IN"
+                                        + " ('uk_rag_doc_effective', 'uk_rag_doc_doc_cd_ver')",
                                 Integer.class))
-                .isEqualTo(1);
+                .as("판본 관리가 걸던 인덱스·제약은 V12가 지웠다")
+                .isZero();
+
+        assertThat(
+                        jdbc.queryForList(
+                                "SELECT column_name FROM information_schema.columns WHERE"
+                                        + " table_schema = 'public' AND table_name = 'rag_doc' AND"
+                                        + " column_name IN ('doc_cd', 'doc_ver')",
+                                String.class))
+                .as("컬럼 둘도 함께 사라졌다 — 제약만 지우면 엔티티와 스키마가 갈린다")
+                .isEmpty();
     }
 }

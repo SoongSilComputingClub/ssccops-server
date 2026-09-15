@@ -171,13 +171,7 @@ class RagDocumentEntityTest {
 
     private static RagDocumentEntity document() {
         return RagDocumentEntity.register(
-                "REGULATION",
-                "회칙 개정안",
-                RagDocumentType.STRUCTURED,
-                RagDocumentEntity.FIRST_VERSION,
-                "회칙개정_2026_개정안전문.md",
-                31_204,
-                null);
+                "회칙 개정안", RagDocumentType.STRUCTURED, "회칙개정_2026_개정안전문.md", 31_204, null);
     }
 
     private static RagDocumentEntity indexing() {

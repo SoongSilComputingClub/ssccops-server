@@ -24,6 +24,9 @@ import org.sscc.ssccopsserver.domain.assistant.code.CitationType;
  *
  * ══ 싣지 않는 것 ═══════════════════════════════════════════════
  *
+ * **판본 번호(`docVer`)가 있던 자리다**(ADR-0034). 문서 한 건이 곧 그 규정이라 인용 카드에
+ * 「v1」을 그릴 것이 없다.
+ *
  * 유사도 점수를 내리지 않는다. 화면이 그 수를 그리면 «0.62점짜리 근거»를 사용자가 해석하게
  * 되는데, 임계값 아래는 애초에 답변에 닿지 않고(§6.1) 그 위의 순위는 우리가 보증하는 값이
  * 아니다. 청크 식별자도 내리지 않는다 — 다시 부를 수 있는 API가 없다.
@@ -31,7 +34,6 @@ import org.sscc.ssccopsserver.domain.assistant.code.CitationType;
 public record AssistantCitationResponse(
         CitationType citationType,
         String docTitle,
-        Short docVer,
         String chapter,
         Boolean supplementary,
         String article,
@@ -42,7 +44,6 @@ public record AssistantCitationResponse(
     /** 조항 인용 — `제2장 회원 · 제7조 (회원의 구분) · 6항`. `page`는 언제나 null이다 */
     public static AssistantCitationResponse article(
             String docTitle,
-            Short docVer,
             String chapter,
             boolean supplementary,
             String article,
@@ -52,7 +53,6 @@ public record AssistantCitationResponse(
         return new AssistantCitationResponse(
                 CitationType.ARTICLE,
                 docTitle,
-                docVer,
                 chapter,
                 supplementary,
                 article,
@@ -62,10 +62,9 @@ public record AssistantCitationResponse(
     }
 
     /** 페이지 인용 — `2026 지원금 집행 지침 · p.12`. <b>`page`가 null인 것은 DOCX라는 뜻이다</b>(#398) */
-    public static AssistantCitationResponse page(
-            String docTitle, Short docVer, Integer page, String snippet) {
+    public static AssistantCitationResponse page(String docTitle, Integer page, String snippet) {
 
         return new AssistantCitationResponse(
-                CitationType.PAGE, docTitle, docVer, null, null, null, null, page, snippet);
+                CitationType.PAGE, docTitle, null, null, null, null, page, snippet);
     }
 }

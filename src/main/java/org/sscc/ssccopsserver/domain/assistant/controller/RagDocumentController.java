@@ -71,16 +71,20 @@ public class RagDocumentController {
      *
      * `Location`이 가리키는 상세 조회는 아래 `GET /{ragDocId}`다(#401이 열었다).
      *
-     * `documentCode`·`name`을 `@RequestPart`가 아니라 `@RequestParam`으로 받는 것은 화면이
-     * `FormData.append('documentCode', …)`로 보내는 값이 파트가 아니라 폼 필드이기 때문이다
+     * `name`을 `@RequestPart`가 아니라 `@RequestParam`으로 받는 것은 화면이
+     * `FormData.append('name', …)`로 보내는 값이 파트가 아니라 폼 필드이기 때문이다
      * (CSV 이관 위저드와 같은 모양 · #84). `required = false`로 받아 **누락도 서비스가 도메인
      * 오류로 돌려주는 것**은, 서블릿이 먼저 끊으면 `ApiResponse` 봉투가 붙지 않은 응답이 나가기
      * 때문이다.
+     *
+     * **`documentCode`가 있던 자리다**(ADR-0034). 화면이 「비우면 서버가 정합니다」로 안내했는데
+     * 서버에는 그 경로가 없었고, 자동 생성은 이 값의 존재 이유(판본을 묶는다)와 모순이라 만들 수도
+     * 없었다 — 그래서 고친 것이 문구가 아니라 값 자체다.
      */
     @Operation(
             summary = "규정 문서 업로드",
             description =
-                    "문서 원본을 받아 그 자리에서 파싱한 뒤 새 판본을 PENDING·DRAFT로 만든다(201)."
+                    "문서 원본을 받아 그 자리에서 파싱한 뒤 새 문서를 PENDING·DRAFT로 만든다(201)."
                             + " 색인(임베딩)은 이 요청에서 하지 않으며 워커가 뒤에서 집어 간다."
                             + " file은 .md·.pdf·.docx 중 하나이고 10MB 이하다 — 밖이면 400"
                             + " RAG_DOCUMENT_UNSUPPORTED_TYPE, 넘으면 413 RAG_DOCUMENT_TOO_LARGE다."
@@ -88,20 +92,18 @@ public class RagDocumentController {
                             + " .md는 회칙 계약(장·조)을 검사해 어기면 400"
                             + " RAG_DOCUMENT_PARSE_FAILED이고 **몇째 줄이 왜 걸렸는지**가 message에"
                             + " 실린다. .pdf·.docx는 텍스트가 한 글자도 추출되지 않으면 같은 코드다"
-                            + " (스캔 이미지 PDF). documentCode는 판본을 가로지르는 열쇠이며 같은"
-                            + " 값으로 다시 올리면 doc_ver가 1 늘어난다. name을 비우면 파일명에서"
+                            + " (스캔 이미지 PDF). 판본 개념이 없으므로 같은 규정을 갱신할 때는"
+                            + " 옛 문서를 지우고 새로 올린다(ADR-0034). name을 비우면 파일명에서"
                             + " 확장자를 뗀 것이 표시명이 된다. 올린 회원은 요청이 아니라 인증"
                             + " 주체에서 오며, 적재는 회원당 하루 10건까지다(429"
                             + " ASSISTANT_RATE_LIMITED).")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<RagDocumentResponse>> upload(
             @RequestPart("file") MultipartFile file,
-            @RequestParam(value = "documentCode", required = false) String documentCode,
             @RequestParam(value = "name", required = false) String name,
             @CurrentMember MemberEntity registrant) {
 
-        RagDocumentResponse response =
-                ragDocumentService.upload(file, documentCode, name, registrant);
+        RagDocumentResponse response = ragDocumentService.upload(file, name, registrant);
         URI location = URI.create("/v1/assistant/documents/" + response.ragDocId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
@@ -164,14 +166,15 @@ public class RagDocumentController {
     @Operation(
             summary = "규정 문서 적용 상태 전환",
             description =
-                    "DRAFT → EFFECTIVE(시행 중으로 올리기) 또는 EFFECTIVE → SUPERSEDED(옛 판본으로"
-                            + " 내리기). EFFECTIVE로 올리면 같은 documentCode의 기존 시행본이 같은"
-                            + " 트랜잭션에서 SUPERSEDED로 내려가며(문서당 시행본은 하나다) 내려간"
-                            + " 판본의 청크는 커밋 뒤에 지워진다. **INDEXED가 아닌 판본은 올릴 수"
+                    "DRAFT → EFFECTIVE(시행 중으로 올리기) 또는 EFFECTIVE → SUPERSEDED(내려두기)."
+                            + " **다른 문서를 함께 내리지 않으며 시행 중인 문서는 여러 건일 수"
+                            + " 있다**(ADR-0034 — 갱신된 규정의 옛 문서를 지우는 것은 운영진의 몫이다)."
+                            + " SUPERSEDED로 내리면 그 문서의 청크가 커밋 뒤에 지워진다. **INDEXED가"
+                            + " 아니면 올릴 수"
                             + " 없다 — 409 RAG_DOCUMENT_NOT_INDEXED**(통과시키면 «시행 중인데 검색되지"
                             + " 않는 문서»가 된다). 그 밖의 전이(SUPERSEDED에서 되돌리기, DRAFT로"
                             + " 내리기)는 400 INVALID_RAG_APPLY_STATUS_TRANSITION이다 — 되돌리려면 그"
-                            + " 파일을 새 판본으로 다시 올린다. effectiveFrom을 비우면 오늘이 들어가며"
+                            + " 파일을 다시 올린다. effectiveFrom을 비우면 오늘이 들어가며"
                             + " 답변의 «시행 기준» 배지가 그 값이다. 색인 상태는 이 API가 바꾸지"
                             + " 않는다(워커가 적는 값이다).")
     @PatchMapping("/{ragDocId}/apply-status")

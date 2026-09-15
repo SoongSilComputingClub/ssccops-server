@@ -15,7 +15,6 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
 
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -58,35 +57,16 @@ import lombok.NoArgsConstructor;
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
-@Table(
-        name = "rag_doc",
-        uniqueConstraints =
-                @UniqueConstraint(
-                        name = "uk_rag_doc_doc_cd_ver",
-                        columnNames = {"doc_cd", "doc_ver"}))
+@Table(name = "rag_doc")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class RagDocumentEntity {
 
-    /** 같은 문서의 첫 판본 번호. 두 번째부터는 {@code 직전 판본 + 1}이며 세지 않는다 */
-    public static final short FIRST_VERSION = 1;
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "rag_doc_id")
     private Long id;
-
-    /*
-     * 판본을 가로지르는 열쇠. **화면에서 바뀌지 않는 값이라 제목·파일명으로 대신하지 않는다** —
-     * `form.sys_form_cd`가 폼에서 한 일과 같은 자리다(#140). 제목으로 판본을 묶으면 운영진이
-     * 제목을 다듬는 순간 «같은 문서»가 둘로 갈린다.
-     *
-     * 표준코드 그룹이 아니라 문자열인 것은 사전에 코드그룹으로 등재하지 않았기 때문이다
-     * (ssccops#325). 어휘(REGULATION·SCHOOL_RULE·…)는 운영 규칙이며 코드가 강제하지 않는다.
-     */
-    @Column(name = "doc_cd", nullable = false, length = 20, updatable = false)
-    private String documentCode;
 
     /** 인용 카드에 찍히는 표시명. 기본값은 원본 파일명에서 확장자를 뗀 것이고 운영진이 고칠 수 있다 */
     @Column(name = "doc_nm", nullable = false, length = 200)
@@ -95,10 +75,6 @@ public class RagDocumentEntity {
     @Enumerated(EnumType.STRING)
     @Column(name = "doc_type_cd", nullable = false, length = 20, updatable = false)
     private RagDocumentType type;
-
-    /** 같은 {@code doc_cd} 안에서 1부터. `(doc_cd, doc_ver)` UNIQUE가 겹침을 막는다 */
-    @Column(name = "doc_ver", nullable = false, updatable = false)
-    private Short version;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "indx_stts_cd", nullable = false, length = 20)
@@ -165,25 +141,22 @@ public class RagDocumentEntity {
     private Instant updatedAt;
 
     /**
-     * 새 판본. <b>언제나 {@code PENDING} + {@code DRAFT}로 들어온다</b> — 업로드가 상태를 고르지 못하는 것이 «올린 것이 곧바로 답변의
-     * 근거가 되지 않는다»의 전부다(ADR-0029).
+     * 새 문서. <b>언제나 {@code PENDING} + {@code DRAFT}로 들어온다</b> — 업로드가 상태를 고르지 못하는 것이 «올린 것이 곧바로 답변의
+     * 근거가 되지 않는다»의 전부다(ADR-0029 · 이 규칙은 판본 관리가 사라져도 그대로다).
      *
-     * @param version 같은 {@code documentCode}의 직전 판본 + 1. 세지 않고 최대값에서 얻는다 — 삭제가 하드라 행 수와 번호가 갈린다
+     * <p><b>판본 인자가 없다</b>(ADR-0034). 규정이 갱신되면 운영진이 옛 문서를 지우고 새 문서를 올리므로 문서 한 건이 곧 그 규정이다 — 묶을 것이 없어
+     * 문서 식별자도 판본 번호도 받지 않는다.
      */
     public static RagDocumentEntity register(
-            String documentCode,
             String name,
             RagDocumentType type,
-            short version,
             String originalFileName,
             int fileSize,
             MemberEntity registrant) {
         return new RagDocumentEntity(
                 null,
-                documentCode,
                 name,
                 type,
-                version,
                 RagIndexStatus.PENDING,
                 RagApplyStatus.DRAFT,
                 null,
@@ -251,8 +224,8 @@ public class RagDocumentEntity {
      * 그때부터 두 곳에 적히기 시작한다 — {@code SUPERSEDED}가 종착점인 것도 {@code DRAFT}로 내려올 수 없는 것도 {@link
      * RagApplyStatus} 한 곳이 말한다.
      *
-     * <p><b>같은 {@code doc_cd}의 기존 시행본을 내리는 것은 이 메서드가 하지 않는다</b> — 다른 행을 읽어야 하므로, 전환을 수행하는 서비스가 그 행을
-     * 잠그고 {@link #supersede()}로 내린 뒤 이것을 부른다(엔티티 하나가 자기 테이블을 질의하지 않는다).
+     * <p><b>다른 문서를 함께 내리지 않는다</b>(ADR-0034). 예전에는 같은 문서 식별자의 기존 시행본을 서비스가 잠그고 내린 뒤 이것을 불렀는데, 판본 관리를
+     * 걷어내며 그 경로가 사라졌다 — 시행 중인 문서는 여러 건일 수 있고, 갱신된 규정의 옛 문서를 지우는 것은 운영진의 몫이다.
      *
      * @param effectiveFrom {@code EFFECTIVE}로 올릴 때만 쓰인다. 나머지 전이에서는 무시된다 — 시행일은 «시행 중이 된 판본»의 값이고,
      *     내려간 판본의 것은 «언제부터 언제까지 유효했나»로 그대로 남는다
@@ -271,10 +244,9 @@ public class RagDocumentEntity {
      *
      * <p><b>색인이 끝나 있어야 한다</b>(409) — 아니면 «시행 중인데 검색되지 않는 문서»가 되어 도우미가 근거 없이 침묵한다.
      *
-     * <p><b>같은 {@code doc_cd}에 이미 시행 중인 판본이 있는지는 여기서 보지 않는다.</b> 그 판정에는 다른 행을 읽어야 하므로 전환을 수행하는
-     * 쪽(#401)이 기존 판본을 잠그고 같은 트랜잭션에서 {@link #supersede()}로 내린 뒤 이것을 부른다. PostgreSQL에서는 부분 유니크
-     * 인덱스({@code uk_rag_doc_effective})가 최종 방어선이고, <b>H2에는 그 인덱스가 없어 그 판정이 유일한 방어선이다</b>(#143과 같은 두
-     * 겹).
+     * <p><b>이미 시행 중인 다른 문서가 있는지는 보지 않는다 — 여러 건이어도 된다</b>(ADR-0034). 예전에는 같은 문서 식별자당 한 벌이라 전환하는 쪽이
+     * 기존 판본을 내렸고 부분 유니크 인덱스가 최종 방어선이었는데, 둘 다 사라졌다. «같은 규정의 두 문서가 함께 시행 중»을 막는 것은 이제 코드가 아니라
+     * 운영이다(ADR-0034의 «포기하는 것»).
      */
     public void makeEffective(LocalDate effectiveFrom) {
         if (indexStatus != RagIndexStatus.INDEXED) {

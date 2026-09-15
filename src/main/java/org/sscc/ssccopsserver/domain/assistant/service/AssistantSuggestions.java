@@ -1,8 +1,6 @@
 package org.sscc.ssccopsserver.domain.assistant.service;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 import org.springframework.stereotype.Component;
 
@@ -15,11 +13,19 @@ import org.springframework.stereotype.Component;
  * 거짓말을 한다** — 지원금 지침이 빠져도 «지원금 한도는?»이 그대로 남고, 누르면 «찾지
  * 못했습니다»가 돌아온다. 그 화면은 도우미가 고장 난 것처럼 보인다.
  *
- * ══ 표가 문서 코드에 매여 있다 ══════════════════════════════════
+ * ══ 고정 셋이다 — 문서에 매달지 않는다 (ADR-0034) ══════════════
  *
- * 후보마다 «어느 문서가 있어야 답할 수 있는가»를 `doc_cd`로 적어 두고, 지금 검색 대상인
- * 판본(`INDEXED && EFFECTIVE`)의 코드만 통과시킨다. **제목이 아니라 코드로 묻는 것**은
- * 운영진이 표시명을 다듬는 순간 추천 질문이 통째로 사라지지 않게 하기 위해서다.
+ * 예전에는 후보마다 «어느 문서가 있어야 답할 수 있는가»를 `doc_cd`로 적어 두고 검색 대상
+ * 판본의 코드만 통과시켰다. **추천 질문은 「이런 기능이 있다」를 보여주는 참고용**이라 그
+ * 정밀함이 필요하지 않고, 판본 관리를 걷어내며 그 열쇠도 함께 사라졌다.
+ *
+ * **묻는 것은 «코퍼스가 비어 있지 않은가» 하나뿐이다.** 그 판정까지 없애지 않은 것은 참고용이어도
+ * **누르면 실제 질의가 나가기** 때문이다 — 빈 코퍼스에서 내보내면 «찾지 못했습니다»가 돌아오고,
+ * 그 화면이 아래 §13.3이 막으려던 바로 그것이다.
+ *
+ * ⚠️ **감수하는 것**: 코퍼스에 회칙이 없고 세칙만 있으면 이 셋이 빗나간다(회칙 조문을 묻는
+ * 질문이므로). 회칙이 첫 업로드 대상이자 다른 문서가 없어도 답할 수 있는 유일한 문서라 실제로
+ * 일어나기 어렵고, 일어나도 참고용 패널이 한 번 헛도는 것이 전부다.
  *
  * 문서 표시명으로 질문을 **지어내는** 안(«「{문서명}」에는 어떤 내용이 있나요?»)은 택하지
  * 않았다. 언제나 세 개를 채울 수 있다는 것이 장점인데, 조 단위 청크에는 문서명이 본문에 없어
@@ -34,9 +40,9 @@ import org.springframework.stereotype.Component;
  * 그 테스트의 시험지(`AssistantGoldenSet.ANSWERABLE`)도 함께 고칠 것 — 두 벌이 되면 확인이
  * 확인하지 않는 문장을 보게 된다.
  *
- * 아래 `GUIDELINE`·`BYLAW` 두 줄은 **답할 문서가 아직 없어 조용히 꺼져 있다**(2026-09-13 확인 —
- * 학술국 운영 세칙·지원금 집행 지침이 실재하지 않는다). 세칙이 올라오면 **배포 없이** 켜지는
- * 것이 서버가 내리는 값의 값어치다.
+ * 학술국 운영 세칙·지원금 집행 지침을 기대하던 두 줄이 있었으나 **그 문서들이 실재하지 않아
+ * 한 번도 켜진 적이 없어**(2026-09-13 확인) 고정 셋으로 옮기며 지웠다. 세칙이 올라와 질문을
+ * 더하고 싶어지면 **아래 표에 줄을 더한다** — 골든셋으로 «실제로 답해지는가»를 확인하고 더할 것.
  */
 @Component
 public class AssistantSuggestions {
@@ -45,40 +51,27 @@ public class AssistantSuggestions {
     static final int MAX = 3;
 
     /*
-     * 후보 표 — 순서가 곧 우선순위다. 회칙(`REGULATION`)이 앞인 것은 그것이 첫 업로드 대상이자
-     * 다른 문서가 없어도 답할 수 있는 유일한 문서이기 때문이다.
+     * 화면에 그리는 질문 — **{@link #MAX}개와 같은 수만 둔다.** 더 두면 뒤가 잘리는데 무엇이
+     * 잘렸는지가 이 파일에서 보이지 않는다.
      *
-     * 어휘(`REGULATION`·`GUIDELINE`·`BYLAW`)는 **운영 규칙이고 코드가 강제하지 않는다**
-     * (ssccops#325 — `doc_cd`는 표준코드 그룹이 아니라 문자열이다). 운영진이 다른 코드로 올리면
-     * 그 줄이 조용히 꺼지는 것이 대가이며, 그래서 이 표는 «없으면 안 보인다»를 감수할 수 있는
-     * 값(추천 질문)에만 쓴다 — 인가·검색 판정은 어느 것도 이 표를 보지 않는다.
+     * 셋 다 회칙 질문이고 **골든셋이 «실제로 답해진다»를 확인한 문장이다**(위). 인가·검색 판정은
+     * 어느 것도 이 표를 보지 않는다 — 틀려도 참고용 패널이 헛도는 것이 전부인 값이다.
      */
-    private static final List<Candidate> CANDIDATES =
+    private static final List<String> QUESTIONS =
             List.of(
-                    new Candidate("REGULATION", "정회원으로 승격하려면 어떤 조건을 갖춰야 하나요?"),
-                    new Candidate("REGULATION", "회칙을 개정하려면 어떤 절차를 거치나요?"),
-                    new Candidate("REGULATION", "임원이 임기 중에 그만두면 회원 등급은 어떻게 되나요?"),
-                    new Candidate("GUIDELINE", "학술 활동 지원금의 한도와 정산 기한은 어떻게 되나요?"),
-                    new Candidate("BYLAW", "스터디 출석률이 미달이면 어떻게 처리하나요?"));
+                    "정회원으로 승격하려면 어떤 조건을 갖춰야 하나요?",
+                    "회칙을 개정하려면 어떤 절차를 거치나요?",
+                    "임원이 임기 중에 그만두면 회원 등급은 어떻게 되나요?");
 
     /**
-     * 지금 답할 수 있는 질문 최대 {@value #MAX}개.
+     * 화면에 그릴 질문 — 코퍼스가 비어 있으면 <b>빈 목록</b>이고, 그것이 새 환경의 정상 상태다.
      *
-     * @param documentCodes 검색 대상인 판본들의 {@code doc_cd} — 코퍼스가 비어 있으면 빈 목록이 나가고, 그것이 새 환경의 정상 상태다
+     * <p><b>코퍼스가 비어 있는지 하나만 묻는다</b>(ADR-0034). 참고용이어도 <b>누르면 실제 질의가 나가므로</b> 빈 코퍼스에서 내보내면 «찾지
+     * 못했습니다»가 돌아오고, 추천을 눌렀는데 거절당하는 그 화면이 애초에 이 표가 막으려던 것이다(§13.3).
+     *
+     * @param corpusHasDocuments 검색 대상 문서가 하나라도 있는가
      */
-    public List<String> forDocumentCodes(Set<String> documentCodes) {
-        List<String> questions = new ArrayList<>();
-        for (Candidate candidate : CANDIDATES) {
-            if (questions.size() == MAX) {
-                break;
-            }
-            if (documentCodes.contains(candidate.documentCode())) {
-                questions.add(candidate.question());
-            }
-        }
-        return List.copyOf(questions);
+    public List<String> forCorpus(boolean corpusHasDocuments) {
+        return corpusHasDocuments ? QUESTIONS : List.of();
     }
-
-    /** 질문 하나와 «그 질문이 기대는 문서» */
-    private record Candidate(String documentCode, String question) {}
 }

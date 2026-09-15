@@ -589,9 +589,7 @@ class AssistantServiceImplTest {
 
         RagDocumentEntity document = mock(RagDocumentEntity.class);
         when(document.getId()).thenReturn(id);
-        when(document.getDocumentCode()).thenReturn(code);
         when(document.getName()).thenReturn(name);
-        when(document.getVersion()).thenReturn(version);
         when(document.getType()).thenReturn(type);
         when(document.getApplyStatus()).thenReturn(RagApplyStatus.EFFECTIVE);
         when(document.getEffectiveFrom()).thenReturn(effectiveFrom);

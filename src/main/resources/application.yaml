@@ -222,6 +222,27 @@ spring:
         # 먼저 돌므로(Boot 의 JdbcOperationsDependsOnPostProcessor) 순서 문제가 없다.
         schema-validation: true
 
+    # ── 모델 호출 재시도 (규정 도우미 RAG · #403) ────────────────────────────
+    #
+    # **기본값(10회 · 2s에서 5배씩)이 사용자 요청에 맞지 않는다.** 그대로 두면 공급자가
+    # 5xx를 내는 동안 질의 한 건이 2s → 10s → 50s … 로 물러나며 **분 단위로** 요청 스레드를
+    # 붙들고, 화면은 그동안 아무 말도 하지 못한다(§14.2의 목표가 p95 5초다).
+    #
+    # 2회 · 1s · 2배 · 최대 5s면 «한 번은 더 해 보고 안 되면 우리 문구로 안내»가 된다 —
+    # 그 문구가 503 ASSISTANT_UPSTREAM_FAILED이고 화면은 «일시적으로 답할 수 없어요»를 그린다.
+    #
+    # **색인 워커의 임베딩도 같은 RetryTemplate을 쓴다**(빈이 하나다). 그쪽에도 이 값이 맞다:
+    # 실패의 대부분이 쿼터이고 자동 재시도는 쿼터 소진을 가속하며(#400이 문서 단위 재시도를
+    # 두지 않은 근거 그대로), 단일 스레드 워커가 50초씩 물러나면 대기열 전체가 그만큼 밀린다.
+    #
+    # `on-client-errors`는 기본 false를 그대로 둔다 — 4xx(429 쿼터 포함)를 다시 부르지 않는다.
+    retry:
+      max-attempts: 2
+      backoff:
+        initial-interval: 1s
+        multiplier: 2
+        max-interval: 5s
+
 server:
   port: ${PORT:8080}
 

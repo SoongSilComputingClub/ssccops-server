@@ -3,8 +3,8 @@
 이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
 
 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399) ·
-색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401)까지 왔다** (Epic ssccops#321).
-질의(#403)는 아직 없다 — 그 이슈가 여기 규칙 위에 얹힌다. 결정은
+색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403)까지 왔다** (Epic ssccops#321).
+**남은 것은 레이트 리밋(#404) · 골든셋(#405) · 대화 메모리(#406 · Phase 2)다.** 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
 
@@ -17,16 +17,23 @@
   그 SAX 핸들러 `PageContentHandler` · 두 갈래가 합류하는 `DocumentChunker` · 메타 key 상수 `RagChunkMetadata` ·
   코퍼스 `RagDocumentService`/`Impl`(업로드 #399 · 목록·상세·전환·재색인·삭제 #401) · 색인 워커
   `RagIndexingWorker`와 그것을 돌리는 `RagIndexingScheduler`(#400) · 청크를 커밋 뒤에 지우는
-  `RagChunkEraser`(#401).
+  `RagChunkEraser`(#401) · 질의 `AssistantService`/`Impl`과 그것이 쓰는 넷 — 손잡이
+  `AssistantQueryPolicy` · 프롬프트와 거절 문구 `AssistantPrompt` · 인용 대조 `CitationVerifier` ·
+  추천 질문 표 `AssistantSuggestions`(#403).
 - 컨트롤러: `RagDocumentController`(코퍼스 6핸들러 · 클래스 레벨
-  `@RequireAuthority(RAG_DOCUMENT_MANAGE)`). **질의 컨트롤러(#403)와 나뉜다** — 아래 «다른 도메인».
+  `@RequireAuthority(RAG_DOCUMENT_MANAGE)`)와 **`AssistantController`(질의·추천 질문 · 인증만)**.
+  **둘이 나뉜 이유**는 아래 «다른 도메인».
 - 응답 record는 **한 행 한 벌**이다 — `RagDocumentResponse`가 목록의 한 행이자 업로드·재색인·
   전환의 응답이고, 상세(`RagDocumentDetailResponse`)가 그것을 품는다. 요약 3값은
   `RagCorpusSummaryResponse`이며 목록 응답에 함께 실린다.
+- 질의의 값은 `dto/Assistant*`(`QueryRequest` · `QueryResponse` · `CitationResponse` ·
+  `SuggestionsResponse`)와 인용 모양 enum `code/CitationType`이고, 검색 결과를 판본과 함께 들고
+  다니는 것은 `service/RetrievedChunk`·`SearchableDocument`다(#403).
 - 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`) ·
   평문 쪽은 `dto/Extracted*`(`Document` · `Page`)와 `dto/GenericChunk`다.
 - 확장자 표는 `code/RagDocumentFormat` 한 곳이다 — 유형(`STRUCTURED`/`GENERIC`)과 파서를 함께 가른다.
-- 빈 배선은 `global/config/AssistantConfig`(`ChatClient` · `RagChunkStore`)다.
+- 빈 배선은 `global/config/AssistantConfig`(`ChatClient` · `RagChunkStore`)와
+  `global/config/GeminiClientConfig`(호출 시간 상한을 건 `com.google.genai.Client` · #403)다.
 - 벡터 청크는 `vector_store`에 들어가며 **그 테이블에는 엔티티가 없다** — 스키마도 이름도
   Spring AI가 정하고 우리는 `V10`으로 옮겨 적기만 한다.
 
@@ -102,9 +109,14 @@
   키가 없어 배선이 서지 않음 → 503 `ASSISTANT_UNAVAILABLE`(켜 두고 설정이 덜 된 상태라 요청의
   잘못이 아니다) · 전이표 위반 → 400 · 색인 전 시행 → 409 · **받지 않는 확장자 → 400
   `RAG_DOCUMENT_UNSUPPORTED_TYPE` · 10MB 초과 → 413 `RAG_DOCUMENT_TOO_LARGE` · 적재 한도 초과 →
-  429 `ASSISTANT_RATE_LIMITED`**(#399). 앞의 둘을 `RAG_DOCUMENT_PARSE_FAILED`와 나눈 것은
-  운영진이 할 일이 «형식을 바꾼다»와 «내용을 고친다»로 겹치지 않기 때문이다 — 그 **안에서는**
-  사유마다 코드를 만들지 않는다(#150).
+  429 `ASSISTANT_RATE_LIMITED`**(#399) · **질문 1,000자 초과 → 413
+  `ASSISTANT_QUESTION_TOO_LONG` · 모델 호출 실패·타임아웃 → 503 `ASSISTANT_UPSTREAM_FAILED`**(#403).
+  앞의 둘을 `RAG_DOCUMENT_PARSE_FAILED`와 나눈 것은 운영진이 할 일이 «형식을 바꾼다»와 «내용을
+  고친다»로 겹치지 않기 때문이다 — 그 **안에서는** 사유마다 코드를 만들지 않는다(#150).
+  - **`ASSISTANT_UPSTREAM_FAILED`(503)와 `ASSISTANT_UNAVAILABLE`(503)은 상태 코드가 같고 뜻이
+    다르다.** 앞은 «다시 물으면 될 수도 있다»(공급자 장애·타임아웃), 뒤는 «키를 넣기 전까지
+    언제 물어도 같다»이며 화면의 안내가 그만큼 갈린다.
+  - **«근거를 찾지 못했다»는 오류가 아니다** — 200에 `answered: false`다(아래 절).
 
 ## 업로드 — 요청 안에서 파싱하고 R2에 원본을 둔다 (#399 · 기획안 §2 · §9 · §11)
 
@@ -391,6 +403,166 @@
   6쪽 전부에 있다). 반복 줄을 지우는 것은 휴리스틱이고, 잘못 지우면 조문이 사라진다 — 검색 품질이
   이것 때문에 무너진다고 골든셋(§14.2)이 말하면 그때 본다.
 
+## 질의 — 방어선 셋 · 검색 필터 둘 · 인용 검증 (#403 · 기획안 §6 · §10 · §13.3)
+
+| | |
+|---|---|
+| `POST /v1/assistant/queries` | 질문 → 답변 + 인용. **인증만** |
+| `GET /v1/assistant/suggestions` | 추천 질문 최대 3개. **인증만** |
+
+**거절이 이 기능의 가장 중요한 동작이다.** 규정 답변에서 없는 조항을 지어내는 것은 틀린 답보다
+나쁘다 — 운영진이 그것을 근거로 사람의 자격을 판단한다.
+
+### 방어선이 셋이고 순서가 중요하다
+
+| | 무엇이 | 어디가 |
+|---|---|---|
+| 1차 | **임계값을 넘는 청크가 없으면 모델을 부르지 않는다** | `AssistantServiceImpl` |
+| 2차 | 프롬프트의 다섯 규칙 | `AssistantPrompt` |
+| 3차 | **모델이 단 인용을 실제 청크와 대조하고, 통과한 것이 없으면 답을 버린다** | `CitationVerifier` |
+
+**프롬프트에 「모르면 모른다고 해」를 적는 것은 2차이고 모델은 그 지시를 종종 어긴다 — 아예
+부르지 않으면 어길 수 없다.** 그래서 «근거가 약해도 답하고 화면에 «참고용» 배지»는 기각했다:
+배지는 읽히지 않고 문장은 읽힌다. **새 규칙을 프롬프트에 적기 전에 코드로 막을 수 있는지 먼저
+볼 것.**
+
+거절은 셋 다 같은 모양이다 — 200 · 정해진 문구(`AssistantPrompt.NO_EVIDENCE`) ·
+`answered: false` · **빈 배열(null 아님)** `citations` · 판본 값 둘 `null`. 오류가 아닌 것은
+화면이 그 문구를 말풍선으로 그려야 하기 때문이고, 셋을 가르는 값은 **로그에만** 남는다
+(«모델이 근거 없는 답을 했습니다»를 사용자에게 말할 이유가 없다).
+
+### 검색 필터가 둘이다 — 하나라도 빠지면 새어 나간다
+
+조건은 `INDEXED && EFFECTIVE`이고 **조회한 뒤 `if`로 거르지 않는다.** 판정은 JPA 질의
+`RagDocumentRepository.findSearchable()` 한 곳에 박혀 있고(파라미터로 받지 않는다 — 부르는 쪽이
+한쪽만 넘기는 순간 새어 나간다), 거기서 나온 식별자 집합이 **그대로 벡터 검색의
+필터**(`ragDocId in [...]`)가 된다.
+
+- 색인 전 판본을 보면 **청크가 반쯤 든 문서**로 답하고, 적용 상태를 빼면 **의결 전 개정안이
+  시행 중인 회칙 행세를 한다.**
+- ⚠️ **청크 메타의 `applyStatus`로 걸지 말 것.** 그 값은 **색인 시점의 값**이라 적용 전환(#401)이
+  재색인을 시키지 않는 이상 낡아 있다 — `DRAFT → EFFECTIVE`로 올린 판본의 청크에는 아직
+  `DRAFT`가 찍혀 있어, 메타로 걸면 **방금 시행 중으로 올린 문서가 검색되지 않는다.**
+- **돌아온 청크도 한 번 더 본다** — 판본을 붙일 수 없는 청크(고아 청크 · 필터를 무시하는 스텁)는
+  버린다. 필터의 대체가 아니라 «인용을 만들 수 없는 청크는 근거가 되지 못한다»는 사실이다.
+
+### 임계값은 유형별이고 검색 뒤에 한 번 더 잰다
+
+조 단위 청크(목표 450자)와 고정 길이 청크(600자 + overlap)는 **점수 분포가 같지 않다.** 저장소는
+요청 하나에 임계값 하나만 받으므로 **가장 느슨한 값으로 긁고 유형별 판정은 결과를 받아 한다** —
+순서를 뒤집으면 낮은 임계값을 가진 유형의 청크가 애초에 돌아오지 않아 그 손잡이가 아무 일도
+하지 않는다. 판본 조건과 갈리는 지점이다: 그쪽은 «보면 안 되는 것»이라 반드시 필터이고, 이쪽은
+«얼마나 관련 있어야 하는가»라 두 단계로 나뉘어도 새어 나갈 것이 없다.
+
+손잡이는 `AssistantQueryPolicy`(`ssccops.assistant.query.*` — `top-k` 8 ·
+`similarity-threshold` 0.5 · `-structured`/`-generic` 덮어쓰기 · `max-question-length` 1000 ·
+`snippet-length` 200)다. **지금 두 임계값이 같은 것이 «아직 실측하지 않았다»는 표시이며 값은
+골든셋(#405)이 정한다.** 요청은 이 값들을 고르지 못한다 — 열면 «임계값 0으로 물어보기»가
+가능해지고 그것은 **클라이언트가 거절을 끌 수 있다**는 뜻이다.
+
+### 인용 — 표기가 세 모양뿐이라서 검증할 수 있다
+
+발췌마다 «인용 표기»를 먼저 적어 주고(`RetrievedChunk.marker()`), 모델이 그것을 대괄호로 옮겨
+쓰게 한다. **표기를 자유롭게 지으면 대조할 대상이 없다.**
+
+| 표기 | 통과 조건 | 응답 |
+|---|---|---|
+| `제7조` · `제27조의2` · `부칙 제3조` | 같은 (부칙 여부 · 조번호 · 가지번호)의 조 단위 청크를 넣어 줬다 | `citationType: ARTICLE` |
+| `제7조 6항` | 위에 더해 **그 청크 본문에 `6항` 줄이 실제로 있다** | 없으면 조까지만 싣고 `clause`는 `null` |
+| `p.12` | 그 쪽에서 시작하는 평문 청크를 넣어 줬다 | `citationType: PAGE` |
+| 문서명 | 페이지가 없는 형식(DOCX · #398)의 청크를 넣어 줬다 | `PAGE` · `page`는 `null` |
+
+- **통과하지 못한 토큰은 본문에서도 지운다.** 인용 목록에서만 빼면 답변 문장에 `[제99조]`가
+  남아 화면이 «근거가 있는 문장»으로 읽는다 — 인용 카드가 없다는 것을 알아채는 사람은 없다.
+  지우는 것은 **조·페이지 모양인데 대조에 실패한 토큰**뿐이고 `[참고]` 같은 대괄호는 건드리지
+  않는다.
+- **항이 확인되지 않아도 조는 남긴다** — 긴 조는 항 묶음으로 갈리므로(#397) 그 항이 같은 조의
+  **다른 청크**에 있을 수 있다. «맞는 인용을 버리지 않는다»와 «확인하지 못한 값을 싣지 않는다»가
+  여기서 만난다.
+- **`citationType`이 어느 필드가 채워졌는지를 말하고 반대쪽은 `null`이다 — 서버가 대체값을 만들지
+  않는다.** `"—"`를 채우면 화면이 «값이 없다»와 «없는 것이 정상이다»를 구별하지 못하는데, DOCX에
+  페이지가 없어 **`PAGE`인데 `page`가 비는 것이 정상**인 경우가 실제로 있다. **한 답변에 두 유형이
+  섞이는 것도 정상이다**(회칙 제27조가 세부 규정을 위임한다).
+- **판본 배지(`applyStatus`·`effectiveDate`)는 첫 인용의 판본에서 온다.** 배지가 답하는 물음이
+  «어느 판본을 기준으로 읽었나»인데 날짜 여럿을 배지 하나에 담을 방법이 없고, 첫 인용이 답변이
+  가장 크게 기댄 근거다(유사도 순서 그대로). 거절이면 둘 다 `null`이다.
+- 같은 조가 두 문서에 있으면 **먼저 온 청크**를 고른다. 모델에게 문서명을 함께 쓰게 하는 안은
+  표기를 길게 만들어 **맞는 인용이 버려질 확률**을 올린다.
+
+### 프롬프트 · 인젝션 · 개인정보
+
+- **도구 호출을 붙이지 않는다.** 인젝션이 성공해도 할 수 있는 것이 «이상한 답을 한다»뿐이라는
+  성질이 이 기능의 경계다(§6.4) — `.tools(...)`·`.toolNames(...)`를 질의 경로에 들이지 말 것.
+  테스트가 프롬프트의 옵션이 `ToolCallingChatOptions`가 **아님**을 본다.
+- **사용자 질문과 문서 발췌를 분리된 블록으로** 넣고, 발췌가 지시가 아니라 자료임을 시스템
+  프롬프트가 못 박는다.
+- **프롬프트에 회원 실명·학번·연락처가 들어가지 않는다**(§11) — 무료 티어 입력은 제품 개선에
+  사용될 수 있다. `AssistantPrompt`의 어떤 메서드도 `MemberEntity`를 받지 않으며 받게 하지 말 것.
+- **질문도 답변도 어디에도 저장하지 않는다**(질의 로그 표를 두지 않았다 · §9). **로그에도 싣지
+  않는다** — 질문에 사람 이름이 섞여 들어올 수 있고 로그는 Kibana에 남는다(ADR-0024). 남기는
+  것은 «누가 · 몇 개의 근거로 · 답했는가 · 얼마나 걸렸는가»다.
+- 모델 호출 실패의 **원문을 응답에 싣지 않는다** — SDK의 예외 문장에 요청 본문이 섞여 나오고 그
+  본문이 곧 사용자의 질문이다.
+
+### `QuestionAnswerAdvisor`를 쓰지 않았다
+
+기획안(§4)과 이슈가 가리킨 길인데 **셋이 겹쳐 성립하지 않는다.**
+
+1. **1차 방어선이 성립하지 않는다.** 어드바이저는 검색과 생성을 한 번에 하므로 «임계값을 넘는
+   청크가 없으면 부르지 않는다»를 끼워 넣을 자리가 없다 — 빈 컨텍스트로도 모델을 부른다.
+2. **필터가 요청마다 DB 질의에서 나온다.** 시행 중인 판본의 식별자 집합은 고정 문자열이 아니다.
+3. 포트가 `VectorStore`가 아니라 `RagChunkStore`다 — 테스트가 실제 PostgreSQL 없이 돌기 위한
+   경계이며(#396) 어드바이저는 `VectorStore`를 요구한다.
+
+그래서 **검색을 포트 뒤에서 직접 조립한다**(이슈의 «안 되면» 항목 그대로). `spring-ai-advisors-vector-store`
+의존성도 들이지 않았다 — 지금 classpath에 없다.
+
+### Gemini 호출에 시간 상한을 건다
+
+⚠️ **google-genai SDK의 기본값은 「무한」이다** — 1.37.0이 OkHttp에 `connectTimeout(0)`을 걸고
+read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **톰캣 요청 스레드를 영영 붙든다.**
+스타터에는 그 값을 줄 프로퍼티가 없어(1.1.8의 `spring-configuration-metadata.json` 확인)
+`GeminiClientConfig`가 `com.google.genai.Client` 빈을 직접 만든다 — 자동 구성의 그 빈이
+`@ConditionalOnMissingBean`이라 **허용된 길**이다(MCP 전송 빈과 같은 자리).
+
+- 값은 `ssccops.assistant.gemini.call-timeout`(기본 `PT20S`)이고 **connect와 read를 따로 줄 수
+  없다** — SDK가 받는 것이 전체 왕복 하나(`HttpOptions.timeout` → OkHttp `callTimeout`)라
+  기획안의 «connect 3s / read 20s»를 합쳤다.
+- **임베딩은 이 빈을 쓰지 않는다**(`GoogleGenAiEmbeddingConnectionDetails`로 따로 연결한다) —
+  상한이 질의 경로에만 걸리는 것이 마침 맞다. 색인 워커는 느려도 끝나기만 하면 된다.
+- **재시도도 함께 좁혔다** — `spring.ai.retry`가 기본 10회 · 2s에서 5배씩이라 질의 한 건이
+  **분 단위로** 물러난다. 2회 · 1s · 2배 · 최대 5s이며, 같은 `RetryTemplate`을 쓰는 색인
+  임베딩에도 맞는 값이다(자동 재시도가 쿼터 소진을 가속한다 · #400).
+
+### 추천 질문 — 코퍼스에 실제로 있는 문서에만 매인다
+
+**서버가 내린다**(§13.3). 웹에 하드코딩하면 업로드 다음 날부터 거짓말을 한다 — 지원금 지침이
+빠져도 «지원금 한도는?»이 남고 누르면 «찾지 못했습니다»가 돌아온다.
+
+`AssistantSuggestions`의 후보마다 «어느 문서가 있어야 답할 수 있는가»를 `doc_cd`로 적어 두고,
+지금 검색 대상인 판본의 코드만 통과시켜 최대 3개를 낸다. **제목이 아니라 코드로 묻는 것**은
+표시명을 다듬는 순간 추천 질문이 통째로 사라지지 않게 하기 위해서다.
+
+- **문서 표시명으로 질문을 지어내는 안은 기각했다**(«「{문서명}」에는 어떤 내용이 있나요?»).
+  언제나 세 개를 채울 수 있다는 것이 장점인데, 조 단위 청크에는 문서명이 본문에 없어(#397)
+  그 질문이 임계값을 넘지 못하고 **추천 질문을 눌렀는데 거절당하는** 화면이 된다.
+- **빈 배열이 정상이다** — 코퍼스가 비어 있는 것이 새 환경의 기본 상태이고 화면은 그때 고지
+  문구만 그린다(§13.1).
+- ⚠️ **문구는 골든셋(#405)이 확정한다.** 지금 셋은 기획안 §13.3이 «회칙이 스스로 답할 수 있다»고
+  본 것이며 실제 인용이 나오는지는 실제 코퍼스로 재 봐야 안다. 고치는 데 웹 배포가 필요 없다는
+  것이 서버가 내리는 값의 값어치다.
+
+### 여기 없는 것
+
+- **대화(`conversationId` · `DELETE /v1/assistant/conversations/{id}`)는 #406(Phase 2)다.**
+  요청에도 응답에도 자리를 만들어 두지 않았다 — 받아 두고 무시하면 화면이 «이어지는 대화»를
+  그린 채 매번 처음부터 답한다(§13.1이 `↺` 버튼을 Phase 1에 그리지 않기로 한 것과 같은 판단).
+- **회원별·전역 질의 레이트 리밋은 #404다.** 적재 한도(회원당 일 10회)만 이미 있다(#399).
+- **트랜잭션이 모델 호출을 감싸지 않는다** — 판본 목록을 읽는 것만 리포지토리의 트랜잭션이고,
+  서비스 메서드에 `@Transactional`을 걸면 Gemini 왕복 동안 Supabase Free의 커넥션을 쥔다
+  (ssccops#324 · 색인 워커가 트랜잭션을 셋으로 쪼갠 것과 같은 이유). 그래서 엔티티를 들고
+  나가지 않고 `SearchableDocument`로 옮겨 담는다.
+
 ## 스키마 — `V10__create_assistant_tables.sql`
 
 - **스타터가 만들게 두지 않는다** — `spring.ai.vectorstore.pgvector.initialize-schema: false`.
@@ -430,8 +602,11 @@
 - 권한 `RAG_DOCUMENT_MANAGE`와 `FileTargetType.RAG_DOCUMENT`는 **#402가 세웠다.** 코퍼스를
   바꾸는 조작에만 붙고 질의는 인증만 요구한다 — 코퍼스 변경은 모든 답변의 근거를 갈아치우는
   조작이고, 프롬프트 인젝션 완화의 첫째 층이다(ADR-0029). **코퍼스 컨트롤러(#399·#401)는 클래스
-  레벨 `@RequireAuthority(RAG_DOCUMENT_MANAGE)`이고 질의 컨트롤러(#403)와 나뉜다** — 한 클래스에
-  두면 핸들러마다 붙이게 되고 하나 빠뜨리는 순간 코퍼스가 열린다.
+  레벨 `@RequireAuthority(RAG_DOCUMENT_MANAGE)`이고 질의 컨트롤러(#403 `AssistantController`)와
+  나뉜다** — 한 클래스에 두면 클래스 레벨로 걸 수 없어 핸들러마다 붙이게 되고 하나 빠뜨리는
+  순간 코퍼스가 열린다. 질의 쪽은 `@CurrentMember`가 계단의 전부다(미인증 401 · 미가입 403
+  `SIGNUP_REQUIRED`). **추천 질문도 같은 계단을 쓴다** — 미가입자에게 질문만 보이고 누르면 403이
+  되는 상태를 만들지 않는다.
   - 시드는 `V11`이며 **`SUPER` 직속 + 회장·부회장·총무 명시 부여**다. `EXECUTIVE`의 자식이
     아닌 것은 그러면 좁히는 쪽이 화면 조작이 아니라 마이그레이션이 되기 때문이다(#101이
     `SUB_WORK_TYPE_MANAGE`에서 치른 값). 넓히는 것도 좁히는 것도 역할별 권한 화면이다(#65).
@@ -483,6 +658,19 @@
   오지 않는다. 그래서 청크·R2 오브젝트 삭제의 «언제»는 목으로 보는 단위 테스트가 갖는다
   (`RagChunkEraserTest` · `FileReferenceUpsertEraseTest` · `FileEraserTest`와 같은 모양).
   `RagDocumentControllerTest`는 «행과 참조가 사라졌는가»까지만 본다.
+- **채팅 스텁은 저장소 스텁과 나눠 import 한다** — `support/AssistantChatStubConfig`(스텁
+  `ChatModel` + 그것으로 만든 `assistantChatClient`)가 `AssistantStubConfig`와 별개인 것은, 한
+  벌로 묶으면 «키가 없는 서버에는 `ChatClient` 빈이 없다»를 지키는 `AssistantWiringTest`가 깨지기
+  때문이다. 그 사실이 **규정 도우미와 무관한 환경이 정상적으로 뜨는 근거**다(#396).
+  - 스텁 모델(`StubChatModel`)의 **부른 횟수가 곧 1차 방어선의 검증이다** — «거절»의 정의가
+    «모델을 부르지 않는다»라 0을 세는 것 자체가 확인이다. 컨텍스트와 함께 사니 `@BeforeEach`에서
+    `reset()`할 것(`InMemoryRagChunkStore.clear()`와 같은 자리).
+- **질의 규칙은 컨텍스트 없이 본다**(`AssistantServiceImplTest`) — 확인하려는 것이 배선이 아니라
+  «부르지 않았다»와 «검색 요청에 무엇이 실렸나»라 목이 더 정확하다. `AssistantControllerTest`는
+  그것이 HTTP 계약(인가 계단 · 200인 거절 · 413 · 503)으로 나가는지만 본다.
+- **실제 모델 품질은 CI에 넣지 않는다** — 외부 의존이고 비결정적이다(§14.2). 임계값·검색 품질의
+  검증은 골든셋(#405)의 몫이고, 이 층이 못 박는 것은 **모델이 규칙을 어겼을 때 무슨 일이
+  일어나는가**다.
 - 스텁(`InMemoryRagChunkStore`)은 **유사도를 흉내 내지 않는다.** 넣은 순서대로 `topK`개를
   돌려줄 뿐이며, 순위를 지어내면 «검색이 무엇을 골랐나»를 확인하는 테스트가 스텁의 규칙을
   검증하게 된다. 검색 품질은 골든셋(#405)이 실제 스택에서 본다.

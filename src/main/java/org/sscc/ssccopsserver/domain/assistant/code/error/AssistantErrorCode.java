@@ -51,6 +51,34 @@ public enum AssistantErrorCode implements ErrorCode {
             HttpStatus.TOO_MANY_REQUESTS, "ASSISTANT_RATE_LIMITED", "요청 한도를 초과했습니다."),
 
     /*
+     * 503 — 모델 호출이 실패했거나 시간 안에 돌아오지 않았다 (#403 · 기획안 §10).
+     *
+     * **배선 없음(`ASSISTANT_UNAVAILABLE`)과 코드를 나눈다.** 그쪽은 「키를 넣지 않은 서버」라
+     * 운영자가 할 일이 있고 다시 눌러도 결과가 같지만, 이쪽은 **다시 물으면 될 수도 있는
+     * 상태**다(공급자 장애·타임아웃·쿼터). 화면이 할 안내가 그만큼 갈린다 —
+     * «일시적으로 답할 수 없어요»(§13.1)는 이 코드의 것이다.
+     *
+     * 원문 오류를 `detail`에 싣지 않는다 — 모델 SDK의 예외 문장에는 요청 본문 일부와 내부
+     * 주소가 섞여 나오고, 그 본문이 곧 사용자의 질문이다(§11 개인정보).
+     */
+    ASSISTANT_UPSTREAM_FAILED(
+            HttpStatus.SERVICE_UNAVAILABLE, "ASSISTANT_UPSTREAM_FAILED", "지금은 답변을 만들 수 없습니다."),
+
+    /*
+     * 413 — 질문이 1,000자를 넘었다 (#403 · 기획안 §10 · §8.1).
+     *
+     * **품질 규칙이 아니라 용량 규칙이다.** 질문 길이가 곧 프롬프트 길이이고, 그것이 힙(§8.1)과
+     * 모델 입력 비용을 정한다. 파일 상한(`RAG_DOCUMENT_TOO_LARGE`)과 같은 상태 코드를 쓰면서
+     * 코드를 나누는 것은 화면이 안내할 자리가 다르기 때문이다 — 한쪽은 업로드 다이얼로그,
+     * 다른 쪽은 질문 입력창이다.
+     *
+     * `@Valid`의 400이 아닌 것은 이 값이 **도메인이 정한 한도**라서다. 빈 질문은 그대로 400이며
+     * (`@NotBlank`), 그쪽은 요청이 형식을 어긴 것이다.
+     */
+    ASSISTANT_QUESTION_TOO_LONG(
+            HttpStatus.PAYLOAD_TOO_LARGE, "ASSISTANT_QUESTION_TOO_LONG", "질문이 너무 깁니다."),
+
+    /*
      * 400 — `.md`·`.pdf`·`.docx` 밖의 확장자다 (#399).
      *
      * **파싱 실패(아래)와 나눈다.** 코드를 하나로 합치면 화면이 «파일을 고쳐 다시 올리세요»

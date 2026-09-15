@@ -3,8 +3,8 @@
 이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
 
 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399) ·
-색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403) · 질의 레이트 리밋(#404)까지
-왔다** (Epic ssccops#321). **남은 것은 골든셋(#405) · 대화 메모리(#406 · Phase 2)다.** 결정은
+색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403) · 질의 레이트 리밋(#404) ·
+골든셋(#405)까지 왔다** (Epic ssccops#321). **남은 것은 대화 메모리(#406 · Phase 2)다.** 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
 
@@ -461,9 +461,19 @@
 
 손잡이는 `AssistantQueryPolicy`(`ssccops.assistant.query.*` — `top-k` 8 ·
 `similarity-threshold` 0.5 · `-structured`/`-generic` 덮어쓰기 · `max-question-length` 1000 ·
-`snippet-length` 200)다. **지금 두 임계값이 같은 것이 «아직 실측하지 않았다»는 표시이며 값은
-골든셋(#405)이 정한다.** 요청은 이 값들을 고르지 못한다 — 열면 «임계값 0으로 물어보기»가
+`snippet-length` 200)다. 요청은 이 값들을 고르지 못한다 — 열면 «임계값 0으로 물어보기»가
 가능해지고 그것은 **클라이언트가 거절을 끌 수 있다**는 뜻이다.
+
+**골든셋이 방향을 정했다 — 눈금은 아직이다** (#405 · 아래 «골든셋» 절). 같은 질문·같은 코퍼스
+에서 조 단위 청크가 고정 길이 청크보다 **언제나 높게** 나왔다(비 1.07~2.98). «유형별 손잡이가
+있어야 한다»와 «움직일 때 `GENERIC` 쪽을 낮춘다»가 그 결과다.
+
+**그래도 두 기본값은 같은 값으로 남는다.** 골든셋의 점수는 문자 n-gram 코사인이라 밀집
+임베딩의 눈금이 아니고, 그 테스트가 «어휘만 겹치는 무관한 질문이 기대 최저 점수를 넘는다»를
+일부러 못 박아 그 사실을 남겨 두었다(`theStubScaleCannotTellLexicalNearMissesApart`). 절대
+눈금은 **`./gradlew geminiCheck` 의 7단계**가 잰다 — 같은 시험지를 실제 모델로 한 번 돌려
+유형별 분포와 권장 임계값을 찍는다. 고칠 때 손대는 것은 코드가 아니라 배포 환경변수 한 줄이다
+(`SSCCOPS_ASSISTANT_QUERY_SIMILARITY_THRESHOLD_STRUCTURED` · `…_GENERIC`).
 
 ### 인용 — 표기가 세 모양뿐이라서 검증할 수 있다
 
@@ -608,9 +618,13 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
   그 질문이 임계값을 넘지 못하고 **추천 질문을 눌렀는데 거절당하는** 화면이 된다.
 - **빈 배열이 정상이다** — 코퍼스가 비어 있는 것이 새 환경의 기본 상태이고 화면은 그때 고지
   문구만 그린다(§13.1).
-- ⚠️ **문구는 골든셋(#405)이 확정한다.** 지금 셋은 기획안 §13.3이 «회칙이 스스로 답할 수 있다»고
-  본 것이며 실제 인용이 나오는지는 실제 코퍼스로 재 봐야 안다. 고치는 데 웹 배포가 필요 없다는
-  것이 서버가 내리는 값의 값어치다.
+- **회칙 질문 셋은 골든셋이 확정했다** (#405). 개정안 전문을 실제로 청킹한 코퍼스에 그 셋을
+  그대로 물어 **검증을 통과한 인용이 붙는 것**을 본다(`answersEverySuggestionTheCorpusAdvertises`)
+  — §13.3이 막으려는 화면이 «추천 질문을 눌렀는데 「찾지 못했습니다」가 돌아오는» 것이라 그
+  확인이 곧 이 표의 값이다. **문구를 고치면 골든셋의 시험지도 함께 고친다**(`AssistantGoldenSet`)
+  — 두 벌이 되면 확인이 확인하지 않는 문장을 보게 된다.
+- `GUIDELINE`·`BYLAW` 두 줄은 **답할 문서가 없어 조용히 꺼져 있다**(2026-09-13 확인). 세칙이
+  올라오면 배포 없이 켜지는 것이 서버가 내리는 값의 값어치다.
 
 ### 여기 없는 것
 
@@ -621,6 +635,86 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
   서비스 메서드에 `@Transactional`을 걸면 Gemini 왕복 동안 Supabase Free의 커넥션을 쥔다
   (ssccops#324 · 색인 워커가 트랜잭션을 셋으로 쪼갠 것과 같은 이유). 그래서 엔티티를 들고
   나가지 않고 `SearchableDocument`로 옮겨 담는다.
+
+## 골든셋 — 검색·답변과 적재·색인 회귀 (#405 · 기획안 §14.2 · §14.3)
+
+파서 골든셋(`RegulationGoldenSetTest` #397 · `GenericGoldenSetTest` #398)이 «문서가 청크로 옳게
+갈리는가»를 봤다면, **`RetrievalGoldenSetTest`는 그 청크가 질문 하나에 대해 옳게 골라지고 옳은
+인용이 되어 나오는가**를 본다. 외부 호출이 없어 **CI에서 매번 돈다.**
+
+| 지표 | 목표 | 2026-09-15 실측 |
+|---|---|---|
+| 검색 적중 hit@5 | ≥ 0.9 | **1.00** (10/10) |
+| 인용 정확도 | ≥ 0.95 | **1.00** (10/10) |
+| **올바른 거절률** | **1.0** | **1.00** (3/3) · 모델 호출 0 |
+| p95 질의 응답 시간 | < 5s | **5 ms** (모델 왕복 제외 — 아래) |
+
+🚦 **거절률 1.0이 기능 플래그를 켜는 조건이다.**
+
+### 시험지가 한 벌이다 — `support/AssistantGoldenSet`
+
+**같은 질문을 두 곳이 묻는다.** CI는 스텁 임베딩으로, `./gradlew geminiCheck` 7단계는 실제 키로.
+두 벌로 두면 «스텁에서는 통과하는데 실측은 다른 질문을 본» 상태가 조용히 성립하고, 그러면
+실측값으로 임계값을 정할 근거가 사라진다. 질문·기대 인용·코퍼스 조립이 전부 거기 있다.
+
+### 코퍼스가 둘이다
+
+| | 무엇이 | 무엇을 위해 |
+|---|---|---|
+| **A** | 개정안 `.md`(STRUCTURED 40청크) + 학술국 운영 세칙 `.docx`(GENERIC 2청크 · 쪽 없음) | 조항 인용 · 부칙 · 가지 조번호 · 문서명 인용 · 거절 |
+| **B** | 개정안 `.md` + 현행 회칙 `.pdf`(GENERIC 11청크 · 쪽 있음) | `p.N` 인용 · 혼합 인용 · 유형별 점수 비교 |
+
+**B가 판본이 어긋나는 두 문서를 일부러 함께 담는다.** 운영 코퍼스에서는 하지 않는 일이고
+(ssccops#323) `GenericGoldenSetTest`도 그 PDF를 «쪽이 나오는가»의 증인으로만 썼는데, 여기서는
+**그 «같은 내용, 다른 청킹»이 필요하다** — 유형별 점수 차이를 재려면 같은 코퍼스 안에서(= 같은
+idf, 같은 모델) 같은 질문을 물어야 한다.
+
+### 스텁 임베딩 — `support/LexicalRagChunkStore`
+
+문자 bigram TF-IDF 코사인이다. 결정적이라 CI에서 매번 돌고 쿼터를 쓰지 않는다. **`InMemoryRagChunkStore`와
+나뉜 이유**는 그쪽이 «유사도를 흉내 내지 않는다»가 맞는 자리이기 때문이다(넣은 순서대로 `topK`개) —
+순위가 필요한 것은 골든셋뿐이고, 다른 테스트가 스텁의 순위 규칙을 검증하게 되면 안 된다.
+검색 필터(`ragDocId in [...]`)는 **실제로 건다** — 무시하면 필터를 보는 테스트가 통과하면서
+아무것도 검증하지 못하고, 모르는 필터 모양은 통과시키지 않고 던진다.
+
+⚠️ **그 눈금으로 운영 임계값을 정할 수 없다.** 어휘가 겹치기만 해도 점수가 오른다 — «동아리
+티셔츠는 어디서 주문하나요?»가 제30조(동아리 등록)에서 0.0953을 받아 **답해야 하는 질문의 최저
+점수(0.0371)를 넘는다.** 그 사실을 `theStubScaleCannotTellLexicalNearMissesApart`가 **assert로**
+못 박는다 — 숨기면 «거절률 1.0»이 실제보다 넓은 약속으로 읽힌다. 그래서 거절 케이스는 어휘조차
+겹치지 않는 질문으로 두고, 절대 눈금은 `geminiCheck` 7단계가 잰다(위 «임계값» 절).
+
+**p95에 Gemini 왕복이 없다.** 스텁이라 재는 것은 **우리 몫**(검색 · 임계값 · 프롬프트 조립 ·
+인용 검증)이고, 모델 쪽 상한은 `ssccops.assistant.gemini.call-timeout`(기본 20초)이 건다.
+
+### 스텁 모델은 프롬프트에서 표기를 읽는다
+
+`GoldenChatModel`이 발췌 목록을 밖에서 받지 않고 **프롬프트의 `인용 표기: [...]` 줄을 읽어**
+상위 셋을 옮겨 쓴다 — 실제 모델이 보는 것이 그 문자열뿐이라, 프롬프트가 표기를 적어 주지 않게
+되는 순간 이 스텁도 인용하지 못한다. 「표기를 먼저 적어 준다」가 인용 검증의 전제이므로
+(`AssistantPrompt.user`) 그 전제가 깨지면 골든셋이 먼저 무너지는 것이 맞다.
+
+날조하는 모델(`[제99조]`·`[부칙 제99조]`·`[p.99]`를 덧붙인다)과 인용을 하나도 달지 않는 모델도
+같은 클래스가 흉내 낸다 — 앞은 «날조가 목록에서도 본문에서도 사라지고 맞는 인용은 남는가»,
+뒤는 3차 방어선이다.
+
+### 적재·색인 회귀는 한 클래스가 아니다 — 어디가 무엇을 잡는가
+
+§14.3의 아홉 줄은 이미 각자의 자리가 있다. **한 자리에 베껴 모으지 않는 것**이 이 저장소의
+규칙이고, 대신 표가 그 자리를 가리킨다.
+
+| §14.3 | 어디가 |
+|---|---|
+| 업로드가 임베딩을 부르지 않는다 | `RagDocumentControllerTest.uploadNeverReachesTheEmbedding` — `InMemoryRagChunkStore.operations()`가 비어 있음이 곧 「호출 0」이다 |
+| 파싱 실패 시 행도 오브젝트도 없다 | `rejectsMarkdownThatBreaksTheContractBeforeTouchingR2` · `rejectsScannedPdfWithNoText` |
+| `PENDING → INDEXING → INDEXED` | `indexesPendingDocumentAndRecordsChunkCountAndTimestamps` + **가운데는** `staysInIndexingWhileTheEmbeddingRuns`(적재 도중에 끼어들어 그때의 행을 읽는다) |
+| 실패 시 `FAILED` + 사유 | `marksFailedWithReasonWhenTheOriginalIsGone` · `marksFailedWhenTheOriginalNoLongerParses` |
+| 재색인이 `PENDING`으로 | `reindexPutsIndexedDocumentBackToPending` |
+| **재색인이 옛 청크를 먼저 지운다** | `reindexingReplacesOldChunksInsteadOfDuplicatingThem` — 수뿐 아니라 **순서**(`delete` → `add`)를 `operations()`로 본다 |
+| 부팅 복구 | `bootRecoveryRequeuesDocumentsStuckInIndexing` |
+| `EFFECTIVE` 한 벌 | `promotingSupersedesThePreviousEffectiveVersion` · 인덱스 모양은 `FlywayMigrationValidateTest` |
+| `INDEXED`가 아니면 `EFFECTIVE` 불가 | `rejectsPromotionOfDocumentThatIsNotIndexed` |
+| 검색 필터 둘 | `doesNotSearchAVersionThatIsNotIndexed` · `doesNotSearchAVersionThatIsNotInForce` — **실제 엔티티와 실제 JPA 질의**라 골든셋(리포지토리가 목이다)이 아니라 여기가 맞다 |
+| 삭제가 커밋 뒤에 R2 | `FileReferenceUpsertEraseTest.deletesReferenceAndErasesObject` + `FileEraserTest` · 청크는 `RagChunkEraserTest` |
 
 ## 스키마 — `V10__create_assistant_tables.sql`
 
@@ -737,9 +831,12 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
   이유로** 429가 되고 그 실패가 메서드 순서에 따라 나타났다 사라진다. **회원당 한도는 기본값
   그대로 둔다**: 컨트롤러 테스트가 테스트마다 회원을 새로 만들어 겹치지 않고, 무엇보다 429의
   계약을 그 값(분 5회)으로 실제로 확인한다.
-- **실제 모델 품질은 CI에 넣지 않는다** — 외부 의존이고 비결정적이다(§14.2). 임계값·검색 품질의
-  검증은 골든셋(#405)의 몫이고, 이 층이 못 박는 것은 **모델이 규칙을 어겼을 때 무슨 일이
-  일어나는가**다.
+- **실제 모델 품질은 CI에 넣지 않는다** — 외부 의존이고 비결정적이다(§14.2). 이 층이 못 박는
+  것은 **모델이 규칙을 어겼을 때 무슨 일이 일어나는가**다.
 - 스텁(`InMemoryRagChunkStore`)은 **유사도를 흉내 내지 않는다.** 넣은 순서대로 `topK`개를
   돌려줄 뿐이며, 순위를 지어내면 «검색이 무엇을 골랐나»를 확인하는 테스트가 스텁의 규칙을
-  검증하게 된다. 검색 품질은 골든셋(#405)이 실제 스택에서 본다.
+  검증하게 된다. **순위가 필요한 것은 골든셋뿐이고 그쪽은 `LexicalRagChunkStore`를 따로 쓴다**
+  (#405 · 위 «골든셋» 절). 같은 클래스가 `operations()`로 «언제 무엇이 불렸나»도 들고 있다 —
+  업로드의 「임베딩 호출 0」과 재색인의 「지우고 나서 넣는다」가 그 목록으로 확인된다.
+- **검색 품질은 «실제 스택»에서 보지 않는다** — 골든셋도 스텁 임베딩이다. 실제 눈금이 필요한
+  질문(임계값)만 `./gradlew geminiCheck` 7단계로 나간다.

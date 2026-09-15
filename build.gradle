@@ -326,9 +326,17 @@ tasks.register('r2Check', JavaExec) {
 // Gemini 임베딩 스모크 체크 (#395). 실제 키로 한 번 불러 「무엇이 나오는가」를 재 본다 —
 // 이 이슈에서 유일하게 남은 미지수이며, 여기서 나오는 차원이 #396 `V10`의 `vector(N)`이다.
 //
+// **7단계가 검색 점수 분포다** (#405). 골든셋 시험지(`AssistantGoldenSet` — CI 의
+// `RetrievalGoldenSetTest`가 스텁 임베딩으로 묻는 것과 **같은 질문·같은 청크**)를 실제 모델로 한
+// 번 돌려 유형별 분포와 권장 임계값(`ssccops.assistant.query.similarity-threshold-structured`
+// ·`-generic`)을 찍는다. **운영 임계값이 정해지는 유일한 자리다** — 스텁의 눈금은 문자 n-gram
+// 코사인이라 밀집 임베딩의 것이 아니다. 임베딩을 약 70회 부르므로 쿼터가 아까우면
+// `--no-distribution` 으로 건너뛴다.
+//
 //   ./gradlew geminiCheck
 //   ./gradlew geminiCheck -Pargs="--models=gemini-embedding-001,gemini-embedding-2"
 //   ./gradlew geminiCheck -Pargs="--file=private-workspace/rag/회칙개정_2026_개정안전문.md"
+//   ./gradlew geminiCheck -Pargs="--no-distribution"
 //
 // 키는 환경변수 GEMINI_API_KEY 에서 읽는다(.env 가 있으면 Gradle 이 주입한다). R2Check(#137)와
 // 같은 자리에 두는 것은 성격이 같아서다 — 실제 자격증명이 있어야만 답이 나오는 진단이라
@@ -336,7 +344,7 @@ tasks.register('r2Check', JavaExec) {
 // ============================================================================
 tasks.register('geminiCheck', JavaExec) {
     group = 'verification'
-    description = 'Gemini 임베딩 진단 (차원·task-type 전달 여부·정규화·입력 잘림)'
+    description = 'Gemini 임베딩 진단 (차원·task-type 전달 여부·정규화·입력 잘림·골든셋 점수 분포)'
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'org.sscc.ssccopsserver.tools.GeminiCheck'
     if (!envVars.isEmpty()) {

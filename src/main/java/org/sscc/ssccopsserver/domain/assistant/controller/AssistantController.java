@@ -45,8 +45,14 @@ import lombok.RequiredArgsConstructor;
  *
  * **`DELETE /v1/assistant/conversations/{id}`가 없다** — 대화 메모리가 Phase 2(#406)라 되돌릴
  * 상태가 없다. 지금 만들어 두면 «초기화»가 아무 일도 하지 않는데 사용자는 초기화됐다고 믿는다
- * (§13.1이 화면에서 `↺` 버튼을 그리지 않기로 한 것과 같은 판단). 회원별 질의 한도(#404)도
- * 아직 없다.
+ * (§13.1이 화면에서 `↺` 버튼을 그리지 않기로 한 것과 같은 판단).
+ *
+ * ══ 한도를 여기서 보지 않는다 ═══════════════════════════════════
+ *
+ * 질의 한도(#404)는 필터도 인터셉터도 아니고 **서비스가 모델을 부르기 직전에** 본다
+ * (`AssistantRateLimiter`). 경로로 거는 층을 만들면 «어떤 요청이 쿼터를 쓰는가»가 컨트롤러
+ * 목록으로 흩어지는데, 실제로 쿼터를 쓰는 것은 경로가 아니라 **Gemini를 부르는 코드 한 줄**이다
+ * — 추천 질문이 같은 컨트롤러에 있으면서도 세어지지 않는 이유가 그것이다(DB만 읽는다).
  */
 @RestController
 @RequestMapping("/v1/assistant")
@@ -77,7 +83,11 @@ public class AssistantController {
                             + " 넘으면 413 ASSISTANT_QUESTION_TOO_LONG, 모델 호출이 실패하면 503"
                             + " ASSISTANT_UPSTREAM_FAILED, 키가 없어 배선이 서지 않았으면 503"
                             + " ASSISTANT_UNAVAILABLE, 기능이 꺼져 있으면 404 ASSISTANT_DISABLED다."
-                            + " 질문과 답변은 어디에도 저장되지 않는다.")
+                            + " 한도를 넘으면 429 ASSISTANT_RATE_LIMITED이며(회원당 1분 5회 · 하루"
+                            + " 50회, 그리고 전원이 나눠 쓰는 분당 한도) message가 어느 한도인지에"
+                            + " 따라 «잠시 뒤»와 «내일»을 가른다 — 무료 쿼터가 API 키 단위의 공유"
+                            + " 자원이라 서버가 공급자보다 먼저 끊는다. 질문과 답변은 어디에도"
+                            + " 저장되지 않는다.")
     @PostMapping("/queries")
     public ApiResponse<AssistantQueryResponse> query(
             @Valid @RequestBody AssistantQueryRequest request, @CurrentMember MemberEntity member) {

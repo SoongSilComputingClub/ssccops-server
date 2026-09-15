@@ -173,7 +173,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
-| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · 인용 검증 · 추천 질문). **레이트 리밋·대화는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · 인용 검증 · 추천 질문) · **질의 레이트 리밋**(회원 분·일 · 전역 분 · 인메모리). **대화는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사
@@ -258,8 +258,9 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 **무거운 의존성을 어떻게 골랐고 무엇을 실측했는가**만 남긴다 — 모델 쪽 배선(Gemini)과 Tika다.
 
 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) ·
-업로드(#399) · 색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403)까지 왔다.**
-남은 것은 레이트 리밋(#404) · 골든셋(#405) · 대화 메모리(#406)이며, 기능 플래그
+업로드(#399) · 색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403) ·
+질의 레이트 리밋(#404)까지 왔다.**
+남은 것은 골든셋(#405) · 대화 메모리(#406)이며, 기능 플래그
 `ssccops.assistant.enabled`는 기본이 **꺼짐**이다 — 그 플래그가 **질의와 워커를 함께 닫는다**(질의만
 닫으면 워커가 계속 임베딩을 부르는데, 끄는 이유가 대개 쿼터다). 워커의 자동 실행에는 스위치가
 하나 더 있다: `ssccops.assistant.indexing.auto`(기본 켬 · `test` 프로필만 끈다).
@@ -390,6 +391,10 @@ jar들을 스캔하지 않고 우리가 Tika의 `ServiceLoader`(= `AutoDetectPar
   and can be viewed in Google AI Studio»라고만 하고 모델별 Free Tier 표를 싣지 않는다(2026-09-13
   확인. 그 페이지의 표는 Batch API enqueued token 한도이며 우리가 쓰는 값이 아니다).
   전역 레이트 리밋(§11)의 `N`이 그 값이므로 콘솔에서 읽어 ssccops#324에 적는다.
+  ⚠️ **그 자리는 이제 비어 있지 않고 잠정값이 들어가 있다**(#404) — `AssistantRateLimiter`의
+  전역 분 한도 기본값 **7**은 «10 RPM 가정 × 70%»이며, 실측이 끝나면 고치는 것은 코드가 아니라
+  배포 환경변수 한 줄(`SSCCOPS_ASSISTANT_RATE_LIMIT_GLOBAL_PER_MINUTE`)이다. 낮게 잡힌 채로
+  두는 쪽이 안전한 실패라 그 값으로 배포해 둔다.
 
 ## 커밋 · 브랜치 · PR 컨벤션
 

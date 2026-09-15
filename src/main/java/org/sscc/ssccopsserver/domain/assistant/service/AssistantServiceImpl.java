@@ -41,6 +41,12 @@ import lombok.extern.slf4j.Slf4j;
  *
  * **거절이 이 기능의 가장 중요한 동작이다.** 운영진이 답변을 근거로 사람의 자격을 판단한다.
  *
+ * ══ 그 앞에 레이트 리밋이 있다 ══════════════════════════════════
+ *
+ * 위 셋이 «무엇을 답할 것인가»의 방어선이라면 `AssistantRateLimiter`는 «얼마나 답할 것인가»의
+ * 방어선이다(#404 · §11). 무료 쿼터가 API 키 단위의 공유 자원이라 한 사람의 루프가 전원의
+ * 답변을 멈춘다 — 그래서 **모델을 부르기 전에** 429로 끊는다. 순서의 이유는 `query` 안에 있다.
+ *
  * ══ 검색 조건은 둘이고 «조회 뒤 if»가 아니다 ════════════════════
  *
  * 볼 수 있는 것은 `INDEXED && EFFECTIVE`인 판본의 청크뿐이다(§5.5). 그 판정은 JPA 질의
@@ -73,6 +79,7 @@ public class AssistantServiceImpl implements AssistantService {
 
     private final AssistantFeature assistantFeature;
     private final AssistantQueryPolicy policy;
+    private final AssistantRateLimiter rateLimiter;
     private final AssistantSuggestions assistantSuggestions;
     private final CitationVerifier citationVerifier;
     private final RagDocumentRepository ragDocumentRepository;
@@ -91,9 +98,18 @@ public class AssistantServiceImpl implements AssistantService {
     public AssistantQueryResponse query(AssistantQueryRequest request, MemberEntity member) {
         assistantFeature.requireEnabled();
 
+        /*
+         * **거절의 순서가 곧 «무엇을 아껴야 하는가»의 순서다** — 뒤로 갈수록 값비싼 자원을
+         * 건드린다. 한도(429)를 맨 뒤에 두는 것은 그 앞의 셋이 전부 **쿼터를 한 톨도 쓰지 않는
+         * 거절**이기 때문이다: 기능이 꺼져 있거나(404), 질문이 상한을 넘었거나(413), 키가 없어
+         * 배선이 서지 않은(503) 요청은 애초에 Gemini에 닿지 못하므로 그 사람의 한도를 깎을
+         * 이유가 없다. 여기를 지난 요청만이 임베딩을 부른다.
+         */
         String question = requireAskable(request.question());
         RagChunkStore chunkStore = require(ragChunkStore);
         ChatClient chatClient = require(assistantChatClient);
+        rateLimiter.requireWithinQuota(member.getId());
+
         Instant startedAt = Instant.now();
 
         Map<Long, SearchableDocument> searchable = searchableDocuments();

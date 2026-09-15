@@ -257,6 +257,29 @@ class AssistantControllerTest {
                 .andExpect(jsonPath("$.message").value("지금은 답변을 만들 수 없습니다."));
     }
 
+    /*
+     * **한도를 넘으면 429**이며, 공급자가 아니라 **우리가 먼저 끊은 것**이다 (#404 · §11).
+     *
+     * 무료 쿼터가 API 키 단위의 공유 자원이라 한 사람의 루프가 전원의 답변을 멈춘다. 여섯 번째
+     * 질의가 막히는 것은 회원당 분 한도가 5회라서이고, 그 값은 `application-test.yaml`이 손대지
+     * 않은 운영 기본값이다 — 여기서 확인하는 것은 **그 한도가 HTTP 계약으로 나가는 모양**이고,
+     * 창이 넘어가는 규칙은 시계를 옮길 수 있는 `AssistantRateLimiterTest`가 본다.
+     *
+     * 코퍼스를 세우지 않은 것은 **거절로 끝난 질의도 한 칸을 쓰기 때문**이다 — 세는 것이 «답한
+     * 질의»가 아니라 «받아들인 질의»라는 사실이 여기서도 그대로 드러난다.
+     */
+    @Test
+    void refusesWithTooManyRequestsOnceTheMinuteQuotaIsSpent() throws Exception {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            query("정회원 승격 조건은?").andExpect(status().isOk());
+        }
+
+        query("정회원 승격 조건은?")
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("ASSISTANT_RATE_LIMITED"))
+                .andExpect(jsonPath("$.message").value(containsString("잠시 뒤")));
+    }
+
     // ------------------------------------------------------------------ 추천 질문
 
     /*

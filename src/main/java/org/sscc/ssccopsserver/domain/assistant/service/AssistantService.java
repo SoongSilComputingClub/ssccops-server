@@ -18,7 +18,7 @@ public interface AssistantService {
      * 질문 하나에 답한다 — <b>근거가 없으면 모델을 부르지 않는다</b>(§6.1).
      *
      * @param member 인증 주체. <b>프롬프트에는 들어가지 않는다</b>(§11 — 무료 티어 입력은 제품 개선에 쓰일 수 있다). 로그의 «누가 물었나»와
-     *     앞으로 들어올 회원별 한도(#404)의 재료다
+     *     회원별 한도({@code AssistantRateLimiter} · #404)가 세는 축이다
      */
     AssistantQueryResponse query(AssistantQueryRequest request, MemberEntity member);
 

@@ -307,3 +307,130 @@ logging:
   pattern:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# 규정 도우미(RAG) 손잡이 — 이 애플리케이션 고유 설정 (#439 · Epic ssccops#321)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# **여기가 기본값의 유일한 출처다.** 자바 쪽 `@Value`는 키만 참조하고 기본값을 갖지 않는다 —
+# 두 곳에 적으면 한쪽만 바뀌고 그 사실이 아무 데서도 드러나지 않는다(릴리스 버전 절이 겪은
+# 모양이다). 그래서 아래 줄을 지우면 부팅이 `Could not resolve placeholder`로 **실패한다.**
+# 그것이 의도이며, `dev`·`prod`의 `ddl-auto: validate`와 같은 판단이다.
+#
+# **값을 바꾸는 곳은 여기가 아니라 환경변수다.** `dev`·`prod`는 Coolify 대시보드(#202 —
+# 환경변수의 정본은 Coolify), 로컬은 `.env`다. `${...}` 안의 이름이 그때 쓰는 변수명이며,
+# 그 목록은 `.env.example`이 줄 단위로 들고 있다(설명은 두 벌로 두지 않고 이 파일이 갖는다).
+#
+# **프로필 파일(`application-dev.yaml`·`-prod.yaml`)에 이 키를 옮겨 적지 않는다.** 배포마다
+# 다른 값은 환경변수로 주고, 여기에는 «아무도 주지 않았을 때의 값»만 둔다. `application-test.yaml`
+# 이 몇 줄을 덮어쓰는 것은 예외이며 그 이유는 그 파일의 주석에 있다(프로필 yaml이 이 파일을 이긴다).
+ssccops:
+  assistant:
+    # 질의·적재·색인 워커를 **함께** 연다 (#396). 기본값이 `false`인 것은 **머지가 곧 dev
+    # 배포**이기 때문이다(#202) — 스위치가 없으면 색인 워커가 배포 직후부터 대기열을 돌며 무료
+    # 임베딩 쿼터를 태우고, 멈추는 방법이 revert뿐이다.
+    #
+    # 질의만 닫지 않는 이유는 끄는 이유가 대개 그 쿼터인데 워커만 살아 있으면 계속 태우기
+    # 때문이다. 꺼져 있으면 404 `ASSISTANT_DISABLED`다.
+    #
+    # **`GEMINI_API_KEY`와는 다른 축이다** — 키가 없으면 배선 자체가 서지 않아 503
+    # `ASSISTANT_UNAVAILABLE`이고(설정이 덜 된 상태), 이 플래그는 「이 서버에 규정 도우미가
+    # 없다」다. 여기 `false`로 선언하는 것은 **자리를 만드는 것이지 켜는 것이 아니다** —
+    # 켜는 곳은 여전히 Coolify 환경변수 한 줄이다.
+    enabled: ${SSCCOPS_ASSISTANT_ENABLED:false}
+
+    indexing:
+      # 색인 워커의 **자동 실행**(기동 복구 + 폴링). 끄면 `RagIndexingScheduler` 빈 자체가
+      # 서지 않는다 — `@ConditionalOnProperty`라 이 값은 위의 «키가 없으면 부팅 실패» 규칙이
+      # 걸리지 않으므로 그쪽 애노테이션이 `matchIfMissing = true`를 함께 들고 있다.
+      #
+      # `test` 프로필만 끈다(`application-test.yaml`) — 켜 두면 컨텍스트가 뜨자마자 공용
+      # `testdb`와 `InMemoryRagChunkStore`로 상태가 테스트 사이를 새어 나간다.
+      auto: ${SSCCOPS_ASSISTANT_INDEXING_AUTO:true}
+
+      # 대기열 폴링 주기. **화면의 폴링은 웹 책임이고 이 값과 무관하다.**
+      poll-interval: ${SSCCOPS_ASSISTANT_INDEXING_POLL_INTERVAL:PT10S}
+
+    gemini:
+      # Gemini 호출의 **전체 왕복** 상한 (#403). ⚠️ **SDK 기본값이 「무한」이고 스타터에는 그것을
+      # 줄 프로퍼티가 없다** — google-genai가 OkHttp에 `connectTimeout(0)`을 걸고 read·write도
+      # 같다. 이 값이 없으면 질의 한 건이 톰캣 요청 스레드를 영영 붙들 수 있다.
+      #
+      # ⚠️ **connect와 read를 따로 줄 수 없어** 기획안의 «connect 3s / read 20s»를 하나로 합친
+      # 값이다. 좁히면 긴 답변이 잘리는 것이 아니라 통째로 503이 된다.
+      #
+      # **임베딩에는 걸리지 않는다** — 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`로 따로
+      # 연결한다. 색인이 임베딩을 수백 번 부르는 자리(#400)의 성질(느려도 끝나기만 하면 된다)과
+      # 맞지 않으므로 마침 맞는 분리다.
+      call-timeout: ${SSCCOPS_ASSISTANT_GEMINI_CALL_TIMEOUT:PT20S}
+
+    query:
+      # 한 번에 프롬프트에 넣는 발췌 수(기획안 §4). 답변 3~5문장 규칙과 함께 프롬프트 길이를
+      # 정한다 — 늘리면 힙과 모델 입력이 함께 는다(§8.1).
+      top-k: ${SSCCOPS_ASSISTANT_QUERY_TOP_K:8}
+
+      # 유형별 임계값이 없을 때 쓰는 공통값.
+      #
+      # ⚠️ **낮추면 거절이 줄어드는 것이 아니라 근거가 약한 답이 늘어난다.** 이 기능에서 가장
+      # 중요한 동작이 거절이다(없는 조항을 지어내는 것은 틀린 답보다 나쁘다).
+      #
+      # **아직 실측으로 정해진 값이 아니다** — 정해지는 자리는 `./gradlew geminiCheck`의 7단계이고
+      # (골든셋 시험지를 실제 모델로 돌려 유형별 분포와 권장 임계값을 찍는다), 그때 고치는 것은
+      # 코드가 아니라 배포 환경변수 한 줄이다.
+      similarity-threshold: ${SSCCOPS_ASSISTANT_QUERY_SIMILARITY_THRESHOLD:0.5}
+
+      # ⚠️ **유형별 임계값 둘은 일부러 여기 없다.**
+      #
+      #   ssccops.assistant.query.similarity-threshold-structured   (조 단위 청크 · 목표 450자)
+      #   ssccops.assistant.query.similarity-threshold-generic      (고정 길이 청크 · 600자+overlap)
+      #
+      # 이 둘은 **「값 없음」이 「위의 공통값을 쓴다」라는 뜻**이라, 다른 키들과 달리 선언 자체가
+      # 의미를 바꾼다(`AssistantQueryPolicy`가 null을 그렇게 읽는다). 그래서 이 둘만 자바 쪽
+      # `@Value`가 `#{null}` 기본값을 그대로 들고 있다.
+      #
+      # 유형별로 가르려면 **환경변수로 준다** — 위 두 이름을 대문자·언더스코어로 바꾼 것이다.
+      # 여기에 빈 값으로 줄을 만들지 말 것: 빈 문자열은 `Double`로 변환되지 않아 부팅이 깨진다.
+      # 두 유형은 청크 길이가 달라 점수 분포가 같지 않으므로, 실측 뒤 갈릴 가능성이 높은 자리다.
+
+      # 질문 길이 상한 — **품질 규칙이 아니라 용량 규칙이다**(§8.1). 넘으면 413
+      # `ASSISTANT_QUESTION_TOO_LONG`.
+      max-question-length: ${SSCCOPS_ASSISTANT_QUERY_MAX_QUESTION_LENGTH:1000}
+
+      # 인용 카드에 싣는 원문 발췌 길이. 조문을 통째로 옮기지 않는다(§6.2 다섯째 규칙).
+      snippet-length: ${SSCCOPS_ASSISTANT_QUERY_SNIPPET_LENGTH:200}
+
+      # 질의 임베딩 캐시 (#406). 같은 질문을 다시 물었을 때 임베딩 호출을 아낀다 — 무료 쿼터가
+      # API 키 단위의 공유 자원이라 그 절약이 곧 전원의 여유다.
+      embedding-cache-size: ${SSCCOPS_ASSISTANT_QUERY_EMBEDDING_CACHE_SIZE:1000}
+      embedding-cache-ttl: ${SSCCOPS_ASSISTANT_QUERY_EMBEDDING_CACHE_TTL:P7D}
+
+    memory:
+      # 대화 메모리 — **힙 Caffeine이다**(#406 · 기획안 §7·§8.1). 세 값이 함께 §8.1의 12MB
+      # 산수를 이룬다: 대화 수 상한 · 슬라이딩 TTL · 턴 상한.
+      max-conversations: ${SSCCOPS_ASSISTANT_MEMORY_MAX_CONVERSATIONS:500}
+
+      # **슬라이딩이다**(`expireAfterAccess`) — 이어 가고 있는 대화가 24시간이 지났다고 한가운데서
+      # 사라지면 사용자에게는 방금 물어본 것을 도우미가 잊은 것으로 보인다.
+      ttl: ${SSCCOPS_ASSISTANT_MEMORY_TTL:PT24H}
+
+      # 창에 남기는 턴 수(메시지로는 이 값의 두 배). §8.1의 «대화 1개 ≈ 24KB»가 여기서 나온다.
+      max-turns: ${SSCCOPS_ASSISTANT_MEMORY_MAX_TURNS:20}
+
+    rate-limit:
+      # 질의 레이트 리밋 (#404) — **인메모리이고 인스턴스별이다.** 무료 쿼터는 API 키 단위의
+      # 공유 자원이라 한 사람이 루프를 돌리면 전원이 답을 못 받는다. 넘으면 Gemini를 부르기 전에
+      # 429 `ASSISTANT_RATE_LIMITED`로 끊는다.
+      #
+      # 적재(업로드) 한도는 여기 없다 — 그쪽은 회원당 일 10회이고 **DB가 센다**(#399). 재기동이
+      # 곧 한도 초기화가 되면 안 되기 때문이며, 업로드 한 건이 임베딩을 수백 번 부른다.
+      member-per-minute: ${SSCCOPS_ASSISTANT_RATE_LIMIT_MEMBER_PER_MINUTE:5}
+      member-per-day: ${SSCCOPS_ASSISTANT_RATE_LIMIT_MEMBER_PER_DAY:50}
+
+      # ⚠️ **실측값이 들어와야 하는 자리다.** 「Gemini RPM의 70%」인데 무료 티어의 실제 RPM이 아직
+      # 실측되지 않아(ssccops#324 · 공개 문서에 수치가 없다) 이 값은 10 RPM을 가정한 잠정값이다.
+      # 콘솔에서 읽은 뒤 고치는 것은 이 줄이 아니라 배포 환경변수 한 줄이다 — 낮게 잡힌 채로 두는
+      # 쪽이 안전한 실패다(덜 답하는 것이지 쿼터를 태우는 것이 아니다).
+      #
+      # **인스턴스를 늘리면 이 값은 뜻을 잃는다**(카운터가 나뉘어 실질 상한이 배수가 된다) —
+      # 그 계획이 생기면 공유 저장소로 옮기기 전에 `AssistantRateLimiter`의 주석을 먼저 볼 것.
+      global-per-minute: ${SSCCOPS_ASSISTANT_RATE_LIMIT_GLOBAL_PER_MINUTE:7}

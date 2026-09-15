@@ -62,15 +62,14 @@ public class AssistantQueryPolicy {
     private final int snippetLength;
 
     public AssistantQueryPolicy(
-            @Value("${ssccops.assistant.query.top-k:8}") int topK,
-            @Value("${ssccops.assistant.query.similarity-threshold:0.5}")
-                    double similarityThreshold,
+            @Value("${ssccops.assistant.query.top-k}") int topK,
+            @Value("${ssccops.assistant.query.similarity-threshold}") double similarityThreshold,
             @Value("${ssccops.assistant.query.similarity-threshold-structured:#{null}}")
                     Double structuredThreshold,
             @Value("${ssccops.assistant.query.similarity-threshold-generic:#{null}}")
                     Double genericThreshold,
-            @Value("${ssccops.assistant.query.max-question-length:1000}") int maxQuestionLength,
-            @Value("${ssccops.assistant.query.snippet-length:200}") int snippetLength) {
+            @Value("${ssccops.assistant.query.max-question-length}") int maxQuestionLength,
+            @Value("${ssccops.assistant.query.snippet-length}") int snippetLength) {
 
         this.topK = topK;
         this.similarityThreshold = similarityThreshold;

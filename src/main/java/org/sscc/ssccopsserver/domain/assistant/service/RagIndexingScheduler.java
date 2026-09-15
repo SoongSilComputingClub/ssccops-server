@@ -46,6 +46,12 @@ import lombok.extern.slf4j.Slf4j;
  * 통째로 감싼다 — 워커는 문서별 실패를 이미 `FAILED`로 흡수하지만, 그 밖(조회·커넥션)에서 난
  * 예외 하나로 색인이 재기동 전까지 영영 서 버리면 안 된다.
  */
+/*
+ * `matchIfMissing = true`는 `application.yaml`이 이 키를 선언한 뒤(#439)로는 닿지 않는 길이다.
+ * 그래도 남기는 것은 **`@ConditionalOnProperty`가 「키가 없으면 부팅 실패」를 표현하지 못하기**
+ * 때문이다 — 나머지 손잡이는 `@Value`에서 기본값을 빼 그 자리에서 깨지지만 이 값만은 깨질 수
+ * 없으므로, 선언이 사라졌을 때의 동작을 애노테이션이 스스로 들고 있어야 한다.
+ */
 @Slf4j
 @Component
 @ConditionalOnProperty(
@@ -60,7 +66,7 @@ public class RagIndexingScheduler implements ApplicationRunner, DisposableBean {
 
     public RagIndexingScheduler(
             RagIndexingWorker worker,
-            @Value("${ssccops.assistant.indexing.poll-interval:PT10S}") Duration pollInterval) {
+            @Value("${ssccops.assistant.indexing.poll-interval}") Duration pollInterval) {
 
         this.worker = worker;
         this.pollInterval = pollInterval;

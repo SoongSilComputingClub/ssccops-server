@@ -37,8 +37,17 @@ class AssistantConfigTest {
 
     /*
      * ⚠️ **변환 서비스를 손으로 붙인다.** `SpringApplication`이 부팅 때 등록하는
-     * `ApplicationConversionService`가 여기에는 없어서 `@Value("P7D")`가 `Duration`으로 바뀌지
+     * `ApplicationConversionService`가 여기에는 없어서 `P7D`가 `Duration`으로 바뀌지
      * 않는다 — 실제 부팅에서는 되는 일이 이 러너에서만 «변환할 수 없다»로 죽는다.
+     *
+     * ⚠️ **손잡이 값도 손으로 준다** (#439). 기본값이 `application.yaml`로 옮겨 가며 `@Value`에서
+     * 빠졌는데, `ApplicationContextRunner`는 그 파일을 **읽지 않는다** — 빈 세 개가 전부
+     * «placeholder를 풀 수 없다»로 죽는다. 실제 부팅·`@SpringBootTest`에는 yaml이 있으므로 이것도
+     * 위와 같은 **테스트 하네스의 차이**다.
+     *
+     * 일부러 운영 기본값(1000 · P7D · 20)과 **다른 값**을 준다 — 이 테스트가 보는 것은 «빈이 서는
+     * 조건»이지 값이 아니고, 같은 숫자를 적으면 기본값이 여기에도 한 벌 생겨 #439가 없애려던 모양이
+     * 테스트 쪽에 남는다.
      */
     private final ApplicationContextRunner runner =
             new ApplicationContextRunner()
@@ -48,6 +57,10 @@ class AssistantConfigTest {
                                             .setConversionService(
                                                     ApplicationConversionService
                                                             .getSharedInstance()))
+                    .withPropertyValues(
+                            "ssccops.assistant.query.embedding-cache-size=7",
+                            "ssccops.assistant.query.embedding-cache-ttl=PT3M",
+                            "ssccops.assistant.memory.max-turns=3")
                     .withUserConfiguration(AssistantConfig.class, StubModels.class);
 
     /* 키가 있는 환경 — 두 프로퍼티가 아예 없다(EPP가 아무것도 넣지 않았다) */

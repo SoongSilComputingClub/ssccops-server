@@ -96,9 +96,9 @@ public class AssistantRateLimiter {
     private final Clock clock;
 
     public AssistantRateLimiter(
-            @Value("${ssccops.assistant.rate-limit.member-per-minute:5}") int memberPerMinute,
-            @Value("${ssccops.assistant.rate-limit.member-per-day:50}") int memberPerDay,
-            @Value("${ssccops.assistant.rate-limit.global-per-minute:7}") int globalPerMinute,
+            @Value("${ssccops.assistant.rate-limit.member-per-minute}") int memberPerMinute,
+            @Value("${ssccops.assistant.rate-limit.member-per-day}") int memberPerDay,
+            @Value("${ssccops.assistant.rate-limit.global-per-minute}") int globalPerMinute,
             Clock clock) {
 
         this.memberPerMinute = memberPerMinute;

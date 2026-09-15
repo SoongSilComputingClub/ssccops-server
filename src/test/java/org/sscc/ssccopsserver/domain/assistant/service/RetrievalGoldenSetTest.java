@@ -19,6 +19,7 @@ import static org.sscc.ssccopsserver.support.AssistantGoldenSet.markerOf;
 import static org.sscc.ssccopsserver.support.AssistantGoldenSet.regulationChunks;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -31,6 +32,7 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
@@ -465,11 +467,31 @@ class RetrievalGoldenSetTest {
                                 Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), ZoneOffset.UTC)),
                         new AssistantSuggestions(),
                         new CitationVerifier(policy),
+                        conversations(),
                         ragDocumentRepository,
                         provider(store),
                         provider(ChatClient.builder(chatModel).build()));
 
-        return service.query(new AssistantQueryRequest(question), member);
+        return service.query(new AssistantQueryRequest(question, null), member);
+    }
+
+    /*
+     * 대화는 **매번 새로 만든다** — 골든셋의 질문들은 서로 이어지지 않는 단발 질의이고(시험지가
+     * 그렇게 짜여 있다 · `AssistantGoldenSet`), 한 벌을 나눠 쓰면 앞 질문의 답이 다음 질문의
+     * 맥락으로 들어가 **지표가 질문 순서에 따라 달라진다**(#406).
+     */
+    private AssistantConversations conversations() {
+        return new AssistantConversations(
+                MessageWindowChatMemory.builder()
+                        .chatMemoryRepository(
+                                new AssistantMemoryStore(
+                                        500,
+                                        Duration.ofHours(24),
+                                        Clock.fixed(
+                                                Instant.parse("2026-09-15T01:00:00Z"),
+                                                ZoneOffset.UTC)))
+                        .maxMessages(40)
+                        .build());
     }
 
     /** 응답의 인용을 <b>모델이 옮겨 쓴 표기 모양으로</b> 되돌린다 — 정답지와 견주는 축을 하나로 둔다 */

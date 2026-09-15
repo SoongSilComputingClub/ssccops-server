@@ -256,17 +256,54 @@ class RagDocumentControllerTest {
     // ------------------------------------------------------------------ 거절
 
     /*
-     * **`.md` 계약 위반은 그 자리에서 400이고 «몇째 줄이 왜»가 실린다**(§13.2).
+     * ══ 회칙이 아닌 `.md`는 거절이 아니라 평문이다 (#445) ═══════════
      *
-     * 파싱을 워커로 미루지 않은 이유가 이것이며, 파싱이 R2 PUT보다 먼저라 **오브젝트도 행도
-     * 남지 않는다** — 뒤집으면 고아 오브젝트가 남는다.
+     * **이 이슈의 동작 그 자체다.** 그전에는 여기가 400 `RAG_DOCUMENT_PARSE_FAILED`였고, 그래서
+     * 회칙이 아닌 마크다운(개정 검토 목록·회의록)은 확장자를 바꾸지 않는 한 코퍼스에 들어갈
+     * 방법이 아예 없었다. 이제 회칙 파서를 시도하고 계약을 어기면 평문으로 떨어진다 — 잃는 것은
+     * 그 문서의 조 단위 인용뿐이고 내용은 그대로 검색·인용된다.
+     *
+     * **`docType`이 응답에 실리는 것이 이 설계가 조용하지 않은 근거다** — 화면이 목록에 그리므로
+     * 회칙 `.md`에 오타가 나서 평문으로 떨어져도 운영진이 본다. 되묻는 버튼이나 요청 플래그를
+     * 두지 않은 이유이며, 그것이 있으면 «턱턱 넣는다»를 한 번 더 막는 값만 남는다.
      */
     @Test
-    void rejectsMarkdownThatBreaksTheContractBeforeTouchingR2() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", "# 회칙\n\n### 제1조 (명칭)\n\n본 회의 명칭.\n"), null))
+    void marksMarkdownThatIsNotARegulationAsGenericInsteadOfRejecting() throws Exception {
+        mockMvc.perform(
+                        upload(
+                                markdown(
+                                        "회칙개정_2026_검토목록.md",
+                                        "# 검토 목록\n\n## A. 기계적 수정 — 논의 없이 고칠 것\n\n- 오탈자 정리\n"),
+                                null))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.docType").value(RagDocumentType.GENERIC.name()))
+                .andExpect(jsonPath("$.data.indexStatus").value(RagIndexStatus.PENDING.name()));
+
+        assertThat(ragDocumentRepository.count()).isEqualTo(1);
+        verify(r2Client).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+    }
+
+    /** 회칙 계약을 지킨 `.md`는 여전히 조 단위다 — 떨어뜨리는 길이 생겼다고 이쪽이 바뀌지 않는다 */
+    @Test
+    void keepsValidMarkdownStructured() throws Exception {
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.docType").value(RagDocumentType.STRUCTURED.name()));
+    }
+
+    /*
+     * **평문으로도 읽을 것이 없으면 그때는 400이다** (#445).
+     *
+     * 떨어뜨리는 길이 생겼다고 «무엇이든 받는다»가 되지는 않는다 — 빈 문서를 통과시키면 화면에는
+     * «색인 완료»로 뜨는데 무엇을 물어도 답하지 못하고, 원인이 파일에 있다는 신호가 아무 데도
+     * 남지 않는다. 파싱이 R2 PUT보다 먼저라 **오브젝트도 행도 남지 않는다**.
+     */
+    @Test
+    void rejectsMarkdownWithNoTextAtAllBeforeTouchingR2() throws Exception {
+        mockMvc.perform(upload(markdown("빈.md", "   \n\n"), null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_PARSE_FAILED"))
-                .andExpect(jsonPath("$.message").value(containsString("3번째 줄")));
+                .andExpect(jsonPath("$.message").value(containsString("텍스트가 한 글자도")));
 
         assertThat(ragDocumentRepository.count()).isZero();
         verify(r2Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));

@@ -173,7 +173,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
-| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제. **질의는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서 판본(`rag_doc`) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · PDF·DOCX 평문 추출과 고정 길이 청커 · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · 인용 검증 · 추천 질문). **레이트 리밋·대화는 아직 없다** | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사
@@ -257,10 +257,10 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 판본 테이블·두 축 상태·청크 저장소 포트·기능 플래그·`V10` 스키마·두 갈래 파싱이 거기 있다. 이 절은
 **무거운 의존성을 어떻게 골랐고 무엇을 실측했는가**만 남긴다 — 모델 쪽 배선(Gemini)과 Tika다.
 
-아직 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) ·
-업로드(#399) · 색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401)까지다.** 질의(#403)는
-없으며, 기능 플래그
-`ssccops.assistant.enabled`는 기본이 **꺼짐**이다 — 그 플래그가 **워커도 함께 닫는다**(질의만
+**스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) ·
+업로드(#399) · 색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403)까지 왔다.**
+남은 것은 레이트 리밋(#404) · 골든셋(#405) · 대화 메모리(#406)이며, 기능 플래그
+`ssccops.assistant.enabled`는 기본이 **꺼짐**이다 — 그 플래그가 **질의와 워커를 함께 닫는다**(질의만
 닫으면 워커가 계속 임베딩을 부르는데, 끄는 이유가 대개 쿼터다). 워커의 자동 실행에는 스위치가
 하나 더 있다: `ssccops.assistant.indexing.auto`(기본 켬 · `test` 프로필만 끈다).
 
@@ -341,6 +341,18 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   `spring.ai.vectorstore.pgvector.distance-type`의 기본값이 `cosine-distance`이고 **코사인이
   스케일 불변**이기 때문이다 — **`euclidean`·`inner-product`로 바꾸는 순간 검색이 조용히
   망가진다.**
+- ⚠️ **SDK의 기본 타임아웃은 「무한」이고 스타터에는 그것을 줄 프로퍼티가 없다** (#403).
+  google-genai 1.37.0이 OkHttp에 `connectTimeout(0)`을 걸고 read·write도 같다 — 0은 「제한 없음」
+  이라 질의 한 건이 **톰캣 요청 스레드를 영영 붙들 수 있다.** 그래서 `GeminiClientConfig`가
+  `com.google.genai.Client` 빈을 직접 만들어 `HttpOptions.timeout`(→ OkHttp `callTimeout`)을
+  건다(`ssccops.assistant.gemini.call-timeout` · 기본 20초). 자동 구성의 그 빈이
+  `@ConditionalOnMissingBean`이라 허용된 길이며, **connect와 read를 따로 줄 수 없어** 기획안의
+  «connect 3s / read 20s»는 전체 왕복 하나로 합쳤다. **임베딩은 이 빈을 쓰지 않는다**
+  (`GoogleGenAiEmbeddingConnectionDetails`로 따로 연결한다) — 상한이 질의 경로에만 걸린다.
+- **`spring.ai.retry`를 2회 · 1s · 2배 · 최대 5s로 좁혔다** (#403). 기본값은 **10회 · 2s에서
+  5배씩**이라 공급자가 5xx를 내는 동안 질의 한 건이 분 단위로 물러난다(목표가 p95 5초다).
+  같은 `RetryTemplate`을 색인 임베딩도 쓰는데 그쪽에도 맞는 값이다 — 실패의 대부분이 쿼터이고
+  자동 재시도가 그것을 가속한다(#400). 4xx(429 포함)는 기본값 그대로 재시도하지 않는다.
 - **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.6-flash`) ·
   `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-2`). 교체가 환경변수 하나가 되게 한다.
 - **`./gradlew geminiCheck`** (`src/test/.../tools/GeminiCheck`, R2Check와 같은 자리) — 실제

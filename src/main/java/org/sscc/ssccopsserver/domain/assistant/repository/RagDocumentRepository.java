@@ -49,6 +49,29 @@ public interface RagDocumentRepository extends JpaRepository<RagDocumentEntity, 
      */
     List<RagDocumentEntity> findAllByNameContainingIgnoreCaseOrderByIdDesc(String name);
 
+    /**
+     * <b>질의가 볼 수 있는 판본 — {@code INDEXED}이고 {@code EFFECTIVE}인 것</b> (#403 · 기획안 §5.5 · §6.1).
+     *
+     * <p><b>조건 둘이 이 메서드 하나에 박혀 있는 것이 요점이다.</b> 파라미터로 받지 않는 것은 부르는 쪽이 한쪽만 넘기는 순간 새어 나가기 때문이다 — 색인이
+     * 끝나지 않은 판본을 보면 청크가 반쯤 든 문서로 답하고, 적용 상태를 빼면 <b>의결 전 개정안이 시행 중인 회칙 행세를 한다.</b> 후자는 사람의 자격을 판단하는
+     * 근거가 조용히 바뀌는 자리다.
+     *
+     * <p><b>여기서 받은 식별자가 그대로 벡터 검색의 필터가 된다</b>({@code ragDocId in [...]}) — 조회한 뒤 {@code if}로 거르지
+     * 않는다. 청크 메타데이터의 {@code applyStatus}로 거르지 않는 이유는 그 값이 <b>색인 시점의 값</b>이라서다: 적용 전환(#401)은 재색인을
+     * 시키지 않으므로 {@code DRAFT → EFFECTIVE}로 올린 판본의 청크에는 아직 {@code DRAFT}가 찍혀 있다. 메타로 걸면 방금 시행 중으로 올린
+     * 문서가 검색되지 않고, 그 고장은 «답이 달라지지 않는다»로만 드러난다.
+     *
+     * <p>정렬이 식별자 오름차순인 것은 인용의 판본 정보를 만들 때 순서가 흔들리지 않게 하기 위한 것뿐이다.
+     */
+    @Query(
+            "select d from RagDocumentEntity d"
+                    + " where d.indexStatus ="
+                    + " org.sscc.ssccopsserver.domain.assistant.code.RagIndexStatus.INDEXED"
+                    + " and d.applyStatus ="
+                    + " org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus.EFFECTIVE"
+                    + " order by d.id")
+    List<RagDocumentEntity> findSearchable();
+
     /** 요약 3값 중 «색인 완료» (#401). 등록 문서 수는 {@code count()}이고 총 청크는 {@link #sumActiveChunkCount()}다 */
     long countByIndexStatus(RagIndexStatus indexStatus);
 

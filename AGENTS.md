@@ -108,6 +108,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V10__create_assistant_tables.sql` | `vector` 확장 · `vector_store`(Spring AI가 이름을 정한다) · `rag_doc`. 규정 도우미(RAG)의 스키마이며 **`FlywayMigrationValidateTest`의 Testcontainers 이미지가 `pgvector/pgvector:pg17`로 바뀐 이유**다 (#396 · ADR-0028·0029) |
 | `V11__seed_rag_document_manage_authority.sql` | `RAG_DOCUMENT_MANAGE` 권한 한 줄(`SUPER` 직속 · `sys_yn`)과 회장·부회장·총무 부여. **시드를 더할 때도 새 파일**이라는 규칙이 처음 쓰인 자리이며, `test`는 Flyway가 꺼져 있어 `data-locations`가 V3와 함께 이 파일도 가리킨다 (#402) |
 | `V12__drop_rag_document_versioning.sql` | `rag_doc.doc_cd`·`doc_ver`와 제약·인덱스 둘(`uk_rag_doc_doc_cd_ver` · `uk_rag_doc_effective`). 규정 문서의 판본 관리를 걷어낸다 — 문서 한 건이 곧 그 규정이고 갱신은 «옛 것을 지우고 새로 올리기»다. **시행 중인 문서가 여러 건일 수 있게 된다** (#441 · ADR-0034) |
+| `V13__widen_file_target_check.sql` | `file_rfrnc.trgt_se_cd` CHECK 제약을 `FileTargetType` 두 값으로 넓힌다. V6과 **같은 결함의 두 번째**라 — enum만 자라고 제약은 그대로여서 규정 문서 업로드가 언제나 500이었다 — 제약을 이름이 아니라 컬럼으로 찾아 지우고, 규칙을 문장이 아니라 테스트로 옮겼다(`FlywayMigrationValidateTest.checkConstraintsMatchTheirEnums`가 `@Enumerated(STRING)` 29개를 전수 대조한다) (#443) |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**

@@ -2,15 +2,33 @@ package org.sscc.ssccopsserver.global.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import javax.sql.DataSource;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
+
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
+import org.springframework.core.type.filter.AnnotationTypeFilter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -414,5 +432,150 @@ class FlywayMigrationValidateTest {
                                 String.class))
                 .as("컬럼 둘도 함께 사라졌다 — 제약만 지우면 엔티티와 스키마가 갈린다")
                 .isEmpty();
+    }
+
+    /*
+     * ══ @Enumerated(STRING) 필드 전부를 CHECK 제약과 대조한다 (#443) ══════════════
+     *
+     * **이 자리가 두 번 샜다.** `shr_lnk.shr_trgt_se_cd`가 `ShareTargetType`보다 좁아 공유 링크
+     * 발급이 터졌고(V6), 같은 일이 `file_rfrnc.trgt_se_cd`에서 되풀이돼 규정 문서 업로드가
+     * 언제나 500이었다(V13). V6의 주석이 «값을 더할 때 두 자리를 함께 고친다»를 적어 두었는데
+     * 그 문장이 다른 enum까지 닿지 않았다 — 규칙을 사람이 읽는 자리에만 두면 새는 것이 확인됐고,
+     * 그래서 기계가 본다.
+     *
+     * **어느 테스트도 이것을 잡을 수 없었다.** `test`는 Flyway가 꺼져 있고 H2 스키마를 Hibernate가
+     * **현재 enum으로** 만들어 주므로 어긋남이 존재하지조차 않는다. 위 `validate` 테스트도
+     * 못 잡는다 — Hibernate의 `validate`는 테이블·컬럼·타입만 보고 CHECK 제약은 보지 않는다.
+     * 마이그레이션이 실제로 적용된 PostgreSQL을 들고 있는 이 클래스가 유일한 자리다.
+     *
+     * **같은 집합인지를 본다 — 부분집합이 아니다.** enum이 넓으면 배포에서 INSERT가 터지고
+     * (이 이슈), 제약이 넓으면 코드가 모르는 값이 조용히 들어올 수 있다. 값을 **뺄** 때도
+     * 마이그레이션을 쓰게 되며, 그때 «옛 행은 어떻게 하나»를 여기서 한 번 묻게 되는 것이 맞다.
+     *
+     * 물리 이름은 `@Table`·`@Column`을 읽고, 없으면 Spring Boot 기본 전략과 같은 규칙
+     * (카멜 → 스네이크)으로 되돌린다 — `ExampleEntity.status`가 그 경우다.
+     */
+    @Test
+    void checkConstraintsMatchTheirEnums() throws ClassNotFoundException {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        // (테이블, 컬럼) → CHECK 정의. 컬럼 하나에만 걸린 것이 코드값 제약이다
+        Map<String, List<String>> definitions = new HashMap<>();
+        jdbc.query(
+                """
+                SELECT t.relname, a.attname, pg_get_constraintdef(c.oid)
+                  FROM pg_constraint c
+                  JOIN pg_class t ON t.oid = c.conrelid
+                  JOIN pg_namespace n ON n.oid = t.relnamespace
+                  JOIN pg_attribute a
+                    ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+                 WHERE n.nspname = 'public'
+                   AND c.contype = 'c'
+                   AND cardinality(c.conkey) = 1
+                """,
+                rs -> {
+                    definitions
+                            .computeIfAbsent(
+                                    rs.getString(1) + "." + rs.getString(2),
+                                    key -> new ArrayList<>())
+                            .add(rs.getString(3));
+                });
+
+        ClassPathScanningCandidateComponentProvider scanner =
+                new ClassPathScanningCandidateComponentProvider(false);
+        scanner.addIncludeFilter(new AnnotationTypeFilter(Entity.class));
+
+        List<String> mismatches = new ArrayList<>();
+        int compared = 0;
+
+        for (BeanDefinition candidate : scanner.findCandidateComponents(ENTITY_BASE_PACKAGE)) {
+            Class<?> entity = Class.forName(candidate.getBeanClassName());
+            String table = tableName(entity);
+
+            for (Field field : entity.getDeclaredFields()) {
+                Enumerated enumerated = field.getAnnotation(Enumerated.class);
+                if (enumerated == null || enumerated.value() != EnumType.STRING) {
+                    continue;
+                }
+                compared++;
+
+                String qualified = table + "." + columnName(field);
+                List<String> constraints = definitions.getOrDefault(qualified, List.of());
+
+                if (constraints.isEmpty()) {
+                    mismatches.add(
+                            "%s — CHECK 제약이 없다 (%s)"
+                                    .formatted(qualified, field.getType().getSimpleName()));
+                    continue;
+                }
+                if (constraints.size() > 1) {
+                    mismatches.add(
+                            "%s — CHECK 제약이 %d개다: %s"
+                                    .formatted(qualified, constraints.size(), constraints));
+                    continue;
+                }
+
+                Set<String> allowed = allowedValues(constraints.get(0));
+                Set<String> constants =
+                        Arrays.stream(field.getType().getEnumConstants())
+                                .map(constant -> ((Enum<?>) constant).name())
+                                .collect(Collectors.toCollection(TreeSet::new));
+
+                if (!allowed.equals(constants)) {
+                    mismatches.add(
+                            "%s — 제약 %s ≠ %s %s"
+                                    .formatted(
+                                            qualified,
+                                            allowed,
+                                            field.getType().getSimpleName(),
+                                            constants));
+                }
+            }
+        }
+
+        assertThat(compared)
+                .as("스캐너가 엔티티를 못 찾으면 이 테스트는 아무것도 보지 않고 통과한다")
+                .isGreaterThanOrEqualTo(29);
+        assertThat(mismatches)
+                .as("enum이 정본이고 CHECK 제약은 그 사본이다 — 값을 더하거나 뺄 때 마이그레이션을 함께 쓴다")
+                .isEmpty();
+    }
+
+    /** 엔티티를 찾을 뿌리. 루트 패키지라 도메인이 늘어도 따라온다 */
+    private static final String ENTITY_BASE_PACKAGE = "org.sscc.ssccopsserver";
+
+    /*
+     * `pg_get_constraintdef`가 내는 정의에서 허용 값을 뽑는다. 모양이 두 가지인데
+     * (`= 'SESSION'::text` · `= ANY ((ARRAY['A'::character varying, …])::text[])`)
+     * 둘 다 값만 작은따옴표에 싸이고 컬럼 이름은 싸이지 않으므로 같은 규칙으로 걷힌다.
+     */
+    private static final Pattern QUOTED_VALUE = Pattern.compile("'([^']*)'::");
+
+    private static Set<String> allowedValues(String constraintDefinition) {
+        Set<String> values = new TreeSet<>();
+        Matcher matcher = QUOTED_VALUE.matcher(constraintDefinition);
+        while (matcher.find()) {
+            values.add(matcher.group(1));
+        }
+        return values;
+    }
+
+    private static String tableName(Class<?> entity) {
+        Table table = entity.getAnnotation(Table.class);
+        return table != null && !table.name().isEmpty()
+                ? table.name()
+                : toSnakeCase(entity.getSimpleName());
+    }
+
+    private static String columnName(Field field) {
+        Column column = field.getAnnotation(Column.class);
+        return column != null && !column.name().isEmpty()
+                ? column.name()
+                : toSnakeCase(field.getName());
+    }
+
+    /** Spring Boot 기본 물리 명명 전략(CamelCaseToUnderscoresNamingStrategy)과 같은 규칙 */
+    private static String toSnakeCase(String name) {
+        return name.replaceAll("([a-z0-9])([A-Z])", "$1_$2").toLowerCase(Locale.ROOT);
     }
 }

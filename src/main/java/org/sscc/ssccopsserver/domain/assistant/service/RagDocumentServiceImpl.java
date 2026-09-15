@@ -114,7 +114,7 @@ public class RagDocumentServiceImpl implements RagDocumentService {
          */
         requireWithinDailyQuota(registrant);
 
-        parse(format, content, originalFileName);
+        RagDocumentType documentType = resolveType(format, content, originalFileName);
 
         /*
          * **식별자를 먼저 받는다** — 키가 `rag-documents/{ragDocId}/…`라서다. `saveAndFlush`인
@@ -127,7 +127,7 @@ public class RagDocumentServiceImpl implements RagDocumentService {
                 ragDocumentRepository.saveAndFlush(
                         RagDocumentEntity.register(
                                 resolveName(name, originalFileName, format),
-                                format.getDocumentType(),
+                                documentType,
                                 originalFileName,
                                 content.length,
                                 registrant));
@@ -399,14 +399,50 @@ public class RagDocumentServiceImpl implements RagDocumentService {
      * 유형이 파서를 고른다(§5.2). **결과는 버린다** — 여기서 파싱은 검증이고, 색인은 R2의 원본을
      * 다시 읽는다(클래스 주석).
      */
-    private void parse(RagDocumentFormat format, byte[] content, String fileName) {
-        if (format.getDocumentType() == RagDocumentType.STRUCTURED) {
-            // 바이트를 그대로 넘긴다 — UTF-8 디코딩과 BOM 제거는 파서의 계약이고(#400), 여기서
-            // 한 번 더 하면 검증과 색인이 같은 파일을 다르게 읽을 자리가 생긴다
-            regulationParser.parse(content);
-            return;
+    /*
+     * ══ 유형을 정하는 유일한 자리다 (#445) ═══════════════════════
+     *
+     * **확장자가 아니라 파싱 결과가 정한다.** 그전에는 `RagDocumentFormat`이 «`.md`면 회칙»이라고
+     * 단정했고, 그래서 회칙이 아닌 마크다운은 코퍼스에 들어갈 방법이 아예 없었다 — 계약을 어기면
+     * 400이고 확장자를 바꾸지 않는 한 평문 경로로 갈 수 없었다.
+     *
+     * 이제 `.md`는 회칙 파서를 **시도**하고, 계약을 어기면 거절이 아니라 평문으로 떨어진다.
+     * 잃는 것은 그 문서의 조 단위 인용뿐이고 내용은 그대로 검색·인용된다.
+     *
+     * ── 왜 여기서 정하고 그 값을 저장하는가 ─────────────────────
+     *
+     * 색인 워커가 `rag_doc.doc_type_cd`로 청커를 고르므로(`RagIndexingWorker.chunk`) **판단이
+     * 두 곳에 있으면 갈린다** — 업로드는 회칙으로 읽었는데 워커는 평문으로 자르는 상태가 성립한다.
+     * 그래서 결정을 여기서 한 번만 하고 그 결과를 행에 적는다.
+     *
+     * ── 조용한 강등이 아니다 ─────────────────────────────────────
+     *
+     * 떨어진 유형은 `RagDocumentResponse.docType`으로 목록에 그대로 실린다(화면의 문서명 아래
+     * 칸이 그 값이다). 회칙 `.md`에 오타가 나서 평문으로 떨어져도 운영진이 목록에서 본다 —
+     * 되묻는 버튼이나 요청 플래그를 두지 않은 이유이며, 그것이 있으면 «턱턱 넣는다»를 한 번 더
+     * 막는 값만 남는다. 로그에도 사유를 남긴다.
+     *
+     * **`RAG_DOCUMENT_PARSE_FAILED`만 떨어뜨린다.** 다른 코드(한도·상태 등)로 나온 예외를 함께
+     * 삼키면 «회칙이 아니라서»와 «서버가 고장나서»가 같은 결과가 된다.
+     */
+    private RagDocumentType resolveType(RagDocumentFormat format, byte[] content, String fileName) {
+
+        if (format.isRegulationCandidate()) {
+            try {
+                // 바이트를 그대로 넘긴다 — UTF-8 디코딩과 BOM 제거는 파서의 계약이고(#400), 여기서
+                // 한 번 더 하면 검증과 색인이 같은 파일을 다르게 읽을 자리가 생긴다
+                regulationParser.parse(content);
+                return RagDocumentType.STRUCTURED;
+            } catch (GeneralException exception) {
+                if (exception.getErrorCode() != AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED) {
+                    throw exception;
+                }
+                log.info("회칙 구조가 아니라 평문으로 색인한다 — 파일={} 사유={}", fileName, exception.getMessage());
+            }
         }
+
         genericTextExtractor.extract(content, fileName);
+        return RagDocumentType.GENERIC;
     }
 
     /*

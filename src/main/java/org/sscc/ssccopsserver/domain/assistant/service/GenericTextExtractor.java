@@ -2,18 +2,19 @@ package org.sscc.ssccopsserver.domain.assistant.service;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import org.apache.tika.exception.EncryptedDocumentException;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.Parser;
+import org.apache.tika.parser.microsoft.OfficeParser;
 import org.apache.tika.parser.microsoft.ooxml.OOXMLParser;
 import org.apache.tika.parser.pdf.PDFParser;
 import org.apache.tika.parser.pdf.PDFParserConfig;
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.assistant.code.RagDocumentFormat;
-import org.sscc.ssccopsserver.domain.assistant.code.RagDocumentType;
 import org.sscc.ssccopsserver.domain.assistant.code.error.AssistantErrorCode;
 import org.sscc.ssccopsserver.domain.assistant.dto.ExtractedDocument;
 import org.sscc.ssccopsserver.domain.assistant.dto.ExtractedPage;
@@ -22,7 +23,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import lombok.extern.slf4j.Slf4j;
 
 /*
- * 받아 온 PDF·DOCX를 **평문 + 페이지 경계**로 뽑는다 (#398 · 기획안 §5.4).
+ * 받아 온 파일을 **평문 + 페이지 경계**로 뽑는다 (#398 · #445 · 기획안 §5.4).
  *
  * ── 왜 PDFBox가 아니라 Tika인가 ─────────────────────────────
  *
@@ -44,10 +45,21 @@ import lombok.extern.slf4j.Slf4j;
  *
  * ── 파서를 확장자로 고정한다 — `AutoDetectParser`가 아니다 ──
  *
- * 우리가 받는 것은 `.pdf`·`.docx` 둘뿐이므로(`RagDocumentFormat`) 파서도 그 둘이면 된다.
- * 자동 감지는 클래스패스에 있는 모든 파서를 후보로 올리는데, 코퍼스에 올라오는 것은 **외부에서
- * 받아 온 파일**이라 실행될 수 있는 파서가 적을수록 좋다. 확장자와 내용이 어긋난 파일(`.pdf`로
- * 이름만 바꾼 zip)은 파서가 열지 못해 400이 되고, 그것이 맞는 결과다.
+ * 확장자마다 파서가 **고정**이며 그 표는 `RagDocumentFormat.Extraction`이다. 자동 감지는
+ * 클래스패스에 있는 모든 파서를 후보로 올리는데, 코퍼스에 올라오는 것은 **외부에서 받아 온
+ * 파일**이라 실행될 수 있는 파서가 적을수록 좋다. 확장자와 내용이 어긋난 파일(`.pdf`로 이름만
+ * 바꾼 zip)은 파서가 열지 못해 400이 되고, 그것이 맞는 결과다.
+ *
+ * **#445에서 확장자가 늘었지만 파서는 셋뿐이다** — 새로 받는 `.pptx`·`.xlsx`는 `.docx`와 같은
+ * `OOXMLParser`이고, 옛 `.doc`·`.ppt`·`.xls`만 `OfficeParser` 하나를 더한다(둘 다 이미 깔린
+ * `tika-parser-microsoft-module`이 싣는다 — 새 의존성이 없다). `.md`·`.txt`는 **파서를 아예
+ * 쓰지 않는다**: 바이트가 곧 본문이라 Tika를 태우면 파서 수를 줄인 이 판단과 거꾸로 간다.
+ *
+ * ── `.md`가 여기로 올 수 있다 (#445) ────────────────────────
+ *
+ * 그전에는 `.md`를 받으면 400이었다 — 확장자가 유형을 단정했으므로 «구조화 문서를 평문으로
+ * 뽑는 것»이 곧 실수였기 때문이다. 이제 유형은 파싱 결과가 정하고
+ * (`RagDocumentServiceImpl.resolveType`), 회칙 계약을 어긴 `.md`가 **정상적으로** 이 길로 온다.
  *
  * ── OCR을 붙이지 않는다 ─────────────────────────────────────
  *
@@ -65,26 +77,12 @@ public class GenericTextExtractor {
 
     public ExtractedDocument extract(byte[] content, String fileName) {
         RagDocumentFormat format = RagDocumentFormat.fromFileName(fileName);
-        if (format.getDocumentType() != RagDocumentType.GENERIC) {
-            // `.md`는 구조화 문서다 — 평문으로 뽑으면 조 단위 인용을 잃는다
-            throw new GeneralException(
-                    AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED,
-                    "`.md`는 회칙 계약으로 읽습니다. 평문 추출 대상은 `.pdf`·`.docx`입니다.");
-        }
 
-        PageContentHandler handler = new PageContentHandler();
-        try (InputStream input = new ByteArrayInputStream(content)) {
-            parserFor(format).parse(input, handler, new Metadata(), parseContext());
-        } catch (EncryptedDocumentException exception) {
-            throw new GeneralException(
-                    AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED,
-                    "암호가 걸린 문서입니다. 암호를 푼 파일로 다시 올려 주세요.");
-        } catch (Exception exception) {
-            log.warn("규정 문서 추출 실패 — format={}", format, exception);
-            throw new GeneralException(AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED, CORRUPTED);
-        }
+        List<ExtractedPage> pages =
+                format.getExtraction() == RagDocumentFormat.Extraction.PLAIN
+                        ? plainText(content)
+                        : parsed(content, format);
 
-        List<ExtractedPage> pages = handler.pages();
         ExtractedDocument extracted = new ExtractedDocument(pages);
         if (extracted.blank()) {
             /*
@@ -104,8 +102,53 @@ public class GenericTextExtractor {
         return extracted;
     }
 
+    /*
+     * 파서를 태우는 길 — PDF·OOXML·OLE2.
+     *
+     * 예외를 두 갈래로 나누는 것은 운영진이 할 일이 다르기 때문이다: 암호는 «암호를 풀어 오세요»,
+     * 나머지는 «파일이 깨졌는지 보세요»다. 어느 쪽이든 본문·스택은 응답에 싣지 않는다.
+     */
+    private List<ExtractedPage> parsed(byte[] content, RagDocumentFormat format) {
+        PageContentHandler handler = new PageContentHandler();
+        try (InputStream input = new ByteArrayInputStream(content)) {
+            parserFor(format).parse(input, handler, new Metadata(), parseContext());
+        } catch (EncryptedDocumentException exception) {
+            throw new GeneralException(
+                    AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED,
+                    "암호가 걸린 문서입니다. 암호를 푼 파일로 다시 올려 주세요.");
+        } catch (Exception exception) {
+            log.warn("규정 문서 추출 실패 — format={}", format, exception);
+            throw new GeneralException(AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED, CORRUPTED);
+        }
+        return handler.pages();
+    }
+
+    /*
+     * 평문 — `.md`·`.txt` (#445).
+     *
+     * **쪽 번호가 없으므로 한 장으로 돌려준다**(`number = null`) — DOCX가 오는 모양과 같고,
+     * `ExtractedDocument.paginated()`가 그 값을 보고 판단하므로 인용이 문서명까지만 간다.
+     *
+     * **UTF-8로 읽고 BOM을 떼는 것은 `RegulationParser`의 계약과 같다**(#400). 같은 `.md`를 두
+     * 파서가 다르게 읽으면, 회칙 파서는 통과했는데 평문 경로에서만 첫 글자가 달라지는 자리가
+     * 생긴다. 다른 인코딩을 추측하지 않는다 — 깨진 글자가 코퍼스에 조용히 들어가느니 운영진이
+     * UTF-8로 저장해 다시 올리는 편이 낫다(OCR을 붙이지 않는 것과 같은 줄기다).
+     */
+    private static List<ExtractedPage> plainText(byte[] content) {
+        String text = new String(content, StandardCharsets.UTF_8);
+        if (text.startsWith("\uFEFF")) {
+            text = text.substring(1);
+        }
+        return List.of(new ExtractedPage(null, text));
+    }
+
     private static Parser parserFor(RagDocumentFormat format) {
-        return format == RagDocumentFormat.PDF ? new PDFParser() : new OOXMLParser();
+        return switch (format.getExtraction()) {
+            case PDF -> new PDFParser();
+            case OOXML -> new OOXMLParser();
+            case OLE2 -> new OfficeParser();
+            case PLAIN -> throw new IllegalStateException("평문은 파서를 쓰지 않는다");
+        };
     }
 
     /*

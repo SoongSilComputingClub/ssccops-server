@@ -658,6 +658,12 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
 | 배선 | `AssistantConfig.assistantChatMemory`(`MessageWindowChatMemory` · 메시지 40개 = 20턴) |
 | 초기화 | `DELETE /v1/assistant/conversations/{id}` — **없는 대화를 지우는 것도 200이다** |
 
+손잡이는 다섯이다 — `ssccops.assistant.memory.max-conversations`(500) · `…memory.ttl`(PT24H) ·
+`…memory.max-turns`(20) · `ssccops.assistant.query.embedding-cache-size`(1000) ·
+`…query.embedding-cache-ttl`(P7D). **배포에서 건드릴 값이 아니다** — §8.1의 15MB가 이 다섯에
+매여 있어 올리는 것은 곧 힙 예산을 올리는 것이다. 열어 둔 것은 테스트가 시계와 상한을 옮겨
+가며 재기 위해서이고, 그래서 설정 파일에도 `.env.example`에도 적지 않는다(기본값이 곧 운영값이다).
+
 ### 힙에 두는 것이 결정이다 — 그리고 언제 바꾸는지도 정해 두었다
 
 **대화 500개 × 20턴 ≈ 12MB** + 질의 임베딩 캐시 3.3MB + 레이트 리밋 카운터 15KB ≈ **15MB**(§8.1).

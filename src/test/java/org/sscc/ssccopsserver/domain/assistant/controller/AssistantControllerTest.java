@@ -124,7 +124,6 @@ class AssistantControllerTest {
                 .andExpect(jsonPath("$.data.citations", hasSize(1)))
                 .andExpect(jsonPath("$.data.citations[0].citationType").value("ARTICLE"))
                 .andExpect(jsonPath("$.data.citations[0].docTitle").value("SSCC 동아리 회칙"))
-                .andExpect(jsonPath("$.data.citations[0].docVer").value(1))
                 .andExpect(jsonPath("$.data.citations[0].chapter").value("제2장 회원"))
                 .andExpect(jsonPath("$.data.citations[0].supplementary").value(false))
                 .andExpect(jsonPath("$.data.citations[0].article").value("제7조 (회원의 구분)"))
@@ -448,13 +447,7 @@ class AssistantControllerTest {
 
     private RagDocumentEntity registerRegulation() {
         return RagDocumentEntity.register(
-                "REGULATION",
-                "SSCC 동아리 회칙",
-                RagDocumentType.STRUCTURED,
-                RagDocumentEntity.FIRST_VERSION,
-                "회칙.md",
-                1024,
-                member);
+                "SSCC 동아리 회칙", RagDocumentType.STRUCTURED, "회칙.md", 1024, member);
     }
 
     /** 색인이 끝났고 시행 중인 판본 — <b>검색이 보는 유일한 조합이다</b> */

@@ -11,14 +11,15 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 public interface RagDocumentService {
 
     /**
-     * 새 판본을 올린다 — <b>파싱은 이 요청 안에서 하고 임베딩은 부르지 않는다</b>(#399).
+     * 새 문서를 올린다 — <b>파싱은 이 요청 안에서 하고 임베딩은 부르지 않는다</b>(#399).
      *
-     * @param documentCode 판본을 가로지르는 열쇠. 같은 값으로 다시 올리면 직전 판본 + 1이 된다
+     * <p><b>문서 식별자를 받지 않는다</b>(ADR-0034). 문서 한 건이 곧 그 규정이라 묶을 것이 없다 — 규정이 갱신되면 운영진이 옛 문서를 지우고 새 문서를
+     * 올린다.
+     *
      * @param name 표시명. 비우면 파일명에서 확장자를 뗀 것이 들어간다
      * @param registrant 올린 회원. <b>요청 본문이 아니라 {@code @CurrentMember}에서 온다</b>(#78)
      */
-    RagDocumentResponse upload(
-            MultipartFile file, String documentCode, String name, MemberEntity registrant);
+    RagDocumentResponse upload(MultipartFile file, String name, MemberEntity registrant);
 
     /**
      * 목록과 <b>요약 3값을 한 응답으로</b> (#401).
@@ -34,8 +35,8 @@ public interface RagDocumentService {
     /**
      * 적용 상태를 바꾼다 — {@code DRAFT → EFFECTIVE} · {@code EFFECTIVE → SUPERSEDED} (#401 · 기획안 §5.5).
      *
-     * <p><b>{@code EFFECTIVE}로 올리면 같은 {@code doc_cd}의 기존 시행본이 같은 트랜잭션에서 내려간다</b>(대표 역할 {@code
-     * rprs_role_yn}이 회원당 1건인 것과 같은 모양). 성립하지 않는 전이는 엔티티의 전이표가 거절한다.
+     * <p><b>그 문서 하나만 바꾼다 — 다른 문서를 함께 내리지 않는다</b>(ADR-0034). 시행 중인 문서는 여러 건일 수 있고, 갱신된 규정의 옛 문서를 지우는
+     * 것은 운영진의 몫이다. 성립하지 않는 전이는 엔티티의 전이표가 거절한다.
      */
     RagDocumentResponse changeApplyStatus(
             Long ragDocId, RagDocumentApplyStatusUpdateRequest request);

@@ -155,12 +155,10 @@ class RagDocumentControllerTest {
      */
     @Test
     void createsPendingDraftFirstVersionFromMarkdown() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("Location"))
-                .andExpect(jsonPath("$.data.documentCode").value("REGULATION"))
                 .andExpect(jsonPath("$.data.docType").value(RagDocumentType.STRUCTURED.name()))
-                .andExpect(jsonPath("$.data.version").value(1))
                 .andExpect(jsonPath("$.data.indexStatus").value(RagIndexStatus.PENDING.name()))
                 .andExpect(jsonPath("$.data.applyStatus").value(RagApplyStatus.DRAFT.name()))
                 .andExpect(jsonPath("$.data.originalFileName").value("회칙.md"))
@@ -189,7 +187,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void uploadNeverReachesTheEmbedding() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.indexStatus").value(RagIndexStatus.PENDING.name()));
 
@@ -206,7 +204,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void storesOriginalUnderRagDocumentsKeyAndRecordsFileReference() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isCreated());
 
         Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
@@ -228,28 +226,26 @@ class RagDocumentControllerTest {
     }
 
     /*
-     * 같은 `doc_cd`로 다시 올리면 **직전 판본 + 1**이다. 제목이 아니라 이 코드가 판본을 묶으므로
-     * 표시명을 달리 줘도 같은 문서의 2판본이다.
+     * **다시 올리면 별개 문서다** (ADR-0034). 예전에는 같은 `doc_cd`가 판본을 묶어 «직전 판본 + 1»이
+     * 됐는데, 묶는 열쇠가 사라져 행이 둘이 된다 — 규정을 갱신할 때 옛 문서를 지우는 것은 운영진의
+     * 몫이고, 그것이 이 결정이 기대는 자리다.
      */
     @Test
-    void secondUploadOfSameDocumentCodeBecomesNextVersion() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+    void secondUploadBecomesASeparateDocument() throws Exception {
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isCreated());
 
-        mockMvc.perform(upload(markdown("회칙_개정안.md", VALID_MARKDOWN), "regulation", "2026 개정안"))
+        mockMvc.perform(upload(markdown("회칙_개정안.md", VALID_MARKDOWN), "2026 개정안"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.version").value(2))
-                // 소문자로 보내도 같은 문서다 — 눈으로 같아 보이는 두 값이 다른 문서가 되면 안 된다
-                .andExpect(jsonPath("$.data.documentCode").value("REGULATION"))
                 .andExpect(jsonPath("$.data.name").value("2026 개정안"));
 
-        assertThat(ragDocumentRepository.findMaxVersion("REGULATION")).contains((short) 2);
+        assertThat(ragDocumentRepository.count()).isEqualTo(2);
     }
 
     /** `.pdf`는 평문 갈래다 — 유형을 요청이 신고하지 않고 확장자가 정한다(#210과 같은 판단) */
     @Test
     void classifiesPdfAsGenericFromItsExtension() throws Exception {
-        mockMvc.perform(upload(resource("rag/regulation-current.pdf"), "SCHOOL_RULE", null))
+        mockMvc.perform(upload(resource("rag/regulation-current.pdf"), null))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.docType").value(RagDocumentType.GENERIC.name()))
                 .andExpect(jsonPath("$.data.indexStatus").value(RagIndexStatus.PENDING.name()));
@@ -267,11 +263,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void rejectsMarkdownThatBreaksTheContractBeforeTouchingR2() throws Exception {
-        mockMvc.perform(
-                        upload(
-                                markdown("회칙.md", "# 회칙\n\n### 제1조 (명칭)\n\n본 회의 명칭.\n"),
-                                "REGULATION",
-                                null))
+        mockMvc.perform(upload(markdown("회칙.md", "# 회칙\n\n### 제1조 (명칭)\n\n본 회의 명칭.\n"), null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_PARSE_FAILED"))
                 .andExpect(jsonPath("$.message").value(containsString("3번째 줄")));
@@ -283,7 +275,7 @@ class RagDocumentControllerTest {
     /** 텍스트가 한 글자도 없는 스캔 PDF도 같은 코드다 — 색인 완료인데 아무 답도 못 하는 행을 만들지 않는다 */
     @Test
     void rejectsScannedPdfWithNoText() throws Exception {
-        mockMvc.perform(upload(resource("rag/scanned-no-text.pdf"), "SCHOOL_RULE", null))
+        mockMvc.perform(upload(resource("rag/scanned-no-text.pdf"), null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_PARSE_FAILED"));
 
@@ -294,11 +286,7 @@ class RagDocumentControllerTest {
     /** 받는 형식 밖은 파싱 실패와 코드가 갈린다 — 운영진이 할 일이 «형식을 바꾼다»로 다르다 */
     @Test
     void rejectsUnsupportedExtension() throws Exception {
-        mockMvc.perform(
-                        upload(
-                                file("학칙.hwp", "application/octet-stream", "본문"),
-                                "SCHOOL_RULE",
-                                null))
+        mockMvc.perform(upload(file("학칙.hwp", "application/octet-stream", "본문"), null))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_UNSUPPORTED_TYPE"));
 
@@ -317,7 +305,6 @@ class RagDocumentControllerTest {
         mockMvc.perform(
                         upload(
                                 new MockMultipartFile("file", "큰회칙.md", "text/markdown", tooLarge),
-                                "REGULATION",
                                 null))
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.code").value("RAG_DOCUMENT_TOO_LARGE"));
@@ -336,16 +323,14 @@ class RagDocumentControllerTest {
         for (int i = 1; i <= 10; i++) {
             ragDocumentRepository.saveAndFlush(
                     RagDocumentEntity.register(
-                            "GUIDE" + i,
                             "지침 " + i,
                             RagDocumentType.STRUCTURED,
-                            RagDocumentEntity.FIRST_VERSION,
                             "guide" + i + ".md",
                             10,
                             manager));
         }
 
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("ASSISTANT_RATE_LIMITED"));
 
@@ -360,20 +345,8 @@ class RagDocumentControllerTest {
     void rejectsUploadWithoutRagDocumentManageAuthority() throws Exception {
         MockMultipartHttpServletRequestBuilder request =
                 multipart(DOCUMENTS).file(markdown("회칙.md", VALID_MARKDOWN));
-        request.param("documentCode", "REGULATION");
 
         mockMvc.perform(authorized(request, outsiderToken)).andExpect(status().isForbidden());
-
-        assertThat(ragDocumentRepository.count()).isZero();
-        verify(r2Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
-    }
-
-    /** `doc_cd`는 판본을 묶는 열쇠라 모양을 본다 — 공백·한글이 섞이면 같은 문서가 둘로 갈린다 */
-    @Test
-    void rejectsMalformedDocumentCode() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "회칙 2026", null))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
         assertThat(ragDocumentRepository.count()).isZero();
         verify(r2Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
@@ -390,11 +363,11 @@ class RagDocumentControllerTest {
      */
     @Test
     void listsNewestFirstWithCorpusSummary() throws Exception {
-        RagDocumentEntity old = indexed("REGULATION", "2025 회칙", (short) 1, 5);
+        RagDocumentEntity old = indexed("2025 회칙", 5);
         old.makeEffective(LocalDate.of(2025, 3, 1));
         old.supersede();
-        indexed("REGULATION", "2026 회칙", (short) 2, 12);
-        pending("GUIDE", "집행 지침");
+        indexed("2026 회칙", 12);
+        pending("집행 지침");
 
         mockMvc.perform(authorized(get(DOCUMENTS), managerToken))
                 .andExpect(status().isOk())
@@ -416,8 +389,8 @@ class RagDocumentControllerTest {
      */
     @Test
     void filtersByDocumentNameButSummaryStaysWholeCorpus() throws Exception {
-        indexed("REGULATION", "2026 회칙", (short) 1, 12);
-        pending("GUIDE", "집행 지침");
+        indexed("2026 회칙", 12);
+        pending("집행 지침");
 
         mockMvc.perform(authorized(get(DOCUMENTS).param("q", "회칙"), managerToken))
                 .andExpect(status().isOk())
@@ -447,7 +420,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void detailParsesArticlesFromTheStoredOriginal() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isCreated());
         Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
         stubDownload(VALID_MARKDOWN.getBytes(StandardCharsets.UTF_8));
@@ -469,7 +442,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void detailOfGenericDocumentHasNoArticles() throws Exception {
-        mockMvc.perform(upload(resource("rag/regulation-current.pdf"), "SCHOOL_RULE", null))
+        mockMvc.perform(upload(resource("rag/regulation-current.pdf"), null))
                 .andExpect(status().isCreated());
         Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
 
@@ -493,17 +466,19 @@ class RagDocumentControllerTest {
     // ------------------------------------------------------------------ 적용 전환 (#401)
 
     /*
-     * **시행본은 문서당 하나다** — 올리면 같은 `doc_cd`의 기존 시행본이 **같은 트랜잭션에서**
-     * 내려간다(§5.5 · 대표 역할 `rprs_role_yn`이 회원당 1건인 것과 같은 모양).
+     * **시행 중인 문서는 여러 건일 수 있다** (ADR-0034). 예전에는 `EFFECTIVE`로 올리면 같은
+     * `doc_cd`의 기존 시행본이 같은 트랜잭션에서 내려갔는데, 판본 관리를 걷어내며 그 경로와
+     * 부분 유니크 인덱스가 함께 사라졌다.
      *
-     * 규칙은 부분 유니크 인덱스와 이 판정 두 겹인데 **H2에는 그 인덱스가 없어** 여기가 유일한
-     * 방어선이다(#143의 초안 1건 제약과 같은 자리) — 그래서 이 테스트가 그 환경에서 지키는 것이다.
+     * 이 테스트가 지키는 것이 그 자리다 — 자동 승계가 «되살아나지 않는 것»을 본다. 갱신된 규정의
+     * 옛 문서를 지우는 것은 이제 운영진의 몫이고, 그것이 ADR-0034가 «포기하는 것»으로 적어 둔
+     * 대가다.
      */
     @Test
-    void promotingSupersedesThePreviousEffectiveVersion() throws Exception {
-        RagDocumentEntity previous = indexed("REGULATION", "2025 회칙", (short) 1, 5);
-        previous.makeEffective(LocalDate.of(2025, 3, 1));
-        RagDocumentEntity next = indexed("REGULATION", "2026 회칙", (short) 2, 12);
+    void promotingLeavesOtherEffectiveDocumentsAlone() throws Exception {
+        RagDocumentEntity other = indexed("2025 회칙", 5);
+        other.makeEffective(LocalDate.of(2025, 3, 1));
+        RagDocumentEntity next = indexed("2026 회칙", 12);
 
         mockMvc.perform(applyStatus(next.getId(), "{\"applyStatus\":\"EFFECTIVE\"}"))
                 .andExpect(status().isOk())
@@ -513,12 +488,10 @@ class RagDocumentControllerTest {
                         jsonPath("$.data.effectiveFrom")
                                 .value(LocalDate.now(ZoneId.of("Asia/Seoul")).toString()));
 
-        assertThat(reload(previous).getApplyStatus())
-                .as("같은 문서의 옛 시행본은 같은 트랜잭션에서 내려간다")
-                .isEqualTo(RagApplyStatus.SUPERSEDED);
-        assertThat(reload(previous).getEffectiveFrom())
-                .as("내려가도 시행일은 지우지 않는다 — «언제부터 언제까지 유효했나»가 그 값이다")
-                .isEqualTo(LocalDate.of(2025, 3, 1));
+        assertThat(reload(other).getApplyStatus())
+                .as("다른 문서는 건드리지 않는다 — 시행 중인 문서는 여러 건일 수 있다(ADR-0034)")
+                .isEqualTo(RagApplyStatus.EFFECTIVE);
+        assertThat(reload(other).getEffectiveFrom()).isEqualTo(LocalDate.of(2025, 3, 1));
     }
 
     /*
@@ -528,7 +501,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void rejectsPromotionOfDocumentThatIsNotIndexed() throws Exception {
-        RagDocumentEntity waiting = pending("REGULATION", "2026 회칙");
+        RagDocumentEntity waiting = pending("2026 회칙");
 
         mockMvc.perform(applyStatus(waiting.getId(), "{\"applyStatus\":\"EFFECTIVE\"}"))
                 .andExpect(status().isConflict())
@@ -541,7 +514,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void rejectsTransitionBackToDraft() throws Exception {
-        RagDocumentEntity document = indexed("REGULATION", "2026 회칙", (short) 1, 12);
+        RagDocumentEntity document = indexed("2026 회칙", 12);
 
         mockMvc.perform(applyStatus(document.getId(), "{\"applyStatus\":\"DRAFT\"}"))
                 .andExpect(status().isBadRequest())
@@ -556,7 +529,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void reindexPutsIndexedDocumentBackToPending() throws Exception {
-        RagDocumentEntity document = indexed("REGULATION", "2026 회칙", (short) 1, 12);
+        RagDocumentEntity document = indexed("2026 회칙", 12);
 
         mockMvc.perform(
                         authorized(
@@ -577,7 +550,7 @@ class RagDocumentControllerTest {
      */
     @Test
     void deleteRemovesRowAndFileReference() throws Exception {
-        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), "REGULATION", null))
+        mockMvc.perform(upload(markdown("회칙.md", VALID_MARKDOWN), null))
                 .andExpect(status().isCreated());
         Long ragDocId = ragDocumentRepository.findAll().get(0).getId();
 
@@ -590,13 +563,9 @@ class RagDocumentControllerTest {
 
     // ------------------------------------------------------------------ 도우미
 
-    private MockMultipartHttpServletRequestBuilder upload(
-            MockMultipartFile file, String documentCode, String name) {
+    private MockMultipartHttpServletRequestBuilder upload(MockMultipartFile file, String name) {
 
         MockMultipartHttpServletRequestBuilder builder = multipart(DOCUMENTS).file(file);
-        if (documentCode != null) {
-            builder.param("documentCode", documentCode);
-        }
         if (name != null) {
             builder.param("name", name);
         }
@@ -641,27 +610,17 @@ class RagDocumentControllerTest {
     }
 
     /** 색인이 끝난 판본 — 전이는 엔티티의 것을 그대로 쓴다(테스트가 상태를 직접 심지 않는다) */
-    private RagDocumentEntity indexed(String documentCode, String name, short version, int chunks) {
-        RagDocumentEntity document = pending(documentCode, name, version);
+    private RagDocumentEntity indexed(String name, int chunks) {
+        RagDocumentEntity document = pending(name);
         document.startIndexing(Instant.now());
         document.completeIndexing(chunks, Instant.now());
         return ragDocumentRepository.saveAndFlush(document);
     }
 
-    private RagDocumentEntity pending(String documentCode, String name) {
-        return pending(documentCode, name, RagDocumentEntity.FIRST_VERSION);
-    }
-
-    private RagDocumentEntity pending(String documentCode, String name, short version) {
+    private RagDocumentEntity pending(String name) {
         return ragDocumentRepository.saveAndFlush(
                 RagDocumentEntity.register(
-                        documentCode,
-                        name,
-                        RagDocumentType.STRUCTURED,
-                        version,
-                        name + ".md",
-                        10,
-                        manager));
+                        name, RagDocumentType.STRUCTURED, name + ".md", 10, manager));
     }
 
     private RagDocumentEntity reload(RagDocumentEntity document) {

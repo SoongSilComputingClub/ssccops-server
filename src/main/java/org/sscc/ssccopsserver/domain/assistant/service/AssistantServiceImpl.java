@@ -6,8 +6,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
@@ -165,14 +163,13 @@ public class AssistantServiceImpl implements AssistantService {
 
         SearchableDocument primary = verified.citations().get(0).source();
         log.info(
-                "규정 도우미 답변 — mbrId={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준판본={}(v{}) 소요={}ms",
+                "규정 도우미 답변 — mbrId={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준문서={} 소요={}ms",
                 member.getId(),
                 history.size() / 2,
                 chunks.size(),
                 verified.citations().size(),
                 verified.dropped(),
-                primary.documentCode(),
-                primary.version(),
+                primary.name(),
                 Duration.between(startedAt, Instant.now()).toMillis());
 
         return new AssistantQueryResponse(
@@ -200,13 +197,17 @@ public class AssistantServiceImpl implements AssistantService {
     public AssistantSuggestionsResponse suggestions() {
         assistantFeature.requireEnabled();
 
-        Set<String> documentCodes =
-                searchableDocuments().values().stream()
-                        .map(SearchableDocument::documentCode)
-                        .collect(Collectors.toSet());
+        /*
+         * **«코퍼스가 비어 있지 않은가» 하나만 묻는다**(ADR-0034). 예전에는 문서 식별자 집합을
+         * 넘겨 문서에 맞는 질문을 골랐는데, 추천 질문이 고정 셋이 되며 물을 것이 이것뿐이다.
+         *
+         * 그래도 이 판정을 없애지는 않는다 — 참고용이어도 **누르면 실제 질의가 나가고**, 빈
+         * 코퍼스에서는 «찾지 못했습니다»가 돌아온다. 추천을 눌렀는데 거절당하는 화면이 애초에
+         * 이 표가 막으려던 것이다(§13.3).
+         */
+        boolean corpusHasDocuments = !searchableDocuments().isEmpty();
 
-        return new AssistantSuggestionsResponse(
-                assistantSuggestions.forDocumentCodes(documentCodes));
+        return new AssistantSuggestionsResponse(assistantSuggestions.forCorpus(corpusHasDocuments));
     }
 
     /*

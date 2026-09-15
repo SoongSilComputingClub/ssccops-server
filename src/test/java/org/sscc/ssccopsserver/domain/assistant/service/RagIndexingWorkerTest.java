@@ -183,8 +183,7 @@ class RagIndexingWorkerTest {
     @Test
     void indexesGenericPdfWithPageMetadata() throws Exception {
         byte[] pdf = resource("rag/regulation-current.pdf");
-        RagDocumentEntity document =
-                pending("SCHOOL_RULE", "2026 동아리 회칙", "regulation-current.pdf", pdf);
+        RagDocumentEntity document = pending("2026 동아리 회칙", "regulation-current.pdf", pdf);
 
         assertThat(worker.drainQueue()).isEqualTo(1);
 
@@ -338,24 +337,20 @@ class RagIndexingWorkerTest {
 
     // ------------------------------------------------------------------ 도우미
 
-    private RagDocumentEntity pendingMarkdown(String documentCode, String markdown) {
-        return pending(
-                documentCode, documentCode, "회칙.md", markdown.getBytes(StandardCharsets.UTF_8));
+    private RagDocumentEntity pendingMarkdown(String name, String markdown) {
+        return pending(name, "회칙.md", markdown.getBytes(StandardCharsets.UTF_8));
     }
 
     /** 업로드가 남기는 것과 같은 상태를 만든다 — 행(`PENDING`·`DRAFT`) + `file_rfrnc` + R2의 바이트 */
-    private RagDocumentEntity pending(
-            String documentCode, String name, String fileName, byte[] content) {
+    private RagDocumentEntity pending(String name, String fileName, byte[] content) {
 
         RagDocumentEntity document =
                 ragDocumentRepository.save(
                         RagDocumentEntity.register(
-                                documentCode,
                                 name,
                                 fileName.endsWith(".md")
                                         ? RagDocumentType.STRUCTURED
                                         : RagDocumentType.GENERIC,
-                                RagDocumentEntity.FIRST_VERSION,
                                 fileName,
                                 content.length,
                                 registrant));
@@ -367,19 +362,19 @@ class RagIndexingWorkerTest {
         return document;
     }
 
-    /** 상한 판정의 재료 — 이미 색인이 끝난 판본 하나가 청크 N개를 들고 있는 상태 */
-    private void indexedWithChunks(String documentCode, int chunkCount) {
-        RagDocumentEntity document = pendingMarkdown(documentCode, VALID_MARKDOWN);
+    /** 상한 판정의 재료 — 이미 색인이 끝난 문서 하나가 청크 N개를 들고 있는 상태 */
+    private void indexedWithChunks(String name, int chunkCount) {
+        RagDocumentEntity document = pendingMarkdown(name, VALID_MARKDOWN);
         document.startIndexing(Instant.now());
         document.completeIndexing(chunkCount, Instant.now());
         ragDocumentRepository.save(document);
     }
 
-    private void supersededWithChunks(String documentCode, int chunkCount) {
-        indexedWithChunks(documentCode, chunkCount);
+    private void supersededWithChunks(String name, int chunkCount) {
+        indexedWithChunks(name, chunkCount);
         RagDocumentEntity document =
                 ragDocumentRepository.findAll().stream()
-                        .filter(candidate -> candidate.getDocumentCode().equals(documentCode))
+                        .filter(candidate -> candidate.getName().equals(name))
                         .findFirst()
                         .orElseThrow();
         document.makeEffective(LocalDate.now());

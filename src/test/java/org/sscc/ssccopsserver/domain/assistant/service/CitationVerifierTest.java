@@ -29,9 +29,7 @@ class CitationVerifierTest {
     private final SearchableDocument regulation =
             new SearchableDocument(
                     1L,
-                    "REGULATION",
                     "SSCC 동아리 회칙",
-                    (short) 17,
                     RagDocumentType.STRUCTURED,
                     RagApplyStatus.EFFECTIVE,
                     LocalDate.of(2026, 3, 24));
@@ -39,9 +37,7 @@ class CitationVerifierTest {
     private final SearchableDocument guideline =
             new SearchableDocument(
                     2L,
-                    "GUIDELINE",
                     "2026 지원금 집행 지침",
-                    (short) 1,
                     RagDocumentType.GENERIC,
                     RagApplyStatus.EFFECTIVE,
                     LocalDate.of(2026, 3, 1));
@@ -61,7 +57,6 @@ class CitationVerifierTest {
         AssistantCitationResponse citation = verified.responses().get(0);
         assertThat(citation.citationType()).isEqualTo(CitationType.ARTICLE);
         assertThat(citation.docTitle()).isEqualTo("SSCC 동아리 회칙");
-        assertThat(citation.docVer()).isEqualTo((short) 17);
         assertThat(citation.chapter()).isEqualTo("제2장 회원");
         assertThat(citation.supplementary()).isFalse();
         assertThat(citation.article()).isEqualTo("제7조 (회원의 구분)");
@@ -162,9 +157,7 @@ class CitationVerifierTest {
                                 .build(),
                         new SearchableDocument(
                                 3L,
-                                "BYLAW",
                                 "학술국 운영 세칙",
-                                (short) 2,
                                 RagDocumentType.GENERIC,
                                 RagApplyStatus.EFFECTIVE,
                                 LocalDate.of(2026, 3, 1)));

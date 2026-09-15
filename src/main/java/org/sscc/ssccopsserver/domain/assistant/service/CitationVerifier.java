@@ -159,7 +159,6 @@ public class CitationVerifier {
                     new VerifiedCitation(
                             AssistantCitationResponse.article(
                                     chunk.source().name(),
-                                    chunk.source().version(),
                                     chunk.chapter(),
                                     supplementary,
                                     chunk.articleCitation(),
@@ -177,10 +176,7 @@ public class CitationVerifier {
                         "%s#%d#%d".formatted(CitationType.PAGE, chunk.source().ragDocId(), page),
                         new VerifiedCitation(
                                 AssistantCitationResponse.page(
-                                        chunk.source().name(),
-                                        chunk.source().version(),
-                                        page,
-                                        snippet(chunk)),
+                                        chunk.source().name(), page, snippet(chunk)),
                                 chunk.source()));
             }
         }
@@ -203,8 +199,7 @@ public class CitationVerifier {
                 return new Resolved(
                         "%s#%d#-".formatted(CitationType.PAGE, chunk.source().ragDocId()),
                         new VerifiedCitation(
-                                AssistantCitationResponse.page(
-                                        name, chunk.source().version(), null, snippet(chunk)),
+                                AssistantCitationResponse.page(name, null, snippet(chunk)),
                                 chunk.source()));
             }
         }

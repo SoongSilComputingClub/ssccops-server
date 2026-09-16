@@ -256,6 +256,82 @@ class AssistantServiceImplTest {
     }
 
     /*
+     * ⚠️ **인용을 달았어도 모델이 «근거 없음»을 알렸으면 거절이다** (#455).
+     *
+     * 이 고장이 실제로 난 모양은 «규정 문서에서 … 근거를 찾지 못했습니다 [1][2][3][4][5]»였다 —
+     * 모델이 규칙을 어긴 것이 아니라 「근거가 없다」도 주장이라 출처를 붙인 것이고, 인용 수만
+     * 보던 판정이 그것을 **답변으로 셌다.** 화면에는 판본 배지와 인용 카드 다섯 장이 달린
+     * 「찾지 못했습니다」가 그려졌다.
+     *
+     * 그래서 표식이 인용을 이긴다. 사용자가 읽는 것은 모델의 거절 문장이 아니라 **서버의 안내
+     * 문구**이고, 그 둘이 갈려 있어야 «더 구체적으로 적어 주세요»가 함께 나간다.
+     */
+    @Test
+    void refusesWhenTheModelFlagsNoEvidenceEvenThoughItCitedExcerpts() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "[근거없음] 이번 발췌에는 제3조의 조문 내용이 포함되어 있지 않습니다 [1]";
+
+        AssistantQueryResponse response = service.query(ask("회칙 제3조의 내용을 그대로 인용해줘"), member);
+
+        assertThat(response.answered()).isFalse();
+        assertThat(response.answer()).isEqualTo(AssistantPrompt.NO_EVIDENCE);
+        assertThat(response.citations()).as("거절에 인용 카드가 딸리지 않는다").isEmpty();
+        assertThat(response.applyStatus()).as("기댄 판본이 없으므로 배지도 없다").isNull();
+        assertThat(response.effectiveDate()).isNull();
+        assertThat(conversations.history(response.conversationId()))
+                .as("거절은 다음 턴의 맥락이 되지 않는다")
+                .isEmpty();
+    }
+
+    /*
+     * 같은 거절이 **스트리밍에서는 조각 없이** 온다 (#455 · #447).
+     *
+     * 표식이 첫 줄이므로 화면에 글자가 닿기 전에 판정이 끝난다 — 임계값 거절과 같은 모양(`delta`
+     * 없이 `done` 하나)이고, 그래서 «근거 없음»으로 표시할 문장이 아니라 **정해진 안내 문구**가
+     * 나간다. 이것이 `ungrounded`와 갈리는 지점이다.
+     */
+    @Test
+    void streamsNothingAndSendsTheGuidanceWhenTheModelFlagsNoEvidence() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "[근거없음]";
+
+        RecordingSink sink = new RecordingSink();
+        service.queryStreaming(ask("회칙 제3조의 내용을 그대로 인용해줘"), member, sink);
+        sink.await();
+
+        assertThat(sink.text()).as("표식은 화면에 닿지 않는다").isEmpty();
+        assertThat(sink.done.answered()).isFalse();
+        assertThat(sink.done.answer()).isEqualTo(AssistantPrompt.NO_EVIDENCE);
+        assertThat(sink.done.citations()).isEmpty();
+        assertThat(sink.done.applyStatus()).isNull();
+    }
+
+    /* 셋을 가르는 값은 로그에만 있다 — 표식 거절은 «모델이 규칙을 지킨 것»이라 프롬프트를 다시 볼 일이 없다 */
+    @Test
+    void tellsTheTwoGroundingFailuresApartInTheLogOnly() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+
+        try (LogCapture logs = LogCapture.of(AssistantServiceImpl.class)) {
+            chatModel.answer = "[근거없음]";
+            service.query(ask("회칙 제3조의 내용을 그대로 인용해줘"), member);
+            chatModel.answer = "발췌를 하나도 가리키지 않는 답입니다.";
+            service.query(ask("정회원 승격 조건은?"), member);
+
+            List<String> refusals =
+                    logs.infoMessages().stream()
+                            .filter(line -> line.startsWith("규정 도우미 거절"))
+                            .toList();
+
+            assertThat(refusals).hasSize(2);
+            assertThat(refusals.get(0)).contains("모델이 근거 없음을 표식으로 알렸다");
+            assertThat(refusals.get(1)).contains("모델의 답에서 검증을 통과한 인용이 없다");
+        }
+    }
+
+    /*
      * 프롬프트가 **발췌와 질문을 나눠 싣고 회원 정보를 싣지 않는다** (§6.4 · §11).
      *
      * 개인정보를 넣지 않는 것은 무료 티어의 입력이 제품 개선에 쓰일 수 있기 때문이고, 블록을

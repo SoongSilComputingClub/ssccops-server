@@ -333,6 +333,99 @@ class CitationVerifierTest {
         assertThat(session.accept("\n다음 줄")).as("줄이 바뀌면 인용 토큰이 될 수 없다").isEqualTo(" [가나다\n다음 줄");
     }
 
+    // ------------------------------------------------------------------ 거절 표식 (#455)
+
+    /*
+     * **표식은 본문에서 사라지고 «거절»만 남는다** (#455).
+     *
+     * 모델이 근거 없음을 말로 하면 서버는 그것을 알 수 없다 — 실제로 「찾지 못했습니다」에 출처가
+     * 붙어 나갔고 인용 수만 보던 판정이 그것을 답변으로 셌다. 표식을 받는 것은 그 판정을 «그
+     * 문자열이 있는가» 하나로 줄이기 위해서다.
+     */
+    @Test
+    void readsTheRefusalMarkAsARefusalAndKeepsItOutOfTheAnswer() {
+        List<RetrievedChunk> chunks = List.of(article(7, null, "제7조", "회원의 구분", "6항 정회원은 …"));
+
+        CitationVerifier.Verified verified = verifier.verify("[근거없음]", chunks);
+
+        assertThat(verified.refused()).isTrue();
+        assertThat(verified.answer()).as("표식은 화면에 닿지 않는다").isEmpty();
+        assertThat(verified.responses()).isEmpty();
+        assertThat(verified.dropped()).as("출처를 달려다 실패한 토큰이 아니다").isZero();
+    }
+
+    /* 띄어쓰기로 판정이 갈리면 그 고장은 «가끔 답변으로 샌다»로 나타난다 */
+    @Test
+    void readsTheRefusalMarkEvenWhenTheModelSpacesItOut() {
+        assertThat(verifier.verify("[근거 없음]", List.of()).refused()).isTrue();
+    }
+
+    /*
+     * ⚠️ **표식이 인용을 이긴다 — 이 이슈가 터진 모양이다** (#455).
+     *
+     * 모델이 표식을 쓰고도 규칙 2를 마저 지켜 출처를 덧붙일 수 있다. 그때 인용 수를 세면 «근거가
+     * 다섯 개인 거절»이라는 상태가 되는데, 그 답이 화면에 판본 배지와 인용 카드를 달고 나간 것이
+     * 이 판정이 생긴 이유다.
+     */
+    @Test
+    void letsTheRefusalMarkWinOverTheCitationsThatFollowIt() {
+        List<RetrievedChunk> chunks =
+                List.of(article(7, null, "제7조", "회원의 구분", "6항 정회원은 …"), page(12, "정산 기한은 …"));
+
+        CitationVerifier.Verified verified =
+                verifier.verify("[근거없음] 이번 발췌에는 제3조가 없습니다. [1][2]", chunks);
+
+        assertThat(verified.refused()).isTrue();
+        assertThat(verified.responses()).as("거절에 인용이 딸리는 상태를 만들지 않는다").isEmpty();
+        assertThat(verified.answer()).as("표식 뒤는 내보내지 않는다").isEmpty();
+    }
+
+    /*
+     * **표식 앞의 아직 내보내지 않은 글자도 함께 버린다.** 화면에 닿지 않은 것은 버릴 수 있고,
+     * 버려야 `answer`가 빈 채로 끝나 두 경로 모두 정해진 안내 문구로 떨어진다.
+     */
+    @Test
+    void dropsWhatItWasStillHoldingWhenTheMarkArrives() {
+        CitationVerifier.Session session = verifier.open(List.of());
+
+        assertThat(session.accept("제3조는 발췌에 없습니다. [근거없음]")).isEmpty();
+        assertThat(session.finish()).isEmpty();
+        assertThat(session.verified().answer()).isEmpty();
+        assertThat(session.verified().refused()).isTrue();
+    }
+
+    /*
+     * **이미 나간 글자는 회수하지 않는다** (#447) — 표식이 뒤늦게 와도 그렇다. 그때 `answered`는
+     * `false`이고 `answer`는 흘려보낸 문장 그대로다(`AssistantQueryResponse.ungrounded`).
+     */
+    @Test
+    void keepsWhatItAlreadyStreamedWhenTheMarkComesLate() {
+        CitationVerifier.Session session = verifier.open(List.of());
+
+        assertThat(session.accept("설명을 먼저 적었습니다.")).isEqualTo("설명을 먼저 적었습니다.");
+        assertThat(session.accept(" [근거없음]")).isEmpty();
+        assertThat(session.accept(" 그리고 더 적습니다.")).as("표식 뒤는 나가지 않는다").isEmpty();
+        assertThat(session.finish()).isEmpty();
+        assertThat(session.verified().answer()).isEqualTo("설명을 먼저 적었습니다.");
+        assertThat(session.verified().refused()).isTrue();
+    }
+
+    /* 표식도 조각 경계에 걸쳐 온다 — 닫히지 않은 대괄호를 붙들어 두는 그 구조가 여기서도 판정을 세운다 */
+    @Test
+    void readsTheRefusalMarkNoMatterHowTheDeltasAreCut() {
+        for (int size : new int[] {1, 2, 3, 7, 40}) {
+            CitationVerifier.Session session = verifier.open(List.of());
+            StringBuilder streamed = new StringBuilder();
+            for (String piece : cut("[근거없음]", size)) {
+                streamed.append(session.accept(piece));
+            }
+            streamed.append(session.finish());
+
+            assertThat(streamed.toString()).as("조각 %d자".formatted(size)).isEmpty();
+            assertThat(session.verified().refused()).as("조각 %d자".formatted(size)).isTrue();
+        }
+    }
+
     // ------------------------------------------------------------------ 픽스처
 
     private static List<String> cut(String text, int size) {

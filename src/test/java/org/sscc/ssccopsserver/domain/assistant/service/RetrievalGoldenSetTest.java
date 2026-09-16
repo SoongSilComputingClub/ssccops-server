@@ -70,7 +70,16 @@ import reactor.core.publisher.Flux;
  * | 검색 적중 hit@5 | ≥ 0.9 | {@link #retrievesTheExpectedEvidenceWithinTheTopFive()} |
  * | 인용 정확도 | ≥ 0.95 | {@link #citesTheExpectedEvidence()} |
  * | **올바른 거절률** | **1.0** | {@link #refusesEveryQuestionTheCorpusCannotAnswer()} |
- * | p95 질의 응답 시간 | < 5s | {@link #staysWellUnderTheLatencyBudget()} |
+ * | p95 질의 응답 시간 | < 5s (우리 몫) | {@link #staysWellUnderTheLatencyBudget()} |
+ *
+ * ⚠️ **p95 의 목표가 «질의 한 건»에서는 15초로 바뀌었다** (#448 — 실측이 7~12초였고 기획안 §10의
+ * 5초는 재기 전에 적은 값이다). 여기 실린 시간에 Gemini 왕복이 없으므로 이 테스트가 재는 것은
+ * 여전히 **우리 몫**이고, 그 몫의 목표는 5초 그대로다.
+ *
+ * ══ 발췌 폭도 이 자리에서 지킨다 (#448) ════════════════════════
+ *
+ * `top-k`를 8에서 5로 좁힌 근거가 여기 있다 — {@link #narrowingTheExcerptWidthToFiveLosesNoEvidence()}
+ * 가 두 폭의 hit@k 를 나란히 재어 «속도를 재현율로 사지 않았다»를 숫자로 남긴다.
  *
  * ══ 번호 참조 뒤 «인용 정확도»가 재는 것 (#447) ═════════════════
  *
@@ -143,10 +152,22 @@ class RetrievalGoldenSetTest {
 
     // ------------------------------------------------------------------ 배선
 
+    /**
+     * 프롬프트에 싣는 발췌 수 — <b>운영 기본값이다</b>({@code application.yaml} 의 {@code
+     * ssccops.assistant.query.top-k}).
+     *
+     * <p><b>여기가 운영과 다른 값을 들고 있으면 지표가 화면이 보는 답을 말하지 않는다.</b> #448 에서 8 → 5 로 좁힐 때 그 회귀를 보는 자리가
+     * {@link #narrowingTheExcerptWidthToFiveLosesNoEvidence()} 이며, 다시 넓힐 일이 생기면 두 숫자가 함께 움직인다.
+     */
+    private static final int TOP_K = 5;
+
+    /** 좁히기 전의 폭 — 무엇을 잃었는지 재려면 둘을 나란히 봐야 한다 (#448) */
+    private static final int TOP_K_BEFORE = 8;
+
     private final RagDocumentRepository ragDocumentRepository = mock(RagDocumentRepository.class);
     private final GoldenChatModel chatModel = new GoldenChatModel();
     private final AssistantQueryPolicy policy =
-            new AssistantQueryPolicy(8, THRESHOLD, null, null, 1000, 200);
+            new AssistantQueryPolicy(TOP_K, THRESHOLD, null, null, 1000, 200);
 
     private final MemberEntity member = member();
 
@@ -163,20 +184,30 @@ class RetrievalGoldenSetTest {
      */
     @Test
     void retrievesTheExpectedEvidenceWithinTheTopFive() {
-        int hits = 0;
-        int expectations = 0;
-        for (Golden golden : ANSWERABLE) {
-            List<String> top = markers(CORPUS_A.scored(golden.question()), 5);
-            for (String expected : golden.expected()) {
-                expectations++;
-                if (top.contains(expected)) {
-                    hits++;
-                }
-            }
-        }
-        double hitAtFive = (double) hits / expectations;
-        report("hit@5", "%.2f (%d/%d)".formatted(hitAtFive, hits, expectations));
-        assertThat(hitAtFive).as("기획안 §14.2의 목표는 0.9다").isGreaterThanOrEqualTo(0.9);
+        Hits hits = hitAt(TOP_K);
+        report("hit@%d".formatted(TOP_K), hits.toString());
+        assertThat(hits.ratio()).as("기획안 §14.2의 목표는 0.9다").isGreaterThanOrEqualTo(0.9);
+    }
+
+    /*
+     * **발췌를 여덟에서 다섯으로 좁혀도 잃는 근거가 없다** (#448).
+     *
+     * `top-k`를 줄인 이유는 속도다 — 입력이 줄면 생성이 빨라지고, 실제로 쓰인 인용은 한 답에
+     * 1~2개였다. **잃는 것이 있다면 그것은 재현율이고, 재는 자리가 여기다.** 6~8위에 있던 근거가
+     * 답에 필요해지는 날(코퍼스가 자라거나 청킹이 바뀌는 날) 이 테스트가 먼저 떨어진다 —
+     * 그때는 `application.yaml`의 `top-k`와 위의 {@code TOP_K}를 함께 되돌린다.
+     *
+     * 순위만의 값이라 임계값과 무관하고, 그래서 스텁의 눈금에 매이지 않는다(클래스 주석의 ⚠️).
+     */
+    @Test
+    void narrowingTheExcerptWidthToFiveLosesNoEvidence() {
+        Hits before = hitAt(TOP_K_BEFORE);
+        Hits after = hitAt(TOP_K);
+
+        report("발췌 폭", "hit@%d=%s → hit@%d=%s".formatted(TOP_K_BEFORE, before, TOP_K, after));
+        assertThat(after.hits())
+                .as("좁히며 잃은 근거가 있으면 되돌린다 — 속도를 재현율로 사지 않는다")
+                .isEqualTo(before.hits());
     }
 
     /*
@@ -239,7 +270,7 @@ class RetrievalGoldenSetTest {
      * **p95 < 5s.** 여기 실린 시간에는 Gemini 왕복이 없다 — 스텁 임베딩·스텁 모델이라 재는 것은
      * **우리 몫**(검색 · 임계값 · 프롬프트 조립 · 인용 검증)이다. 그 몫이 예산의 큰 부분을 먹기
      * 시작하면 이 값이 먼저 움직인다. 모델 왕복 쪽의 상한은 여기가 아니라
-     * `ssccops.assistant.gemini.call-timeout`(기본 20초)이 건다.
+     * `ssccops.assistant.gemini.call-timeout`(기본 40초 · #448)이 건다.
      */
     @Test
     void staysWellUnderTheLatencyBudget() {
@@ -565,6 +596,35 @@ class RetrievalGoldenSetTest {
      */
     private static List<String> citedMarkers(AssistantQueryResponse response) {
         return response.citations().stream().map(AssistantCitationResponse::marker).toList();
+    }
+
+    /** 기대 근거가 상위 {@code width} 안에 든 비율 — 지표 hit@k 의 정의 그대로다 */
+    private static Hits hitAt(int width) {
+        int hits = 0;
+        int expectations = 0;
+        for (Golden golden : ANSWERABLE) {
+            List<String> top = markers(CORPUS_A.scored(golden.question()), width);
+            for (String expected : golden.expected()) {
+                expectations++;
+                if (top.contains(expected)) {
+                    hits++;
+                }
+            }
+        }
+        return new Hits(hits, expectations);
+    }
+
+    /** 비율만 두면 «몇 개 중 몇 개»가 사라져 회귀가 얼마나 큰지 읽히지 않는다 */
+    private record Hits(int hits, int expectations) {
+
+        double ratio() {
+            return (double) hits / expectations;
+        }
+
+        @Override
+        public String toString() {
+            return "%.2f (%d/%d)".formatted(ratio(), hits, expectations);
+        }
     }
 
     private static List<String> markers(List<LexicalRagChunkStore.Scored> scored, int count) {

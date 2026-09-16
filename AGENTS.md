@@ -361,18 +361,31 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   `spring.ai.vectorstore.pgvector.distance-type`의 기본값이 `cosine-distance`이고 **코사인이
   스케일 불변**이기 때문이다 — **`euclidean`·`inner-product`로 바꾸는 순간 검색이 조용히
   망가진다.**
-- ⚠️ **SDK의 기본 타임아웃은 「무한」이고 스타터에는 그것을 줄 프로퍼티가 없다** (#403).
+- ⚠️ **SDK의 기본 타임아웃은 「무한」이고 스타터에는 그것을 줄 프로퍼티가 없다** (#403 · #448).
   google-genai 1.37.0이 OkHttp에 `connectTimeout(0)`을 걸고 read·write도 같다 — 0은 「제한 없음」
   이라 질의 한 건이 **톰캣 요청 스레드를 영영 붙들 수 있다.** 그래서 `GeminiClientConfig`가
   `com.google.genai.Client` 빈을 직접 만들어 `HttpOptions.timeout`(→ OkHttp `callTimeout`)을
-  건다(`ssccops.assistant.gemini.call-timeout` · 기본 20초). 자동 구성의 그 빈이
+  건다(`ssccops.assistant.gemini.call-timeout` · **기본 40초**). 자동 구성의 그 빈이
   `@ConditionalOnMissingBean`이라 허용된 길이며, **connect와 read를 따로 줄 수 없어** 기획안의
-  «connect 3s / read 20s»는 전체 왕복 하나로 합쳤다. **임베딩은 이 빈을 쓰지 않는다**
-  (`GoogleGenAiEmbeddingConnectionDetails`로 따로 연결한다) — 상한이 질의 경로에만 걸린다.
-- **`spring.ai.retry`를 2회 · 1s · 2배 · 최대 5s로 좁혔다** (#403). 기본값은 **10회 · 2s에서
-  5배씩**이라 공급자가 5xx를 내는 동안 질의 한 건이 분 단위로 물러난다(목표가 p95 5초다).
-  같은 `RetryTemplate`을 색인 임베딩도 쓰는데 그쪽에도 맞는 값이다 — 실패의 대부분이 쿼터이고
-  자동 재시도가 그것을 가속한다(#400). 4xx(429 포함)는 기본값 그대로 재시도하지 않는다.
+  «connect 3s / read 20s»는 전체 왕복 하나로 합쳤다 — **본문을 다 읽는 시간까지 포함**하므로
+  스트리밍(#447)도 같은 상한에 걸린다(실측: 상한 1,500ms에 조각 넷이 나간 뒤 1,863ms에 끊긴다).
+  **임베딩은 이 빈을 쓰지 않는다**(`GoogleGenAiEmbeddingConnectionDetails`로 따로 연결한다) —
+  상한이 질의 경로에만 걸린다.
+- ⚠️ **`spring.ai.retry`는 그 자체로는 Gemini 경로에 닿지 않는다 — 재시도의 정본은 SDK다**
+  (#448). 스타터의 `RetryTemplate`은 세 예외만 다시 부르는 **화이트리스트**이고
+  (`TransientAiException`·`ResourceAccessException`·`WebClientRequestException`) google-genai가
+  던지는 것(`GenAiIOException`·`ApiException`)은 그중 무엇도 아니다 — 재 봤다(그 템플릿에
+  `GenAiIOException`을 던지면 콜백이 **한 번**, `TransientAiException`이면 두 번 불린다). 게다가
+  스트리밍(`internalStream`)은 템플릿을 아예 지나지 않는다. **대신 SDK가 자기 재시도를 감춰
+  두고 있었다** — `ApiClient`가 `retryOptions`가 비면 `RetryInterceptor`를 기본값(5회 · 1s에서
+  2배씩 · 408·429·5xx·**모든 IOException**)으로 끼우는데, 그것이 OkHttp **애플리케이션
+  인터셉터**라 `callTimeout`이 터진 뒤에도 잠든다(취소된 호출의 재요청은 서버에 닿지도 않는다).
+  **그래서 상한 20초가 35~43초의 대기가 됐다**(#448의 증상 · 작게 재현하면 상한 1초 → 18.2초).
+  지금은 `GeminiClientConfig`가 `spring.ai.retry`의 값을 그 인터셉터로 옮겨 담아 **2회 · 1s ·
+  2배 · 최대 5s · 5xx만**이며, `on-client-errors`(기본 false)가 408·429를 가른다 — 쿼터로
+  거절당한 요청을 다시 부르는 것은 쿼터 소진을 가속할 뿐이다(#400). `GeminiClientConfigTest`가
+  가짜 서버를 물려 횟수와 대기 시간을 본다. **색인 임베딩에는 아직 닿지 않는다**(따로 연결한다
+  — SDK 기본 재시도 그대로다).
 - **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.6-flash`) ·
   `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-2`). 교체가 환경변수 하나가 되게 한다.
 - **`./gradlew geminiCheck`** (`src/test/.../tools/GeminiCheck`, R2Check와 같은 자리) — 실제

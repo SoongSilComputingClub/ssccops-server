@@ -310,7 +310,7 @@ public class AssistantServiceImpl implements AssistantService {
                 verified.citations().size(),
                 verified.dropped(),
                 primary.name(),
-                Duration.between(prepared.startedAt(), Instant.now()).toMillis());
+                elapsedMillis(prepared));
 
         return new AssistantQueryResponse(
                 verified.answer(),
@@ -319,6 +319,19 @@ public class AssistantServiceImpl implements AssistantService {
                 primary.effectiveFrom(),
                 true,
                 prepared.conversationId());
+    }
+
+    /*
+     * **실패에도 걸린 시간을 남긴다** (#448).
+     *
+     * 성공 로그에만 `소요`가 있던 동안 «상한에 걸리고 있는가»를 알아내려면 요청 줄과 오류 줄의
+     * 시각을 사람이 빼야 했고, 그래서 «상한 20초인데 사용자는 35~43초를 기다린다»가 한참 뒤에야
+     * 드러났다. 세 로그가 같은 축(`발췌` · `이력` · `소요`)을 쓰면 **값을 바꾼 뒤 다시 재는 일이
+     * 로그 한 번 긁는 일**이 된다 — 이 기능에 지표(Micrometer)가 없는 이유가 그것을 대신한다
+     * (루트 AGENTS.md «관측성» — export 가 꺼져 있어 Kibana 가 유일한 계기판이다).
+     */
+    private static long elapsedMillis(Prepared prepared) {
+        return Duration.between(prepared.startedAt(), Instant.now()).toMillis();
     }
 
     /** 빈 조각은 내보내지 않는다 — 판정에 붙들린 글자만 있었다는 뜻이라 이벤트를 만들 이유가 없다 */
@@ -345,7 +358,12 @@ public class AssistantServiceImpl implements AssistantService {
          * 공급자 장애·타임아웃·쿼터. **원문을 응답에 싣지 않는다** — 모델 SDK의 예외 문장에는
          * 요청 본문 일부가 섞여 나오고 그 본문이 곧 사용자의 질문이다(§11). 로그에는 남긴다.
          */
-        log.error("규정 도우미 모델 스트림이 실패했다 — 발췌={}", prepared.chunks().size(), cause);
+        log.error(
+                "규정 도우미 모델 스트림이 실패했다 — 발췌={} 이력={}턴 소요={}ms",
+                prepared.chunks().size(),
+                prepared.history().size() / 2,
+                elapsedMillis(prepared),
+                cause);
         sink.failed(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
     }
 
@@ -461,7 +479,12 @@ public class AssistantServiceImpl implements AssistantService {
              * 공급자 장애·타임아웃·쿼터. **원문을 응답에 싣지 않는다** — 모델 SDK의 예외 문장에는
              * 요청 본문 일부가 섞여 나오고 그 본문이 곧 사용자의 질문이다(§11). 로그에는 남긴다.
              */
-            log.error("규정 도우미 모델 호출이 실패했다 — 발췌={}", prepared.chunks().size(), exception);
+            log.error(
+                    "규정 도우미 모델 호출이 실패했다 — 발췌={} 이력={}턴 소요={}ms",
+                    prepared.chunks().size(),
+                    prepared.history().size() / 2,
+                    elapsedMillis(prepared),
+                    exception);
             throw new GeneralException(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
         }
     }

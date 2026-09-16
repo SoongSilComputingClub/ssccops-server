@@ -222,20 +222,29 @@ spring:
         # 먼저 돌므로(Boot 의 JdbcOperationsDependsOnPostProcessor) 순서 문제가 없다.
         schema-validation: true
 
-    # ── 모델 호출 재시도 (규정 도우미 RAG · #403) ────────────────────────────
+    # ── 모델 호출 재시도 (규정 도우미 RAG · #403 · #448) ──────────────────────
     #
-    # **기본값(10회 · 2s에서 5배씩)이 사용자 요청에 맞지 않는다.** 그대로 두면 공급자가
-    # 5xx를 내는 동안 질의 한 건이 2s → 10s → 50s … 로 물러나며 **분 단위로** 요청 스레드를
-    # 붙들고, 화면은 그동안 아무 말도 하지 못한다(§14.2의 목표가 p95 5초다).
+    # ⚠️ **이 값들이 실제로 정하는 것은 `RetryTemplate`이 아니라 google-genai SDK의 재시도다** (#448).
+    # 스타터가 만드는 `RetryTemplate`은 세 예외만 다시 부르는 **화이트리스트**라
+    # (`TransientAiException` · `ResourceAccessException` · `WebClientRequestException`) Gemini가
+    # 던지는 것(`GenAiIOException` · `ApiException`)에는 **아무 일도 하지 않는다** — 그 템플릿에
+    # `GenAiIOException`을 던지면 콜백이 한 번, `TransientAiException`을 던지면 두 번 불린다.
+    #
+    # 대신 SDK가 OkHttp 인터셉터로 자기 재시도를 감춰 두고 있었다(기본 5회 · 1s에서 2배씩 ·
+    # 408·429·5xx·**모든 IOException**). 그것이 `callTimeout`이 터진 뒤에도 잠들어 **상한 20초가
+    # 35~43초의 대기**가 됐다 — #448이 고친 것이 그 자리다. `GeminiClientConfig`가 여기 값을 그
+    # 인터셉터로 옮겨 담아, 이 블록이 장식이 아니라 실제로 무언가를 정하게 한다.
     #
     # 2회 · 1s · 2배 · 최대 5s면 «한 번은 더 해 보고 안 되면 우리 문구로 안내»가 된다 —
     # 그 문구가 503 ASSISTANT_UPSTREAM_FAILED이고 화면은 «일시적으로 답할 수 없어요»를 그린다.
     #
-    # **색인 워커의 임베딩도 같은 RetryTemplate을 쓴다**(빈이 하나다). 그쪽에도 이 값이 맞다:
-    # 실패의 대부분이 쿼터이고 자동 재시도는 쿼터 소진을 가속하며(#400이 문서 단위 재시도를
-    # 두지 않은 근거 그대로), 단일 스레드 워커가 50초씩 물러나면 대기열 전체가 그만큼 밀린다.
+    # `on-client-errors`는 기본 false를 그대로 둔다 — **그 값이 408·429를 재시도 목록에서
+    # 가른다**(`GeminiClientConfig`). 쿼터로 거절당한 요청을 다시 부르는 것은 쿼터 소진을
+    # 가속할 뿐이다(#400이 문서 단위 재시도를 두지 않은 근거 그대로).
     #
-    # `on-client-errors`는 기본 false를 그대로 둔다 — 4xx(429 쿼터 포함)를 다시 부르지 않는다.
+    # ⚠️ **색인 임베딩에는 닿지 않는다.** 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`가 따로
+    # 연결하므로 SDK 기본 재시도(429 포함 5회)를 그대로 쓴다 — 옮겨 담을 자리가 하나 더 있다는
+    # 뜻이고, 그쪽의 문제는 질의 지연이 아니라 쿼터다.
     retry:
       max-attempts: 2
       backoff:
@@ -352,22 +361,40 @@ ssccops:
       poll-interval: ${SSCCOPS_ASSISTANT_INDEXING_POLL_INTERVAL:PT10S}
 
     gemini:
-      # Gemini 호출의 **전체 왕복** 상한 (#403). ⚠️ **SDK 기본값이 「무한」이고 스타터에는 그것을
-      # 줄 프로퍼티가 없다** — google-genai가 OkHttp에 `connectTimeout(0)`을 걸고 read·write도
+      # Gemini 호출의 **전체 왕복** 상한 (#403 · #448). ⚠️ **SDK 기본값이 「무한」이고 스타터에는
+      # 그것을 줄 프로퍼티가 없다** — google-genai가 OkHttp에 `connectTimeout(0)`을 걸고 read·write도
       # 같다. 이 값이 없으면 질의 한 건이 톰캣 요청 스레드를 영영 붙들 수 있다.
       #
       # ⚠️ **connect와 read를 따로 줄 수 없어** 기획안의 «connect 3s / read 20s»를 하나로 합친
-      # 값이다. 좁히면 긴 답변이 잘리는 것이 아니라 통째로 503이 된다.
+      # 값이다. 좁히면 긴 답변이 잘리는 것이 아니라 통째로 503이 된다. **본문을 다 읽는 시간까지
+      # 들어가므로 스트리밍(#447)도 같은 상한에 걸린다** — 그때는 글자가 나오다 끊기고 오류
+      # 이벤트가 온다(상한 1,500ms에 실측: 조각 넷이 나간 뒤 1,863ms에 끊겼다).
+      #
+      # **20초에서 40초로 넓혔다** (#448). 실측(2026-09-16 로컬 · 문서 3건 67청크)에서 **성공이
+      # 7~12초**라 여유가 8초뿐이었고, 조금만 느려지면 넘고 그 뒤에 SDK 재시도가 붙어 **35~43초를
+      # 기다린 끝에 실패**했다. 그 재시도를 좁혀(위 `spring.ai.retry`) 최악의 대기가 «상한 + 지연
+      # 한 번»이 되었으므로, 40초는 **오늘 실패에 이미 쓰고 있는 시간을 넘지 않으면서** 성공할 수
+      # 있는 창을 두 배로 넓힌다.
+      #
+      # **목표 p95는 5초가 아니라 15초다** (#448). 기획안 §10의 5초는 재기 전에 적은 값인데
+      # 실측이 7~12초다 — 그대로 두면 «목표는 언제나 빗나가 있다»가 정상이 된다. 그 값을 줄이는
+      # 손잡이는 이 상한이 아니라 `query.top-k`와 대화 이력(`memory.max-turns`)이다.
       #
       # **임베딩에는 걸리지 않는다** — 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`로 따로
       # 연결한다. 색인이 임베딩을 수백 번 부르는 자리(#400)의 성질(느려도 끝나기만 하면 된다)과
       # 맞지 않으므로 마침 맞는 분리다.
-      call-timeout: ${SSCCOPS_ASSISTANT_GEMINI_CALL_TIMEOUT:PT20S}
+      call-timeout: ${SSCCOPS_ASSISTANT_GEMINI_CALL_TIMEOUT:PT40S}
 
     query:
       # 한 번에 프롬프트에 넣는 발췌 수(기획안 §4). 답변 3~5문장 규칙과 함께 프롬프트 길이를
       # 정한다 — 늘리면 힙과 모델 입력이 함께 는다(§8.1).
-      top-k: ${SSCCOPS_ASSISTANT_QUERY_TOP_K:8}
+      #
+      # **8에서 5로 줄였다** (#448). 입력이 줄면 생성이 빨라지고, 실제로 쓰인 인용은 한 답에
+      # 1~2개였다(로그 `인용=1` · `인용=2`). **재현율을 깎지 않는다는 근거는 골든셋이다** —
+      # 기대 근거가 상위 다섯 안에 드는 비율이 1.00(10/10)이라 여덟에서 다섯으로 좁혀도 잃는
+      # 근거가 없으며, `RetrievalGoldenSetTest`가 두 폭을 나란히 재어 회귀를 막는다. 다시 넓힐
+      # 일이 생기면 그 테스트의 숫자가 먼저 움직인다.
+      top-k: ${SSCCOPS_ASSISTANT_QUERY_TOP_K:5}
 
       # 유형별 임계값이 없을 때 쓰는 공통값.
       #

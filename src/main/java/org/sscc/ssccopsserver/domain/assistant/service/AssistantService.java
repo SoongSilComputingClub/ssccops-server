@@ -49,6 +49,18 @@ public interface AssistantService {
      */
     void clearConversation(String conversationId, MemberEntity member);
 
-    /** 지금 코퍼스가 답할 수 있는 추천 질문 (§13.3). <b>코퍼스가 비면 빈 목록이며 그것이 정상이다</b> */
+    /**
+     * 지금 코퍼스가 답할 수 있는 추천 질문과 <b>코퍼스 상태</b> (§13.1 · §13.3 · #449).
+     *
+     * <p><b>답할 수 없으면 빈 목록이며 그것이 정상이다</b> — 새 환경의 기본 상태이고, 참고용이어도 누르면 실제 질의가 나가므로 답할 수 없는 질문을 권하지
+     * 않는다.
+     *
+     * <p><b>같은 응답이 «왜 비었는가»도 말한다.</b> «문서가 없다»와 «문서는 있는데 검색 대상이 없다»가 둘 다 빈 목록이라 화면이 후자에게도 «문서를
+     * 올려주세요»를 말했는데, 업로드가 언제나 {@code DRAFT}로 들어오므로(ADR-0034) 그것이 <b>첫 업로드마다 반드시 지나는 화면</b>이었다. 값의 뜻은
+     * {@code AssistantCorpusState}에 있다.
+     *
+     * <p><b>인가가 필요 없는 자리인 것이 이 값을 여기 둔 이유다</b> — 문서 목록·요약은 {@code RAG_DOCUMENT_MANAGE} 뒤에 있어 일반 회원은
+     * 403이고, 도우미 패널은 어디서나 열린다.
+     */
     AssistantSuggestionsResponse suggestions();
 }

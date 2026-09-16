@@ -14,6 +14,7 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+import org.sscc.ssccopsserver.domain.assistant.code.AssistantCorpusState;
 import org.sscc.ssccopsserver.domain.assistant.code.error.AssistantErrorCode;
 import org.sscc.ssccopsserver.domain.assistant.dto.AssistantQueryRequest;
 import org.sscc.ssccopsserver.domain.assistant.dto.AssistantQueryResponse;
@@ -197,16 +198,15 @@ public class AssistantServiceImpl implements AssistantService {
         assistantFeature.requireEnabled();
 
         /*
-         * **«코퍼스가 비어 있지 않은가» 하나만 묻는다**(ADR-0034). 예전에는 문서 식별자 집합을
-         * 넘겨 문서에 맞는 질문을 골랐는데, 추천 질문이 고정 셋이 되며 물을 것이 이것뿐이다.
-         *
-         * 그래도 이 판정을 없애지는 않는다 — 참고용이어도 **누르면 실제 질의가 나가고**, 빈
-         * 코퍼스에서는 «찾지 못했습니다»가 돌아온다. 추천을 눌렀는데 거절당하는 화면이 애초에
-         * 이 표가 막으려던 것이다(§13.3).
+         * **판정이 한 번이고 그 결과가 두 자리로 나간다**(#449). 추천 질문이 보는 것은
+         * «`READY`인가» 하나지만(그 뒤에 물어도 되는지가 그것이다 · §13.3) 같은 값이 응답에도
+         * 실려 화면이 빈 상태 문구를 가른다. 여기서 두 번 판정하면 «질문은 비어 있는데 상태는
+         * `READY`»가 성립한다.
          */
-        boolean corpusHasDocuments = !searchableDocuments().isEmpty();
+        AssistantCorpusState corpusState = corpusState();
 
-        return new AssistantSuggestionsResponse(assistantSuggestions.forCorpus(corpusHasDocuments));
+        return new AssistantSuggestionsResponse(
+                corpusState, assistantSuggestions.forCorpus(corpusState));
     }
 
     /*
@@ -398,6 +398,31 @@ public class AssistantServiceImpl implements AssistantService {
             searchable.put(document.getId(), SearchableDocument.from(document));
         }
         return searchable;
+    }
+
+    /*
+     * 지금 코퍼스가 답할 수 있는가 — **두 상태를 가르는 유일한 자리** (#449).
+     *
+     * **«검색 대상이 있는가»를 먼저 묻고, 없을 때만 전체 건수를 센다.** 조건(`INDEXED &&
+     * EFFECTIVE`)을 옮겨 적은 두 번째 질의를 만들지 않는 것이 요점이다 — `findSearchable`이 그
+     * 조건을 한 곳에 박아 둔 이유가 «한쪽만 넘기는 순간 새어 나간다»이고(리포지토리 주석), 세는
+     * 질의를 따로 쓰면 그 조건이 두 벌이 되어 **화면의 빈 상태와 실제 검색 결과가 갈린다.**
+     *
+     * 건수 질의가 뒤에 있는 것은 그것이 **답할 수 없을 때만 필요한 값**이기 때문이다. `READY`인
+     * 코퍼스에서는 부르지 않으므로 평소 경로의 질의 수가 늘지 않는다.
+     *
+     * ⚠️ **`count()`는 «행이 있는가»이지 «시행 가능한 문서가 있는가»가 아니다** — 내려둔
+     * (`SUPERSEDED`) 문서만 남은 코퍼스도, 색인이 실패한 문서만 있는 코퍼스도 `NONE_EFFECTIVE`로
+     * 묶인다. 그 넷을 가르지 않은 이유는 `AssistantCorpusState`에 있다. 삭제가 하드라
+     * (ADR-0029) 이 수는 관리 화면의 «등록 문서» 카드와 같은 값이다(`RagCorpusSummaryResponse`).
+     */
+    private AssistantCorpusState corpusState() {
+        if (!searchableDocuments().isEmpty()) {
+            return AssistantCorpusState.READY;
+        }
+        return ragDocumentRepository.count() == 0
+                ? AssistantCorpusState.EMPTY
+                : AssistantCorpusState.NONE_EFFECTIVE;
     }
 
     /*

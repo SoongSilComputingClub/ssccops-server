@@ -37,11 +37,13 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.beans.factory.ObjectProvider;
+import org.sscc.ssccopsserver.domain.assistant.code.AssistantCorpusState;
 import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
 import org.sscc.ssccopsserver.domain.assistant.code.RagDocumentType;
 import org.sscc.ssccopsserver.domain.assistant.code.error.AssistantErrorCode;
 import org.sscc.ssccopsserver.domain.assistant.dto.AssistantQueryRequest;
 import org.sscc.ssccopsserver.domain.assistant.dto.AssistantQueryResponse;
+import org.sscc.ssccopsserver.domain.assistant.dto.AssistantSuggestionsResponse;
 import org.sscc.ssccopsserver.domain.assistant.entity.RagDocumentEntity;
 import org.sscc.ssccopsserver.domain.assistant.repository.RagDocumentRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -510,18 +512,50 @@ class AssistantServiceImplTest {
     // ------------------------------------------------------------------ 추천 질문
 
     /*
-     * 추천 질문은 **지금 검색 대상인 문서에만 매인다**(§13.3) — 코퍼스가 비면 빈 목록이고 그것이
+     * 추천 질문은 **지금 검색 대상인 문서에만 매인다**(§13.3) — 답할 수 없으면 빈 목록이고 그것이
      * 새 환경의 정상 상태다.
+     *
+     * **그리고 «왜 비었는가»가 같은 응답에 실린다**(#449). 셋을 함께 보는 것은 화면이 이 값으로
+     * 빈 상태 문구를 가르기 때문이고, 순서가 곧 **운영진이 이 기능을 처음 쓰며 지나는 순서**다 —
+     * 아무것도 없다 → 올렸다(`DRAFT`) → 시행을 눌렀다. 가운데 칸에서 «문서를 올려주세요»를 말한
+     * 것이 이 이슈다.
      */
     @Test
-    void suggestsOnlyWhatTheCorpusCanAnswer() {
+    void tellsWhyTheCorpusCannotAnswerAlongsideTheSuggestions() {
         when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
-        assertThat(service.suggestions().questions()).isEmpty();
+        when(ragDocumentRepository.count()).thenReturn(0L);
+
+        AssistantSuggestionsResponse empty = service.suggestions();
+        assertThat(empty.corpusState()).isEqualTo(AssistantCorpusState.EMPTY);
+        assertThat(empty.questions()).isEmpty();
+
+        /* 올린 직후다 — 업로드는 언제나 `DRAFT`로 들어오므로 검색 대상이 아직 없다(ADR-0034) */
+        when(ragDocumentRepository.count()).thenReturn(1L);
+
+        AssistantSuggestionsResponse noneEffective = service.suggestions();
+        assertThat(noneEffective.corpusState()).isEqualTo(AssistantCorpusState.NONE_EFFECTIVE);
+        assertThat(noneEffective.questions()).as("`READY`가 아니면 빈 목록이다").isEmpty();
 
         searchable(regulation());
-        assertThat(service.suggestions().questions())
+
+        AssistantSuggestionsResponse ready = service.suggestions();
+        assertThat(ready.corpusState()).isEqualTo(AssistantCorpusState.READY);
+        assertThat(ready.questions())
                 .hasSize(AssistantSuggestions.MAX)
                 .allSatisfy(question -> assertThat(question).isNotBlank());
+    }
+
+    /*
+     * **답할 수 있는 코퍼스에서는 건수를 세지 않는다** — 전체 건수는 «왜 못 답하는가»를 가를 때만
+     * 필요한 값이라 검색 대상이 있으면 묻지 않는다(#449).
+     */
+    @Test
+    void doesNotCountTheCorpusWhenItCanAlreadyAnswer() {
+        searchable(regulation());
+
+        assertThat(service.suggestions().corpusState()).isEqualTo(AssistantCorpusState.READY);
+
+        verify(ragDocumentRepository, never()).count();
     }
 
     // ------------------------------------------------------------------ 스트리밍 (#447)

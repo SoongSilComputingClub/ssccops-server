@@ -330,9 +330,13 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   모델 목록 문서는 Embedding 2의 ID를 `gemini-embedding-2-preview`로 적는데 API는
   `gemini-embedding-2`도 함께 내주며 여기서는 후자를 고정한다.
   ⚠️ **채팅 모델 ID는 늙는다** — 처음 기본값이던 `gemini-2.5-flash`는 모델 목록에 여전히
-  보이는데도 새 키로 부르면 404 «no longer available to new users»다. 문서상 최신 stable은
-  `gemini-3.8-flash`이고 3.6을 쓰는 것은 **실제로 답하는 것을 확인한 유일한 모델**이라서다 —
-  옮기려면 `./gradlew geminiCheck -Pargs="--chat-model=…"`가 먼저다.
+  보이는데도 새 키로 부르면 404 «no longer available to new users»다. **목록에 보이는 것과
+  부를 수 있는 것이 다르므로** 옮기려면 `./gradlew geminiCheck -Pargs="--chat-model=…"`가
+  먼저다. **2026-09-17에 `gemini-3.6-flash` → `gemini-3.5-flash-lite`로 옮겼고**(#461)
+  geminiCheck가 목록과 응답을 확인했다 — #457의 검증이 전부 이 모델로 돌았다.
+  ⚠️ **일일 한도가 모델마다 따로 붙는다** — 3.6-flash는
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier`가 **20**이었다(429 응답 본문에서 읽었다 ·
+  공개 문서에 이 수치가 없다는 아래 «아직 실측하지 않은 것»의 한 조각이 그렇게 메워졌다).
   출처: [pricing](https://ai.google.dev/gemini-api/docs/pricing) ·
   [models](https://ai.google.dev/gemini-api/docs/models) ·
   [embeddings](https://ai.google.dev/gemini-api/docs/embeddings)
@@ -386,7 +390,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   거절당한 요청을 다시 부르는 것은 쿼터 소진을 가속할 뿐이다(#400). `GeminiClientConfigTest`가
   가짜 서버를 물려 횟수와 대기 시간을 본다. **색인 임베딩에는 아직 닿지 않는다**(따로 연결한다
   — SDK 기본 재시도 그대로다).
-- **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.6-flash`) ·
+- **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.5-flash-lite` · #461) ·
   `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-2`). 교체가 환경변수 하나가 되게 한다.
 - ⚠️ **사고 수준을 명시한다 — `GEMINI_CHAT_THINKING_LEVEL`(기본 `MINIMAL`)** (#453).
   «첫 글자까지 6초»의 **76%가 모델이 말하기 전 사고 시간**이었다(2026-09-16 로컬 ·
@@ -410,6 +414,24 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   `인용`·`버린인용`이 그대로라 **이 한 건에서는 품질 회귀가 없다** — 표본이 하나씩이므로
   여러 질문으로 다시 볼 것. **남은 2.7초는 A 0.8초 + B 1.9초**이고, B 는 `MINIMAL`에서도
   남는 모델의 최소 왕복이라 **여기가 대체로 바닥이다.**
+
+  ⚠️ **이 표는 `gemini-3.6-flash`의 기록이다** — 모델이 #461에서 `gemini-3.5-flash-lite`로
+  바뀌었으므로 절대값은 다시 재야 한다. 남겨 두는 것은 «생성 앞의 침묵»이 어디서 왔는지가
+  모델과 무관한 구조이기 때문이다.
+
+  **«여러 질문으로 다시 볼 것»을 #461에서 했고, 그 결과가 `MEDIUM`을 기각했다.** 같은 질문·
+  같은 발췌로 `gemini-3.5-flash-lite`에서 재니 **2~3배 느린데 품질 이득이 없다**:
+
+  | 질문 | MINIMAL | MEDIUM |
+  |---|---:|---:|
+  | 임원 탄핵 절차 | 1,409ms · 인용 1 | 2,774ms · 인용 1 (1.97×) |
+  | 정회원 승격 조건 | 1,117ms · 인용 1 | 2,220ms · 인용 1 (1.99×) |
+  | 휴학과 정회원 자격 | 1,434ms · **인용 4** | 3,370ms · 인용 3 (2.35×) |
+  | 임원의 총회 의결권 | 1,210ms · 인용 2 | 3,667ms · 인용 2 (3.03×) |
+
+  뒤의 둘은 **여러 조를 엮어야 답이 나오는** 질문이라 사고가 쓰일 자리였는데도 같았고, 셋째는
+  오히려 `MINIMAL`이 근거를 더 폭넓게 짚었다. 경량 모델로 내리는 대신 사고를 늘려 보완한다는
+  발상이 이 코퍼스에서는 성립하지 않는다.
 
   ⚠️ **`thinking-budget`이 아니라 `thinking-level`이다**(둘 다 실재한다 — 이름의 정본은 jar
   의 `spring-configuration-metadata.json`이라는 위 규칙이 여기서도 걸린다). **Gemini 3 Pro

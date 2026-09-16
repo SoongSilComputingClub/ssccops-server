@@ -388,6 +388,35 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   — SDK 기본 재시도 그대로다).
 - **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.6-flash`) ·
   `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-2`). 교체가 환경변수 하나가 되게 한다.
+- ⚠️ **사고 수준을 명시한다 — `GEMINI_CHAT_THINKING_LEVEL`(기본 `MINIMAL`)** (#453).
+  «첫 글자까지 6초»의 **76%가 모델이 말하기 전 사고 시간**이었다(2026-09-16 로컬 ·
+  `검색=904ms 첫수신=5272ms 첫송신=5276ms 소요=5732ms` — 검색 0.9초 · **생성 앞의 침묵
+  4.4초** · 답 전체가 흘러나오는 데 0.46초). 느린 것은 전송도 생성도 아니었고 #447의 SSE는
+  정상 동작 중이었다.
+
+  **그전까지 이 블록에는 `model` 한 줄뿐이었고, `thinkingLevel`·`thinkingBudget`·
+  `includeThoughts`가 전부 null 이면 Spring AI 가 `ThinkingConfig`를 요청에 아예 싣지
+  않는다**(바이트코드 확인) — 모델 기본값을 그대로 받고 있었던 것이고, `includeThoughts`가
+  꺼져 있어 그 시간이 **열린 스트림 안의 침묵**으로 나타났다.
+
+  **건 뒤 (같은 질문 · 같은 조건 · 각 1건)**:
+
+  | | 검색 | 첫수신 | 첫송신 | 소요 | 인용 |
+  |---|---:|---:|---:|---:|---:|
+  | 전 | 904ms | 5272ms | 5276ms | 5732ms | 1 (버린 0) |
+  | **후** | 814ms | **2674ms** | **2676ms** | **3347ms** | 1 (버린 0) |
+
+  **첫 글자까지 5.3초 → 2.7초**이고 줄어든 것은 전부 B다(4.37초 → 1.86초 · **-57%**).
+  `인용`·`버린인용`이 그대로라 **이 한 건에서는 품질 회귀가 없다** — 표본이 하나씩이므로
+  여러 질문으로 다시 볼 것. **남은 2.7초는 A 0.8초 + B 1.9초**이고, B 는 `MINIMAL`에서도
+  남는 모델의 최소 왕복이라 **여기가 대체로 바닥이다.**
+
+  ⚠️ **`thinking-budget`이 아니라 `thinking-level`이다**(둘 다 실재한다 — 이름의 정본은 jar
+  의 `spring-configuration-metadata.json`이라는 위 규칙이 여기서도 걸린다). **Gemini 3 Pro
+  로 옮기면 `MINIMAL`이 부팅을 깨뜨린다**(`validateThinkingLevelForModel`이 Pro 에서만
+  LOW·HIGH 로 제한한다) — 그 짝을 `GeminiChatOptionsDefaultsTest`가 묶어 두었다. **키가 없는
+  환경에서는 이 프로퍼티가 바인딩조차 되지 않아**(위 `GeminiWiringEnvironmentPostProcessor`)
+  CI 가 오타를 잡지 못하므로, 그 테스트는 부팅이 아니라 **선언 자체**를 읽는다.
 - **`./gradlew geminiCheck`** (`src/test/.../tools/GeminiCheck`, R2Check와 같은 자리) — 실제
   키로 차원·`task-type` 전달 여부·정규화·긴 조문 잘림을 재 본다. `./gradlew test`에 섞지 않은
   것은 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 되기 때문이다.

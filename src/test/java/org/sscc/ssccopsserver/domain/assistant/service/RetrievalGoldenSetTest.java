@@ -42,6 +42,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.ObjectProvider;
+import org.sscc.ssccopsserver.domain.assistant.code.AssistantCorpusState;
 import org.sscc.ssccopsserver.domain.assistant.code.CitationType;
 import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
 import org.sscc.ssccopsserver.domain.assistant.code.RagDocumentType;
@@ -484,7 +485,7 @@ class RetrievalGoldenSetTest {
      */
     @Test
     void answersEverySuggestionTheCorpusAdvertises() {
-        List<String> suggestions = new AssistantSuggestions().forCorpus(true);
+        List<String> suggestions = new AssistantSuggestions().forCorpus(AssistantCorpusState.READY);
 
         assertThat(suggestions).hasSize(3);
         for (String suggestion : suggestions) {

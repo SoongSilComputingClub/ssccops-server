@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.assistant.service;
 import java.util.List;
 
 import org.springframework.stereotype.Component;
+import org.sscc.ssccopsserver.domain.assistant.code.AssistantCorpusState;
 
 /*
  * 추천 질문 — **코퍼스에 실제로 있는 문서에만 매인다** (#403 · 기획안 §13.3).
@@ -19,9 +20,13 @@ import org.springframework.stereotype.Component;
  * 판본의 코드만 통과시켰다. **추천 질문은 「이런 기능이 있다」를 보여주는 참고용**이라 그
  * 정밀함이 필요하지 않고, 판본 관리를 걷어내며 그 열쇠도 함께 사라졌다.
  *
- * **묻는 것은 «코퍼스가 비어 있지 않은가» 하나뿐이다.** 그 판정까지 없애지 않은 것은 참고용이어도
- * **누르면 실제 질의가 나가기** 때문이다 — 빈 코퍼스에서 내보내면 «찾지 못했습니다»가 돌아오고,
- * 그 화면이 아래 §13.3이 막으려던 바로 그것이다.
+ * **묻는 것은 «지금 물어도 되는가» 하나뿐이다** — `AssistantCorpusState.READY`인가. 그 판정까지
+ * 없애지 않은 것은 참고용이어도 **누르면 실제 질의가 나가기** 때문이다 — 답할 수 없는 코퍼스에서
+ * 내보내면 «찾지 못했습니다»가 돌아오고, 그 화면이 아래 §13.3이 막으려던 바로 그것이다.
+ *
+ * ⚠️ **받는 것이 boolean이 아니라 상태인 것은 화면 몫이 늘었기 때문이다**(#449). 여기서 쓰는 것은
+ * 여전히 «READY인가» 하나지만, 같은 판정 결과가 응답에 함께 실려 화면이 빈 상태 문구를 가른다 —
+ * 그래서 판정이 **두 번 일어나지 않게** 서비스가 한 번 판정한 값을 그대로 넘긴다.
  *
  * ⚠️ **감수하는 것**: 코퍼스에 회칙이 없고 세칙만 있으면 이 셋이 빗나간다(회칙 조문을 묻는
  * 질문이므로). 회칙이 첫 업로드 대상이자 다른 문서가 없어도 답할 수 있는 유일한 문서라 실제로
@@ -64,14 +69,17 @@ public class AssistantSuggestions {
                     "임원이 임기 중에 그만두면 회원 등급은 어떻게 되나요?");
 
     /**
-     * 화면에 그릴 질문 — 코퍼스가 비어 있으면 <b>빈 목록</b>이고, 그것이 새 환경의 정상 상태다.
+     * 화면에 그릴 질문 — <b>{@code READY}가 아니면 빈 목록</b>이고, 그것이 새 환경의 정상 상태다.
      *
-     * <p><b>코퍼스가 비어 있는지 하나만 묻는다</b>(ADR-0034). 참고용이어도 <b>누르면 실제 질의가 나가므로</b> 빈 코퍼스에서 내보내면 «찾지
-     * 못했습니다»가 돌아오고, 추천을 눌렀는데 거절당하는 그 화면이 애초에 이 표가 막으려던 것이다(§13.3).
+     * <p><b>묻는 것은 «지금 물어도 되는가» 하나다</b>(ADR-0034). 참고용이어도 <b>누르면 실제 질의가 나가므로</b> 답할 수 없는 코퍼스에서 내보내면
+     * «찾지 못했습니다»가 돌아오고, 추천을 눌렀는데 거절당하는 그 화면이 애초에 이 표가 막으려던 것이다(§13.3).
      *
-     * @param corpusHasDocuments 검색 대상 문서가 하나라도 있는가
+     * <p><b>{@code EMPTY}와 {@code NONE_EFFECTIVE}를 여기서 가르지 않는다</b>(#449) — 둘 다 답할 수 없으므로 빈 목록이 맞고,
+     * 그 둘을 가른 값은 화면이 고지 문구를 고르는 데 쓴다({@code AssistantSuggestionsResponse.corpusState}).
+     *
+     * @param corpusState 서비스가 한 번 판정한 코퍼스 상태. 같은 값이 응답에도 실린다
      */
-    public List<String> forCorpus(boolean corpusHasDocuments) {
-        return corpusHasDocuments ? QUESTIONS : List.of();
+    public List<String> forCorpus(AssistantCorpusState corpusState) {
+        return corpusState == AssistantCorpusState.READY ? QUESTIONS : List.of();
     }
 }

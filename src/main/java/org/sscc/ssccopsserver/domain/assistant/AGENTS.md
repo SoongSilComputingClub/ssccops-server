@@ -4,8 +4,9 @@
 
 **스키마·배선(#396) · 구조화 파서(#397) · 평문 추출기와 고정 길이 청커(#398) · 업로드(#399) ·
 색인 워커(#400) · 목록·상세·적용 전환·재색인·삭제(#401) · 질의(#403) · 질의 레이트 리밋(#404) ·
-골든셋(#405) · 대화 메모리(#406 · Phase 2) · 번호 참조와 SSE 스트리밍(#447)까지 왔다**
-(Epic ssccops#321). **서버가 할 일은 이것으로 끝이고 남은 것은 웹(ssccops-web#434)이다.** 결정은
+골든셋(#405) · 대화 메모리(#406 · Phase 2) · 번호 참조와 SSE 스트리밍(#447) · 빈 상태 세 값
+(#449)까지 왔다** (Epic ssccops#321). **서버가 할 일은 이것으로 끝이고 남은 것은
+웹(ssccops-web#434)이다.** 결정은
 [ADR-0028](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0028-rag-assistant-on-existing-stack.md)(스택)과
 [ADR-0029](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0029-rag-corpus-owned-by-screen.md)(코퍼스)에 있다.
 
@@ -32,8 +33,9 @@
   전환의 응답이고, 상세(`RagDocumentDetailResponse`)가 그것을 품는다. 요약 3값은
   `RagCorpusSummaryResponse`이며 목록 응답에 함께 실린다.
 - 질의의 값은 `dto/Assistant*`(`QueryRequest` · `QueryResponse` · `CitationResponse` ·
-  `SuggestionsResponse` · SSE 전용 `AnswerDeltaResponse`·`StreamErrorResponse` #447)와 인용 모양
-  enum `code/CitationType`이고, 검색 결과를 판본과 함께 들고
+  `SuggestionsResponse` · SSE 전용 `AnswerDeltaResponse`·`StreamErrorResponse` #447)와 응답 전용
+  enum 둘 — 인용 모양 `code/CitationType` · **코퍼스 상태 `code/AssistantCorpusState`(#449)** —
+  이고, 검색 결과를 판본과 함께 들고
   다니는 것은 `service/RetrievedChunk`·`SearchableDocument`다(#403).
 - 파싱 결과 트리와 청크는 `dto/Regulation*`(`Document` · `Chapter` · `Article` · `Clause` · `Chunk`) ·
   평문 쪽은 `dto/Extracted*`(`Document` · `Page`)와 `dto/GenericChunk`다.
@@ -447,7 +449,7 @@ UTF-8로 읽고 BOM을 떼는 것은 `RegulationParser`의 계약과 같으며(#
 |---|---|
 | `POST /v1/assistant/queries` | 질문 → 답변 + 인용. 한 번에 준다. **인증만** |
 | `POST /v1/assistant/queries/stream` | 같은 질문을 **흘려보내며**(SSE). 화면이 쓰는 것은 이쪽이다 (#447) |
-| `GET /v1/assistant/suggestions` | 추천 질문 최대 3개. **인증만** |
+| `GET /v1/assistant/suggestions` | 추천 질문 최대 3개 + **코퍼스 상태**(#449). **인증만** |
 
 **거절이 이 기능의 가장 중요한 동작이다.** 규정 답변에서 없는 조항을 지어내는 것은 틀린 답보다
 나쁘다 — 운영진이 그것을 근거로 사람의 자격을 판단한다.
@@ -732,11 +734,11 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
 답할 수 있는가»를 `doc_cd`로 적어 두고 검색 대상 판본의 코드만 통과시켰는데, **추천 질문은 «이런
 기능이 있다»를 보여주는 참고용**이라 그 정밀함이 필요하지 않고 묶는 열쇠도 함께 사라졌다.
 
-**묻는 것은 «코퍼스가 비어 있지 않은가» 하나뿐이다**(`forCorpus`). 그 판정까지 없애지 않은 것은
-참고용이어도 **누르면 실제 질의가 나가기** 때문이다 — 빈 코퍼스에서 내보내면 «찾지 못했습니다»가
-돌아오고 그 화면이 §13.3이 막으려던 것이다. ⚠️ **감수하는 것**: 코퍼스에 회칙이 없고 세칙만 있으면
-셋이 빗나간다. 세칙 질문을 더하고 싶어지면 표에 줄을 더하되 골든셋으로 «실제로 답해지는가»를
-확인하고 더한다.
+**묻는 것은 «지금 물어도 되는가» 하나뿐이다**(`forCorpus` — `READY`인가). 그 판정까지 없애지 않은
+것은 참고용이어도 **누르면 실제 질의가 나가기** 때문이다 — 답할 수 없는 코퍼스에서 내보내면 «찾지
+못했습니다»가 돌아오고 그 화면이 §13.3이 막으려던 것이다. ⚠️ **감수하는 것**: 코퍼스에 회칙이 없고
+세칙만 있으면 셋이 빗나간다. 세칙 질문을 더하고 싶어지면 표에 줄을 더하되 골든셋으로 «실제로
+답해지는가»를 확인하고 더한다.
 
 - **문서 표시명으로 질문을 지어내는 안은 기각했다**(«「{문서명}」에는 어떤 내용이 있나요?»).
   언제나 세 개를 채울 수 있다는 것이 장점인데, 조 단위 청크에는 문서명이 본문에 없어(#397)
@@ -750,6 +752,50 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
   — 두 벌이 되면 확인이 확인하지 않는 문장을 보게 된다.
 - `GUIDELINE`·`BYLAW` 두 줄은 **답할 문서가 없어 조용히 꺼져 있다**(2026-09-13 확인). 세칙이
   올라오면 배포 없이 켜지는 것이 서버가 내리는 값의 값어치다.
+
+### 빈 배열이 «왜 비었는가»까지 말한다 — `corpusState` (#449)
+
+같은 응답에 `AssistantCorpusState`가 함께 실린다. **빈 배열 하나로는 화면이 그릴 문구를 고를 수
+없었다:**
+
+| 실제 | 그전 | 지금 |
+|---|---|---|
+| 코퍼스에 행이 없다 | `questions: []` | `EMPTY` + `[]` |
+| **문서는 있는데 검색 대상이 없다** | `questions: []` — 화면이 «문서를 올려주세요»를 말했다 ❌ | **`NONE_EFFECTIVE`** + `[]` |
+| 검색 대상이 있다 | `questions` 3개 | `READY` + 3개 |
+
+**가운데 칸은 첫 업로드마다 반드시 지나는 자리다** — 업로드는 언제나 `DRAFT`로 들어오고
+(ADR-0034) 「시행」을 눌러야 검색 대상이 되므로, 운영진이 이 기능을 처음 쓰는 5분 안에 100%
+만난다. 그런데 화면은 **이미 올린 문서를 올리라고** 말했다(2026-09-16 실측 · 문서 1건 · 색인 완료 ·
+40청크).
+
+- **웹이 혼자 고칠 수 없어서 서버가 가른다.** 문서 목록·요약은 `RAG_DOCUMENT_MANAGE` 뒤에 있어
+  일반 회원은 403이고(도우미 패널은 어디서나 열린다), `RagCorpusSummaryResponse`의 3값에는
+  «시행 중 N건»이 없다. 그래서 **그쪽에 값을 더하는 안을 택하지 않았다** — 카드가 사는 화면은
+  같은 권한 벽 뒤이고, 패널이 부르는 것은 `suggestions`다.
+- **판정은 `AssistantServiceImpl.corpusState()` 한 곳이다.** `findSearchable()`(=`INDEXED &&
+  EFFECTIVE`)이 비었을 때만 `count()`를 부른다 — 조건을 옮겨 적은 두 번째 질의를 만들지 않는
+  것이 요점이며(리포지토리 주석의 «한쪽만 넘기는 순간 새어 나간다»), `READY`인 코퍼스에서는
+  질의가 늘지 않는다. **응답의 두 값이 같은 판정에서 나온다** — 따로 재면 «상태는 `READY`인데
+  질문은 비어 있는» 조합이 성립한다.
+- **`questions`의 규칙은 그대로다** — `READY`가 아니면 빈 배열이다. 답할 수 없는 코퍼스에서
+  추천을 내보내면 눌렀을 때 거절당하고, 그것이 애초에 §13.3이 막으려던 화면이다.
+- ⚠️ **`NONE_EFFECTIVE`는 이름보다 넓다.** 검색 조건이 두 축이라 «색인 중» · «색인 실패» ·
+  «내려둔(`SUPERSEDED`) 문서뿐» · «시행 중이지만 재색인 중»이 모두 여기 들어온다. 넷으로 쪼개지
+  않은 것은 그러면 이 값이 «왜 없는가»를 말하기 시작하는데 그 답은 문서 한 건씩의 두 상태이고
+  그것을 보는 화면(§13.2 관리 목록)이 이미 있기 때문이다 — 패널이 물은 것은 «지금 물어도
+  되는가»다.
+- **문구는 서버가 내리지 않는다.** 같은 `NONE_EFFECTIVE`에서도 `RAG_DOCUMENT_MANAGE`를 가진
+  사람에게는 «시행을 누르세요»이고 그렇지 않은 사람에게는 «운영진에게 문의»인데, 그 갈림의
+  재료(`capabilities`)는 화면이 이미 들고 있다(`GET /v1/auth/session`). 서버가 문장을 쥐면
+  권한·맥락에 따라 다르게 그릴 수 없고 다국어가 생기면 서버가 그것을 안다.
+- **업로드를 곧바로 `EFFECTIVE`로 넣는 길은 택하지 않았다** — 「올린 문서가 바로 답변에 쓰이지
+  않는다」가 ADR-0034가 정한 것이고, 색인 전에 시행되면 «시행 중인데 검색되지 않는 문서»가 된다
+  (`RAG_DOCUMENT_NOT_INDEXED`가 막는 자리).
+- 회귀는 두 자리다 — `AssistantServiceImplTest.tellsWhyTheCorpusCannotAnswerAlongsideTheSuggestions`
+  (세 상태에서 상태와 질문이 짝인지 · `doesNotCountTheCorpusWhenItCanAlreadyAnswer`가 질의 순서)와
+  `AssistantControllerTest.servesSuggestionsThatTheCorpusCanActuallyAnswer`(실제 행으로 `EMPTY` →
+  `NONE_EFFECTIVE` → `READY`).
 
 ### 여기 없는 것
 

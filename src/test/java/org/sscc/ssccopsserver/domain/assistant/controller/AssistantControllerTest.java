@@ -573,19 +573,33 @@ class AssistantControllerTest {
     // ------------------------------------------------------------------ 추천 질문
 
     /*
-     * 추천 질문은 **지금 답할 수 있는 것만**이다(§13.3) — 코퍼스가 비면 빈 배열이고 화면은 그때
-     * 고지 문구만 그린다.
+     * 추천 질문은 **지금 답할 수 있는 것만**이고, 답할 수 없으면 **«왜»가 함께 나간다**(§13.1 ·
+     * §13.3 · #449). 화면이 빈 상태 문구를 그 값으로 가르므로 **셋이 짝을 이루는 것**이 계약이다.
+     *
+     * 가운데 칸이 이 이슈가 열린 자리다 — 문서가 있는데 «등록된 문서가 없다»고 말했고, 업로드가
+     * 언제나 `DRAFT`로 들어오므로(ADR-0034) 그것이 **첫 업로드마다 반드시 지나는 화면**이다.
      */
     @Test
     void servesSuggestionsThatTheCorpusCanActuallyAnswer() throws Exception {
         mockMvc.perform(get(SUGGESTIONS).header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.corpusState").value("EMPTY"))
                 .andExpect(jsonPath("$.data.questions", hasSize(0)));
 
+        // 올렸다 — 색인도 시행도 아직이다
+        ragDocumentRepository.saveAndFlush(registerRegulation());
+
+        mockMvc.perform(get(SUGGESTIONS).header("Authorization", "Bearer " + memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.corpusState").value("NONE_EFFECTIVE"))
+                .andExpect(jsonPath("$.data.questions", hasSize(0)));
+
+        // 색인이 끝나고 「시행」을 눌렀다
         indexedAndEffectiveRegulation();
 
         mockMvc.perform(get(SUGGESTIONS).header("Authorization", "Bearer " + memberToken))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.corpusState").value("READY"))
                 .andExpect(jsonPath("$.data.questions", hasSize(3)));
     }
 

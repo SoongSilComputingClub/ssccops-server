@@ -39,7 +39,8 @@ import lombok.extern.slf4j.Slf4j;
  *        하라»는 지시를 모델은 종종 어기는데, **아예 부르지 않으면 어길 수 없다.**
  *   2차  프롬프트가 다섯 규칙을 건다(`AssistantPrompt`).
  *   3차  **모델이 쓴 출처가 우리가 넣어 준 발췌의 번호인지 본다**(`CitationVerifier`).
- *        범위 밖이면 그 토큰은 본문에서도 사라진다.
+ *        범위 밖이면 그 토큰은 본문에서도 사라진다. **모델이 `[근거없음]` 표식을 쓰면 인용이
+ *        몇 개든 거절이다**(#455) — 「찾지 못했습니다」에 출처를 달아 답변으로 세어지던 자리다.
  *
  * **거절이 이 기능의 가장 중요한 동작이다.** 운영진이 답변을 근거로 사람의 자격을 판단한다.
  *
@@ -278,16 +279,18 @@ public class AssistantServiceImpl implements AssistantService {
             Prepared prepared, CitationVerifier.Session session, boolean streamed) {
 
         CitationVerifier.Verified verified = session.verified();
-        if (verified.citations().isEmpty()) {
+        if (verified.refused() || verified.citations().isEmpty()) {
             /*
-             * 모델이 답은 했는데 **우리가 넣어 준 발췌를 하나도 가리키지 않았다.** 근거 없는 규정
-             * 답변을 우리 이름으로 내보내지 않는다 — 사용자에게는 「찾지 못했다」와 같은 문구이고
-             * (화면이 할 일이 같다), 둘을 가르는 값은 이 로그에만 남는다.
+             * 모델이 **근거 없음을 표식으로 알렸거나**(#455) 답은 했는데 **우리가 넣어 준 발췌를
+             * 하나도 가리키지 않았다.** 근거 없는 규정 답변을 우리 이름으로 내보내지 않는다 —
+             * 사용자에게는 임계값 거절까지 셋이 「찾지 못했다」와 같은 문구이고(화면이 할 일이
+             * 같다), 그것들을 가르는 값은 이 로그에만 남는다.
              */
             if (streamed && !verified.answer().isEmpty()) {
                 log.info(
-                        "규정 도우미 근거 없는 답을 흘려보냈다 — mbrId={} 발췌={} 버린인용={}",
+                        "규정 도우미 근거 없는 답을 흘려보냈다 — mbrId={} 사유={} 발췌={} 버린인용={}",
                         prepared.memberId(),
+                        groundingFailure(verified),
                         prepared.chunks().size(),
                         verified.dropped());
                 return AssistantQueryResponse.ungrounded(
@@ -295,7 +298,7 @@ public class AssistantServiceImpl implements AssistantService {
             }
             return refuse(
                     prepared.memberId(),
-                    "모델의 답에서 검증을 통과한 인용이 없다",
+                    groundingFailure(verified),
                     prepared.chunks().size(),
                     prepared.conversationId(),
                     prepared.timeline());
@@ -330,6 +333,18 @@ public class AssistantServiceImpl implements AssistantService {
                 primary.effectiveFrom(),
                 true,
                 prepared.conversationId());
+    }
+
+    /*
+     * 왜 답으로 세지 않았는가 — **로그에만 남는 값이다** (#455).
+     *
+     * 사용자에게는 셋이 같은 문구이고(`AssistantPrompt.NO_EVIDENCE`) 가르는 이유는 «프롬프트를
+     * 고쳐야 하는가»가 둘에서 갈리기 때문이다: 표식으로 알린 거절은 **모델이 규칙을 지킨 것**이라
+     * 세어도 할 일이 없고, 인용을 하나도 달지 않은 답은 규칙을 어긴 것이라 그 수가 늘면 프롬프트나
+     * 임계값을 다시 봐야 한다. 지표(Micrometer)가 아니라 로그인 이유는 `refuse`의 주석에 있다.
+     */
+    private static String groundingFailure(CitationVerifier.Verified verified) {
+        return verified.refused() ? "모델이 근거 없음을 표식으로 알렸다" : "모델의 답에서 검증을 통과한 인용이 없다";
     }
 
     /*

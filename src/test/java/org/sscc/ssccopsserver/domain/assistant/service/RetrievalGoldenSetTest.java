@@ -473,6 +473,26 @@ class RetrievalGoldenSetTest {
         assertThat(chatModel.calls()).as("근거는 있었으므로 모델은 불렸다").isEqualTo(1);
     }
 
+    /*
+     * **표식이 인용을 이긴다** (#455).
+     *
+     * 모델이 `[근거없음]`을 적고도 규칙 2를 마저 지켜 출처를 덧붙일 수 있다. 인용 수를 세면 그것은
+     * «근거가 여럿인 거절»이 되는데, 실제로 그 답이 판본 배지와 인용 카드를 달고 화면에 나갔다.
+     * 사용자가 읽는 것은 모델의 거절 문장이 아니라 **서버의 안내 문구**여야 한다.
+     */
+    @Test
+    void discardsAnAnswerThatFlagsNoEvidenceEvenThoughItCitesExcerpts() {
+        chatModel.refuse();
+
+        AssistantQueryResponse response = ask(CORPUS_A, "정회원으로 승격하려면 어떤 조건을 갖춰야 하나요?");
+
+        assertThat(response.answered()).isFalse();
+        assertThat(response.answer()).isEqualTo(AssistantPrompt.NO_EVIDENCE);
+        assertThat(response.citations()).isEmpty();
+        assertThat(response.applyStatus()).isNull();
+        assertThat(chatModel.calls()).as("근거는 있었으므로 모델은 불렸다").isEqualTo(1);
+    }
+
     // ------------------------------------------------------------------ 추천 질문
 
     /*
@@ -769,11 +789,16 @@ class RetrievalGoldenSetTest {
         private int calls;
         private boolean invent;
         private boolean citeNothing;
+        private boolean refuse;
 
         @Override
         public ChatResponse call(Prompt prompt) {
             calls++;
-            StringBuilder answer = new StringBuilder("규정에 따르면 다음과 같습니다.");
+            /*
+             * **표식을 쓰고도 출처를 마저 다는 모델** (#455) — 규칙 2를 끝까지 지킨 모양이고,
+             * 인용 수를 세던 판정이 그것을 답변으로 셌다.
+             */
+            StringBuilder answer = new StringBuilder(refuse ? "[근거없음]" : "규정에 따르면 다음과 같습니다.");
             if (!citeNothing) {
                 for (String number : numbersIn(prompt)) {
                     answer.append(" 자세한 내용은 [").append(number).append("]에 있습니다.");
@@ -820,6 +845,11 @@ class RetrievalGoldenSetTest {
             citeNothing = true;
         }
 
+        /** 표식으로 «근거 없음»을 알리면서 출처는 그대로 다는 모델 (#455) */
+        void refuse() {
+            refuse = true;
+        }
+
         int calls() {
             return calls;
         }
@@ -828,6 +858,7 @@ class RetrievalGoldenSetTest {
             calls = 0;
             invent = false;
             citeNothing = false;
+            refuse = false;
         }
     }
 }

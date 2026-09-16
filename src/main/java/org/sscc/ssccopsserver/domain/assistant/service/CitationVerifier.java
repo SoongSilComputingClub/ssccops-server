@@ -46,6 +46,21 @@ import lombok.RequiredArgsConstructor;
  * 한 번에 답하는 경로({@link #verify})도 같은 세션을 쓴다 — 두 길이 **글자 하나까지 같은
  * 문자열**을 내야 «스트리밍이 아닌 경로의 회귀»라는 말이 성립한다.
  *
+ * ══ 거절도 대괄호로 온다 — `[근거없음]` (#455) ══════════════════
+ *
+ * 모델이 근거를 찾지 못했다고 **말로** 하면 서버는 그것을 알 수 없다. 실제로 그 말에 출처가 함께
+ * 붙어 나갔고(«… 근거를 찾지 못했습니다 [1][2][3][4][5]»), 인용 수만 보던 판정이 그것을 답변으로
+ * 셌다 — 판본 배지와 인용 카드 다섯 장이 달린 「찾지 못했습니다」가 화면에 그려졌다. 모델이 규칙을
+ * 어긴 것이 아니다: 「근거가 없다」도 주장이라 규칙 2가 시키는 대로 출처를 붙였을 뿐이다.
+ *
+ * 그래서 거절을 **구조로** 받는다. `[근거없음]`이 보이면 본문에서 지우고 `refused`를 세우며 **그 뒤
+ * 조각은 내보내지 않는다** — 붙들고 있던 꼬리까지 함께 버리므로 표식이 첫 줄이면 `answer`가 빈 채로
+ * 끝나고, 두 경로 모두 정해진 안내 문구로 떨어진다(`AssistantPrompt.NO_EVIDENCE`). 이미 흘려보낸
+ * 글자가 있으면 그것은 회수하지 않는다(#447).
+ *
+ * **프롬프트가 그 표식을 쓰라고 시키는 것이 짝이다**(`AssistantPrompt` 규칙 3) — 한쪽만 고치면
+ * 아무 일도 일어나지 않는다.
+ *
  * ══ 통과하지 못한 토큰은 본문에서도 지운다 ══════════════════════
  *
  * 인용 목록에서만 빼면 답변 문장에 `[9]`가 그대로 남아 화면이 «근거가 있는 문장»으로 읽는다 —
@@ -79,6 +94,14 @@ public class CitationVerifier {
     /** 옛 계약의 쪽 표기 — `p.12` · `p12` · `P. 12` */
     private static final Pattern PAGE = Pattern.compile("^[pP]\\s*\\.?\\s*\\d+$");
 
+    /**
+     * 모델이 «근거가 없다»고 말하는 <b>유일한 모양</b> (#455).
+     *
+     * <p>공백은 지우고 견준다 — `[근거 없음]`도 같은 표식이다. 모델이 띄어쓰기를 바꾼 것으로 판정이 갈리면 그 고장은 «가끔 답변으로 샌다»로 나타나 아무도
+     * 재현하지 못한다.
+     */
+    private static final String REFUSAL = "근거없음";
+
     private final AssistantQueryPolicy policy;
 
     /**
@@ -99,8 +122,15 @@ public class CitationVerifier {
         return new Session(chunks, policy.getSnippetLength());
     }
 
-    /** 해석 결과 — 손본 답변과 <b>코드가 번호로 찾아낸 인용만</b>. {@code dropped}는 로그용이다(사용자에게 말하지 않는다) */
-    public record Verified(String answer, List<VerifiedCitation> citations, int dropped) {
+    /**
+     * 해석 결과 — 손본 답변과 <b>코드가 번호로 찾아낸 인용만</b>. {@code dropped}는 로그용이다(사용자에게 말하지 않는다).
+     *
+     * <p><b>{@code refused}면 {@code citations}는 언제나 비어 있다</b> (#455) — 거절에 인용이 딸리는 상태를 만들지 않기 위해서다.
+     * 그 상태가 성립했던 것이 이 필드가 생긴 이유다: 모델이 «근거를 찾지 못했습니다»라고 말하면서 그 문장에 `[1][2][3]`을 달면, 인용 수만 보던 판정이 그것을
+     * 답변으로 셌다.
+     */
+    public record Verified(
+            String answer, List<VerifiedCitation> citations, int dropped, boolean refused) {
 
         public Verified {
             citations = List.copyOf(citations);
@@ -141,6 +171,9 @@ public class CitationVerifier {
 
         private int dropped;
 
+        /** 모델이 표식으로 «근거 없음»을 알렸나 — 그 뒤로는 아무것도 내보내지 않는다 (#455) */
+        private boolean refused;
+
         /** 첫 글자를 내보냈나 — 앞쪽 공백을 버리기 위한 값이다(끝쪽은 붙들고 있다가 버린다) */
         private boolean started;
 
@@ -155,6 +188,10 @@ public class CitationVerifier {
          * <p>돌려주지 않은 것은 버려졌거나(인용이려다 실패한 토큰) 아직 판정 중이다(닫히지 않은 대괄호 · 뒤따라올 토큰이 함께 지울 수도 있는 끝 공백).
          */
         public String accept(String delta) {
+            if (refused) {
+                // 표식 뒤는 내보내지 않는다 — 거절의 답은 서버가 정한 문구다(#455)
+                return "";
+            }
             pending.append(delta);
 
             StringBuilder out = new StringBuilder();
@@ -162,6 +199,9 @@ public class CitationVerifier {
             int cursor = 0;
             while (marker.find(cursor)) {
                 String token = marker.group(1).trim();
+                if (isRefusal(token)) {
+                    return refuse();
+                }
                 VerifiedCitation citation = resolve(token);
                 if (citation != null) {
                     citations.putIfAbsent(Integer.valueOf(token), citation);
@@ -184,6 +224,9 @@ public class CitationVerifier {
 
         /** 스트림이 끝났다 — 붙들고 있던 꼬리를 비운다. 끝의 공백은 내보내지 않는다(= {@code strip}) */
         public String finish() {
+            if (refused) {
+                return "";
+            }
             int end = pending.length();
             while (end > 0 && Character.isWhitespace(pending.charAt(end - 1))) {
                 end--;
@@ -193,9 +236,31 @@ public class CitationVerifier {
             return emit(tail);
         }
 
-        /** 지금까지 내보낸 답과 통과한 인용 */
+        /** 지금까지 내보낸 답과 통과한 인용. <b>거절이면 인용은 없다</b>(record 주석) */
         public Verified verified() {
-            return new Verified(answer.toString(), List.copyOf(citations.values()), dropped);
+            List<VerifiedCitation> found = refused ? List.of() : List.copyOf(citations.values());
+            return new Verified(answer.toString(), found, dropped, refused);
+        }
+
+        /*
+         * 표식을 만났다 — **아직 내보내지 않은 것은 함께 버린다** (#455).
+         *
+         * 붙들고 있던 꼬리(표식과 그 앞의 글자·공백)는 화면에 닿지 않았으므로 버릴 수 있고, 버려야
+         * `answer`가 빈 채로 끝나 두 경로 모두 **정해진 안내 문구**로 떨어진다. 이미 나간 글자는
+         * 되돌리지 않는다 — 그때는 `answer`가 비어 있지 않아 «근거 없음»으로 표시된다(#447).
+         *
+         * `dropped`를 올리지 않는 것은 그 수가 «출처를 달려다 실패한 토큰»이기 때문이다. 표식은
+         * 실패한 인용이 아니라 모델이 제대로 지킨 규칙이다.
+         */
+        private String refuse() {
+            refused = true;
+            pending.setLength(0);
+            return "";
+        }
+
+        /** 공백을 지우고 견준다 — `[근거 없음]`도 같은 표식이다 */
+        private static boolean isRefusal(String token) {
+            return REFUSAL.equals(token.replaceAll("\\s+", ""));
         }
 
         /*

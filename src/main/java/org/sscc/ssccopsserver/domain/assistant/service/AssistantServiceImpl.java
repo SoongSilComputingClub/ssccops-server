@@ -3,9 +3,11 @@ package org.sscc.ssccopsserver.domain.assistant.service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
@@ -113,6 +115,9 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @RequiredArgsConstructor
 public class AssistantServiceImpl implements AssistantService {
+
+    /** 지목된 조 하나에서 집어 올 청크 수 상한 — 한 조가 여러 청크로 갈릴 수 있다(제7조가 둘이다) */
+    private static final int ARTICLE_PIN_LIMIT = 3;
 
     private final AssistantFeature assistantFeature;
     private final AssistantQueryPolicy policy;
@@ -475,34 +480,129 @@ public class AssistantServiceImpl implements AssistantService {
     private List<RetrievedChunk> retrieve(
             String question, Map<Long, SearchableDocument> searchable, RagChunkStore chunkStore) {
 
-        SearchRequest search =
-                SearchRequest.builder()
-                        .query(question)
-                        .topK(policy.getTopK())
-                        .similarityThreshold(policy.searchThreshold())
-                        .filterExpression(
-                                new FilterExpressionBuilder()
-                                        .in(
-                                                RagChunkStore.RAG_DOCUMENT_ID_KEY,
-                                                List.copyOf(searchable.keySet()))
-                                        .build())
-                        .build();
-
+        /*
+         * ⚠️ **`List<Object>`로 선언해야 한다.** `FilterExpressionBuilder.in`에는
+         * `(String, Object...)`와 `(String, List<Object>)` 두 오버로드가 있어, `List<Long>`으로
+         * 두면 varargs 쪽이 골라져 리스트가 **값 하나로 통째로 감싸진다** — 필터가
+         * `ragDocId IN [[1, 2]]`가 되어 **아무 청크도 맞지 않는다.** 예전에 이 자리가
+         * `List.copyOf(...)` 인라인이었을 때 맞게 동작한 것은 타입 추론이 `List<Object>`를
+         * 골라 주었기 때문이고, 변수로 뽑는 순간 그 우연이 사라진다.
+         */
+        List<Object> documentIds = List.copyOf(searchable.keySet());
         List<RetrievedChunk> chunks = new ArrayList<>();
-        for (Document found : chunkStore.search(search)) {
-            Long ragDocId = RetrievedChunk.ragDocumentIdOf(found.getMetadata());
+        Set<String> seen = new HashSet<>();
+
+        /*
+         * 질문이 조를 지목하면 **그 조를 먼저 확보한다** (#457). 벡터 검색에 맡기면 조 번호가
+         * 식별자로 잡히지 않아 밀려난다 — 「회칙 제3조는 무엇을 정하고 있어?」의 1위가 부칙
+         * 제4조이고 정답이 8위였다. 지목은 그 자체로 근거이므로 **점수로 버리지 않는다.**
+         */
+        ArticleReference article = ArticleReference.parse(question);
+        if (article != null) {
+            collect(
+                    chunkStore.search(pinnedArticle(question, documentIds, article)),
+                    searchable,
+                    chunks,
+                    seen,
+                    false);
+        }
+
+        List<Document> found = chunkStore.search(bySimilarity(question, documentIds));
+        collect(found, searchable, chunks, seen, true);
+        if (chunks.isEmpty()) {
+            /*
+             * **「저장소가 0건」과 「유형별 판정에서 0건」은 다른 고장이다** (#457). 앞은 검색
+             * 임계값(`searchThreshold`)이 질문의 점수 대역보다 높다는 뜻이고, 뒤는 유형별 값이
+             * 어긋났다는 뜻이라 손대는 곳이 다르다. 거절 로그의 `발췌=0`만으로는 그 둘이 갈리지
+             * 않아, 실제로 원인을 찾는 데 시간이 들었다.
+             */
+            log.info(
+                    "규정 도우미 검색이 비었다 — 저장소={} 임계값={} 조지목={}",
+                    found.size(),
+                    policy.searchThreshold(),
+                    article);
+        }
+        return chunks;
+    }
+
+    /**
+     * 검색 결과를 발췌 목록에 담는다.
+     *
+     * <p>{@code applyThreshold}가 꺼지는 것은 조를 지목한 질의 하나뿐이다 — 그쪽은 「무엇을 달라」가 질문에 적혀 있어 유사도가 판단 재료가 아니다.
+     * 이미 담은 청크는 건너뛴다(두 검색이 같은 조를 집을 수 있다).
+     */
+    private void collect(
+            List<Document> found,
+            Map<Long, SearchableDocument> searchable,
+            List<RetrievedChunk> chunks,
+            Set<String> seen,
+            boolean applyThreshold) {
+
+        for (Document document : found) {
+            Long ragDocId = RetrievedChunk.ragDocumentIdOf(document.getMetadata());
             SearchableDocument source = ragDocId == null ? null : searchable.get(ragDocId);
             if (source == null) {
                 // 판본을 붙일 수 없는 청크 — 인용을 만들 수 없으므로 근거가 되지 못한다(클래스 주석)
                 log.warn("검색 결과에 판본을 알 수 없는 청크가 섞여 있다 — ragDocId={}", ragDocId);
                 continue;
             }
-            RetrievedChunk chunk = new RetrievedChunk(found, source);
-            if (chunk.score() >= policy.thresholdFor(source.type())) {
+            if (!seen.add(document.getId())) {
+                continue;
+            }
+            RetrievedChunk chunk = new RetrievedChunk(document, source);
+            if (!applyThreshold || chunk.score() >= policy.thresholdFor(source.type())) {
                 chunks.add(chunk);
             }
         }
-        return chunks;
+    }
+
+    /** 기존 유사도 검색 — 가장 느슨한 임계값으로 긁고 유형별 판정은 {@link #collect}가 한다 */
+    private SearchRequest bySimilarity(String question, List<Object> documentIds) {
+        return SearchRequest.builder()
+                .query(question)
+                .topK(policy.getTopK())
+                .similarityThreshold(policy.searchThreshold())
+                .filterExpression(
+                        new FilterExpressionBuilder()
+                                .in(RagChunkStore.RAG_DOCUMENT_ID_KEY, documentIds)
+                                .build())
+                .build();
+    }
+
+    /**
+     * 지목된 조를 메타데이터로 직접 집는다 (#457).
+     *
+     * <p>가지 번호(「제27조의2」)는 <b>질문이 적었을 때만</b> 조건에 넣는다 — 「제27조」로 물으면 본조와 가지가 함께 오는 편이 맞고, 「제27조의2」로
+     * 물으면 그것만 와야 한다.
+     *
+     * <p>{@code topK}가 {@value #ARTICLE_PIN_LIMIT}인 것은 한 조가 여러 청크로 갈릴 수 있기 때문이다(제7조가 둘이다). 이 발췌는 아래
+     * 유사도 검색의 예산과 별도로 실린다 — 지목된 조를 넣으려고 맥락을 밀어내면 「그 조만 알고 답을 못 하는」 상태가 된다.
+     */
+    private SearchRequest pinnedArticle(
+            String question, List<Object> documentIds, ArticleReference article) {
+
+        FilterExpressionBuilder builder = new FilterExpressionBuilder();
+        FilterExpressionBuilder.Op filter =
+                builder.and(
+                        builder.in(RagChunkStore.RAG_DOCUMENT_ID_KEY, documentIds),
+                        builder.and(
+                                builder.eq(RagChunkMetadata.ARTICLE_NUMBER, article.number()),
+                                builder.eq(
+                                        RagChunkMetadata.SUPPLEMENTARY, article.supplementary())));
+        if (article.branchNumber() != null) {
+            filter =
+                    builder.and(
+                            filter,
+                            builder.eq(
+                                    RagChunkMetadata.ARTICLE_BRANCH_NUMBER,
+                                    article.branchNumber()));
+        }
+        return SearchRequest.builder()
+                .query(question)
+                .topK(ARTICLE_PIN_LIMIT)
+                .similarityThreshold(SearchRequest.SIMILARITY_THRESHOLD_ACCEPT_ALL)
+                .filterExpression(filter.build())
+                .build();
     }
 
     /*

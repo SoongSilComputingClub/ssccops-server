@@ -21,6 +21,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -49,6 +51,7 @@ import org.sscc.ssccopsserver.domain.assistant.repository.RagDocumentRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.support.LogCapture;
 
 import reactor.core.publisher.Flux;
 
@@ -705,6 +708,90 @@ class AssistantServiceImplTest {
         assertThat(delivered).as("첫 조각에서 구독이 끊긴다").hasSize(1);
         assertThat(sink.done).isNull();
         assertThat(sink.failed).as("알릴 상대가 없으므로 오류 이벤트도 없다").isNull();
+    }
+
+    // ------------------------------------------------------------------ 이정표 (#453)
+
+    /*
+     * **어디서 오래 걸렸는지가 로그 한 줄에 실린다 — 이 이슈의 계기판이다** (#453).
+     *
+     * 재려는 것은 «첫 글자까지 6초»의 정체이고, 답은 이정표의 차다: A(검색) · B(`첫수신 - 검색`) ·
+     * 검증기가 붙든 시간(`첫송신 - 첫수신`). 셋이 **같은 시작점**을 쓰므로 단조 증가여야 하며,
+     * 그것이 깨지면 수치가 아니라 **계측이 틀린 것**이다 — 그래서 값이 아니라 순서를 못 박는다
+     * (스텁이라 실제 ms 는 전부 0 근처다).
+     *
+     * **일괄 경로에는 조각이 없어 `-1`이다.** 0으로 두면 «곧바로 일어났다»와 구별되지 않는데,
+     * 0ms 는 실제로 나올 수 있는 값이다(임베딩 캐시가 맞은 검색).
+     */
+    @Test
+    void logsWhereTheTimeWentOnOneLine() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원 승격은 총회의 동의가 필요합니다. [1]";
+
+        try (LogCapture logs = LogCapture.of(AssistantServiceImpl.class)) {
+            RecordingSink sink = new RecordingSink();
+            service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+            sink.await();
+            service.query(ask("정회원 승격 조건은?"), member);
+
+            List<String> answered =
+                    logs.infoMessages().stream()
+                            .filter(line -> line.startsWith("규정 도우미 답변"))
+                            .toList();
+            assertThat(answered).hasSize(2);
+
+            String streamed = answered.get(0);
+            assertThat(milestone(streamed, "검색")).as("A — 응답이 열리기까지").isNotNegative();
+            assertThat(milestone(streamed, "첫수신"))
+                    .as("B 의 끝은 검색보다 앞설 수 없다")
+                    .isGreaterThanOrEqualTo(milestone(streamed, "검색"));
+            assertThat(milestone(streamed, "첫송신"))
+                    .as("검증기가 붙들 수는 있어도 먼저 나갈 수는 없다")
+                    .isGreaterThanOrEqualTo(milestone(streamed, "첫수신"));
+            assertThat(milestone(streamed, "소요"))
+                    .isGreaterThanOrEqualTo(milestone(streamed, "첫송신"));
+
+            String atOnce = answered.get(1);
+            assertThat(milestone(atOnce, "검색")).as("A 는 두 경로가 함께 쓴다").isNotNegative();
+            assertThat(milestone(atOnce, "첫수신")).as("일괄에는 조각이 없다").isEqualTo(-1);
+            assertThat(milestone(atOnce, "첫송신")).isEqualTo(-1);
+
+            assertThat(answered)
+                    .as("질문도 답변도 로그에 싣지 않는다 (ADR-0024 · §11)")
+                    .noneMatch(line -> line.contains("정회원 승격") || line.contains("총회의 동의"));
+        }
+    }
+
+    /*
+     * 거절도 같은 축으로 남는다 — **근거를 찾지 못한 질의야말로 A 가 전부인 요청**이라
+     * 여기 수치가 A 를 가장 깨끗하게 보여 준다(모델을 부르지 않으므로 B 가 없다).
+     */
+    @Test
+    void logsTheSameMilestonesWhenItRefuses() {
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        try (LogCapture logs = LogCapture.of(AssistantServiceImpl.class)) {
+            RecordingSink sink = new RecordingSink();
+            service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+            sink.await();
+
+            String refused =
+                    logs.infoMessages().stream()
+                            .filter(line -> line.startsWith("규정 도우미 거절"))
+                            .findFirst()
+                            .orElseThrow();
+
+            assertThat(milestone(refused, "검색")).as("검색에 닿기 전에 끊겼다").isEqualTo(-1);
+            assertThat(milestone(refused, "소요")).isNotNegative();
+        }
+    }
+
+    /** `검색=123ms` 에서 123 — 로그를 읽는 사람이 하는 일과 같다 */
+    private static long milestone(String line, String name) {
+        Matcher found = Pattern.compile(name + "=(-?\\d+)ms").matcher(line);
+        assertThat(found.find()).as("%s 이정표가 로그에 없다 — %s", name, line).isTrue();
+        return Long.parseLong(found.group(1));
     }
 
     // ------------------------------------------------------------------ 픽스처

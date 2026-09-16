@@ -38,6 +38,11 @@ public final class LogCapture implements AutoCloseable {
         return messagesAt(Level.WARN);
     }
 
+    /** 지금까지 쌓인 INFO 줄. <b>값이 로그에만 남는 자리</b>를 보는 테스트가 쓴다 — #453의 이정표가 그렇다 */
+    public List<String> infoMessages() {
+        return messagesAt(Level.INFO);
+    }
+
     public List<String> errorMessages() {
         return messagesAt(Level.ERROR);
     }

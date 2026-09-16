@@ -102,7 +102,7 @@ import lombok.extern.slf4j.Slf4j;
  *
  * **질문도 답변도 어디에도 저장하지 않는다**(§9 · §11 — 질의 로그 표를 두지 않았다). 로그에도
  * 싣지 않는다: 질문에는 사람 이름이 섞여 들어올 수 있고, 로그는 Kibana에 남는다(ADR-0024).
- * 남기는 것은 «누가·몇 개의 근거로·답했는가·얼마나 걸렸는가»다.
+ * 남기는 것은 «누가·몇 개의 근거로·답했는가·**어느 구간에서** 얼마나 걸렸는가»다(#453 · `QueryTimeline`).
  *
  * ⚠️ **대화 메모리는 그 규칙의 예외가 아니라 경계다.** 질문과 답변이 24시간 슬라이딩 만료의
  * 힙 캐시에 머무는 것은 «이어 말하기»가 그것 없이는 성립하지 않기 때문이고, 그 값은 디스크에도
@@ -173,10 +173,13 @@ public class AssistantServiceImpl implements AssistantService {
                 .content()
                 .subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
-                        delta -> emit(sink, session.accept(delta)),
+                        delta -> {
+                            prepared.timeline().received();
+                            emit(sink, prepared.timeline(), session.accept(delta));
+                        },
                         failure -> failed(prepared, sink, failure),
                         () -> {
-                            emit(sink, session.finish());
+                            emit(sink, prepared.timeline(), session.finish());
                             sink.done(conclude(prepared, session, true));
                         });
     }
@@ -222,6 +225,7 @@ public class AssistantServiceImpl implements AssistantService {
      * 한쪽에만 빠진 층이 생기고, 그 고장은 «어떤 경로로 물었는가»에 따라 나타났다 사라진다.
      */
     private Prepared prepare(AssistantQueryRequest request, MemberEntity member) {
+        QueryTimeline timeline = new QueryTimeline();
         assistantFeature.requireEnabled();
 
         String question = requireAskable(request.question());
@@ -231,7 +235,6 @@ public class AssistantServiceImpl implements AssistantService {
         rateLimiter.requireWithinQuota(member.getId());
 
         long memberId = member.getId();
-        Instant startedAt = Instant.now();
 
         Map<Long, SearchableDocument> searchable = searchableDocuments();
         if (searchable.isEmpty()) {
@@ -239,15 +242,18 @@ public class AssistantServiceImpl implements AssistantService {
              * **새 환경의 기본 상태가 여기다**(§12.5 — 코퍼스는 업로드로만 들어온다). 시행 중인
              * 문서가 하나도 없으면 검색할 것이 없으므로 임베딩조차 부르지 않는다.
              */
-            return Prepared.refused(refuse(memberId, "시행 중인 규정 문서가 없다", 0, conversationId));
+            return Prepared.refused(
+                    refuse(memberId, "시행 중인 규정 문서가 없다", 0, conversationId, timeline));
         }
 
         /*
          * **이번 질문 하나로 검색한다** — 이력은 생성에만 들어간다(`AssistantConversations`).
          */
         List<RetrievedChunk> chunks = retrieve(question, searchable, chunkStore);
+        timeline.retrieved();
         if (chunks.isEmpty()) {
-            return Prepared.refused(refuse(memberId, "임계값을 넘는 청크가 없다", 0, conversationId));
+            return Prepared.refused(
+                    refuse(memberId, "임계값을 넘는 청크가 없다", 0, conversationId, timeline));
         }
 
         return new Prepared(
@@ -257,7 +263,7 @@ public class AssistantServiceImpl implements AssistantService {
                 chatClient,
                 chunks,
                 conversations.history(conversationId),
-                startedAt,
+                timeline,
                 null);
     }
 
@@ -291,7 +297,8 @@ public class AssistantServiceImpl implements AssistantService {
                     prepared.memberId(),
                     "모델의 답에서 검증을 통과한 인용이 없다",
                     prepared.chunks().size(),
-                    prepared.conversationId());
+                    prepared.conversationId(),
+                    prepared.timeline());
         }
 
         /*
@@ -302,7 +309,8 @@ public class AssistantServiceImpl implements AssistantService {
 
         SearchableDocument primary = verified.citations().get(0).source();
         log.info(
-                "규정 도우미 답변 — mbrId={} 방식={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준문서={} 소요={}ms",
+                "규정 도우미 답변 — mbrId={} 방식={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준문서={}"
+                        + " 검색={}ms 첫수신={}ms 첫송신={}ms 소요={}ms",
                 prepared.memberId(),
                 streamed ? "스트리밍" : "일괄",
                 prepared.history().size() / 2,
@@ -310,6 +318,9 @@ public class AssistantServiceImpl implements AssistantService {
                 verified.citations().size(),
                 verified.dropped(),
                 primary.name(),
+                prepared.timeline().retrieval(),
+                prepared.timeline().firstChunk(),
+                prepared.timeline().firstDelta(),
                 elapsedMillis(prepared));
 
         return new AssistantQueryResponse(
@@ -331,14 +342,21 @@ public class AssistantServiceImpl implements AssistantService {
      * (루트 AGENTS.md «관측성» — export 가 꺼져 있어 Kibana 가 유일한 계기판이다).
      */
     private static long elapsedMillis(Prepared prepared) {
-        return Duration.between(prepared.startedAt(), Instant.now()).toMillis();
+        return prepared.timeline().elapsed();
     }
 
-    /** 빈 조각은 내보내지 않는다 — 판정에 붙들린 글자만 있었다는 뜻이라 이벤트를 만들 이유가 없다 */
-    private void emit(AssistantAnswerSink sink, String text) {
-        if (!text.isEmpty()) {
-            sink.delta(text);
+    /*
+     * 빈 조각은 내보내지 않는다 — 판정에 붙들린 글자만 있었다는 뜻이라 이벤트를 만들 이유가 없다.
+     *
+     * **`첫송신`은 보낸 «뒤»에 찍는다** (#453) — 재려는 것이 «화면에 글자가 닿은 시각»이라서다.
+     * 앞에서 찍으면 받는 쪽이 사라져 `delta`가 던지는 경우에도 보낸 것으로 남는다.
+     */
+    private void emit(AssistantAnswerSink sink, QueryTimeline timeline, String text) {
+        if (text.isEmpty()) {
+            return;
         }
+        sink.delta(text);
+        timeline.sent();
     }
 
     /*
@@ -359,9 +377,12 @@ public class AssistantServiceImpl implements AssistantService {
          * 요청 본문 일부가 섞여 나오고 그 본문이 곧 사용자의 질문이다(§11). 로그에는 남긴다.
          */
         log.error(
-                "규정 도우미 모델 스트림이 실패했다 — 발췌={} 이력={}턴 소요={}ms",
+                "규정 도우미 모델 스트림이 실패했다 — 발췌={} 이력={}턴 검색={}ms 첫수신={}ms" + " 첫송신={}ms 소요={}ms",
                 prepared.chunks().size(),
                 prepared.history().size() / 2,
+                prepared.timeline().retrieval(),
+                prepared.timeline().firstChunk(),
+                prepared.timeline().firstDelta(),
                 elapsedMillis(prepared),
                 cause);
         sink.failed(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
@@ -505,9 +526,10 @@ public class AssistantServiceImpl implements AssistantService {
              * 요청 본문 일부가 섞여 나오고 그 본문이 곧 사용자의 질문이다(§11). 로그에는 남긴다.
              */
             log.error(
-                    "규정 도우미 모델 호출이 실패했다 — 발췌={} 이력={}턴 소요={}ms",
+                    "규정 도우미 모델 호출이 실패했다 — 발췌={} 이력={}턴 검색={}ms 소요={}ms",
                     prepared.chunks().size(),
                     prepared.history().size() / 2,
+                    prepared.timeline().retrieval(),
                     elapsedMillis(prepared),
                     exception);
             throw new GeneralException(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
@@ -527,9 +549,19 @@ public class AssistantServiceImpl implements AssistantService {
      * 「찾지 못했습니다」는 다음 턴이 기댈 맥락이 아니다.
      */
     private AssistantQueryResponse refuse(
-            long memberId, String reason, int chunkCount, String conversationId) {
+            long memberId,
+            String reason,
+            int chunkCount,
+            String conversationId,
+            QueryTimeline timeline) {
 
-        log.info("규정 도우미 거절 — mbrId={} 사유={} 발췌={}", memberId, reason, chunkCount);
+        log.info(
+                "규정 도우미 거절 — mbrId={} 사유={} 발췌={} 검색={}ms 소요={}ms",
+                memberId,
+                reason,
+                chunkCount,
+                timeline.retrieval(),
+                timeline.elapsed());
         return AssistantQueryResponse.unanswered(AssistantPrompt.NO_EVIDENCE, conversationId);
     }
 
@@ -570,11 +602,100 @@ public class AssistantServiceImpl implements AssistantService {
             ChatClient chatClient,
             List<RetrievedChunk> chunks,
             List<Message> history,
-            Instant startedAt,
+            QueryTimeline timeline,
             AssistantQueryResponse refusal) {
 
         static Prepared refused(AssistantQueryResponse refusal) {
             return new Prepared(0, null, null, null, List.of(), List.of(), null, refusal);
+        }
+    }
+
+    /*
+     * 한 질의의 이정표 (#453).
+     *
+     * ══ 시각이지 구간이 아니다 ═════════════════════════════════════
+     *
+     * 값은 전부 **«요청 시작으로부터 몇 ms»**다. 구간으로 적으면 이정표를 하나 더할 때마다 앞 칸의
+     * 뜻이 함께 바뀌어 옛 로그와 새 로그를 나란히 놓을 수 없는데, 시작점을 공유하면 칸을 더해도
+     * 기존 칸이 그대로다 — `소요`(#448)가 이미 그 축이라 새 칸들이 거기에 붙는다.
+     *
+     * 읽는 쪽이 빼면 구간이 나온다:
+     *
+     * | 구간 | 무엇이 | 빼는 법 |
+     * |---|---|---|
+     * | **A** | DB 조회 · 질의 임베딩 왕복 · pgvector 검색. **여기까지 응답 헤더도 나가지 않는다** | `검색` |
+     * | **B** | 모델이 첫 조각을 줄 때까지 — 연결 · 프롬프트 처리 · 사고(thinking) | `첫수신 - 검색` |
+     * | C | 검증기가 첫 조각을 붙든 시간(닫히지 않은 `[`와 그 앞 공백 · #447) | `첫송신 - 첫수신` |
+     *
+     * **C 를 따로 재는 것은 그것이 6초의 설명이 못 된다는 것을 확인하기 위해서다** — 수십 ms 로
+     * 나오면 그 자리를 다시 의심하지 않아도 되고, 크게 나오면 그때는 그것이 원인이다.
+     *
+     * ══ 없는 이정표는 -1 이다 ══════════════════════════════════════
+     *
+     * 일괄 경로(`/queries`)에는 `첫수신`·`첫송신`이 없고(조각이 없다), 검색 전에 끊긴 거절에는
+     * `검색`이 없다. **0 을 쓰면 «곧바로 일어났다»와 구별되지 않는다** — 0ms 는 실제로 나올 수
+     * 있는 값이다(임베딩 캐시가 맞은 검색).
+     *
+     * ══ 질문도 답변도 담지 않는다 ══════════════════════════════════
+     *
+     * 담는 것은 시각뿐이다(ADR-0024 · §11). 이 객체가 로그로 나가는 유일한 통로이므로 여기에
+     * 본문을 실을 칸을 열지 말 것.
+     *
+     * ⚠️ **표시하는 스레드가 여럿이다** — `검색`은 요청 스레드, 조각 둘은 `boundedElastic`,
+     * 읽는 쪽(실패·완료 로그)은 또 다를 수 있다. 그래서 필드가 `volatile`이다. 조각 표시가
+     * 검사 후 대입이라 엄밀히는 경합이 남지만, 같은 구독을 한 스레드가 순서대로 흘려보내므로
+     * (Reactive Streams 의 onNext 직렬성) 실제로 겹치지 않는다 — 겹치더라도 잃는 것은 몇 ms 다.
+     */
+    private static final class QueryTimeline {
+
+        /** 그 이정표가 이 경로에 없다 — 0(«곧바로»)과 갈린다 */
+        private static final long ABSENT = -1;
+
+        private final Instant startedAt = Instant.now();
+
+        private volatile Instant retrievedAt;
+
+        private volatile Instant firstChunkAt;
+
+        private volatile Instant firstDeltaAt;
+
+        /** 검색이 끝났다 — 스트리밍에서는 이때 응답이 열린다(`SseEmitter`가 반환되는 시각) */
+        void retrieved() {
+            retrievedAt = Instant.now();
+        }
+
+        /** 모델의 첫 조각. <b>첫 번째만 남긴다</b> — 뒤 조각이 덮으면 이정표가 아니라 «마지막 조각»이 된다 */
+        void received() {
+            if (firstChunkAt == null) {
+                firstChunkAt = Instant.now();
+            }
+        }
+
+        /** 화면으로 나간 첫 조각. 검증기가 붙들었다면 {@link #received()}보다 늦다 */
+        void sent() {
+            if (firstDeltaAt == null) {
+                firstDeltaAt = Instant.now();
+            }
+        }
+
+        long retrieval() {
+            return since(retrievedAt);
+        }
+
+        long firstChunk() {
+            return since(firstChunkAt);
+        }
+
+        long firstDelta() {
+            return since(firstDeltaAt);
+        }
+
+        long elapsed() {
+            return Duration.between(startedAt, Instant.now()).toMillis();
+        }
+
+        private long since(Instant at) {
+            return at == null ? ABSENT : Duration.between(startedAt, at).toMillis();
         }
     }
 }

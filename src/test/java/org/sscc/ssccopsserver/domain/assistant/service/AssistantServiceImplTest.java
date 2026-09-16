@@ -14,10 +14,13 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -36,15 +39,19 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.beans.factory.ObjectProvider;
 import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
 import org.sscc.ssccopsserver.domain.assistant.code.RagDocumentType;
+import org.sscc.ssccopsserver.domain.assistant.code.error.AssistantErrorCode;
 import org.sscc.ssccopsserver.domain.assistant.dto.AssistantQueryRequest;
 import org.sscc.ssccopsserver.domain.assistant.dto.AssistantQueryResponse;
 import org.sscc.ssccopsserver.domain.assistant.entity.RagDocumentEntity;
 import org.sscc.ssccopsserver.domain.assistant.repository.RagDocumentRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
+import reactor.core.publisher.Flux;
+
 /*
- * 질의 한 건의 규칙 — **거절 · 검색 필터 둘 · 인용 검증** (#403 · 기획안 §6 · §14.2).
+ * 질의 한 건의 규칙 — **거절 · 검색 필터 둘 · 인용 해석 · 스트리밍** (#403 · #447 · 기획안 §6 · §14.2).
  *
  * ══ 왜 컨텍스트 없이 보는가 ═════════════════════════════════════
  *
@@ -52,6 +59,12 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * «부르지 않았다»를 그대로 셀 수 있고(1차 방어선이 그 사실이다), 검색 요청을 잡아 필터를 열어
  * 볼 수 있다 — 스프링을 띄우면 그 둘 다 흐려진다. 실제 모델 품질은 골든셋(#405)의 몫이며
  * CI에 넣지 않는다(외부 의존이고 비결정적이다).
+ *
+ * ══ 스트리밍도 여기서 본다 (#447) ══════════════════════════════
+ *
+ * 확인하는 것은 **순서**다 — 거절의 계단이 첫 조각보다 앞에서 끝나는가, 흘려보낸 조각을 이어
+ * 붙이면 한 번에 받은 답과 같은가, 도중에 실패하면 예외가 아니라 오류 이벤트로 가는가. SSE
+ * 자체(이벤트 이름·봉투 없음)는 컨트롤러 테스트가 본다.
  */
 class AssistantServiceImplTest {
 
@@ -161,7 +174,7 @@ class AssistantServiceImplTest {
     void filtersTheSearchByTheVersionsThatTheQuerySelected() {
         searchable(regulation(), guideline());
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [1]";
 
         service.query(ask("정회원 승격 조건은?"), member);
 
@@ -202,15 +215,17 @@ class AssistantServiceImplTest {
     void answersWithVerifiedCitationsAndTheVersionBadge() {
         searchable(regulation());
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "정회원 승격은 총회의 동의가 필요합니다. [제7조 6항]";
+        chatModel.answer = "정회원 승격은 총회의 동의가 필요합니다. [1]";
 
         AssistantQueryResponse response = service.query(ask("정회원 승격 조건은?"), member);
 
         assertThat(response.answered()).isTrue();
-        assertThat(response.answer()).isEqualTo("정회원 승격은 총회의 동의가 필요합니다. [제7조 6항]");
+        assertThat(response.answer()).isEqualTo("정회원 승격은 총회의 동의가 필요합니다. [1]");
         assertThat(response.citations()).hasSize(1);
+        assertThat(response.citations().get(0).ref()).as("본문의 [1]과 짝이다").isEqualTo(1);
+        assertThat(response.citations().get(0).marker()).as("표기는 서버가 붙인다").isEqualTo("제7조");
         assertThat(response.citations().get(0).article()).isEqualTo("제7조 (회원의 구분)");
-        assertThat(response.citations().get(0).clause()).isEqualTo("6항");
+        assertThat(response.citations().get(0).clause()).as("번호 참조에는 항 정보가 없다").isNull();
         assertThat(response.applyStatus()).isEqualTo(RagApplyStatus.EFFECTIVE);
         assertThat(response.effectiveDate()).isEqualTo(LocalDate.of(2026, 3, 24));
     }
@@ -225,7 +240,7 @@ class AssistantServiceImplTest {
     void throwsAwayAnAnswerThatHasNoVerifiableCitation() {
         searchable(regulation());
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "제99조에 따라 자동으로 승격됩니다. [제99조]";
+        chatModel.answer = "발췌를 하나도 가리키지 않는 답입니다.";
 
         AssistantQueryResponse response = service.query(ask("정회원 승격 조건은?"), member);
 
@@ -246,7 +261,7 @@ class AssistantServiceImplTest {
         when(member.getName()).thenReturn("이지훈");
         searchable(regulation());
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "[제7조]";
+        chatModel.answer = "[1]";
 
         service.query(ask("정회원 승격 조건은?"), member);
 
@@ -256,7 +271,9 @@ class AssistantServiceImplTest {
         assertThat(system).contains("문서 발췌").contains("읽기 전용").contains("3~5문장");
         assertThat(user)
                 .contains("[문서 발췌]")
-                .contains("인용 표기: [제7조]")
+                .as("발췌마다 번호를 찍는 것이 인용 계약의 전부다 — 조 표기는 적어 주지 않는다(#447)")
+                .contains("--- 발췌 1 ---")
+                .doesNotContain("인용 표기")
                 .contains("[사용자 질문]\n정회원 승격 조건은?");
         assertThat(user).doesNotContain("이지훈");
         assertThat(chatModel.prompt.getOptions())
@@ -402,7 +419,7 @@ class AssistantServiceImplTest {
     void carriesTheEarlierTurnsIntoThePromptButNeverIntoTheSearch() {
         searchable(regulation());
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [1]";
 
         String conversationId = service.query(ask("정회원 승격 조건은?"), member).conversationId();
         service.query(ask("그럼 준회원은요?", conversationId), member);
@@ -413,7 +430,7 @@ class AssistantServiceImplTest {
         assertThat(prompt.get(1).getMessageType()).isEqualTo(MessageType.USER);
         assertThat(prompt.get(1).getText()).as("앞선 질문은 발췌 없이 그대로 남는다").isEqualTo("정회원 승격 조건은?");
         assertThat(prompt.get(2).getMessageType()).isEqualTo(MessageType.ASSISTANT);
-        assertThat(prompt.get(2).getText()).isEqualTo("정회원은 총회의 동의가 필요합니다. [제7조]");
+        assertThat(prompt.get(2).getText()).isEqualTo("정회원은 총회의 동의가 필요합니다. [1]");
         assertThat(prompt.get(3).getText()).contains("[문서 발췌]").contains("그럼 준회원은요?");
 
         ArgumentCaptor<SearchRequest> requests = ArgumentCaptor.forClass(SearchRequest.class);
@@ -435,7 +452,7 @@ class AssistantServiceImplTest {
         String conversationId = service.query(ask("주차장 이용 규정은?"), member).conversationId();
 
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [1]";
         service.query(ask("정회원 승격 조건은?", conversationId), member);
 
         assertThat(chatModel.prompt.getInstructions())
@@ -472,7 +489,7 @@ class AssistantServiceImplTest {
     void clearsTheConversationOnRequest() {
         searchable(regulation());
         when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
-        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [제7조]";
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [1]";
 
         String conversationId = service.query(ask("정회원 승격 조건은?"), member).conversationId();
         service.clearConversation(conversationId, member);
@@ -505,6 +522,155 @@ class AssistantServiceImplTest {
         assertThat(service.suggestions().questions())
                 .hasSize(AssistantSuggestions.MAX)
                 .allSatisfy(question -> assertThat(question).isNotBlank());
+    }
+
+    // ------------------------------------------------------------------ 스트리밍 (#447)
+
+    /*
+     * **흘려보낸 조각을 이어 붙이면 한 번에 받은 답과 글자 하나까지 같다.**
+     *
+     * 두 경로가 프롬프트·검색·인용 해석을 함께 쓴다는 사실이 여기서 드러난다 — 갈리면
+     * «스트리밍에서만 틀린 답»이 생기는데 골든셋은 한쪽만 본다.
+     */
+    @Test
+    void streamsTheSameAnswerItWouldHaveGivenAtOnce() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원 승격은 총회의 동의가 필요합니다. [1] 지어낸 것은 [9] 입니다.";
+
+        AssistantQueryResponse atOnce = service.query(ask("정회원 승격 조건은?"), member);
+
+        RecordingSink sink = new RecordingSink();
+        service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+        sink.await();
+
+        assertThat(sink.deltas).as("한 조각으로 몰아 보내지 않는다").hasSizeGreaterThan(1);
+        assertThat(sink.text()).isEqualTo(atOnce.answer());
+        assertThat(sink.done.answer()).isEqualTo(atOnce.answer());
+        assertThat(sink.done.answered()).isTrue();
+        assertThat(sink.done.citations()).isEqualTo(atOnce.citations());
+        assertThat(sink.done.applyStatus()).isEqualTo(atOnce.applyStatus());
+        assertThat(sink.done.effectiveDate()).isEqualTo(atOnce.effectiveDate());
+        assertThat(sink.text()).as("범위 밖 번호는 흘러나가기 전에 지워진다").doesNotContain("[9]");
+    }
+
+    /*
+     * **거절은 흘려보내지 않는다** — 근거가 없으면 모델을 부르지 않으므로 보낼 조각이 애초에
+     * 없고, `done` 하나가 정해진 안내 문구를 싣는다(§6.3). 화면이 할 일이 종전과 같다.
+     */
+    @Test
+    void refusesWithASingleDoneEventInsteadOfStreaming() {
+        when(ragDocumentRepository.findSearchable()).thenReturn(List.of());
+
+        RecordingSink sink = new RecordingSink();
+        service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+        sink.await();
+
+        assertThat(sink.deltas).isEmpty();
+        assertThat(sink.done.answered()).isFalse();
+        assertThat(sink.done.answer()).isEqualTo(AssistantPrompt.NO_EVIDENCE);
+        assertThat(sink.done.conversationId()).startsWith("7:");
+        assertThat(chatModel.calls).isZero();
+    }
+
+    /*
+     * ⚠️ **거절의 계단은 스트림이 열리기 전에 끝난다** — 그래서 예외로 나가고 상태 코드가 된다.
+     *
+     * 이것이 흐트러지면 «화면에 글자가 나오다가 사실은 한도 초과였다»가 성립한다. 413·404·503·
+     * 403·429가 모두 같은 자리이며 여기서는 그중 하나로 순서를 못 박는다.
+     */
+    @Test
+    void throwsTheRejectionLadderBeforeAnythingIsStreamed() {
+        RecordingSink sink = new RecordingSink();
+
+        assertThatThrownBy(() -> service.queryStreaming(ask("가".repeat(1001)), member, sink))
+                .isInstanceOf(GeneralException.class)
+                .hasMessageContaining("1000자");
+
+        assertThat(sink.deltas).isEmpty();
+        assertThat(sink.done).isNull();
+        assertThat(sink.failed).as("첫 바이트 전이라 오류 이벤트가 아니라 상태 코드다").isNull();
+    }
+
+    /*
+     * **흘려보내기 시작한 뒤의 실패는 예외가 아니라 오류 이벤트다** — 상태 코드를 바꿀 수 없는
+     * 자리라서다. 원문은 싣지 않는다(§11 — 모델 SDK의 예외 문장에 질문이 섞여 나온다).
+     */
+    @Test
+    void reportsAFailureAfterTheStreamOpenedAsAnErrorEvent() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.failure = new IllegalStateException("429 quota exceeded for 정회원 승격 조건은?");
+
+        RecordingSink sink = new RecordingSink();
+        service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+        sink.await();
+
+        assertThat(sink.failed).isEqualTo(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
+        assertThat(sink.done).isNull();
+    }
+
+    /*
+     * ⚠️ **흘려보낸 답은 회수하지 않는다** (#447).
+     *
+     * 모델이 출처를 하나도 달지 않으면 한 번에 받는 경로는 답을 통째로 버리는데(3차 방어선),
+     * 스트리밍에서는 그 글자가 이미 읽혔다 — 다른 문장으로 갈아치우는 것이 기각된 «사후 철회»다.
+     * 그래서 `answered: false`인데 `answer`가 흘려보낸 문장 그대로이고, 화면은 그 말풍선에
+     * «근거 없음»을 표시한다. **대화에는 담지 않는다** — 우리가 뒤에 서지 않는 문장이다.
+     */
+    @Test
+    void marksAnAnswerItAlreadyStreamedAsUngroundedInsteadOfTakingItBack() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "발췌를 하나도 가리키지 않는 답입니다.";
+
+        RecordingSink sink = new RecordingSink();
+        service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+        sink.await();
+
+        assertThat(sink.text()).isEqualTo("발췌를 하나도 가리키지 않는 답입니다.");
+        assertThat(sink.done.answered()).isFalse();
+        assertThat(sink.done.answer())
+                .as("정해진 안내 문구가 아니라 이미 나간 문장 그대로다")
+                .isEqualTo("발췌를 하나도 가리키지 않는 답입니다.");
+        assertThat(sink.done.citations()).isEmpty();
+        assertThat(sink.done.applyStatus()).isNull();
+        assertThat(conversations.history(sink.done.conversationId()))
+                .as("근거 없이 나간 답은 다음 턴의 본보기가 되지 않는다")
+                .isEmpty();
+    }
+
+    /*
+     * **받는 쪽이 사라지면 생성을 멈춘다** — 아무도 읽지 않는 답에 무료 쿼터를 쓰지 않는다(§11).
+     *
+     * 그리고 그때는 오류 이벤트도 보내지 않는다: 알릴 상대가 이미 없고, 공급자 장애로 세면 로그가
+     * «탭을 닫은 횟수»만큼 ERROR 로 채워진다.
+     */
+    @Test
+    void stopsGeneratingWhenTheReceiverIsGone() throws Exception {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "아주 긴 답변입니다. 그리고 계속 이어집니다. [1]";
+
+        CountDownLatch closed = new CountDownLatch(1);
+        List<String> delivered = new ArrayList<>();
+        RecordingSink sink =
+                new RecordingSink() {
+                    @Override
+                    public void delta(String text) {
+                        delivered.add(text);
+                        closed.countDown();
+                        throw new AssistantStreamClosedException();
+                    }
+                };
+
+        service.queryStreaming(ask("정회원 승격 조건은?"), member, sink);
+
+        assertThat(closed.await(5, TimeUnit.SECONDS)).isTrue();
+        Thread.sleep(50);
+        assertThat(delivered).as("첫 조각에서 구독이 끊긴다").hasSize(1);
+        assertThat(sink.done).isNull();
+        assertThat(sink.failed).as("알릴 상대가 없으므로 오류 이벤트도 없다").isNull();
     }
 
     // ------------------------------------------------------------------ 픽스처
@@ -633,7 +799,7 @@ class AssistantServiceImplTest {
      */
     private static final class RecordingChatModel implements ChatModel {
 
-        private String answer = "[제7조]";
+        private String answer = "[1]";
         private RuntimeException failure;
         private int calls;
         private Prompt prompt;
@@ -646,6 +812,66 @@ class AssistantServiceImplTest {
                 throw failure;
             }
             return new ChatResponse(List.of(new Generation(new AssistantMessage(answer))));
+        }
+
+        /*
+         * 흘려보내는 쪽 (#447) — **한 글자씩 낸다.** 조각을 크게 주면 «토큰이 조각 경계에 걸쳐
+         * 온다»는 스트리밍의 실제 조건을 한 번도 밟지 않는데, 인용 판정이 버텨야 하는 것이
+         * 바로 그 경계다.
+         */
+        @Override
+        public Flux<ChatResponse> stream(Prompt prompt) {
+            this.prompt = prompt;
+            this.calls++;
+            if (failure != null) {
+                return Flux.error(failure);
+            }
+            return Flux.fromStream(answer.chars().mapToObj(Character::toString))
+                    .map(
+                            piece ->
+                                    new ChatResponse(
+                                            List.of(new Generation(new AssistantMessage(piece)))));
+        }
+    }
+
+    /** 흘러나온 것을 그대로 받아 두는 수신자 — 컨트롤러가 SSE 로 하는 일의 알맹이만 */
+    private static class RecordingSink implements AssistantAnswerSink {
+
+        private final List<String> deltas = new ArrayList<>();
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private AssistantQueryResponse done;
+        private ErrorCode failed;
+
+        @Override
+        public void delta(String text) {
+            deltas.add(text);
+        }
+
+        @Override
+        public void done(AssistantQueryResponse response) {
+            this.done = response;
+            finished.countDown();
+        }
+
+        @Override
+        public void failed(ErrorCode errorCode) {
+            this.failed = errorCode;
+            finished.countDown();
+        }
+
+        /** 구독이 다른 스레드에서 도므로 기다린다 — 스텁이라 실제로는 곧바로 끝난다 */
+        RecordingSink await() {
+            try {
+                assertThat(finished.await(5, TimeUnit.SECONDS)).as("스트림이 끝나지 않았다").isTrue();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(interrupted);
+            }
+            return this;
+        }
+
+        String text() {
+            return String.join("", deltas);
         }
     }
 }

@@ -175,14 +175,19 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
-| `assistant` | 규정 도우미(RAG) — 문서(`rag_doc` · 판본 없음 ADR-0034) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · 평문 추출과 고정 길이 청커(**확장자가 유형을 단정하지 않는다** — 회칙이 아닌 `.md`는 거절이 아니라 평문으로 떨어진다, #445) · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · 인용 검증 · 추천 질문) · **질의 레이트 리밋**(회원 분·일 · 전역 분 · 인메모리) · **골든셋**(스텁 임베딩 · 지표 넷 · 회귀 표) · **대화**(힙 Caffeine · 대화 500개 · 24h 슬라이딩 · 서버가 발급하는 `{회원 식별자}:{탭 UUID}` · 질의 임베딩 캐시) | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
+| `assistant` | 규정 도우미(RAG) — 문서(`rag_doc` · 판본 없음 ADR-0034) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · 평문 추출과 고정 길이 청커(**확장자가 유형을 단정하지 않는다** — 회칙이 아닌 `.md`는 거절이 아니라 평문으로 떨어진다, #445) · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · **번호 참조 인용**과 그 해석 · 추천 질문) · **SSE 스트리밍**(`POST /v1/assistant/queries/stream` · 조각 단위 인용 판정 · 첫 바이트 전에 끝나는 거절 계단 · **`ApiResponse` 봉투의 유일한 예외**, #447) · **질의 레이트 리밋**(회원 분·일 · 전역 분 · 인메모리) · **골든셋**(스텁 임베딩 · 지표 넷 · 회귀 표) · **대화**(힙 Caffeine · 대화 500개 · 24h 슬라이딩 · 서버가 발급하는 `{회원 식별자}:{탭 UUID}` · 질의 임베딩 캐시) | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
 | `example` | 6계층 템플릿, `@Profile("local")` — 읽으라고 있는 것 | [domain/example/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/example/AGENTS.md) |
 
 ### 전역 — `global/`과 횡단 관심사
 
 - `global/config/R2Config` — Cloudflare R2(S3 호환 오브젝트 스토리지, ssccops#113) 연결용 `S3Client` 빈. R2 전용 SDK가 없어 AWS SDK v2의 S3 모듈을 그대로 쓰되, 리전은 R2가 요구하는 고정값 `"auto"`이고 `forcePathStyle(true)`가 필요하다(꺼져 있으면 R2가 모르는 가상 호스트 이름으로 요청이 나가 연결 자체가 실패한다). 같은 설정으로 `S3Presigner` 빈도 함께 만든다(#161 — 프리사이너에는 `forcePathStyle` 단축 설정이 없어 `S3Configuration.pathStyleAccessEnabled(true)`로 켠다). 두 빈의 엔드포인트·리전이 갈리면 서명은 성공하는데 R2가 거절하는 URL이 나가고, 그 실패는 서버 로그가 아니라 브라우저에서만 보인다.
   - 첫 사용처인 행사 본문 이미지 업로드·읽기 리다이렉트의 규칙은 `domain/event/AGENTS.md`에 있다.
-- `global/apipayload` — 모든 API 응답의 공통 껍데기.
+- `global/apipayload` — 모든 API 응답의 공통 껍데기. **예외가 하나 있다** — 규정 도우미의 SSE
+  스트리밍(`POST /v1/assistant/queries/stream`, #447)은 이벤트에 봉투를 씌우지 않는다. 봉투가
+  «요청 하나에 응답 하나»를 전제로 `success`·`code`·`message`를 매기는데 SSE 는 한 응답 안에서
+  이벤트가 여러 번 나가 그 셋이 조각마다 되풀이될 뿐이기 때문이며, 대신 **오류 이벤트만은 봉투와
+  같은 필드 이름**(`code`·`message`)을 써 화면의 오류 처리를 두 벌로 만들지 않는다. 그 경로에서도
+  **첫 바이트 전의 거절은 종전대로 상태 코드 + 봉투**다 — 예외는 «열린 스트림 안»에만 있다.
   - `ApiResponse<T>` — 생성자는 private, `success`/`successWithNoData`/`created`/`fail` 정적 팩토리로만 생성.
   - `code/success/SuccessCode`, `code/error/ErrorCode` — 인터페이스이며 `CommonErrorCode`가 전역 에러를 구현하고, 도메인 전용 에러가 필요하면 같은 방식으로 도메인 패키지 아래 `code/error` enum을 구현한다. 새 에러를 추가할 때 전역(`CommonErrorCode`)에 넣을지 도메인 전용 enum에 넣을지 먼저 판단할 것.
   - `exception/GeneralException` — 서비스 레이어에서 던지는 표준 예외, `ErrorCode`를 감싼다.

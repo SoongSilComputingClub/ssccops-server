@@ -25,6 +25,8 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,8 +54,10 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.support.AssistantGoldenSet.Golden;
 import org.sscc.ssccopsserver.support.LexicalRagChunkStore;
 
+import reactor.core.publisher.Flux;
+
 /*
- * 검색·답변 골든셋 — **실제 문서 세 벌 · 스텁 임베딩 · Gemini 없음** (#405 · 기획안 §14.2).
+ * 검색·답변 골든셋 — **실제 문서 세 벌 · 스텁 임베딩 · Gemini 없음** (#405 · #447 · 기획안 §14.2).
  *
  * ══ 무엇을 재는 자리인가 ═══════════════════════════════════════
  *
@@ -67,6 +71,15 @@ import org.sscc.ssccopsserver.support.LexicalRagChunkStore;
  * | 인용 정확도 | ≥ 0.95 | {@link #citesTheExpectedEvidence()} |
  * | **올바른 거절률** | **1.0** | {@link #refusesEveryQuestionTheCorpusCannotAnswer()} |
  * | p95 질의 응답 시간 | < 5s | {@link #staysWellUnderTheLatencyBudget()} |
+ *
+ * ══ 번호 참조 뒤 «인용 정확도»가 재는 것 (#447) ═════════════════
+ *
+ * 시험지의 정답지({@code AssistantGoldenSet.ANSWERABLE})는 여전히 `제7조`·`부칙 제3조` 같은
+ * **표기 문자열**이다. 달라진 것은 **누가 그 문자열을 썼는가**다 — 예전에는 모델의 출력이었고
+ * 지금은 서버가 청크에서 만든 값이다({@code AssistantCitationResponse.marker()}). 그래서 이
+ * 지표는 「모델이 조 번호를 옳게 옮겨 적었는가」가 아니라 **「검색이 올려 준 근거가 모델이 고른
+ * 번호를 거쳐 옳은 인용으로 오는가」**를 잰다. 앞의 물음은 번호 참조로 **사라진 물음**이다 —
+ * 모델이 쓸 수 있는 값이 `1..N`뿐이라 틀린 조 번호가 발생할 자리가 없다.
  *
  * ══ «스텁 임베딩»이 무엇이고 무엇을 못 하는가 ═══════════════════
  *
@@ -385,9 +398,9 @@ class RetrievalGoldenSetTest {
     // ------------------------------------------------------------------ 3차 방어선
 
     /*
-     * **모델이 지어낸 인용은 목록에서도 본문에서도 사라진다**(§6.3).
+     * **범위를 벗어난 번호는 목록에서도 본문에서도 사라진다**(§6.3 · #447).
      *
-     * 목록에서만 빼면 문장에 `[제99조]`가 남아 화면이 «근거가 있는 문장»으로 읽는다 — 인용 카드가
+     * 목록에서만 빼면 문장에 `[99]`가 남아 화면이 «근거가 있는 문장»으로 읽는다 — 인용 카드가
      * 없다는 것을 알아채는 사람은 없다. 맞는 인용까지 함께 버리지 않는 것도 같은 무게로 본다.
      */
     @Test
@@ -398,10 +411,15 @@ class RetrievalGoldenSetTest {
             AssistantQueryResponse response = ask(CORPUS_A, golden.question());
 
             assertThat(response.answered()).as(golden.question()).isTrue();
-            assertThat(response.answer()).as(golden.question()).doesNotContain("제99조", "p.99");
+            assertThat(response.answer())
+                    .as(golden.question())
+                    .doesNotContain("[99]", "[98]", "[97]");
+            assertThat(response.citations())
+                    .as(golden.question())
+                    .extracting(AssistantCitationResponse::ref)
+                    .allSatisfy(ref -> assertThat(ref).isBetween(1, policy.getTopK()));
             assertThat(citedMarkers(response))
                     .as(golden.question())
-                    .doesNotContain("제99조", "부칙 제99조", "p.99")
                     .containsAnyElementsOf(golden.expected());
         }
     }
@@ -445,32 +463,78 @@ class RetrievalGoldenSetTest {
         }
     }
 
+    // ------------------------------------------------------------------ 스트리밍 회귀 (#447)
+
+    /*
+     * **흘려보낸 답이 한 번에 받은 답과 같다 — 시험지 전체에서.**
+     *
+     * #447이 두 경로를 남겨 둔 대가가 «한쪽에만 생기는 회귀»인데, 지표를 재는 것은 한 번에 받는
+     * 경로다(위 넷). 그래서 같은 질문들을 흘려보내며 한 번 더 물어 **답·인용·판본이 전부 같은지**
+     * 본다 — 여기가 어긋나면 위의 지표가 화면이 보는 답을 더는 말하지 않는다.
+     */
+    @Test
+    void streamingGivesTheSameAnswersAsTheOneShotPath() {
+        for (Golden golden : ANSWERABLE) {
+            AssistantQueryResponse atOnce = ask(CORPUS_A, golden.question());
+            StreamCollector streamed = askStreaming(CORPUS_A, golden.question());
+
+            assertThat(streamed.text()).as(golden.question()).isEqualTo(atOnce.answer());
+            assertThat(streamed.done.answered()).as(golden.question()).isTrue();
+            assertThat(streamed.done.citations())
+                    .as(golden.question())
+                    .isEqualTo(atOnce.citations());
+            assertThat(streamed.done.applyStatus()).isEqualTo(atOnce.applyStatus());
+            assertThat(streamed.done.effectiveDate()).isEqualTo(atOnce.effectiveDate());
+        }
+    }
+
+    /* **근거가 없으면 한 글자도 나가지 않는다** — 임계값 거절은 스트림이 열리기 전에 끝난다 */
+    @Test
+    void streamsNothingAtAllForAQuestionTheCorpusCannotAnswer() {
+        for (String question : UNANSWERABLE) {
+            StreamCollector streamed = askStreaming(CORPUS_A, question);
+
+            assertThat(streamed.deltas).as(question).isEmpty();
+            assertThat(streamed.done.answered()).as(question).isFalse();
+            assertThat(streamed.done.answer()).isEqualTo(AssistantPrompt.NO_EVIDENCE);
+        }
+        assertThat(chatModel.calls()).as("근거가 없으면 모델을 부르지 않는다 — 1차 방어선").isZero();
+    }
+
     // ------------------------------------------------------------------ 픽스처
 
     private AssistantQueryResponse ask(LexicalRagChunkStore store, String question) {
+        return service(store).query(new AssistantQueryRequest(question, null), member);
+    }
+
+    private AssistantServiceImpl service(LexicalRagChunkStore store) {
         RagDocumentEntity[] searchable =
                 store == CORPUS_A
                         ? new RagDocumentEntity[] {REGULATION, GUIDELINE}
                         : new RagDocumentEntity[] {REGULATION, CURRENT_PDF};
         when(ragDocumentRepository.findSearchable()).thenReturn(List.of(searchable));
 
-        AssistantServiceImpl service =
-                new AssistantServiceImpl(
-                        new AssistantFeature(true),
-                        policy,
-                        new AssistantRateLimiter(
-                                10_000,
-                                100_000,
-                                100_000,
-                                Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), ZoneOffset.UTC)),
-                        new AssistantSuggestions(),
-                        new CitationVerifier(policy),
-                        conversations(),
-                        ragDocumentRepository,
-                        provider(store),
-                        provider(ChatClient.builder(chatModel).build()));
+        return new AssistantServiceImpl(
+                new AssistantFeature(true),
+                policy,
+                new AssistantRateLimiter(
+                        10_000,
+                        100_000,
+                        100_000,
+                        Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), ZoneOffset.UTC)),
+                new AssistantSuggestions(),
+                new CitationVerifier(policy),
+                conversations(),
+                ragDocumentRepository,
+                provider(store),
+                provider(ChatClient.builder(chatModel).build()));
+    }
 
-        return service.query(new AssistantQueryRequest(question, null), member);
+    /** 같은 질의를 흘려보내며 — 조각과 마지막 응답을 모은다 */
+    private StreamCollector askStreaming(LexicalRagChunkStore store, String question) {
+        StreamCollector collector = new StreamCollector();
+        service(store).queryStreaming(new AssistantQueryRequest(question, null), member, collector);
+        return collector.await();
     }
 
     /*
@@ -492,28 +556,15 @@ class RetrievalGoldenSetTest {
                         .build());
     }
 
-    /** 응답의 인용을 <b>모델이 옮겨 쓴 표기 모양으로</b> 되돌린다 — 정답지와 견주는 축을 하나로 둔다 */
-    private static List<String> citedMarkers(AssistantQueryResponse response) {
-        return response.citations().stream()
-                .map(
-                        citation ->
-                                citation.citationType() == CitationType.ARTICLE
-                                        ? articleMarker(citation)
-                                        : pageMarker(citation))
-                .toList();
-    }
-
     /*
-     * 응답의 `article`은 «제3조 (의결의 순서)»이고 **부칙이면 그 앞에 «부칙 »이 이미 붙어 있다**
-     * (`RegulationChunk.citation()`). 표기는 제목을 뺀 앞부분이므로 부칙은 두 어절, 본칙은 한 어절이다.
+     * 응답의 인용을 정답지와 같은 축으로 — <b>서버가 만든 표기 그대로다</b> (#447).
+     *
+     * 예전에는 `article`·`page`에서 표기 모양을 되짜 맞췄는데, 번호 참조로 바뀌며 그 표기가
+     * <b>응답에 그대로 실려 온다</b>({@code marker}). 되짜 맞추는 코드를 남겨 두면 «서버가 만든
+     * 표기»와 «테스트가 만든 표기» 둘이 되어, 정작 틀렸을 때 어느 쪽이 틀렸는지 알 수 없다.
      */
-    private static String articleMarker(AssistantCitationResponse citation) {
-        String[] words = citation.article().split(" ");
-        return Boolean.TRUE.equals(citation.supplementary()) ? words[0] + " " + words[1] : words[0];
-    }
-
-    private static String pageMarker(AssistantCitationResponse citation) {
-        return citation.page() == null ? citation.docTitle() : "p." + citation.page();
+    private static List<String> citedMarkers(AssistantQueryResponse response) {
+        return response.citations().stream().map(AssistantCitationResponse::marker).toList();
     }
 
     private static List<String> markers(List<LexicalRagChunkStore.Scored> scored, int count) {
@@ -587,6 +638,45 @@ class RetrievalGoldenSetTest {
         return mock;
     }
 
+    /** 흘러나온 조각과 마지막 응답 — 컨트롤러가 SSE 로 하는 일의 알맹이만 */
+    private static final class StreamCollector implements AssistantAnswerSink {
+
+        private final List<String> deltas = new ArrayList<>();
+        private final CountDownLatch finished = new CountDownLatch(1);
+        private AssistantQueryResponse done;
+
+        @Override
+        public void delta(String text) {
+            deltas.add(text);
+        }
+
+        @Override
+        public void done(AssistantQueryResponse response) {
+            this.done = response;
+            finished.countDown();
+        }
+
+        @Override
+        public void failed(org.sscc.ssccopsserver.global.apipayload.code.error.ErrorCode code) {
+            finished.countDown();
+            throw new AssertionError("골든셋에서 모델이 실패할 자리가 없다 — " + code.getCode());
+        }
+
+        StreamCollector await() {
+            try {
+                assertThat(finished.await(5, TimeUnit.SECONDS)).as("스트림이 끝나지 않았다").isTrue();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(interrupted);
+            }
+            return this;
+        }
+
+        String text() {
+            return String.join("", deltas);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static <T> ObjectProvider<T> provider(T bean) {
         ObjectProvider<T> provider = mock(ObjectProvider.class);
@@ -595,21 +685,25 @@ class RetrievalGoldenSetTest {
     }
 
     /*
-     * 모델 자리의 스텁 — **프롬프트에 적힌 「인용 표기」를 읽어 그대로 옮겨 쓴다.**
+     * 모델 자리의 스텁 — **프롬프트에 찍힌 발췌 번호를 읽어 그대로 옮겨 쓴다** (#447).
      *
      * 발췌 목록을 밖에서 받지 않고 프롬프트에서 읽는 것이 요점이다: 실제 모델이 보는 것이 그
-     * 문자열뿐이라, 프롬프트가 표기를 적어 주지 않게 되는 순간 이 스텁도 인용하지 못한다 —
-     * 「표기를 먼저 적어 준다」가 인용 검증의 전제이므로(`AssistantPrompt.user`) 그 전제가
+     * 문자열뿐이라, 프롬프트가 번호를 찍어 주지 않게 되는 순간 이 스텁도 인용하지 못한다 —
+     * 「발췌마다 번호를 찍는다」가 인용 해석의 전제이므로(`AssistantPrompt.user`) 그 전제가
      * 깨지면 골든셋이 먼저 무너지는 것이 맞다.
+     *
+     * 날조하는 모델은 **범위 밖 번호**를 덧붙인다. 옛 계약에서는 `[제99조]`처럼 없는 조를 지어낼
+     * 수 있었는데 번호 참조에서는 그 자리가 «있지도 않은 발췌를 가리킨다»로 바뀌었다 — 지어낼
+     * 수 있는 것의 모양이 이렇게까지 좁아진 것이 #447이 한 일이다.
      */
     private static final class GoldenChatModel implements ChatModel {
 
         /** 실제 모델이 가장 기대는 자리 — 상위 셋만 인용한다. 전부 인용하면 인용 정확도가 검색 적중과 같은 값이 된다 */
         private static final int CITED = 3;
 
-        private static final Pattern MARKER = Pattern.compile("인용 표기: \\[([^\\]]+)]");
+        private static final Pattern EXCERPT = Pattern.compile("--- 발췌 (\\d+) ---");
 
-        private static final List<String> INVENTED = List.of("제99조", "부칙 제99조", "p.99");
+        private static final List<String> INVENTED = List.of("99", "98", "97");
 
         private int calls;
         private boolean invent;
@@ -620,12 +714,12 @@ class RetrievalGoldenSetTest {
             calls++;
             StringBuilder answer = new StringBuilder("규정에 따르면 다음과 같습니다.");
             if (!citeNothing) {
-                for (String marker : markersIn(prompt)) {
-                    answer.append(" 자세한 내용은 [").append(marker).append("]에 있습니다.");
+                for (String number : numbersIn(prompt)) {
+                    answer.append(" 자세한 내용은 [").append(number).append("]에 있습니다.");
                 }
                 if (invent) {
-                    for (String marker : INVENTED) {
-                        answer.append(" 그리고 [").append(marker).append("]도 함께 봅니다.");
+                    for (String number : INVENTED) {
+                        answer.append(" 그리고 [").append(number).append("]도 함께 봅니다.");
                     }
                 }
             }
@@ -633,16 +727,28 @@ class RetrievalGoldenSetTest {
                     List.of(new Generation(new AssistantMessage(answer.toString()))));
         }
 
-        private List<String> markersIn(Prompt prompt) {
-            List<String> markers = new ArrayList<>();
+        /** 조각으로 흘려보내는 쪽 — 한 글자씩 낸다. 토큰이 조각 경계에 걸치는 것이 요점이다(#447) */
+        @Override
+        public Flux<ChatResponse> stream(Prompt prompt) {
+            String answer = call(prompt).getResult().getOutput().getText();
+            calls--; // call(...)이 이미 세었다
+            return Flux.fromStream(answer.chars().mapToObj(Character::toString))
+                    .map(
+                            piece ->
+                                    new ChatResponse(
+                                            List.of(new Generation(new AssistantMessage(piece)))));
+        }
+
+        private List<String> numbersIn(Prompt prompt) {
+            List<String> numbers = new ArrayList<>();
             for (Message message : prompt.getInstructions()) {
                 Matcher matcher =
-                        MARKER.matcher(message.getText() == null ? "" : message.getText());
-                while (matcher.find() && markers.size() < CITED) {
-                    markers.add(matcher.group(1));
+                        EXCERPT.matcher(message.getText() == null ? "" : message.getText());
+                while (matcher.find() && numbers.size() < CITED) {
+                    numbers.add(matcher.group(1));
                 }
             }
-            return markers;
+            return numbers;
         }
 
         void invent() {

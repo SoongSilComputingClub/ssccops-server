@@ -6,7 +6,7 @@ import java.util.List;
 import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
 
 /*
- * 질의 한 건의 답 (#403 · #406 · 기획안 §6.3 · §7.4).
+ * 질의 한 건의 답 (#403 · #406 · #447 · 기획안 §6.3 · §7.4).
  *
  * ══ `answered`가 이 기능의 가장 중요한 필드다 ═══════════════════
  *
@@ -16,6 +16,15 @@ import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
  *
  * 화면이 «참고용» 배지를 달고 약한 답을 내보내는 길은 기각했다. 배지는 읽히지 않고 문장은
  * 읽힌다.
+ *
+ * ⚠️ **스트리밍에는 그 기각이 닿지 않는 자리가 하나 있다** (#447 · {@link #ungrounded}). 글자가
+ * 이미 나간 뒤에 «검증을 통과한 인용이 없다»가 확정되면 문장을 회수할 방법이 없다 — 그때만
+ * `answered: false`인데 `answer`가 정해진 안내 문구가 아니라 **모델이 낸 문장 그대로**이며,
+ * 화면은 그 말풍선에 «근거 없음»을 표시한다. 한 번에 받는 경로(`POST /v1/assistant/queries`)에는
+ * 이 경우가 없다 — 거기서는 여전히 답을 통째로 버린다.
+ *
+ * 번호 참조(#447)로 바뀐 뒤 이 경우는 «모델이 출처를 하나도 달지 않았을 때»로 좁아졌다. 옛
+ * 계약에서 흔한 실패였던 «없는 조를 지어낸다»는 범위 검사가 애초에 막는다.
  *
  * ══ 판본 배지의 재료 ════════════════════════════════════════════
  *
@@ -68,5 +77,18 @@ public record AssistantQueryResponse(
      */
     public static AssistantQueryResponse unanswered(String guidance, String conversationId) {
         return new AssistantQueryResponse(guidance, List.of(), null, null, false, conversationId);
+    }
+
+    /**
+     * <b>스트리밍 전용</b> — 흘려보낸 답에 검증을 통과한 인용이 하나도 없었다 (#447).
+     *
+     * <p>{@code answered}는 {@code false}이고 {@code citations}는 빈 배열이지만 <b>{@code answer}가 정해진 안내 문구가
+     * 아니라 이미 화면에 나간 문장 그대로다</b> — 흘려보낸 글자는 되돌릴 수 없고, 다 읽은 문장을 다른 문장으로 갈아치우는 것이 «사후 철회»라 기각된 길이기
+     * 때문이다. 화면이 할 일은 그 말풍선에 «근거 없음»을 표시하는 것이다.
+     *
+     * <p>한 번에 받는 경로에는 이 경우가 없다 — 아직 아무것도 나가지 않았으므로 {@link #unanswered}로 통째로 버린다.
+     */
+    public static AssistantQueryResponse ungrounded(String answer, String conversationId) {
+        return new AssistantQueryResponse(answer, List.of(), null, null, false, conversationId);
     }
 }

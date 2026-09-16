@@ -23,28 +23,49 @@ import org.sscc.ssccopsserver.domain.assistant.repository.RagDocumentRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
+import reactor.core.Exceptions;
+import reactor.core.scheduler.Schedulers;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /*
- * 질의 한 건 — 검색 → (근거가 있으면) 생성 → 인용 검증 (#403 · 기획안 §6).
+ * 질의 한 건 — 검색 → (근거가 있으면) 생성 → 인용 해석 (#403 · #447 · 기획안 §6).
  *
  * ══ 방어선이 셋이고 순서가 중요하다 ═════════════════════════════
  *
  *   1차  **임계값을 넘는 청크가 없으면 모델을 부르지 않는다.** 프롬프트의 «모르면 모른다고
  *        하라»는 지시를 모델은 종종 어기는데, **아예 부르지 않으면 어길 수 없다.**
  *   2차  프롬프트가 다섯 규칙을 건다(`AssistantPrompt`).
- *   3차  **모델이 단 인용을 실제 청크와 대조한다**(`CitationVerifier`). 통과한 것이 하나도
- *        없으면 그 답을 통째로 버리고 거절 문구를 내린다 — 출처 없는 규정 답변은 틀린 답보다
- *        나쁘다(§6.1).
+ *   3차  **모델이 쓴 출처가 우리가 넣어 준 발췌의 번호인지 본다**(`CitationVerifier`).
+ *        범위 밖이면 그 토큰은 본문에서도 사라진다.
  *
  * **거절이 이 기능의 가장 중요한 동작이다.** 운영진이 답변을 근거로 사람의 자격을 판단한다.
+ *
+ * ══ 답이 두 모양으로 나간다 — 아래가 같고 위만 다르다 (#447) ════
+ *
+ * | | 무엇이 | 실패가 어디로 |
+ * |---|---|---|
+ * | `query` | 다 만들고 한 번에 | 전부 상태 코드 |
+ * | `queryStreaming` | 조각을 흘려보내고 마지막에 인용·판본 | **첫 바이트 전**은 상태 코드, 그 뒤는 오류 이벤트 |
+ *
+ * **검색·프롬프트·인용 해석은 한 벌이다**(`prepare` · `AssistantPrompt` · `CitationVerifier`) —
+ * 갈리면 «스트리밍에서만 틀린 답»이 생기고 골든셋은 한쪽만 본다.
+ *
+ * ⚠️ **거절의 계단은 스트림이 열리기 전에 끝난다.** 404·413·503·403·429와 «근거 없음»은 모두
+ * `prepare` 안에서 판정되며, 그래서 SSE 로 바꾸고도 그 응답들이 종전 그대로 상태 코드로 나간다.
+ * 순서를 흐트러뜨리면 «화면에 글자가 나오다가 사실은 한도 초과였다»가 성립한다.
+ *
+ * ⚠️ **흘려보낸 뒤에는 답을 버리지 않는다.** 인용이 하나도 확인되지 않은 답을 통째로 버리는 것은
+ * `query`의 동작이고, 스트리밍에서는 그 글자가 이미 읽혔으므로 회수하지 않고 «근거 없음»으로
+ * 표시한다(`AssistantQueryResponse.ungrounded`). 번호 참조 뒤 그 경우는 «출처를 하나도 달지
+ * 않은 답»으로 좁아졌다 — 옛 계약에서 흔했던 «없는 조를 지어낸다»는 범위 검사가 애초에 막는다.
  *
  * ══ 그 앞에 레이트 리밋이 있다 ══════════════════════════════════
  *
  * 위 셋이 «무엇을 답할 것인가»의 방어선이라면 `AssistantRateLimiter`는 «얼마나 답할 것인가»의
  * 방어선이다(#404 · §11). 무료 쿼터가 API 키 단위의 공유 자원이라 한 사람의 루프가 전원의
- * 답변을 멈춘다 — 그래서 **모델을 부르기 전에** 429로 끊는다. 순서의 이유는 `query` 안에 있다.
+ * 답변을 멈춘다 — 그래서 **모델을 부르기 전에** 429로 끊는다. 순서의 이유는 `prepare` 안에 있다.
  *
  * ══ 검색 조건은 둘이고 «조회 뒤 if»가 아니다 ════════════════════
  *
@@ -63,7 +84,8 @@ import lombok.extern.slf4j.Slf4j;
  * 판본 목록을 읽는 것만 트랜잭션이고(`searchableDocuments`), 임베딩·생성은 그 밖에서 돈다 —
  * 색인 워커가 같은 이유로 트랜잭션을 셋으로 쪼갠 자리이며(#400), Supabase Free의 커넥션을 Gemini
  * 왕복 동안 쥐고 있을 수 없다(ssccops#324). 그래서 엔티티를 들고 나가지 않고
- * `SearchableDocument`로 옮겨 담는다.
+ * `SearchableDocument`로 옮겨 담는다. **스트리밍에서는 더 그렇다** — 그 구간이 요청 스레드조차
+ * 아니다.
  *
  * ══ 대화는 생성의 맥락이고 검색의 재료가 아니다 (#406) ═════════
  *
@@ -72,7 +94,8 @@ import lombok.extern.slf4j.Slf4j;
  * 기각한 길은 `AssistantConversations`에 있다.
  *
  * **한 턴은 답했을 때만 남는다.** 거절과 오류는 이력에 닿지 않으므로, 이어 묻는 사람이 보는
- * 맥락에는 「찾지 못했습니다」가 섞이지 않는다.
+ * 맥락에는 「찾지 못했습니다」가 섞이지 않는다. **근거 없이 흘러나간 답도 담지 않는다** — 우리가
+ * 뒤에 서지 않는 문장을 다음 턴의 본보기로 두지 않는다.
  *
  * ══ 남기지 않는 것 ═════════════════════════════════════════════
  *
@@ -109,76 +132,52 @@ public class AssistantServiceImpl implements AssistantService {
 
     @Override
     public AssistantQueryResponse query(AssistantQueryRequest request, MemberEntity member) {
-        assistantFeature.requireEnabled();
-
-        /*
-         * **거절의 순서가 곧 «무엇을 아껴야 하는가»의 순서다** — 뒤로 갈수록 값비싼 자원을
-         * 건드린다. 한도(429)를 맨 뒤에 두는 것은 그 앞의 넷이 전부 **쿼터를 한 톨도 쓰지 않는
-         * 거절**이기 때문이다: 기능이 꺼져 있거나(404), 질문이 상한을 넘었거나(413), 키가 없어
-         * 배선이 서지 않았거나(503), 남의 대화를 넣은(403 · #406) 요청은 애초에 Gemini에 닿지
-         * 못하므로 그 사람의 한도를 깎을 이유가 없다. 여기를 지난 요청만이 임베딩을 부른다.
-         */
-        String question = requireAskable(request.question());
-        RagChunkStore chunkStore = require(ragChunkStore);
-        ChatClient chatClient = require(assistantChatClient);
-        String conversationId = conversations.open(member.getId(), request.conversationId());
-        rateLimiter.requireWithinQuota(member.getId());
-
-        Instant startedAt = Instant.now();
-
-        Map<Long, SearchableDocument> searchable = searchableDocuments();
-        if (searchable.isEmpty()) {
-            /*
-             * **새 환경의 기본 상태가 여기다**(§12.5 — 코퍼스는 업로드로만 들어온다). 시행 중인
-             * 문서가 하나도 없으면 검색할 것이 없으므로 임베딩조차 부르지 않는다.
-             */
-            return refuse(member, "시행 중인 규정 문서가 없다", 0, conversationId);
+        Prepared prepared = prepare(request, member);
+        if (prepared.refusal() != null) {
+            return prepared.refusal();
         }
 
-        /*
-         * **이번 질문 하나로 검색한다** — 이력은 생성에만 들어간다(`AssistantConversations`).
-         */
-        List<RetrievedChunk> chunks = retrieve(question, searchable, chunkStore);
-        if (chunks.isEmpty()) {
-            return refuse(member, "임계값을 넘는 청크가 없다", 0, conversationId);
+        CitationVerifier.Session session = citationVerifier.open(prepared.chunks());
+        session.accept(generate(prepared));
+        session.finish();
+        return conclude(prepared, session, false);
+    }
+
+    /*
+     * 흘려보내는 답 (#447).
+     *
+     * **`prepare`가 돌아올 때까지는 아무것도 나가지 않았다** — 그래서 그 안의 거절은 예외로 던져
+     * `GlobalExceptionHandler`가 상태 코드로 받는다(계단이 `query`와 글자 하나까지 같다).
+     * 그 뒤부터 응답은 열려 있으므로 실패도 오류 이벤트다.
+     *
+     * ⚠️ **구독을 우리 손으로 다른 스레드에 올린다**(`subscribeOn`). Spring AI 1.1.8의
+     * `GoogleGenAiChatModel.internalStream`이 이미 `boundedElastic`에 올리고 있지만 그것은
+     * **라이브러리 내부 결정이라 버전이 오르며 바뀔 수 있고**, 그 줄이 사라지면 여기서 요청
+     * 스레드가 생성이 끝날 때까지 붙들린다 — 그러면 `SseEmitter`가 조각을 모았다가 한 번에
+     * 내보내므로 **화면에서는 스트리밍이 아니었던 것처럼 보이고** 아무도 원인을 찾지 못한다
+     * (MCP 가 `immediateExecution`을 못 박아 둔 것과 같은 자리 · `global/mcp`).
+     */
+    @Override
+    public void queryStreaming(
+            AssistantQueryRequest request, MemberEntity member, AssistantAnswerSink sink) {
+
+        Prepared prepared = prepare(request, member);
+        if (prepared.refusal() != null) {
+            sink.done(prepared.refusal());
+            return;
         }
 
-        List<Message> history = conversations.history(conversationId);
-        CitationVerifier.Verified verified =
-                citationVerifier.verify(generate(chatClient, question, chunks, history), chunks);
-        if (verified.citations().isEmpty()) {
-            /*
-             * 모델이 답은 했는데 **검증을 통과한 인용이 하나도 없다.** 근거 없는 규정 답변을
-             * 내보내지 않는다 — 사용자에게는 「찾지 못했다」와 같은 문구이고(화면이 할 일이
-             * 같다), 둘을 가르는 값은 이 로그에만 남는다.
-             */
-            return refuse(member, "모델의 답에서 검증을 통과한 인용이 없다", chunks.size(), conversationId);
-        }
-
-        /*
-         * **답한 턴만 담는다**(#406). 거절이 이력에 남으면 다음 턴의 맥락에 「찾지 못했습니다」가
-         * 섞이고, 그것이 모델에게는 이 대화의 본보기가 된다.
-         */
-        conversations.remember(conversationId, question, verified.answer());
-
-        SearchableDocument primary = verified.citations().get(0).source();
-        log.info(
-                "규정 도우미 답변 — mbrId={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준문서={} 소요={}ms",
-                member.getId(),
-                history.size() / 2,
-                chunks.size(),
-                verified.citations().size(),
-                verified.dropped(),
-                primary.name(),
-                Duration.between(startedAt, Instant.now()).toMillis());
-
-        return new AssistantQueryResponse(
-                verified.answer(),
-                verified.responses(),
-                primary.applyStatus(),
-                primary.effectiveFrom(),
-                true,
-                conversationId);
+        CitationVerifier.Session session = citationVerifier.open(prepared.chunks());
+        prompt(prepared).stream()
+                .content()
+                .subscribeOn(Schedulers.boundedElastic())
+                .subscribe(
+                        delta -> emit(sink, session.accept(delta)),
+                        failure -> failed(prepared, sink, failure),
+                        () -> {
+                            emit(sink, session.finish());
+                            sink.done(conclude(prepared, session, true));
+                        });
     }
 
     /*
@@ -211,6 +210,163 @@ public class AssistantServiceImpl implements AssistantService {
     }
 
     /*
+     * ── 첫 바이트 전에 끝나는 것 전부 ─────────────────────────────
+     *
+     * **거절의 순서가 곧 «무엇을 아껴야 하는가»의 순서다** — 뒤로 갈수록 값비싼 자원을
+     * 건드린다. 한도(429)를 맨 뒤에 두는 것은 그 앞의 넷이 전부 **쿼터를 한 톨도 쓰지 않는
+     * 거절**이기 때문이다: 기능이 꺼져 있거나(404), 질문이 상한을 넘었거나(413), 키가 없어
+     * 배선이 서지 않았거나(503), 남의 대화를 넣은(403 · #406) 요청은 애초에 Gemini에 닿지
+     * 못하므로 그 사람의 한도를 깎을 이유가 없다. 여기를 지난 요청만이 임베딩을 부른다.
+     *
+     * **두 경로가 이 메서드를 함께 쓴다**(#447) — 스트리밍이 이 계단을 따로 갖게 되는 순간
+     * 한쪽에만 빠진 층이 생기고, 그 고장은 «어떤 경로로 물었는가»에 따라 나타났다 사라진다.
+     */
+    private Prepared prepare(AssistantQueryRequest request, MemberEntity member) {
+        assistantFeature.requireEnabled();
+
+        String question = requireAskable(request.question());
+        RagChunkStore chunkStore = require(ragChunkStore);
+        ChatClient chatClient = require(assistantChatClient);
+        String conversationId = conversations.open(member.getId(), request.conversationId());
+        rateLimiter.requireWithinQuota(member.getId());
+
+        long memberId = member.getId();
+        Instant startedAt = Instant.now();
+
+        Map<Long, SearchableDocument> searchable = searchableDocuments();
+        if (searchable.isEmpty()) {
+            /*
+             * **새 환경의 기본 상태가 여기다**(§12.5 — 코퍼스는 업로드로만 들어온다). 시행 중인
+             * 문서가 하나도 없으면 검색할 것이 없으므로 임베딩조차 부르지 않는다.
+             */
+            return Prepared.refused(refuse(memberId, "시행 중인 규정 문서가 없다", 0, conversationId));
+        }
+
+        /*
+         * **이번 질문 하나로 검색한다** — 이력은 생성에만 들어간다(`AssistantConversations`).
+         */
+        List<RetrievedChunk> chunks = retrieve(question, searchable, chunkStore);
+        if (chunks.isEmpty()) {
+            return Prepared.refused(refuse(memberId, "임계값을 넘는 청크가 없다", 0, conversationId));
+        }
+
+        return new Prepared(
+                memberId,
+                question,
+                conversationId,
+                chatClient,
+                chunks,
+                conversations.history(conversationId),
+                startedAt,
+                null);
+    }
+
+    /*
+     * ── 다 흘러나온 뒤 ───────────────────────────────────────────
+     *
+     * 인용이 하나도 확인되지 않았을 때 **두 경로의 답이 갈리는 유일한 자리**다: 아직 아무것도
+     * 나가지 않았으면 답을 통째로 버리고(3차 방어선), 이미 나갔으면 회수하지 않고 «근거 없음»을
+     * 싣는다(#447 · `AssistantQueryResponse.ungrounded`). 어느 쪽이든 **대화에는 담지 않는다.**
+     */
+    private AssistantQueryResponse conclude(
+            Prepared prepared, CitationVerifier.Session session, boolean streamed) {
+
+        CitationVerifier.Verified verified = session.verified();
+        if (verified.citations().isEmpty()) {
+            /*
+             * 모델이 답은 했는데 **우리가 넣어 준 발췌를 하나도 가리키지 않았다.** 근거 없는 규정
+             * 답변을 우리 이름으로 내보내지 않는다 — 사용자에게는 「찾지 못했다」와 같은 문구이고
+             * (화면이 할 일이 같다), 둘을 가르는 값은 이 로그에만 남는다.
+             */
+            if (streamed && !verified.answer().isEmpty()) {
+                log.info(
+                        "규정 도우미 근거 없는 답을 흘려보냈다 — mbrId={} 발췌={} 버린인용={}",
+                        prepared.memberId(),
+                        prepared.chunks().size(),
+                        verified.dropped());
+                return AssistantQueryResponse.ungrounded(
+                        verified.answer(), prepared.conversationId());
+            }
+            return refuse(
+                    prepared.memberId(),
+                    "모델의 답에서 검증을 통과한 인용이 없다",
+                    prepared.chunks().size(),
+                    prepared.conversationId());
+        }
+
+        /*
+         * **답한 턴만 담는다**(#406). 거절이 이력에 남으면 다음 턴의 맥락에 「찾지 못했습니다」가
+         * 섞이고, 그것이 모델에게는 이 대화의 본보기가 된다.
+         */
+        conversations.remember(prepared.conversationId(), prepared.question(), verified.answer());
+
+        SearchableDocument primary = verified.citations().get(0).source();
+        log.info(
+                "규정 도우미 답변 — mbrId={} 방식={} 이력={}턴 발췌={} 인용={} 버린인용={} 기준문서={} 소요={}ms",
+                prepared.memberId(),
+                streamed ? "스트리밍" : "일괄",
+                prepared.history().size() / 2,
+                prepared.chunks().size(),
+                verified.citations().size(),
+                verified.dropped(),
+                primary.name(),
+                Duration.between(prepared.startedAt(), Instant.now()).toMillis());
+
+        return new AssistantQueryResponse(
+                verified.answer(),
+                verified.responses(),
+                primary.applyStatus(),
+                primary.effectiveFrom(),
+                true,
+                prepared.conversationId());
+    }
+
+    /** 빈 조각은 내보내지 않는다 — 판정에 붙들린 글자만 있었다는 뜻이라 이벤트를 만들 이유가 없다 */
+    private void emit(AssistantAnswerSink sink, String text) {
+        if (!text.isEmpty()) {
+            sink.delta(text);
+        }
+    }
+
+    /*
+     * 흘려보내는 도중의 실패.
+     *
+     * **보내는 쪽이 닫힌 것과 공급자가 실패한 것을 가른다** — 앞은 알릴 상대가 이미 없어 로그 한
+     * 줄이고, 뒤는 화면이 «일시적으로 답할 수 없어요»를 그려야 하므로 오류 이벤트다. Reactor가
+     * onNext 안의 예외를 감싸 올리므로 원인 사슬을 풀어 본다.
+     */
+    private void failed(Prepared prepared, AssistantAnswerSink sink, Throwable failure) {
+        Throwable cause = Exceptions.unwrap(failure);
+        if (closedByReceiver(cause)) {
+            log.info("규정 도우미 스트림이 도중에 닫혔다 — mbrId={}", prepared.memberId());
+            return;
+        }
+        /*
+         * 공급자 장애·타임아웃·쿼터. **원문을 응답에 싣지 않는다** — 모델 SDK의 예외 문장에는
+         * 요청 본문 일부가 섞여 나오고 그 본문이 곧 사용자의 질문이다(§11). 로그에는 남긴다.
+         */
+        log.error("규정 도우미 모델 스트림이 실패했다 — 발췌={}", prepared.chunks().size(), cause);
+        sink.failed(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
+    }
+
+    /*
+     * Reactor는 `onNext` 안에서 난 예외를 제 나름대로 감싸 올린다(`Operators.onOperatorError`) —
+     * `Exceptions.unwrap`이 아는 껍데기만 벗겨지므로 **원인 사슬까지 훑는다.** 놓치면 탭을 닫은
+     * 요청 하나가 `ASSISTANT_UPSTREAM_FAILED` ERROR 로그를 남겨 «공급자 장애»로 보인다.
+     */
+    private boolean closedByReceiver(Throwable failure) {
+        for (Throwable at = failure; at != null; at = at.getCause()) {
+            if (at instanceof AssistantStreamClosedException) {
+                return true;
+            }
+            if (at.getCause() == at) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /*
      * 볼 수 있는 판본을 **식별자 → 값**으로.
      *
      * **`@Transactional`을 걸지 않는다.** 질의가 하나뿐이라 리포지토리 자신의 트랜잭션으로
@@ -232,6 +388,10 @@ public class AssistantServiceImpl implements AssistantService {
      * 저장소에는 가장 느슨한 임계값으로 긁는다(`searchThreshold`). 유형별 판정을 검색 안에서 할
      * 수 없기 때문인데(요청 하나에 임계값 하나다), 그 대신 돌아온 청크를 유형별로 다시 재는
      * 것은 안전하다 — 「덜 보여 준다」 방향이라 새어 나갈 것이 없다.
+     *
+     * ⚠️ **여기서 만들어진 목록의 순서가 곧 인용 번호다**(#447). 모델이 쓰는 `[3]`은 이 목록의
+     * 세 번째이며, 프롬프트에 찍는 번호(`AssistantPrompt.user`)와 해석(`CitationVerifier`)이
+     * 같은 목록을 본다 — 사이에서 걸러 내거나 다시 정렬하면 인용이 조용히 어긋난다.
      */
     private List<RetrievedChunk> retrieve(
             String question, Map<Long, SearchableDocument> searchable, RagChunkStore chunkStore) {
@@ -267,8 +427,8 @@ public class AssistantServiceImpl implements AssistantService {
     }
 
     /*
-     * 생성 — **도구를 붙이지 않는다.** 인젝션이 성공해도 할 수 있는 것이 «이상한 답을 한다»
-     * 뿐이라는 성질이 이 기능의 경계이며(§6.4), `.tools(...)`를 여기 들이는 순간 그 경계가
+     * 프롬프트 조립 — **도구를 붙이지 않는다.** 인젝션이 성공해도 할 수 있는 것이 «이상한 답을
+     * 한다» 뿐이라는 성질이 이 기능의 경계이며(§6.4), `.tools(...)`를 여기 들이는 순간 그 경계가
      * 사라진다.
      *
      * 시스템·사용자 텍스트에 변수를 넘기지 않으므로 Spring AI의 템플릿 렌더러를 **지나지
@@ -276,31 +436,32 @@ public class AssistantServiceImpl implements AssistantService {
      * 깨지지 않는 것이 그 덕이고, 여기에 `.param(...)`을 더하면 그 성질이 사라진다. 앞선 턴들도
      * `Message` 그대로 실려 같은 이유로 렌더링을 지나지 않는다.
      *
-     * 프롬프트의 순서는 **시스템 → 이력 → 이번 발췌·질문**이다(`.messages(...)`가 그 가운데에
-     * 들어간다 · #406). 이력이 비면 목록째 건너뛰므로 첫 질문의 프롬프트는 #403 그대로다.
+     * 순서는 **시스템 → 이력 → 이번 발췌·질문**이다(`.messages(...)`가 그 가운데에 들어간다 ·
+     * #406). 이력이 비면 목록째 건너뛰므로 첫 질문의 프롬프트는 #403 그대로다.
+     *
+     * **한 번에 받는 길과 흘려보내는 길이 이 메서드를 함께 쓴다** — 갈라 두면 «스트리밍에서만
+     * 다른 규칙으로 답하는» 상태가 조용히 성립한다.
      */
-    private String generate(
-            ChatClient chatClient,
-            String question,
-            List<RetrievedChunk> chunks,
-            List<Message> history) {
+    private ChatClient.ChatClientRequestSpec prompt(Prepared prepared) {
+        return prepared.chatClient()
+                .prompt()
+                .system(AssistantPrompt.SYSTEM)
+                .messages(prepared.history())
+                .user(AssistantPrompt.user(prepared.question(), prepared.chunks()));
+    }
+
+    /** 한 번에 받는 생성. 실패는 그대로 503이다 — 아직 아무것도 나가지 않았다 */
+    private String generate(Prepared prepared) {
         try {
-            String answer =
-                    chatClient
-                            .prompt()
-                            .system(AssistantPrompt.SYSTEM)
-                            .messages(history)
-                            .user(AssistantPrompt.user(question, chunks))
-                            .call()
-                            .content();
-            return answer == null ? "" : answer.strip();
+            String answer = prompt(prepared).call().content();
+            return answer == null ? "" : answer;
 
         } catch (RuntimeException exception) {
             /*
              * 공급자 장애·타임아웃·쿼터. **원문을 응답에 싣지 않는다** — 모델 SDK의 예외 문장에는
              * 요청 본문 일부가 섞여 나오고 그 본문이 곧 사용자의 질문이다(§11). 로그에는 남긴다.
              */
-            log.error("규정 도우미 모델 호출이 실패했다 — 발췌={}", chunks.size(), exception);
+            log.error("규정 도우미 모델 호출이 실패했다 — 발췌={}", prepared.chunks().size(), exception);
             throw new GeneralException(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
         }
     }
@@ -309,13 +470,18 @@ public class AssistantServiceImpl implements AssistantService {
      * 거절 — **정해진 문구 · 빈 배열 · 판본 없음**(§6.3). 이유는 로그에만 남는다: 사용자에게
      * «모델이 근거 없는 답을 했습니다»라고 말할 이유가 없고, 화면이 할 일은 세 경우 모두 같다.
      *
+     * **그래서 «검증기가 답을 버린 횟수»는 이 로그로만 센다** (#447). 지표(Micrometer)를 따로 달지
+     * 않은 것은 dev·prod 모두 export 가 꺼져 있어(루트 AGENTS.md «관측성») 그 수가 아무 데도
+     * 닿지 않기 때문이다 — 지금 그 수를 읽을 수 있는 곳은 Kibana 뿐이고, 사유가 문장에 그대로
+     * 실려 있어 셀 수 있다.
+     *
      * **대화 식별자는 싣고 이력에는 담지 않는다** — 화면은 이 값으로 이어 물어야 하지만(#406),
      * 「찾지 못했습니다」는 다음 턴이 기댈 맥락이 아니다.
      */
     private AssistantQueryResponse refuse(
-            MemberEntity member, String reason, int chunkCount, String conversationId) {
+            long memberId, String reason, int chunkCount, String conversationId) {
 
-        log.info("규정 도우미 거절 — mbrId={} 사유={} 발췌={}", member.getId(), reason, chunkCount);
+        log.info("규정 도우미 거절 — mbrId={} 사유={} 발췌={}", memberId, reason, chunkCount);
         return AssistantQueryResponse.unanswered(AssistantPrompt.NO_EVIDENCE, conversationId);
     }
 
@@ -341,5 +507,26 @@ public class AssistantServiceImpl implements AssistantService {
             throw new GeneralException(AssistantErrorCode.ASSISTANT_UNAVAILABLE);
         }
         return bean;
+    }
+
+    /**
+     * 첫 바이트 전 판정이 끝난 질의 하나 (#447).
+     *
+     * <p>{@code refusal}이 있으면 <b>모델을 부르지 않는다</b> — 그 값이 곧 응답이고, 다른 칸은 비어 있다. 회원 엔티티를 들고 다니지 않는 것은 이
+     * 값이 요청 스레드 밖에서 읽히기 때문이다(준영속 엔티티의 지연 로딩 필드를 거기서 건드리면 터진다 · {@code SearchableDocument}와 같은 판단).
+     */
+    private record Prepared(
+            long memberId,
+            String question,
+            String conversationId,
+            ChatClient chatClient,
+            List<RetrievedChunk> chunks,
+            List<Message> history,
+            Instant startedAt,
+            AssistantQueryResponse refusal) {
+
+        static Prepared refused(AssistantQueryResponse refusal) {
+            return new Prepared(0, null, null, null, List.of(), List.of(), null, refusal);
+        }
     }
 }

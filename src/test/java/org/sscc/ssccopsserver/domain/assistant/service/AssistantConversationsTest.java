@@ -38,18 +38,19 @@ class AssistantConversationsTest {
 
     private static final int MAX_TURNS = 20;
 
+    private static final Clock CLOCK =
+            Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), ZoneOffset.UTC);
+
     private final AssistantConversations conversations =
             new AssistantConversations(
                     MessageWindowChatMemory.builder()
                             .chatMemoryRepository(
-                                    new AssistantMemoryStore(
-                                            500,
-                                            Duration.ofHours(24),
-                                            Clock.fixed(
-                                                    Instant.parse("2026-09-15T01:00:00Z"),
-                                                    ZoneOffset.UTC)))
+                                    new AssistantMemoryStore(500, Duration.ofHours(24), CLOCK))
                             .maxMessages(MAX_TURNS * 2)
-                            .build());
+                            .build(),
+                    500,
+                    Duration.ofHours(24),
+                    CLOCK);
 
     // ------------------------------------------------------------------ 식별자는 서버가 만든다
 
@@ -126,7 +127,7 @@ class AssistantConversationsTest {
     void remembersTheQuestionAndTheAnswerAndNothingElse() {
         String conversationId = conversations.open(MEMBER, null);
 
-        conversations.remember(conversationId, "정회원 승격 조건은?", "총회의 동의가 필요합니다. [제7조]");
+        conversations.remember(conversationId, "정회원 승격 조건은?", "총회의 동의가 필요합니다. [제7조]", null);
 
         List<Message> history = conversations.history(conversationId);
         assertThat(history).hasSize(2);
@@ -148,7 +149,7 @@ class AssistantConversationsTest {
 
         for (int turn = 1; turn <= 25; turn++) {
             conversations.remember(
-                    conversationId, "질문 %02d".formatted(turn), "답 %02d".formatted(turn));
+                    conversationId, "질문 %02d".formatted(turn), "답 %02d".formatted(turn), null);
         }
 
         List<Message> history = conversations.history(conversationId);
@@ -169,7 +170,7 @@ class AssistantConversationsTest {
     @Test
     void clearsTheHistoryButNotTheRightToKeepAsking() {
         String conversationId = conversations.open(MEMBER, null);
-        conversations.remember(conversationId, "정회원 승격 조건은?", "총회의 동의가 필요합니다. [제7조]");
+        conversations.remember(conversationId, "정회원 승격 조건은?", "총회의 동의가 필요합니다. [제7조]", null);
 
         conversations.clear(MEMBER, conversationId);
 
@@ -188,7 +189,7 @@ class AssistantConversationsTest {
     @Test
     void refusesToClearSomeoneElsesConversation() {
         String someoneElses = conversations.open(9L, null);
-        conversations.remember(someoneElses, "질문", "답");
+        conversations.remember(someoneElses, "질문", "답", null);
 
         assertThatThrownBy(() -> conversations.clear(MEMBER, someoneElses))
                 .isInstanceOf(GeneralException.class)
@@ -196,5 +197,62 @@ class AssistantConversationsTest {
                 .isEqualTo(AssistantErrorCode.ASSISTANT_CONVERSATION_FORBIDDEN);
 
         assertThat(conversations.history(someoneElses)).as("남의 이력은 그대로다").hasSize(2);
+    }
+
+    // ------------------------------------------------------------------ 기준 조 (#465)
+
+    /* 이어 묻기가 「그 다음 조」를 풀려면 앞 턴이 무엇을 근거로 답했는지를 알아야 한다 */
+    @Test
+    void remembersTheArticleThatTheAnsweredTurnLeanedOn() {
+        String conversationId = conversations.open(MEMBER, null);
+
+        conversations.remember(conversationId, "제3조 알려줘", "본부는 숭실대학교 안에 둡니다. [1]", article(3));
+
+        assertThat(conversations.anchor(conversationId)).isEqualTo(article(3));
+    }
+
+    /* 첫 턴에는 기준점이 없다 — 그때 상대 표현은 풀리지 않고 그것이 맞다 */
+    @Test
+    void hasNoAnchorBeforeTheFirstAnsweredTurn() {
+        assertThat(conversations.anchor(conversations.open(MEMBER, null))).isNull();
+    }
+
+    /*
+     * **조항이 아닌 근거로 답한 턴이 사슬을 끊지 않는다.** 평문 문서 하나를 사이에 두고
+     * 「그 다음 조는?」이라고 물어도 앞의 조가 기준점으로 남아 있어야 한다.
+     */
+    @Test
+    void keepsThePreviousAnchorWhenATurnHasNoArticle() {
+        String conversationId = conversations.open(MEMBER, null);
+        conversations.remember(conversationId, "제3조 알려줘", "본부는 … [1]", article(3));
+
+        conversations.remember(conversationId, "총회 안내 문서는?", "요약은 … [1]", null);
+
+        assertThat(conversations.anchor(conversationId)).isEqualTo(article(3));
+    }
+
+    /* 대화마다 따로다 — 옆 탭의 기준점이 넘어오면 엉뚱한 조가 핀으로 박힌다 */
+    @Test
+    void keepsAnchorsApartBetweenConversations() {
+        String one = conversations.open(MEMBER, null);
+        String other = conversations.open(MEMBER, null);
+        conversations.remember(one, "제3조 알려줘", "… [1]", article(3));
+
+        assertThat(conversations.anchor(other)).isNull();
+    }
+
+    /* `↺`는 이력만이 아니라 기준점도 지운다 — 남으면 «처음 화면»에서 「그 다음 조」가 풀린다 */
+    @Test
+    void clearsTheAnchorTogetherWithTheHistory() {
+        String conversationId = conversations.open(MEMBER, null);
+        conversations.remember(conversationId, "제3조 알려줘", "… [1]", article(3));
+
+        conversations.clear(MEMBER, conversationId);
+
+        assertThat(conversations.anchor(conversationId)).isNull();
+    }
+
+    private static ArticleReference article(int number) {
+        return new ArticleReference(number, null, false);
     }
 }

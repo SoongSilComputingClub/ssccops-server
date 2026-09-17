@@ -356,6 +356,31 @@ tasks.register('geminiCheck', JavaExec) {
 }
 
 // ============================================================================
+// 규정 도우미 실측 벤치마크 (#465). **로컬 DB에 적재된 코퍼스**와 실제 Gemini 임베딩으로
+// 시험지 한 벌(`AssistantBenchmarkSet`)을 돌려 검색 재현율을 잰다 — 고치기 전후를 나란히
+// 놓는 것이 이 도구의 쓸모다.
+//
+//   ./gradlew ragBench -Pargs="--label=before"
+//   ./gradlew ragBench -Pargs="--only=B"
+//   ./gradlew ragBench -Pargs="--label=after --compare=build/rag-bench/before.tsv"
+//   ./gradlew ragBench -Pargs="--only=B --answer"     # 실제 채팅 모델까지 (쿼터를 쓴다)
+//
+// geminiCheck·r2Check와 같은 자리에 둔다 — 실제 자격증명과 적재된 DB가 있어야만 답이 나온다.
+// ============================================================================
+tasks.register('ragBench', JavaExec) {
+    group = 'verification'
+    description = '규정 도우미 검색·답변 벤치마크 (로컬 DB + 실제 임베딩)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.sscc.ssccopsserver.tools.RagBenchmark'
+    if (!envVars.isEmpty()) {
+        environment(envVars)
+    }
+    if (project.hasProperty('args')) {
+        args project.property('args').toString().split(' ').findAll { it }
+    }
+}
+
+// ============================================================================
 // Test
 // ============================================================================
 tasks.named('test') {

@@ -254,8 +254,14 @@ public class AssistantServiceImpl implements AssistantService {
 
         /*
          * **이번 질문 하나로 검색한다** — 이력은 생성에만 들어간다(`AssistantConversations`).
+         *
+         * 이력에서 넘어오는 것은 임베딩이 아니라 **조 번호 하나**다(#465) — 「그 다음 조」처럼
+         * 홀로 서지 못하는 질문이 가리키는 조를 여기서 확정하고, 검색어는 글자 하나 바뀌지
+         * 않는다. 기준점이 없으면(첫 턴) 종전과 완전히 같다.
          */
-        List<RetrievedChunk> chunks = retrieve(question, searchable, chunkStore);
+        List<ArticleReference> articles =
+                ArticleReference.references(question, conversations.anchor(conversationId));
+        List<RetrievedChunk> chunks = retrieve(question, articles, searchable, chunkStore);
         timeline.retrieved();
         if (chunks.isEmpty()) {
             return Prepared.refused(
@@ -268,6 +274,7 @@ public class AssistantServiceImpl implements AssistantService {
                 conversationId,
                 chatClient,
                 chunks,
+                articles,
                 conversations.history(conversationId),
                 timeline,
                 null);
@@ -313,7 +320,11 @@ public class AssistantServiceImpl implements AssistantService {
          * **답한 턴만 담는다**(#406). 거절이 이력에 남으면 다음 턴의 맥락에 「찾지 못했습니다」가
          * 섞이고, 그것이 모델에게는 이 대화의 본보기가 된다.
          */
-        conversations.remember(prepared.conversationId(), prepared.question(), verified.answer());
+        conversations.remember(
+                prepared.conversationId(),
+                prepared.question(),
+                verified.answer(),
+                anchorOf(prepared, verified));
 
         SearchableDocument primary = verified.citations().get(0).source();
         log.info(
@@ -338,6 +349,27 @@ public class AssistantServiceImpl implements AssistantService {
                 primary.effectiveFrom(),
                 true,
                 prepared.conversationId());
+    }
+
+    /*
+     * 다음 턴이 「그 다음 조」를 풀 기준점 (#465).
+     *
+     * **모델이 첫 번째로 든 근거의 조다.** 질문에 적힌 조가 아니라 답이 실제로 기댄 조인 것은,
+     * 조 번호 없이 물은 턴(「정회원 승격 조건은?」)도 기준점을 세워야 하기 때문이다 — 그 근거는
+     * 질문이 모르고 답만 안다.
+     *
+     * 그 인용이 조항이 아니면(평문 문서) **이번 질의가 푼 조로 내려간다.** 둘 다 없으면 {@code
+     * null}이고, 그때 {@code AssistantConversations.remember}는 앞의 기준점을 지우지 않는다.
+     */
+    private static ArticleReference anchorOf(
+            Prepared prepared, CitationVerifier.Verified verified) {
+        int ref = verified.citations().get(0).response().ref();
+        RetrievedChunk cited = prepared.chunks().get(ref - 1);
+        Integer number = cited.articleNumber();
+        if (number != null) {
+            return new ArticleReference(number, cited.articleBranchNumber(), cited.supplementary());
+        }
+        return prepared.articles().isEmpty() ? null : prepared.articles().get(0);
     }
 
     /*
@@ -478,7 +510,10 @@ public class AssistantServiceImpl implements AssistantService {
      * 같은 목록을 본다 — 사이에서 걸러 내거나 다시 정렬하면 인용이 조용히 어긋난다.
      */
     private List<RetrievedChunk> retrieve(
-            String question, Map<Long, SearchableDocument> searchable, RagChunkStore chunkStore) {
+            String question,
+            List<ArticleReference> articles,
+            Map<Long, SearchableDocument> searchable,
+            RagChunkStore chunkStore) {
 
         /*
          * ⚠️ **`List<Object>`로 선언해야 한다.** `FilterExpressionBuilder.in`에는
@@ -496,9 +531,11 @@ public class AssistantServiceImpl implements AssistantService {
          * 질문이 조를 지목하면 **그 조를 먼저 확보한다** (#457). 벡터 검색에 맡기면 조 번호가
          * 식별자로 잡히지 않아 밀려난다 — 「회칙 제3조는 무엇을 정하고 있어?」의 1위가 부칙
          * 제4조이고 정답이 8위였다. 지목은 그 자체로 근거이므로 **점수로 버리지 않는다.**
+         *
+         * 지목이 「제3조」로 적혀 있든 「그 다음 조」로 적혀 있든 여기서는 같다 — 푸는 일은
+         * `prepare`가 끝냈고(#465), 몇 개인지도 거기서 정해졌다.
          */
-        ArticleReference article = ArticleReference.parse(question);
-        if (article != null) {
+        for (ArticleReference article : articles) {
             collect(
                     chunkStore.search(pinnedArticle(question, documentIds, article)),
                     searchable,
@@ -520,7 +557,7 @@ public class AssistantServiceImpl implements AssistantService {
                     "규정 도우미 검색이 비었다 — 저장소={} 임계값={} 조지목={}",
                     found.size(),
                     policy.searchThreshold(),
-                    article);
+                    articles);
         }
         return chunks;
     }
@@ -716,12 +753,14 @@ public class AssistantServiceImpl implements AssistantService {
             String conversationId,
             ChatClient chatClient,
             List<RetrievedChunk> chunks,
+            List<ArticleReference> articles,
             List<Message> history,
             QueryTimeline timeline,
             AssistantQueryResponse refusal) {
 
         static Prepared refused(AssistantQueryResponse refusal) {
-            return new Prepared(0, null, null, null, List.of(), List.of(), null, refusal);
+            return new Prepared(
+                    0, null, null, null, List.of(), List.of(), List.of(), null, refusal);
         }
     }
 

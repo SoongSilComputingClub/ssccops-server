@@ -4,6 +4,7 @@ import static java.time.ZoneOffset.UTC;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -87,17 +88,18 @@ class AssistantServiceImplTest {
      * 대화는 **진짜를 쓴다** — 우리 힙에 있고 가벼우며, 확인하려는 것이 «이력이 프롬프트의
      * 어디에 실리는가»라 목으로 두면 그 자리가 보이지 않는다(#406).
      */
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), UTC);
+
     private final AssistantConversations conversations =
             new AssistantConversations(
                     MessageWindowChatMemory.builder()
                             .chatMemoryRepository(
-                                    new AssistantMemoryStore(
-                                            500,
-                                            Duration.ofHours(24),
-                                            Clock.fixed(
-                                                    Instant.parse("2026-09-15T01:00:00Z"), UTC)))
+                                    new AssistantMemoryStore(500, Duration.ofHours(24), CLOCK))
                             .maxMessages(40)
-                            .build());
+                            .build(),
+                    500,
+                    Duration.ofHours(24),
+                    CLOCK);
 
     private final AssistantServiceImpl service = service(true);
 
@@ -519,6 +521,48 @@ class AssistantServiceImplTest {
         assertThat(requests.getAllValues().get(1).getQuery())
                 .as("검색어는 이번 질문 하나다")
                 .isEqualTo("그럼 준회원은요?");
+    }
+
+    /*
+     * **이어 묻기가 「그 다음 조」를 푼다** (#465).
+     *
+     * 넘어오는 것은 임베딩이 아니라 **조 번호 하나**다 — 검색어는 여전히 이번 질문 그대로이고,
+     * 바뀌는 것은 핀의 조건뿐이다(위 테스트가 지키는 계약을 깨지 않는다). 기준점은 **앞 턴이
+     * 실제로 인용한 조**라, 질문에 조 번호가 없었어도 선다.
+     */
+    @Test
+    void resolvesTheNextArticleFromWhatTheEarlierTurnCited() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [1]";
+
+        String conversationId = service.query(ask("정회원 승격 조건은?"), member).conversationId();
+        service.query(ask("그 다음 조는 무슨 내용이야?", conversationId), member);
+
+        ArgumentCaptor<SearchRequest> requests = ArgumentCaptor.forClass(SearchRequest.class);
+        verify(ragChunkStore, atLeast(3)).search(requests.capture());
+
+        SearchRequest pinned = requests.getAllValues().get(1);
+        assertThat(pinned.getFilterExpression().toString())
+                .as("앞 턴이 인용한 제7조의 다음 조가 핀으로 걸린다")
+                .contains(RagChunkMetadata.ARTICLE_NUMBER)
+                .contains("value=8");
+        assertThat(pinned.getQuery()).as("검색어는 이번 질문 그대로다").isEqualTo("그 다음 조는 무슨 내용이야?");
+    }
+
+    /*
+     * **기준점이 없으면 아무 일도 하지 않는다.** 첫 턴에 「그 다음 조」를 물으면 지어낼 기준이
+     * 없으므로 핀 없이 밀집 검색만 돈다 — 엉뚱한 조를 근거로 세우는 것보다 낫다.
+     */
+    @Test
+    void doesNotInventAnAnchorOnTheFirstTurn() {
+        searchable(regulation());
+        when(ragChunkStore.search(any())).thenReturn(List.of(articleChunk(7, 0.8)));
+        chatModel.answer = "정회원은 총회의 동의가 필요합니다. [1]";
+
+        service.query(ask("그 다음 조는 무슨 내용이야?"), member);
+
+        verify(ragChunkStore, times(1)).search(any());
     }
 
     /*

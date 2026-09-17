@@ -595,17 +595,16 @@ class RetrievalGoldenSetTest {
      * 맥락으로 들어가 **지표가 질문 순서에 따라 달라진다**(#406).
      */
     private AssistantConversations conversations() {
+        Clock clock = Clock.fixed(Instant.parse("2026-09-15T01:00:00Z"), ZoneOffset.UTC);
         return new AssistantConversations(
                 MessageWindowChatMemory.builder()
                         .chatMemoryRepository(
-                                new AssistantMemoryStore(
-                                        500,
-                                        Duration.ofHours(24),
-                                        Clock.fixed(
-                                                Instant.parse("2026-09-15T01:00:00Z"),
-                                                ZoneOffset.UTC)))
+                                new AssistantMemoryStore(500, Duration.ofHours(24), clock))
                         .maxMessages(40)
-                        .build());
+                        .build(),
+                500,
+                Duration.ofHours(24),
+                clock);
     }
 
     /*

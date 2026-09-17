@@ -1,17 +1,23 @@
 package org.sscc.ssccopsserver.domain.assistant.service;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.assistant.code.error.AssistantErrorCode;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
-import lombok.RequiredArgsConstructor;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Scheduler;
 
 /*
  * 대화 — 식별자를 발급하고, 이력을 꺼내고, 한 턴을 담는다 (#406 · 기획안 §7).
@@ -47,23 +53,55 @@ import lombok.RequiredArgsConstructor;
  * `AssistantMemoryStore`의 `maximumSize`다. **둘이 함께 있어야 §8.1의 12MB가 성립한다** —
  * Spring AI의 기본 배선은 앞의 것만 있고 뒤의 것이 없다.
  *
- * ══ 검색어는 이번 질문 하나다 ═══════════════════════════════════
+ * ══ 검색어는 이번 질문 하나다 — 기준 조 하나만 예외다 (#465) ══
  *
  * 대화는 **답변 생성의 맥락**이지 검색의 재료가 아니다. 이전 질문을 검색어에 이어 붙이는 안은
  * 택하지 않았다 — 임베딩이 두 주제 사이로 끌려가 **맞는 청크가 임계값 아래로 내려가는데**, 그
  * 실패가 «근거를 찾지 못했다»로만 보여 아무도 원인을 찾지 못한다. 모델로 질문을 다시 쓰는 안은
  * 질의 한 건의 Gemini 호출을 둘에서 셋으로 늘린다(레이트 리밋이 «두 번»을 전제로 잡힌 값이다).
- * 그래서 이어 말한 질문이 홀로 서지 못하면 거절되며, **그 거절이 안전한 실패다**(§6.1).
- * 필요가 실제로 확인되면 골든셋(§14.2)에 그 질문을 넣고 재 본 뒤에 손댄다.
+ *
+ * **그 둘은 여전히 기각이고, 넘어오는 것은 임베딩이 아니라 조 번호 하나다**({@link #anchor}).
+ * 「그 다음 조」가 거절로 떨어지던 것을 골든셋이 아니라 **실측 벤치마크**가 먼저 잡았고
+ * (`./gradlew ragBench` · 이어 묻기 6/11), 고친 자리는 검색어가 아니라 **조 지목 핀**이다 —
+ * 검색어는 글자 하나 바뀌지 않으므로 위 문단이 걱정한 «두 주제 사이로 끌려가는 임베딩»이
+ * 일어나지 않는다. 푸는 방법은 {@code ArticleReference}에 있다.
+ *
+ * ══ 기준 조는 «답한 턴이 실제로 근거로 삼은 조»다 ═══════════════
+ *
+ * 앞 질문의 글자에서 뽑지 않는 것은 그 질문에 조 번호가 없을 수 있기 때문이다 — 「정회원 승격
+ * 조건은?」 뒤의 「그 다음 조는?」이 그렇다. 근거(제7조)는 **답변이 알고 질문은 모른다.**
+ *
+ * **이력과 따로 두되 함께 지운다.** 캐시가 둘인 것은 이력이 Spring AI 의 {@code ChatMemory}
+ * 계약이라 «메시지 목록»밖에 담지 못해서이고, 두 캐시의 손잡이(개수·TTL)를 같은 값으로 맞춰
+ * 한쪽만 살아남는 창을 좁힌다. 살아남더라도 잃는 것은 «맥락 없는 대화에 기준 조가 남아 있다»
+ * 하나이고, 그때도 상대 표현이 없는 질문은 영향을 받지 않는다.
  */
 @Component
-@RequiredArgsConstructor
 public class AssistantConversations {
 
     /** 서버가 발급한 값만 통과한다 — {@code {회원 식별자}:{탭 UUID}} */
     private static final String SEPARATOR = ":";
 
     private final ChatMemory memory;
+
+    /** 대화별 «지금 보고 있는 조». 손잡이는 이력과 같은 값을 쓴다(클래스 주석) */
+    private final Cache<String, ArticleReference> anchors;
+
+    public AssistantConversations(
+            ChatMemory memory,
+            @Value("${ssccops.assistant.memory.max-conversations}") long maxConversations,
+            @Value("${ssccops.assistant.memory.ttl}") Duration ttl,
+            Clock clock) {
+
+        this.memory = memory;
+        this.anchors =
+                Caffeine.newBuilder()
+                        .maximumSize(maxConversations)
+                        .expireAfterAccess(ttl)
+                        .ticker(() -> TimeUnit.MILLISECONDS.toNanos(clock.millis()))
+                        .scheduler(Scheduler.systemScheduler())
+                        .build();
+    }
 
     /**
      * 이어 갈 대화를 정한다 — 요청이 비었으면 새로 발급하고, 보냈으면 <b>내 것인지 본다</b>.
@@ -85,15 +123,26 @@ public class AssistantConversations {
         return memory.get(conversationId);
     }
 
+    /** 이어 묻기가 「그 다음 조」를 풀 기준점 — 아직 없거나 조항을 근거로 답한 적이 없으면 {@code null} */
+    ArticleReference anchor(String conversationId) {
+        return anchors.getIfPresent(conversationId);
+    }
+
     /**
      * 한 턴을 담는다 — <b>답한 질의에서만 부른다</b>.
      *
      * <p>담기는 것은 사람이 친 질문과 검증을 통과한 답변 둘뿐이다(클래스 주석). 턴 상한을 넘으면 {@code MessageWindowChatMemory}가 오래된
      * 것부터 덜어낸다.
+     *
+     * <p>{@code anchor}가 {@code null}이면 <b>앞의 기준 조를 지우지 않고 그대로 둔다</b>. 조항이 아닌 근거로 답한 턴(평문 문서) 하나가
+     * 「제14조 …」 → 「총회 안내는?」 → 「그 다음 조는?」의 사슬을 끊지 않게 하기 위해서다.
      */
-    public void remember(String conversationId, String question, String answer) {
+    void remember(String conversationId, String question, String answer, ArticleReference anchor) {
         memory.add(
                 conversationId, List.of(new UserMessage(question), new AssistantMessage(answer)));
+        if (anchor != null) {
+            anchors.put(conversationId, anchor);
+        }
     }
 
     /**
@@ -103,7 +152,9 @@ public class AssistantConversations {
      * 되돌린다»로 같다. 대신 <b>남의 것인지는 본다</b> — 지우는 것도 남의 대화에 닿는 일이다.
      */
     public void clear(long memberId, String conversationId) {
-        memory.clear(requireOwned(memberId, conversationId));
+        String owned = requireOwned(memberId, conversationId);
+        memory.clear(owned);
+        anchors.invalidate(owned);
     }
 
     /*

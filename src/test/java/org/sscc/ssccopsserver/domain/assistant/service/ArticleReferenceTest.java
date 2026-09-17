@@ -67,7 +67,7 @@ class ArticleReferenceTest {
         }
 
         @Test
-        @DisplayName("둘 이상이면 첫 번째만 — 나머지 맥락은 벡터 검색에 맡긴다")
+        @DisplayName("둘 이상이면 첫 번째만 — 기준점을 세우는 자리가 쓰는 값이다")
         void picksOnlyTheFirstArticle() {
             ArticleReference parsed = ArticleReference.parse("제7조와 제8조를 비교해줘");
 
@@ -124,6 +124,149 @@ class ArticleReferenceTest {
         void doesNotPickOtherOrdinals() {
             assertThat(ArticleReference.parse("제1지망 학과를 어디로 쓰나요?")).isNull();
             assertThat(ArticleReference.parse("회칙 제3장은 무엇인가요?")).isNull();
+        }
+    }
+
+    /*
+     * 앞 턴이 세운 조를 가리키는 말 (#465).
+     *
+     * **여기가 헐거우면 조 참조가 아닌 질문에 엉뚱한 조가 핀으로 박힌다** — 그 발췌는 임계값
+     * 판정을 지나지 않으므로(`AssistantServiceImpl.pinnedArticle`) 검색이 걸러 주지 않는다.
+     * 그래서 «푸는 것»만큼 «풀지 않는 것»을 많이 본다.
+     */
+    @Nested
+    @DisplayName("이어 묻기 — 앞 턴의 조를 가리키는 말")
+    class FollowUp {
+
+        private static final ArticleReference ANCHOR = new ArticleReference(3, null, false);
+
+        @Test
+        @DisplayName("「그 다음 조」는 +1")
+        void movesToTheNextArticle() {
+            assertThat(ArticleReference.parse("그 다음 조의 내용도 알려줘", ANCHOR))
+                    .isEqualTo(new ArticleReference(4, null, false));
+        }
+
+        @Test
+        @DisplayName("「그 다음은?」처럼 「조」가 없어도 푼다 — 화면에서 실제로 이렇게 친다")
+        void movesOnWithoutTheWordArticle() {
+            assertThat(ArticleReference.parse("그 다음은?", ANCHOR))
+                    .isEqualTo(new ArticleReference(4, null, false));
+        }
+
+        @Test
+        @DisplayName("「바로 앞 조」·「이전 조」는 −1")
+        void movesToThePreviousArticle() {
+            assertThat(ArticleReference.parse("바로 앞 조는 무슨 내용이야?", ANCHOR))
+                    .isEqualTo(new ArticleReference(2, null, false));
+            assertThat(ArticleReference.parse("이전 조는?", ANCHOR))
+                    .isEqualTo(new ArticleReference(2, null, false));
+        }
+
+        @Test
+        @DisplayName("「그 조」는 기준점 그대로 — 「그 조 2항」을 물으면 같은 조가 다시 실려야 한다")
+        void keepsTheAnchorForTheSameArticle() {
+            assertThat(ArticleReference.parse("그 조 2항의 정족수는 어떻게 돼?", ANCHOR)).isEqualTo(ANCHOR);
+        }
+
+        @Test
+        @DisplayName("부칙은 부칙으로 옮긴다 — 본문 제3조와 부칙 제3조가 함께 있다")
+        void staysInsideTheSupplementaryProvisions() {
+            assertThat(ArticleReference.parse("그 다음 조는?", new ArticleReference(3, null, true)))
+                    .isEqualTo(new ArticleReference(4, null, true));
+        }
+
+        @Test
+        @DisplayName("가지 번호는 버린다 — 제27조의2의 다음은 제28조다")
+        void dropsTheBranchNumberWhenMoving() {
+            assertThat(ArticleReference.parse("그 다음 조는?", new ArticleReference(27, 2, false)))
+                    .isEqualTo(new ArticleReference(28, null, false));
+        }
+
+        @Test
+        @DisplayName("제1조의 이전 조는 없다")
+        void refusesToMoveBeforeTheFirstArticle() {
+            assertThat(ArticleReference.parse("이전 조는?", new ArticleReference(1, null, false)))
+                    .isNull();
+        }
+
+        @Test
+        @DisplayName("기준점이 없으면 풀지 않는다 — 첫 턴에 「그 다음 조」를 물은 경우")
+        void needsAnAnchor() {
+            assertThat(ArticleReference.parse("그 다음 조는?", null)).isNull();
+        }
+
+        @Test
+        @DisplayName("명시가 언제나 이긴다 — 「제7조의 다음 조」를 제8조로 옮기지 않는다")
+        void prefersTheExplicitArticle() {
+            assertThat(ArticleReference.parse("제7조의 다음 조가 뭐야?", ANCHOR))
+                    .isEqualTo(new ArticleReference(7, null, false));
+        }
+
+        @Test
+        @DisplayName("「조」로 시작하는 다른 낱말을 조 참조로 읽지 않는다")
+        void doesNotReadOtherWordsStartingWithTheSameSyllable() {
+            assertThat(ArticleReference.parse("그 조건은 어떻게 되나요?", ANCHOR)).isNull();
+            assertThat(ArticleReference.parse("그 조직은 어떻게 구성되나요?", ANCHOR)).isNull();
+            assertThat(ArticleReference.parse("해당 조치는 누가 하나요?", ANCHOR)).isNull();
+        }
+
+        @Test
+        @DisplayName("「다음과 같이」·「다음 각 호」는 이어 묻기가 아니다")
+        void doesNotReadEnumerationsAsAFollowUp() {
+            assertThat(ArticleReference.parse("절차는 다음과 같이 진행되나요?", ANCHOR)).isNull();
+            assertThat(ArticleReference.parse("다음 각 호에 해당하면 어떻게 되나요?", ANCHOR)).isNull();
+        }
+
+        @Test
+        @DisplayName("가리키는 말이 아예 없으면 기준점이 있어도 풀지 않는다")
+        void leavesUnrelatedQuestionsAlone() {
+            assertThat(ArticleReference.parse("회비는 얼마인가요?", ANCHOR)).isNull();
+        }
+    }
+
+    /*
+     * 발췌에 넣을 조 목록 — 지목이 둘까지 실린다 (#465).
+     */
+    @Nested
+    @DisplayName("핀으로 집을 조 목록")
+    class References {
+
+        @Test
+        @DisplayName("나란히 놓고 묻는 두 조를 함께 집는다")
+        void pinsTwoNamedArticles() {
+            assertThat(ArticleReference.references("제18조와 제19조는 어떻게 다른가요?", null))
+                    .containsExactly(
+                            new ArticleReference(18, null, false),
+                            new ArticleReference(19, null, false));
+        }
+
+        @Test
+        @DisplayName("셋 이상을 적어도 둘까지 — 나머지는 밀집 검색에 맡긴다")
+        void stopsAtTwo() {
+            assertThat(ArticleReference.references("제23조부터 제25조까지 정리해줘", null)).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("같은 조를 두 번 적어도 한 번만 집는다")
+        void doesNotPinTheSameArticleTwice() {
+            assertThat(ArticleReference.references("제7조 1항과 제7조 6항의 차이는?", null))
+                    .containsExactly(new ArticleReference(7, null, false));
+        }
+
+        @Test
+        @DisplayName("지목이 하나도 없을 때에만 기준점에서 옮긴다")
+        void fallsBackToTheAnchorOnlyWhenNothingIsNamed() {
+            assertThat(
+                            ArticleReference.references(
+                                    "그 다음 조는?", new ArticleReference(7, null, false)))
+                    .containsExactly(new ArticleReference(8, null, false));
+        }
+
+        @Test
+        @DisplayName("집을 것이 없으면 빈 목록 — 핀 없이 밀집 검색만 남는다")
+        void returnsNothingToPin() {
+            assertThat(ArticleReference.references("회비는 얼마인가요?", null)).isEmpty();
         }
     }
 }

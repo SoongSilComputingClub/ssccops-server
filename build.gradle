@@ -6,6 +6,8 @@ plugins {
     id 'jacoco'
     id 'com.diffplug.spotless' version '6.25.0'
     id 'org.sonarqube' version '7.3.1.8318'
+    // /actuator/info 에 git sha 를 싣는다 (#410 · ssccops#340). 아래 gitProperties 블록 참고
+    id 'com.gorylenko.gradle-git-properties' version '2.4.2'
 }
 
 group = 'org.sscc'
@@ -17,7 +19,7 @@ group = 'org.sscc'
 // **-SNAPSHOT을 붙이지 않는다.** 이 저장소는 스냅숏을 배포하고 나중에 릴리스로 굳히는
 // 사이클을 돌리지 않는다 — develop이 dev로, main이 prod로 그대로 나가고 릴리스는 태그다.
 // 붙여 두면 어느 산출물도 릴리스가 아니게 되고, 지금 고치는 문제가 이름만 바뀌어 남는다.
-version = '0.2.8'
+version = '0.2.9'
 description = 'SSCC 운영관리 백엔드'
 
 // ============================================================================
@@ -59,6 +61,43 @@ springBoot {
     buildInfo()
 }
 
+// git.properties 를 산출물에 넣는다 → /actuator/info 가 git.branch · git.commit.id(abbrev·full) ·
+// git.commit.time 을 돌려준다 (#410 · ssccops#340). build-info 가 «어느 버전인가»에 답한다면 이것은
+// «정확히 어느 커밋인가»에 답한다 — deploy-history.yml 이 배포 뒤 이 값을 폴링해 푸시된 sha 와
+// 같은지 확인하고, 같아야 레코드가 `deployed` 가 된다. 태그·버전은 사람이 올리는 값이라 «떠 있는
+// 것»의 증빙이 못 된다.
+//
+// 플러그인은 JGit 이라 git 바이너리가 없는 Docker 빌더에서도 `.git` 만 있으면 된다 — 그래서
+// Dockerfile 이 `.git` 을 복사한다. 그래도 `.git` 이 없는 빌드(Coolify 가 언젠가 컨텍스트에서 빼면)에
+// 대비해 실패시키지 않고(failOnNoGitDirectory=false) Coolify·Actions 가 주는 커밋 env
+// (SOURCE_COMMIT · GITHUB_SHA)로 최소 파일을 쓴다. 둘 다 없으면 파일이 없고 /actuator/info 에
+// git 이 빠진다 — 그때 deploy-history 레코드는 `unverified` 로 남는다(고장이 아니라 «확인 못 함»).
+//
+// 키를 넷으로 좁힌 것은 user.email 같은 값이 공개 엔드포인트로 나가지 않게 하기 위해서다.
+gitProperties {
+    failOnNoGitDirectory = false
+    keys = ['git.branch', 'git.commit.id', 'git.commit.id.abbrev', 'git.commit.time']
+    dateFormat = "yyyy-MM-dd'T'HH:mm:ssXXX"
+    dateFormatTimeZone = 'UTC'
+}
+
+tasks.named('generateGitProperties') {
+    doLast {
+        def out = layout.buildDirectory.file('resources/main/git.properties').get().asFile
+        if (out.exists()) {
+            return
+        }
+        def sha = System.getenv('SOURCE_COMMIT') ?: System.getenv('GITHUB_SHA')
+        if (!sha) {
+            logger.warn('git.properties 를 만들지 못했다 — .git 도 SOURCE_COMMIT/GITHUB_SHA 도 없다')
+            return
+        }
+        out.parentFile.mkdirs()
+        out.text = "git.commit.id=${sha}\ngit.commit.id.abbrev=${sha.take(7)}\n"
+        logger.lifecycle("git.properties 를 env 의 커밋으로 썼다: ${sha}")
+    }
+}
+
 // 산출물 이름에서 버전을 뺀다. Dockerfile 이 이 파일을 이름으로 집어 오므로, 고정해 두지
 // 않으면 **버전을 올릴 때마다 Dockerfile 의 COPY 글롭이 함께 깨진다** — 실제로 -SNAPSHOT 을
 // 떼는 이번 변경이 `COPY .../*-SNAPSHOT.jar` 를 무효로 만든다. 버전은 build-info 와 태그가
@@ -83,6 +122,10 @@ dependencyManagement {
         mavenBom 'io.opentelemetry:opentelemetry-bom:1.44.1'
         mavenBom 'io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.11.0-alpha'
         mavenBom 'software.amazon.awssdk:bom:2.29.29'
+        // Spring AI — MCP 서버 (#384 · ADR-0027). **1.1.x 라인에 머문다.** 2.0.x는 Boot 4 ·
+        // Framework 7 · Java 21이 필요해 이 서버(Boot 3.5 · Java 17)에서는 로드조차 되지 않는다.
+        // Boot 4 이관은 별도 Epic이다 — 그때까지 이 줄을 2.0으로 올리지 말 것.
+        mavenBom 'org.springframework.ai:spring-ai-bom:1.1.8'
     }
 }
 
@@ -122,6 +165,79 @@ dependencies {
 
     // Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
+
+    // MCP 서버 — Streamable HTTP `/mcp` (#384 · ADR-0027). 도구는 서비스를 직접 부르지 않고
+    // RestClient로 자기 REST를 호출한다(인가·검증·감사가 컨트롤러 한 곳에 있어서다).
+    // 리소스 서버 메타데이터(RFC 9728)는 org.springaicommunity:mcp-server-security 0.0.6을
+    // 쓰지 않고 손으로 뒀다 — 그 configurer는 withIssuerLocation으로 JwtDecoder를 새로 만들어
+    // 우리 supabaseJwtDecoder(ES256 목록 · iss/aud 검증기)를 밀어내고, EntryPoint 위임이
+    // 본문 없는 BearerTokenAuthenticationEntryPoint로 굳어 있어 ApiResponse 포맷과 갈리며,
+    // resource URL을 요청 Host에서 조립해 프록시 뒤에서는 forwarded 헤더 설정이 또 필요하다.
+    implementation 'org.springframework.ai:spring-ai-starter-mcp-server-webmvc'
+
+    // Gemini — 규정 도우미(RAG)의 채팅·임베딩 모델 (#395 · ssccops#322 · Epic ssccops#321).
+    //
+    // **Vertex AI 스타터(spring-ai-starter-model-vertex-ai-gemini)가 아니다.** 그쪽은 GCP
+    // project-id·location과 결제 계정을 요구하는데 이 기능의 전제가 「비용 0」이다. 이 스타터는
+    // 같은 코드에서 두 백엔드를 고르며 `…vertex-ai`의 기본값이 false라 **AI Studio 무료 키
+    // 하나로 선다** — 그 값을 켜지 말 것(켜는 순간 project-id·location을 요구한다).
+    //
+    // Gemini의 OpenAI 호환 엔드포인트(spring-ai-starter-model-openai에 base-url만 바꾸기)는
+    // 기각했다 — gemini-embedding-001의 기본 출력이 3072차원이고, 그것을 줄이는 네이티브
+    // 파라미터 output_dimensionality를 호환 계층이 OpenAI 표준 `dimensions`로 받아 주는지가
+    // 어디에도 문서화돼 있지 않다. 3072이 나오면 pgvector 인덱스 상한 2,000을 넘어 768을 고른
+    // 근거가 통째로 무너지고, 되돌리려면 전량 재적재다.
+    //
+    // **BOM 줄은 늘지 않는다** — MCP(#384)가 이미 spring-ai-bom:1.1.8을 쓴다. 같은 이유로
+    // **2.0.x로 올리지 말 것**(Boot 4 · Framework 7 · Java 21 필요).
+    implementation 'org.springframework.ai:spring-ai-starter-model-google-genai'
+    implementation 'org.springframework.ai:spring-ai-starter-model-google-genai-embedding'
+
+    // pgvector 벡터 스토어 — 규정 도우미(RAG)의 청크 저장소 (#396 · ssccops#322 · ADR-0028).
+    //
+    // **스키마는 이 스타터가 만들지 않는다.** `spring.ai.vectorstore.pgvector.initialize-schema`가
+    // false이고 `vector_store` 테이블은 `V10__create_assistant_tables.sql`이 만든다 — dev·prod는
+    // `ddl-auto: validate`라 마이그레이션이 모르는 테이블이 생기면 «baseline + 마이그레이션이 곧 DB»
+    // 라는 전제가 깨진다(ssccops#213). 스타터가 쓰는 DDL을 그 파일에 옮겨 적었다.
+    //
+    // 자동 구성(PgVectorStoreAutoConfiguration)은 **EmbeddingModel 빈을 생성자로 요구한다.**
+    // 키가 없으면 그 빈이 없으므로 VectorStore 생성이 깨지고, 그러면 규정 도우미와 무관한
+    // 환경(테스트·키 없는 기여자 로컬·아직 키를 넣지 않은 배포)이 통째로 못 뜬다 —
+    // GeminiWiringEnvironmentPostProcessor가 임베딩 키가 없을 때 이 자동 구성도 함께 제외한다.
+    implementation 'org.springframework.ai:spring-ai-starter-vector-store-pgvector'
+
+    // Tika — 규정 도우미의 `GENERIC` 문서(PDF·DOCX) 평문 추출 (#398 · 기획안 §5.4).
+    //
+    // **`tika-parsers-standard-package`가 아니다.** 우리가 받는 것은 `.pdf`·`.docx` 둘뿐이고
+    // (확장자가 유형을 정한다 — `RagDocumentType.fromFileName`), 표준 패키지는 그 밖에 이미지·
+    // 폰트·CAD·메일 아카이브까지 30여 개 파서를 함께 싣는다. 실측(2026-09-14 · `./gradlew`
+    // 의존성 해석)으로 **jar 74개 50.06MB → 40개 46.47MB**다. 용량이 크게 줄지 않는 것은
+    // 무게의 절반이 DOCX 지원 자체(poi-ooxml-full 13.6MB)와 암호화 PDF(bouncycastle 9.6MB)라
+    // 모듈 선택으로는 건드릴 수 없기 때문이다 — **고른 이유는 용량이 아니라 파서 수**이며,
+    // 코퍼스에 올라오는 것은 외부에서 받아 온 파일이라 실행되는 파서가 적을수록 좋다.
+    //
+    // 더 줄이는 길(poi-ooxml-full → poi-ooxml-lite · jackcess·libpst 제외)은 34.86MB까지
+    // 가지만 택하지 않았다 — lite는 XmlBeans 스키마 클래스를 골라 담은 것이라 흔치 않은 모양의
+    // `.docx` 하나에서 `NoClassDefFoundError`가 나고, 그 파일은 **운영진이 올린 실제 규정 문서**다.
+    // 11MB를 아끼자고 «어떤 파일은 파싱이 죽는다»를 들이지 않는다.
+    //
+    // 버전을 명시하는 것은 어느 BOM도 Tika를 관리하지 않기 때문이다(Spring AI의 tika 리더는
+    // 이 레포가 쓰지 않는다). PDFBox 3 · POI 5.5가 여기 딸려 온다.
+    implementation 'org.apache.tika:tika-core:3.3.1'
+    implementation 'org.apache.tika:tika-parser-pdf-module:3.3.1'
+    implementation 'org.apache.tika:tika-parser-microsoft-module:3.3.1'
+
+    // Caffeine — 규정 도우미의 레이트 리밋 카운터 (#404 · 기획안 §7 · §11).
+    //
+    // **버전을 적지 않는다** — Boot BOM 이 관리한다(스프링의 캐시 추상화가 쓰는 그 구현체다).
+    // spring-boot-starter-cache 를 함께 넣지 않은 것은 @Cacheable 을 쓰지 않기 때문이다.
+    // 카운터가 필요로 하는 것은 «창이 지나면 스스로 비는 맵» 하나이고, 그 둘은 별개다.
+    //
+    // 손으로 만든 ConcurrentHashMap(MemberLinkAttemptLimiter)과 갈리는 지점은 **비우는 코드**다 —
+    // 그쪽은 항목 수가 상한을 넘을 때만 만료분을 걷어내는 purgeIfCrowded 를 직접 들고 있는데,
+    // 그 자리가 여기서는 expireAfterWrite + maximumSize 두 줄이다. 대화 메모리(#406)가 같은
+    // 빌더를 쓰기로 돼 있어(기획안 §7) 그때 늘어나는 것은 캐시 하나뿐이다.
+    implementation 'com.github.ben-manes.caffeine:caffeine'
 
     // CSV (회원 명부 이관 #84). 직접 split 하면 따옴표 안의 쉼표("회장,프로젝트장")와
     // 줄바꿈을 포함한 필드에서 반드시 깨진다 — 파서는 서버 한 곳(MemberImportParser)에만 둔다.
@@ -198,6 +314,64 @@ tasks.register('r2Check', JavaExec) {
     description = 'R2 업로드 경로 진단 (자격증명·버킷 CORS·서명 PUT·프리플라이트)'
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'org.sscc.ssccopsserver.tools.R2Check'
+    if (!envVars.isEmpty()) {
+        environment(envVars)
+    }
+    if (project.hasProperty('args')) {
+        args project.property('args').toString().split(' ').findAll { it }
+    }
+}
+
+// ============================================================================
+// Gemini 임베딩 스모크 체크 (#395). 실제 키로 한 번 불러 「무엇이 나오는가」를 재 본다 —
+// 이 이슈에서 유일하게 남은 미지수이며, 여기서 나오는 차원이 #396 `V10`의 `vector(N)`이다.
+//
+// **7단계가 검색 점수 분포다** (#405). 골든셋 시험지(`AssistantGoldenSet` — CI 의
+// `RetrievalGoldenSetTest`가 스텁 임베딩으로 묻는 것과 **같은 질문·같은 청크**)를 실제 모델로 한
+// 번 돌려 유형별 분포와 권장 임계값(`ssccops.assistant.query.similarity-threshold-structured`
+// ·`-generic`)을 찍는다. **운영 임계값이 정해지는 유일한 자리다** — 스텁의 눈금은 문자 n-gram
+// 코사인이라 밀집 임베딩의 것이 아니다. 임베딩을 약 70회 부르므로 쿼터가 아까우면
+// `--no-distribution` 으로 건너뛴다.
+//
+//   ./gradlew geminiCheck
+//   ./gradlew geminiCheck -Pargs="--models=gemini-embedding-001,gemini-embedding-2"
+//   ./gradlew geminiCheck -Pargs="--file=private-workspace/rag/회칙개정_2026_개정안전문.md"
+//   ./gradlew geminiCheck -Pargs="--no-distribution"
+//
+// 키는 환경변수 GEMINI_API_KEY 에서 읽는다(.env 가 있으면 Gradle 이 주입한다). R2Check(#137)와
+// 같은 자리에 두는 것은 성격이 같아서다 — 실제 자격증명이 있어야만 답이 나오는 진단이라
+// `./gradlew test` 에 섞으면 키 없는 CI·기여자 로컬에서 언제나 건너뛰는 테스트가 된다.
+// ============================================================================
+tasks.register('geminiCheck', JavaExec) {
+    group = 'verification'
+    description = 'Gemini 임베딩 진단 (차원·task-type 전달 여부·정규화·입력 잘림·골든셋 점수 분포)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.sscc.ssccopsserver.tools.GeminiCheck'
+    if (!envVars.isEmpty()) {
+        environment(envVars)
+    }
+    if (project.hasProperty('args')) {
+        args project.property('args').toString().split(' ').findAll { it }
+    }
+}
+
+// ============================================================================
+// 규정 도우미 실측 벤치마크 (#465). **로컬 DB에 적재된 코퍼스**와 실제 Gemini 임베딩으로
+// 시험지 한 벌(`AssistantBenchmarkSet`)을 돌려 검색 재현율을 잰다 — 고치기 전후를 나란히
+// 놓는 것이 이 도구의 쓸모다.
+//
+//   ./gradlew ragBench -Pargs="--label=before"
+//   ./gradlew ragBench -Pargs="--only=B"
+//   ./gradlew ragBench -Pargs="--label=after --compare=build/rag-bench/before.tsv"
+//   ./gradlew ragBench -Pargs="--only=B --answer"     # 실제 채팅 모델까지 (쿼터를 쓴다)
+//
+// geminiCheck·r2Check와 같은 자리에 둔다 — 실제 자격증명과 적재된 DB가 있어야만 답이 나온다.
+// ============================================================================
+tasks.register('ragBench', JavaExec) {
+    group = 'verification'
+    description = '규정 도우미 검색·답변 벤치마크 (로컬 DB + 실제 임베딩)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.sscc.ssccopsserver.tools.RagBenchmark'
     if (!envVars.isEmpty()) {
         environment(envVars)
     }

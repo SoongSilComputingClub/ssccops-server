@@ -6,11 +6,13 @@
 #   - 테스트 수행 및 JaCoCo 커버리지 생성
 #   - SonarQube 분석 (develop 푸시에서만 · 토큰이 있을 때만 · 아무것도 막지 않는다)
 #   - JAR 빌드 검증 (bootJar 가 깨지지 않는지만 본다 — 배포는 Coolify 몫이다)
+#   - OpenAPI 하위 호환 게이트 (PR 에서만 · oasdiff · 라벨 api-breaking-approved 로 예외, ssccops#342)
 #
 # Job 구조:
 #   lint ──┬──> build
 #          ├──> analyze   (develop push 에서만)
 #   test ──┘
+#   api-compat            (PR 에서만 · 독립 — OpenAPI 하위 호환 게이트, #412)
 #
 #   analyze 는 build 를 막지 않는다. 코드 품질 리포트가 없다고 해서 "이 브랜치가
 #   빌드되는가"라는 판정까지 함께 막을 이유가 없다 (ssccops-web integrate.yml 과 같은 판단).
@@ -116,6 +118,135 @@ jobs:
             build/test-results/
             build/reports/jacoco/
           if-no-files-found: ignore
+
+  # ==========================================================================
+  # API Compat Job - OpenAPI 하위 호환 게이트 (PR에서만 · #412 · ssccops#342)
+  # ==========================================================================
+  #
+  # API 계약을 깨는 변경(응답 필드 삭제·이름·타입 변경, 요청 필드 필수화, 엔드포인트·enum 값 삭제)을
+  # 병합 전에 기계가 잡는다 — ssccops#305(서버·웹 계약 어긋남)가 이 종류였다. 추가(필드·엔드포인트·
+  # 선택 파라미터)는 통과한다.
+  #
+  # 스펙은 커밋하지 않는다 — base 와 head 를 각각 체크아웃해 OpenApiSnapshotTest 하나로 build/openapi.json
+  # 을 만들고 oasdiff 로 비교한다. 레포에 스펙을 두고 diff 하면 매 PR 마다 손으로 갱신해야 하고 잊으면
+  # 게이트가 빈다. 생성이 곧 정본이다.
+  #
+  # 심각도는 config/oasdiff/severity-levels.txt 가 덮어쓴다 — springdoc 스펙에는 required 가 없어 기본값으로는
+  # 응답 필드 삭제가 info 라 아무것도 막히지 않는다(그 디렉터리의 README).
+  #
+  # 라벨 `api-breaking-approved` 가 붙어 있으면 결과를 요약에만 남기고 실패시키지 않는다. 라벨은
+  # **실행 시점에** gh 로 읽으므로 라벨을 붙인 뒤 `gh run rerun <id> --failed` 면 된다(pull_request 의 기본
+  # 트리거에 labeled 가 없고, 넣으면 라벨 하나에 lint·test·build 가 전부 다시 돈다).
+  #
+  # develop→main 릴리스 PR·dependabot 은 면제(pr-guard 와 같은 규칙). base 에 OpenApiSnapshotTest 가 없으면
+  # (이 게이트를 들이는 PR 자신) 비교할 것이 없어 건너뛴다.
+  api-compat:
+    name: API Compat
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.head_ref != 'develop' &&
+      !startsWith(github.head_ref, 'dependabot/')
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    env:
+      OASDIFF_VERSION: '1.32.0'
+      SNAPSHOT_TEST: src/test/java/org/sscc/ssccopsserver/global/config/OpenApiSnapshotTest.java
+
+    steps:
+      - name: Checkout head
+        uses: actions/checkout@v7
+        with:
+          path: head
+
+      - name: Checkout base
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: gradle
+
+      # 러너는 리눅스다 — GitHub Release 의 바이너리를 받는다. docker:// 액션은 매 실행에 이미지를 끌어와
+      # 더 느리고, 이 바이너리 하나면 된다.
+      - name: Install oasdiff
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/oasdiff"
+          curl -sSL "https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}/oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/oasdiff" oasdiff
+          echo "$RUNNER_TEMP/oasdiff" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/oasdiff/oasdiff" --version
+
+      - name: Generate base spec
+        id: base
+        working-directory: base
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SNAPSHOT_TEST" ]; then
+            echo "base 에 OpenApiSnapshotTest 가 없다 — 비교할 스펙이 없어 건너뛴다" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          chmod +x gradlew
+          ./gradlew test --tests '*OpenApiSnapshotTest' --no-daemon -q
+          mv build/openapi.json ../base.json
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Generate head spec
+        if: steps.base.outputs.skip == 'false'
+        working-directory: head
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew test --tests '*OpenApiSnapshotTest' --no-daemon -q
+          mv build/openapi.json ../head.json
+
+      - name: Compare (oasdiff breaking)
+        if: steps.base.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Actions 의 기본 셸은 `bash -e` 다 — oasdiff 가 1 로 끝나는 순간 스크립트가 죽어 요약도 라벨 판정도
+          # 없이 «exit code 1» 만 남는다(DoD 검증 PR #416 에서 실제로 그랬다). 종료 코드를 받아 판단하려면 끈다.
+          set +e
+          set -uo pipefail
+          SEVERITY=head/config/oasdiff/severity-levels.txt
+          oasdiff breaking base.json head.json --fail-on ERR --severity-levels "$SEVERITY" -f markup > report.md
+          RC=$?
+          oasdiff breaking base.json head.json --fail-on ERR --severity-levels "$SEVERITY" || true
+
+          APPROVED=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json labels \
+            --jq '[.labels[].name] | index("api-breaking-approved") != null')
+
+          {
+            echo "## API Compat (oasdiff breaking)"
+            echo "- base \`${{ github.event.pull_request.base.sha }}\` → head \`${{ github.event.pull_request.head.sha }}\`"
+            if [ "$RC" -eq 0 ]; then
+              echo "- ✅ 깨는 변경 없음"
+            elif [ "$APPROVED" = true ]; then
+              echo "- ⚠️ 깨는 변경이 있으나 \`api-breaking-approved\` 라벨로 통과 — 마이너 버전업 + 릴리스 노트 마이그레이션 항목이 필요하다"
+            else
+              echo "- ❌ 깨는 변경 — 의도한 것이면 \`api-breaking-approved\` 라벨을 붙이고 이 job 을 다시 돌린다(\`gh run rerun <id> --failed\`)"
+            fi
+            echo
+            cat report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$RC" -ne 0 ] && [ "$APPROVED" != true ]; then
+            echo "::error::OpenAPI 하위 호환이 깨졌다. 의도한 변경이면 라벨 api-breaking-approved 를 붙이고 job 을 다시 돌린다."
+            exit 1
+          fi
 
   # ==========================================================================
   # Analyze Job - SonarQube 분석 (PR에서만 · 토큰이 없으면 건너뛴다)

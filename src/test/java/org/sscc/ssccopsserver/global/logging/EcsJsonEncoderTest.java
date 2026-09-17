@@ -3,8 +3,10 @@ package org.sscc.ssccopsserver.global.logging;
 import static net.logstash.logback.argument.StructuredArguments.kv;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.Properties;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,6 +99,48 @@ class EcsJsonEncoderTest {
         assertThat(json.at("/error/stack_trace").asText())
                 .contains("IllegalStateException")
                 .contains("EcsJsonEncoderTest");
+    }
+
+    /*
+     * service.version (#411 · ssccops#341) — build-info.properties 를 인코더가 직접 읽는다. 값의 출처가
+     * /actuator/info 와 같은 파일이라 배포 이력(deploy-history)의 version 과 로그의 version 이 갈릴 수 없다.
+     * 테스트 클래스패스에는 bootBuildInfo 가 만든 파일이 있다(classes 가 그 태스크에 걸려 있다).
+     */
+    @Test
+    void carriesServiceVersionFromBuildInfo() throws Exception {
+        Properties buildInfo = new Properties();
+        try (InputStream in =
+                getClass().getClassLoader().getResourceAsStream(EcsJsonEncoder.BUILD_INFO)) {
+            assertThat(in).as("bootBuildInfo 가 만든 build-info.properties").isNotNull();
+            buildInfo.load(in);
+        }
+
+        JsonNode json = encode(event(Level.INFO, "versioned", null));
+
+        assertThat(json.at("/service/version").asText())
+                .isEqualTo(buildInfo.getProperty("build.version"))
+                .matches("\\d+\\.\\d+\\.\\d+.*");
+    }
+
+    // 파일이 없을 때(IDE 실행)의 모양 — 지어낸 값 없이 키 자체가 빠진다. 빈 문자열 설정이 그 경로다
+    @Test
+    void omitsServiceVersionWhenBuildInfoIsAbsent() throws Exception {
+        EcsJsonEncoder bare = new EcsJsonEncoder();
+        bare.setContext(context);
+        bare.setServiceVersion("");
+        bare.start();
+        try {
+            JsonNode json =
+                    mapper.readTree(
+                            new String(
+                                    bare.encode(event(Level.INFO, "no version", null)),
+                                    StandardCharsets.UTF_8));
+
+            assertThat(json.at("/service/name").asText()).isEqualTo("ssccops-server");
+            assertThat(json.at("/service").has("version")).isFalse();
+        } finally {
+            bare.stop();
+        }
     }
 
     /* 감사 로그가 쓰는 길 — StructuredArguments 의 객체가 루트에 그대로 중첩으로 실린다 */

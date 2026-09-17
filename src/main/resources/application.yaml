@@ -29,15 +29,300 @@ spring:
     baseline-on-migrate: true
     baseline-version: 1
 
-  # 회원 명부 CSV 이관(#84). 업무 상한은 5MB이며 그 판정은 MemberImportServiceImpl이 한다 —
-  # 여기서 5MB로 끊으면 서블릿 계층이 먼저 걸러 도메인 오류 코드(INVALID_CSV_FILE)가 붙지 않은
-  # 응답이 나가고, 위저드가 무엇이 잘못됐는지 안내하지 못한다. 그래서 이 값은 상한보다 **높게**
-  # 두어 정상 경로가 서비스에 닿게 하고, 스프링 부트 기본값(1MB)이 3MB짜리 정상 명부를 500으로
-  # 떨어뜨리는 것만 막는다. 무한정 받지 않도록 요청 전체는 16MB로 묶는다.
+  # 멀티파트 업로드의 **바깥 상한**이다. 업무 상한은 도메인이 따로 끊는다 — 회원 명부 CSV
+  # 이관은 5MB(MemberImportServiceImpl · #84), 규정 문서 업로드는 10MB(RagDocumentServiceImpl ·
+  # #399). 여기서 업무 상한과 같은 값으로 끊으면 서블릿 계층이 먼저 걸러 도메인 오류 코드
+  # (INVALID_CSV_FILE · RAG_DOCUMENT_TOO_LARGE)가 붙지 않은 응답이 나가고, 화면이 무엇이
+  # 잘못됐는지 안내하지 못한다. 그래서 이 값은 업무 상한보다 **높게** 두어 정상 경로가 서비스에
+  # 닿게 하고, 스프링 부트 기본값(1MB)이 3MB짜리 정상 명부를 500으로 떨어뜨리는 것만 막는다.
+  # 무한정 받지 않도록 요청 전체도 16MB로 묶는다.
   servlet:
     multipart:
       max-file-size: 16MB
       max-request-size: 16MB
+
+  # MCP 서버 (#384 · ADR-0026 · ADR-0027). Claude(claude.ai · Desktop · Claude Code)가
+  # `https://<host>/mcp`로 붙는다. 인증은 웹과 같은 Supabase JWT(OAuth 2.1 서버가 발급) —
+  # 필터체인이 `/mcp`를 anyRequest().authenticated()로 이미 막고, 미인증 401에는
+  # `WWW-Authenticate: Bearer resource_metadata=…`가 붙는다(CustomAuthenticationEntryPoint).
+  #
+  # STATELESS(Streamable HTTP · 세션 없음)다 (#393). 처음엔 STREAMABLE(세션 있음)이었는데 세션이
+  # 메모리에 있어 재배포마다 끊겼고, 2026-09-13 dev 실측으로 Claude Code가 옛 Mcp-Session-Id로
+  # 404를 받으면 재초기화 없이 «failed to connect»로 굳는 것을 봤다. 도구는 요청마다 Bearer로
+  # 신원을 받고 서버에 상태가 없으므로(ADR-0027) 세션이 필요 없다 — STATELESS는 세션을 내지도
+  # 요구하지도 않아 재배포와 무관하다. SSE 전송은 쓰지 않는다(MCP 스펙에서 폐기 예정). 엔드포인트
+  # 프로퍼티(streamable-http.mcp-endpoint)는 stateless 자동 구성도 같은 것을 읽는다. 전송 빈 자체는
+  # McpServerConfig가 만든다(contextExtractor·오류 본문). 리소스·프롬프트·completion은 쓰지 않으므로
+  # capabilities에서 끈다 — 켜 두면 빈 목록을 광고한다.
+  ai:
+    mcp:
+      server:
+        name: ssccops
+        version: 0.1.0
+        type: SYNC
+        protocol: STATELESS
+        instructions: >-
+          SSCC 운영관리 시스템. 도구는 로그인한 운영진 본인의 권한으로 동작하며,
+          «권한이 없습니다»·«가입이 필요합니다» 응답은 재시도해도 바뀌지 않는다 — 사용자에게 알리고 멈춘다.
+        streamable-http:
+          mcp-endpoint: /mcp
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+
+    # ── Gemini (규정 도우미 RAG · #395 · ssccops#322) ──────────────────────────
+    #
+    # **여기 있는 프로퍼티 이름의 정본은 jar 의 spring-configuration-metadata.json 이지
+    # docs.spring.io 가 아니다.** 공개 문서는 `…embedding.text.dimensions` 라고 적는데
+    # 1.1.8 에는 그런 키가 없다(`…embedding.text.options.dimensions` 다). 문서가 다른 버전을
+    # 가리키고 있으니 값을 더할 때도 문서가 아니라 jar 를 확인할 것:
+    #   unzip -p ~/.gradle/caches/**/spring-ai-autoconfigure-model-google-genai-1.1.8.jar \
+    #           META-INF/spring-configuration-metadata.json | python3 -m json.tool
+    #
+    # **api-key 는 프로필마다 다른 환경변수에서 온다**(local: GEMINI_API_KEY · dev·prod:
+    # DEV_/PROD_ 접두). 채팅과 임베딩이 **각각 다른 커넥션 프로퍼티**를 쓰므로 두 벌이다.
+    # **키가 없으면 이 배선은 서지 않는다** — 어떻게 꺼지는지는 GeminiWiringEnvironmentPostProcessor.
+    #
+    # **`…embedding.vertex-ai` 를 건드리지 않는다**(기본 false). 켜는 순간 project-id·location 을
+    # 요구하고, 그 길은 GCP 결제 계정이라 「비용 0」이라는 이 기능의 전제가 깨진다.
+    google:
+      genai:
+        chat:
+          options:
+            # 교체가 환경변수 하나가 되게 한다 — 모델 ID 를 코드에 박지 않는다.
+            #
+            # ⚠️ **모델 ID 는 늙는다.** 기본값이 gemini-2.5-flash 였는데 2026-09-13 실측에서
+            # 404 «no longer available to new users» 를 돌려줬다 — 모델 목록에는 여전히
+            # 보이는데 새 키로는 부를 수 없다. `./gradlew geminiCheck` 6단계가 쓸 수 있는
+            # Flash 계열을 먼저 찍고 실제로 한 번 물어본다(3.6-flash 는 «서울»을 답했다).
+            #
+            # **Flash 3.x 는 전부 무료 티어 "Free of charge" 다**(공식 pricing). 옮기려면 이
+            # 줄이 아니라 `./gradlew geminiCheck -Pargs="--chat-model=…"` 가 먼저다 — 목록에
+            # 보이는 것과 부를 수 있는 것이 다르다는 사실이 2.5-flash 에서 이미 드러났다.
+            #
+            # **2026-09-17 에 `gemini-3.6-flash` 에서 `gemini-3.5-flash-lite` 로 옮겼다**
+            # (#461). geminiCheck 가 목록과 응답을 확인했고, #457 의 검증이 전부 이 모델로
+            # 돌았다 — 조 번호 질의 6/6 · 코퍼스 전 조 36/36 · 홀드아웃 5/5 · 인용 요청 3/3.
+            #
+            # ⚠️ **일일 한도가 모델마다 따로 붙는다.** 3.6-flash 는
+            # `GenerateRequestsPerDayPerProjectPerModel-FreeTier` 가 **20** 이었다(429 응답
+            # 본문에서 읽었다 · 공개 문서에는 이 수치가 없다). 모델을 바꾸면 그 한도도 새로
+            # 시작하지만 **값이 같다는 보장은 없다.**
+            #   https://ai.google.dev/gemini-api/docs/pricing
+            #   https://ai.google.dev/gemini-api/docs/models
+            model: ${GEMINI_CHAT_MODEL:gemini-3.5-flash-lite}
+
+            # 사고 수준 — **«첫 글자까지 6초»의 76% 가 여기였다** (#453 실측).
+            #
+            # ⚠️ **아래 이정표는 `gemini-3.6-flash` 의 기록이다** — 모델이 #461 에서
+            # `gemini-3.5-flash-lite` 로 바뀌었으므로 절대값은 다시 재야 한다. 남겨 두는 것은
+            # **«생성 앞의 침묵»이 어디서 왔는지**가 모델과 무관한 구조이기 때문이다.
+            #
+            # 2026-09-16 로컬 한 건(이력 0턴 · 발췌 5개)의 이정표:
+            #
+            #   검색=904ms 첫수신=5272ms 첫송신=5276ms 소요=5732ms
+            #
+            # 즉 검색 0.9초 · **모델이 말하기 전 4.4초** · 답 전체가 흘러나오는 데 0.46초다.
+            # 느린 것은 전송도 생성도 아니고 **생성 앞의 침묵**이었다.
+            #
+            # 그전까지 이 블록에는 `model` 한 줄뿐이라 `thinkingLevel`·`thinkingBudget`·
+            # `includeThoughts` 가 전부 null 이었고, **셋 다 null 이면 Spring AI 가
+            # `ThinkingConfig` 를 요청에 아예 싣지 않는다**(`GoogleGenAiChatModel` 의
+            # `GenerateContentConfig` 조립 구간 — 바이트코드로 확인). 모델 기본값을 그대로
+            # 받고 있었던 것이고, `includeThoughts` 가 꺼져 있어 그 시간이 **열린 스트림
+            # 안의 침묵**으로 나타났다(#447 의 SSE 는 정상 동작 중이었다).
+            #
+            # **`MINIMAL` 로 시작한 이유**는 답 자체가 이미 0.46초에 다 쓰이고 있어서 사고를
+            # 줄여 잃을 것이 생성 속도가 아니라 **인용 정확도**이기 때문이었다 — «나빠지면 한
+            # 칸 올린다»고 적어 두었고, #463 이 그 계기판(`인용`·`버린인용`)을 읽고 올렸다.
+            #
+            # ⚠️ **`MEDIUM` 은 #461 이 기각했다가 #463 이 되돌린 값이다 — 두 실측은 어긋나지
+            # 않는다. 시험지가 달랐다.**
+            #
+            # **#461 · 내용 질문 넷** (2026-09-17 · 같은 질문·같은 발췌): 2~3배 느린데 이득 없음
+            #
+            #     임원 탄핵 절차          1,409ms → 2,774ms (1.97×)  인용 1 → 1
+            #     정회원 승격 조건        1,117ms → 2,220ms (1.99×)  인용 1 → 1
+            #     휴학과 정회원 자격      1,434ms → 3,370ms (2.35×)  인용 4 → 3
+            #     임원의 총회 의결권      1,210ms → 3,667ms (3.03×)  인용 2 → 2
+            #
+            # **이 표는 지금도 사실이다** — 내용 질문만 놓고 보면 손해만 보는 거래이고, 이 값을
+            # 다시 내리려는 사람이 먼저 읽어야 할 것도 이 표다.
+            #
+            # **#463 · 인용 요청** (2026-09-17 · 일괄 경로 · 초는 생성 구간 = 소요 − 검색):
+            #
+            #     제3조를 그대로 인용해줘         MINIMAL 4/4 답 0.87~1.20s │ MEDIUM 1/1 답 2.80s
+            #     제7조 원문을 그대로 보여줘      MINIMAL 1/1 답 1.60s      │ MEDIUM 1/1 답 3.19s
+            #     제21조를 그대로 인용해줘        MINIMAL 1/1 답 0.98s      │ —
+            #     제21조 전문을 토씨 하나 바꾸지 말고 옮겨 적어줘
+            #                                     MINIMAL **0/4 전부 거절**  │ MEDIUM **4/4 답**
+            #
+            # **마지막 줄이 이 기본값을 바꾼 이유다.** 발췌에 그 조가 #457 의 핀으로 들어가
+            # 있는데도(`발췌=6`) `[근거없음]` 으로 떨어졌다 — 검색 실패가 아니라 **프롬프트
+            # 준수 실패**이고 규칙 3 과 규칙 5 가 충돌하는 자리다(`AssistantPrompt`).
+            # **갈리는 것은 조가 아니라 요구의 세기라** 같은 제21조도 「그대로 인용해줘」
+            # 정도면 MINIMAL 이 답한다.
+            #
+            # 값은 **생성 구간 2.5~3.3배**다. 그것을 치르는 이유는 「근거를 쥐고도 거절한다」가
+            # 화면에서는 「모르는 도우미」와 구분되지 않기 때문이다.
+            #
+            # ⚠️ **`LOW` 는 재지 않았다** — 더 싸게 되는지는 재고 나서 내릴 값이지 짐작으로
+            # 고를 값이 아니다.
+            #
+            # ⚠️ **`thinking-budget` 이 아니라 `thinking-level` 이다.** 프로퍼티 이름의
+            # 정본은 jar 의 `spring-configuration-metadata.json` 이며 둘 다 실재한다
+            # (`…options.thinking-budget` · `…options.thinking-level`). 값은
+            # `GoogleGenAiThinkingLevel` 이고 `validateThinkingLevelForModel` 이
+            # **Gemini 3 Pro 에서만** LOW·HIGH 로 제한하므로 flash 는 MEDIUM 을 받는다 —
+            # **Pro 로 옮기면 이 값이 부팅을 깨뜨린다**(MINIMAL 이든 MEDIUM 이든 같다).
+            thinking-level: ${GEMINI_CHAT_THINKING_LEVEL:MEDIUM}
+        embedding:
+          text:
+            options:
+              # **001 이 아니라 2 다** (2026-09-13 `./gradlew geminiCheck` 실측).
+              # 이 키로 쓸 수 있는 임베딩 모델은 셋이고(001 · 2-preview · 2) 둘을 재 봤다:
+              #
+              #   |                        | gemini-embedding-001 | gemini-embedding-2 |
+              #   |------------------------|----------------------|--------------------|
+              #   | 입력 상한               | 2,048 토큰            | **8,192 토큰**      |
+              #   | dimensions=768 요청     | 768                  | 768                |
+              #   | 그 벡터의 노름           | **0.5819** (비정규화)  | **1.0000** (정규화) |
+              #   | dimensions 미지정       | 3072 (노름 1.0)       | 3072 (노름 1.0)     |
+              #   | task-type 이 결과를 바꾸나 | 예                   | **아니오**          |
+              #   | 개정안 제7조(2,136자) 잘림 | 아니오                | 아니오              |
+              #
+              # 세 가지가 함께 사라진다: ① 조 단위 청크가 상한에 닿을 걱정(§5.3 — 001 은
+              # 제7조가 이미 상한의 코앞이라 조가 조금만 길어지면 **조용히 잘린다**),
+              # ② 자른 벡터를 손으로 정규화해야 하는 조건(아래), ③ 비대칭 임베딩 문제
+              # (task-type 이 결과를 바꾸지 않으므로 적재·질의를 가를 것이 없다).
+              #
+              # 되돌리는 것은 환경변수 한 줄이다 — 둘 다 768차원이라 #396 의 `vector(768)`
+              # 과 재적재 계획은 어느 쪽을 골라도 같다.
+              #
+              # **둘 다 무료 티어다.** 공식 pricing 의 Gemini Embedding 2 는 전 입력 유형이
+              # "Free of charge" 이며(유료는 텍스트 $0.20/1M), **001 은 이제 그 페이지에 아예
+              # 없다** — 값만 바꾸면 되는 선택지이긴 하지만 공식 문서가 가리키는 곳은 2 다.
+              # 모델 목록 문서의 ID 는 `gemini-embedding-2-preview` 로 적혀 있는데 API 는
+              # `gemini-embedding-2` 도 함께 내주며(실측) 여기서는 후자를 고정한다.
+              #   https://ai.google.dev/gemini-api/docs/pricing
+              #   https://ai.google.dev/gemini-api/docs/embeddings
+              model: ${GEMINI_EMBEDDING_MODEL:gemini-embedding-2}
+
+              # pgvector 의 HNSW/IVFFlat 인덱스는 **2,000차원까지만** 걸린다. 이 모델의 기본
+              # 출력은 3072이라 그대로 두면 나중에 재적재 없이는 인덱스를 못 건다(ssccops#322).
+              # 이 값이 #396 `V10` 의 `vector(N)` 이다.
+              #
+              # ⚠️ **모델 클래스의 `dimensions()` 를 믿지 말 것.** 그쪽은 모델 이름으로 찾는
+              # 상수표(GoogleGenAiTextEmbeddingModelName)를 먼저 보고 gemini-embedding-001 에
+              # **3072** 을 돌려준다 — 실제 벡터 길이가 768인데도 그렇다. 이름이 표에 없으면
+              # (gemini-embedding-2 가 그렇다) 진짜 한 번 불러 보고 그 길이를 캐시하므로
+              # 지금은 768이 나오지만, **모델을 바꾸면 답이 달라지는 값**이다. #396 에서
+              # `spring.ai.vectorstore.pgvector.dimensions` 를 **명시**할 것.
+              #
+              # ⚠️ **정규화는 모델에 달려 있다** (2026-09-13 실측 · 위 표). gemini-embedding-2 는
+              # 768로 잘라도 노름이 1.0000 이지만, **001 은 0.5819 다** — Google 문서가 001 을
+              # 3072 밖으로 자르면 수동 정규화가 필요하다고 한 그대로이고 Spring AI 는 하지
+              # 않는다(모델 클래스에 정규화 코드가 없다). 001 로 되돌리면 그 상태에서 무해한
+              # 것은 오직 `spring.ai.vectorstore.pgvector.distance-type` 의 기본값이
+              # `cosine-distance` 이고 **코사인이 스케일 불변**이기 때문이다 —
+              # **`euclidean`·`inner-product` 로 바꾸는 순간 검색이 조용히 망가진다.**
+              dimensions: 768
+
+              # 적재는 문서, 질의는 RETRIEVAL_QUERY 로 거는 **비대칭 임베딩**이 검색 품질의
+              # 표준 처방이다. **지금 이 줄은 아무 일도 하지 않으며, 두 가지 이유가 겹친다**
+              # (둘 다 2026-09-13 `./gradlew geminiCheck` 4단계로 확인):
+              #
+              #   ① Spring AI 1.1.8 이 싣지 않는다. GoogleGenAiTextEmbeddingModel 이
+              #      EmbedContentConfig 에 넣는 것은 outputDimensionality 하나뿐이고
+              #      taskType·title·autoTruncate 는 읽지도 않는다(SDK 와 Gemini API 는 셋 다
+              #      지원한다). 001 에서 SDK 로 직접 부르면 DOCUMENT ≠ QUERY 인데 이 클래스를
+              #      거치면 같은 벡터가 나온다.
+              #   ② **gemini-embedding-2 는 task-type 파라미터 자체를 지원하지 않는다.** SDK 로
+              #      직접 걸어도 DOCUMENT 와 QUERY 가 같은 벡터이고, 공식 문서도 그렇게 말한다
+              #      ("the `task_type` parameter is not supported" ·
+              #      https://ai.google.dev/gemini-api/docs/embeddings).
+              #
+              # 그래서 ①을 고치는 일(EmbeddingModel 을 감싸기)은 **001 로 되돌릴 때만** 의미가
+              # 있다. 줄을 남겨 두는 것은 그 조건을 여기 적어 두기 위해서다 — 지우면 다음
+              # 사람이 "비대칭을 왜 안 걸었지?"를 처음부터 다시 조사한다.
+              #
+              # **비대칭 자체를 포기한 것은 아니다.** 2 에서 Google 이 제시하는 대체 경로는
+              # 파라미터가 아니라 **프롬프트에 과업 설명을 넣는 것**이다("include task
+              # instructions directly in the prompt"). 즉 적재·질의 텍스트 앞에 서로 다른 한
+              # 줄을 붙이는 일이라 Spring AI 가 무엇을 싣든 상관없이 우리가 할 수 있다 —
+              # 골든셋(§14.2)이 필요하다고 말하면 그때 청커·질의 쪽에서 건다.
+              task-type: RETRIEVAL_DOCUMENT
+
+              # `auto-truncate` 를 넣지 말 것 — Spring AI 가 읽지 않을뿐더러, 값이 전달되는
+              # 경로가 생기더라도 Gemini Developer API 는 그 파라미터를 거절한다
+              # ("autoTruncate parameter is not supported in Gemini API", google-genai 1.37.0).
+
+    # ── pgvector (규정 도우미 RAG · #396 · ADR-0028) ──────────────────────────
+    #
+    # 청크는 Supabase PostgreSQL 의 `vector_store` 한 테이블에 들어간다. 새 배포 단위를 세우지
+    # 않는 것이 이 기능의 전제이며(ADR-0028), 벡터는 이미 쓰는 DB 의 확장 하나다.
+    vectorstore:
+      pgvector:
+        # **스타터가 스키마를 만들지 못하게 한다.** dev·prod 는 `ddl-auto: validate` 라
+        # 마이그레이션이 모르는 테이블이 생기면 «baseline + 마이그레이션이 곧 DB»라는 전제가
+        # 깨진다(ssccops#213). 스타터의 DDL 은 V10__create_assistant_tables.sql 에 옮겨 적었다.
+        initialize-schema: false
+
+        # **명시하는 것이 중요하다.** 비워 두면(-1) 저장소가 부팅 중에 임베딩 모델의
+        # dimensions() 를 묻는데, 그 값은 모델 이름 상수표를 먼저 보고 **3072 을 답할 수 있다**
+        # (#395 에서 실측). 그러면 V10 의 vector(768) 과 어긋나 적재가 통째로 실패하고, 원인이
+        # 설정이 아니라 «insert 가 깨진다»로 보인다. 여기 값과 V10 의 vector(N) 은 같아야 한다.
+        dimensions: 768
+
+        # **기본값에서 움직이지 않는다**(ADR-0028). 768 로 자른 임베딩은 모델에 따라 정규화가
+        # 안 돼 있을 수 있고(gemini-embedding-001 은 노름 0.58 이다) Spring AI 는 정규화하지
+        # 않는다 — 지금 무해한 것은 **코사인이 스케일 불변**이기 때문이다.
+        # `euclidean`·`inner-product` 로 바꾸는 순간 검색이 **조용히** 망가진다.
+        distance-type: cosine-distance
+
+        # HNSW·IVFFlat 을 만들지 않는다(ADR-0028) — 청크 수천 개면 순차 스캔이 빠르고, Free
+        # 티어의 진짜 제약은 디스크가 아니라 RAM 이다. initialize-schema 가 false 라 이 값이
+        # 실제로 인덱스를 만들지는 않지만, 켜는 날 기본값(hnsw)이 조용히 인덱스를 걸지 않도록
+        # 의도를 여기 적어 둔다.
+        index-type: none
+
+        # 부팅 때 vector_store 의 컬럼 넷(id·content·metadata·embedding)이 있는지 본다.
+        # 스키마를 Flyway 가 만드는 이상 «스타터가 기대하는 모양»과 어긋날 자리가 생기는데,
+        # 그 어긋남이 첫 적재가 아니라 부팅에서 드러나게 한다. Flyway 는 JdbcTemplate 보다
+        # 먼저 돌므로(Boot 의 JdbcOperationsDependsOnPostProcessor) 순서 문제가 없다.
+        schema-validation: true
+
+    # ── 모델 호출 재시도 (규정 도우미 RAG · #403 · #448) ──────────────────────
+    #
+    # ⚠️ **이 값들이 실제로 정하는 것은 `RetryTemplate`이 아니라 google-genai SDK의 재시도다** (#448).
+    # 스타터가 만드는 `RetryTemplate`은 세 예외만 다시 부르는 **화이트리스트**라
+    # (`TransientAiException` · `ResourceAccessException` · `WebClientRequestException`) Gemini가
+    # 던지는 것(`GenAiIOException` · `ApiException`)에는 **아무 일도 하지 않는다** — 그 템플릿에
+    # `GenAiIOException`을 던지면 콜백이 한 번, `TransientAiException`을 던지면 두 번 불린다.
+    #
+    # 대신 SDK가 OkHttp 인터셉터로 자기 재시도를 감춰 두고 있었다(기본 5회 · 1s에서 2배씩 ·
+    # 408·429·5xx·**모든 IOException**). 그것이 `callTimeout`이 터진 뒤에도 잠들어 **상한 20초가
+    # 35~43초의 대기**가 됐다 — #448이 고친 것이 그 자리다. `GeminiClientConfig`가 여기 값을 그
+    # 인터셉터로 옮겨 담아, 이 블록이 장식이 아니라 실제로 무언가를 정하게 한다.
+    #
+    # 2회 · 1s · 2배 · 최대 5s면 «한 번은 더 해 보고 안 되면 우리 문구로 안내»가 된다 —
+    # 그 문구가 503 ASSISTANT_UPSTREAM_FAILED이고 화면은 «일시적으로 답할 수 없어요»를 그린다.
+    #
+    # `on-client-errors`는 기본 false를 그대로 둔다 — **그 값이 408·429를 재시도 목록에서
+    # 가른다**(`GeminiClientConfig`). 쿼터로 거절당한 요청을 다시 부르는 것은 쿼터 소진을
+    # 가속할 뿐이다(#400이 문서 단위 재시도를 두지 않은 근거 그대로).
+    #
+    # ⚠️ **색인 임베딩에는 닿지 않는다.** 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`가 따로
+    # 연결하므로 SDK 기본 재시도(429 포함 5회)를 그대로 쓴다 — 옮겨 담을 자리가 하나 더 있다는
+    # 뜻이고, 그쪽의 문제는 질의 지연이 아니라 쿼터다.
+    retry:
+      max-attempts: 2
+      backoff:
+        initial-interval: 1s
+        multiplier: 2
+        max-interval: 5s
 
 server:
   port: ${PORT:8080}
@@ -47,6 +332,12 @@ management:
     web:
       exposure:
         include: health,info,prometheus,metrics,loggers
+  # /actuator/info 의 git 정보를 전부 낸다 (#410). 기본 simple 은 commit.id 를 abbrev 하나로
+  # 뭉개는데, deploy-history.yml 은 full 로 푸시된 sha 와 정확히 비교하고 abbrev 는 표시에 쓴다.
+  # 무엇이 나가는지는 build.gradle 의 gitProperties.keys 가 정한다(네 키뿐).
+  info:
+    git:
+      mode: full
   endpoint:
     health:
       show-details: always
@@ -97,3 +388,161 @@ logging:
   pattern:
     level: "%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]"
 
+
+# ════════════════════════════════════════════════════════════════════════════
+# 규정 도우미(RAG) 손잡이 — 이 애플리케이션 고유 설정 (#439 · Epic ssccops#321)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# **여기가 기본값의 유일한 출처다.** 자바 쪽 `@Value`는 키만 참조하고 기본값을 갖지 않는다 —
+# 두 곳에 적으면 한쪽만 바뀌고 그 사실이 아무 데서도 드러나지 않는다(릴리스 버전 절이 겪은
+# 모양이다). 그래서 아래 줄을 지우면 부팅이 `Could not resolve placeholder`로 **실패한다.**
+# 그것이 의도이며, `dev`·`prod`의 `ddl-auto: validate`와 같은 판단이다.
+#
+# **값을 바꾸는 곳은 여기가 아니라 환경변수다.** `dev`·`prod`는 Coolify 대시보드(#202 —
+# 환경변수의 정본은 Coolify), 로컬은 `.env`다. `${...}` 안의 이름이 그때 쓰는 변수명이며,
+# 그 목록은 `.env.example`이 줄 단위로 들고 있다(설명은 두 벌로 두지 않고 이 파일이 갖는다).
+#
+# **프로필 파일(`application-dev.yaml`·`-prod.yaml`)에 이 키를 옮겨 적지 않는다.** 배포마다
+# 다른 값은 환경변수로 주고, 여기에는 «아무도 주지 않았을 때의 값»만 둔다. `application-test.yaml`
+# 이 몇 줄을 덮어쓰는 것은 예외이며 그 이유는 그 파일의 주석에 있다(프로필 yaml이 이 파일을 이긴다).
+ssccops:
+  assistant:
+    # 질의·적재·색인 워커를 **함께** 연다 (#396). 기본값이 `false`인 것은 **머지가 곧 dev
+    # 배포**이기 때문이다(#202) — 스위치가 없으면 색인 워커가 배포 직후부터 대기열을 돌며 무료
+    # 임베딩 쿼터를 태우고, 멈추는 방법이 revert뿐이다.
+    #
+    # 질의만 닫지 않는 이유는 끄는 이유가 대개 그 쿼터인데 워커만 살아 있으면 계속 태우기
+    # 때문이다. 꺼져 있으면 404 `ASSISTANT_DISABLED`다.
+    #
+    # **`GEMINI_API_KEY`와는 다른 축이다** — 키가 없으면 배선 자체가 서지 않아 503
+    # `ASSISTANT_UNAVAILABLE`이고(설정이 덜 된 상태), 이 플래그는 「이 서버에 규정 도우미가
+    # 없다」다. 여기 `false`로 선언하는 것은 **자리를 만드는 것이지 켜는 것이 아니다** —
+    # 켜는 곳은 여전히 Coolify 환경변수 한 줄이다.
+    enabled: ${SSCCOPS_ASSISTANT_ENABLED:false}
+
+    indexing:
+      # 색인 워커의 **자동 실행**(기동 복구 + 폴링). 끄면 `RagIndexingScheduler` 빈 자체가
+      # 서지 않는다 — `@ConditionalOnProperty`라 이 값은 위의 «키가 없으면 부팅 실패» 규칙이
+      # 걸리지 않으므로 그쪽 애노테이션이 `matchIfMissing = true`를 함께 들고 있다.
+      #
+      # `test` 프로필만 끈다(`application-test.yaml`) — 켜 두면 컨텍스트가 뜨자마자 공용
+      # `testdb`와 `InMemoryRagChunkStore`로 상태가 테스트 사이를 새어 나간다.
+      auto: ${SSCCOPS_ASSISTANT_INDEXING_AUTO:true}
+
+      # 대기열 폴링 주기. **화면의 폴링은 웹 책임이고 이 값과 무관하다.**
+      poll-interval: ${SSCCOPS_ASSISTANT_INDEXING_POLL_INTERVAL:PT10S}
+
+    gemini:
+      # Gemini 호출의 **전체 왕복** 상한 (#403 · #448). ⚠️ **SDK 기본값이 「무한」이고 스타터에는
+      # 그것을 줄 프로퍼티가 없다** — google-genai가 OkHttp에 `connectTimeout(0)`을 걸고 read·write도
+      # 같다. 이 값이 없으면 질의 한 건이 톰캣 요청 스레드를 영영 붙들 수 있다.
+      #
+      # ⚠️ **connect와 read를 따로 줄 수 없어** 기획안의 «connect 3s / read 20s»를 하나로 합친
+      # 값이다. 좁히면 긴 답변이 잘리는 것이 아니라 통째로 503이 된다. **본문을 다 읽는 시간까지
+      # 들어가므로 스트리밍(#447)도 같은 상한에 걸린다** — 그때는 글자가 나오다 끊기고 오류
+      # 이벤트가 온다(상한 1,500ms에 실측: 조각 넷이 나간 뒤 1,863ms에 끊겼다).
+      #
+      # **20초에서 40초로 넓혔다** (#448). 실측(2026-09-16 로컬 · 문서 3건 67청크)에서 **성공이
+      # 7~12초**라 여유가 8초뿐이었고, 조금만 느려지면 넘고 그 뒤에 SDK 재시도가 붙어 **35~43초를
+      # 기다린 끝에 실패**했다. 그 재시도를 좁혀(위 `spring.ai.retry`) 최악의 대기가 «상한 + 지연
+      # 한 번»이 되었으므로, 40초는 **오늘 실패에 이미 쓰고 있는 시간을 넘지 않으면서** 성공할 수
+      # 있는 창을 두 배로 넓힌다.
+      #
+      # **목표 p95는 5초가 아니라 15초다** (#448). 기획안 §10의 5초는 재기 전에 적은 값인데
+      # 실측이 7~12초다 — 그대로 두면 «목표는 언제나 빗나가 있다»가 정상이 된다. 그 값을 줄이는
+      # 손잡이는 이 상한이 아니라 `query.top-k`와 대화 이력(`memory.max-turns`)이다.
+      #
+      # **임베딩에는 걸리지 않는다** — 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`로 따로
+      # 연결한다. 색인이 임베딩을 수백 번 부르는 자리(#400)의 성질(느려도 끝나기만 하면 된다)과
+      # 맞지 않으므로 마침 맞는 분리다.
+      call-timeout: ${SSCCOPS_ASSISTANT_GEMINI_CALL_TIMEOUT:PT40S}
+
+    query:
+      # 한 번에 프롬프트에 넣는 발췌 수(기획안 §4). 답변 3~5문장 규칙과 함께 프롬프트 길이를
+      # 정한다 — 늘리면 힙과 모델 입력이 함께 는다(§8.1).
+      #
+      # **8에서 5로 줄였다** (#448). 입력이 줄면 생성이 빨라지고, 실제로 쓰인 인용은 한 답에
+      # 1~2개였다(로그 `인용=1` · `인용=2`). **재현율을 깎지 않는다는 근거는 골든셋이다** —
+      # 기대 근거가 상위 다섯 안에 드는 비율이 1.00(10/10)이라 여덟에서 다섯으로 좁혀도 잃는
+      # 근거가 없으며, `RetrievalGoldenSetTest`가 두 폭을 나란히 재어 회귀를 막는다. 다시 넓힐
+      # 일이 생기면 그 테스트의 숫자가 먼저 움직인다.
+      top-k: ${SSCCOPS_ASSISTANT_QUERY_TOP_K:5}
+
+      # 유형별 임계값이 없을 때 쓰는 공통값.
+      #
+      # ⚠️ **절대값으로는 관련 있는 질문과 없는 질문을 가를 수 없다** (#457 · 2026-09-17 실측 ·
+      # 문서 3건 67청크 · `gemini-embedding-2`). 정당한 질문이 무관한 질문보다 **낮게** 나온다:
+      #
+      #     파이썬에서 리스트를 정렬하는 방법 알려줘  (무관)   1위 0.4910
+      #     내일 서울 날씨 어때?                   (무관)   1위 0.4838
+      #     제21조에 대해 알려줘                   (정당)   1위 0.4791
+      #     오늘 점심 뭐 먹을까?                   (무관)   1위 0.4739
+      #
+      # 0.5로 자르면 제21조까지 막히고(발췌 0개 → 거절), 0.4로 자르면 무관한 질문 셋이 전부
+      # 통과한다. **둘을 가르는 값이 존재하지 않는다** — 이 공간은 대역 자체가 좁아서, 청크쌍
+      # 2,211개의 유사도가 최저 0.5902 · 평균 0.7420 · 최고 0.9313이고 **코퍼스에서 가장 무관한
+      # 두 청크조차 0.59다.**
+      #
+      # **그래서 거절의 주체는 이 손잡이가 아니라 모델의 `[근거없음]`(#455)이다.** 무관한 질문에
+      # 발췌 5개(0.4744~0.4910)를 억지로 실어 보내도 모델은 `[근거없음]`만 낸다(실측). 이 값은
+      # 그 뒤에 남은 최후의 안전장치이고, **0.5에서 0.35로 내린 것은 「정답을 버리지 않는 것」이
+      # 「무관한 것을 거르는 것」보다 이 자리에서 더 중요하기 때문**이다 — 뒤의 일은 모델이 한다.
+      #
+      # ⚠️ **올리지 말 것.** 0.5가 실제로 하던 일은 정당한 질문을 버리는 것뿐이었다.
+      similarity-threshold: ${SSCCOPS_ASSISTANT_QUERY_SIMILARITY_THRESHOLD:0.35}
+
+      # ⚠️ **유형별 임계값 둘은 일부러 여기 없다.**
+      #
+      #   ssccops.assistant.query.similarity-threshold-structured   (조 단위 청크 · 목표 450자)
+      #   ssccops.assistant.query.similarity-threshold-generic      (고정 길이 청크 · 600자+overlap)
+      #
+      # 이 둘은 **「값 없음」이 「위의 공통값을 쓴다」라는 뜻**이라, 다른 키들과 달리 선언 자체가
+      # 의미를 바꾼다(`AssistantQueryPolicy`가 null을 그렇게 읽는다). 그래서 이 둘만 자바 쪽
+      # `@Value`가 `#{null}` 기본값을 그대로 들고 있다.
+      #
+      # 유형별로 가르려면 **환경변수로 준다** — 위 두 이름을 대문자·언더스코어로 바꾼 것이다.
+      # 여기에 빈 값으로 줄을 만들지 말 것: 빈 문자열은 `Double`로 변환되지 않아 부팅이 깨진다.
+      # 두 유형은 청크 길이가 달라 점수 분포가 같지 않으므로, 실측 뒤 갈릴 가능성이 높은 자리다.
+
+      # 질문 길이 상한 — **품질 규칙이 아니라 용량 규칙이다**(§8.1). 넘으면 413
+      # `ASSISTANT_QUESTION_TOO_LONG`.
+      max-question-length: ${SSCCOPS_ASSISTANT_QUERY_MAX_QUESTION_LENGTH:1000}
+
+      # 인용 카드에 싣는 원문 발췌 길이. 조문을 통째로 옮기지 않는다(§6.2 다섯째 규칙).
+      snippet-length: ${SSCCOPS_ASSISTANT_QUERY_SNIPPET_LENGTH:200}
+
+      # 질의 임베딩 캐시 (#406). 같은 질문을 다시 물었을 때 임베딩 호출을 아낀다 — 무료 쿼터가
+      # API 키 단위의 공유 자원이라 그 절약이 곧 전원의 여유다.
+      embedding-cache-size: ${SSCCOPS_ASSISTANT_QUERY_EMBEDDING_CACHE_SIZE:1000}
+      embedding-cache-ttl: ${SSCCOPS_ASSISTANT_QUERY_EMBEDDING_CACHE_TTL:P7D}
+
+    memory:
+      # 대화 메모리 — **힙 Caffeine이다**(#406 · 기획안 §7·§8.1). 세 값이 함께 §8.1의 12MB
+      # 산수를 이룬다: 대화 수 상한 · 슬라이딩 TTL · 턴 상한.
+      max-conversations: ${SSCCOPS_ASSISTANT_MEMORY_MAX_CONVERSATIONS:500}
+
+      # **슬라이딩이다**(`expireAfterAccess`) — 이어 가고 있는 대화가 24시간이 지났다고 한가운데서
+      # 사라지면 사용자에게는 방금 물어본 것을 도우미가 잊은 것으로 보인다.
+      ttl: ${SSCCOPS_ASSISTANT_MEMORY_TTL:PT24H}
+
+      # 창에 남기는 턴 수(메시지로는 이 값의 두 배). §8.1의 «대화 1개 ≈ 24KB»가 여기서 나온다.
+      max-turns: ${SSCCOPS_ASSISTANT_MEMORY_MAX_TURNS:20}
+
+    rate-limit:
+      # 질의 레이트 리밋 (#404) — **인메모리이고 인스턴스별이다.** 무료 쿼터는 API 키 단위의
+      # 공유 자원이라 한 사람이 루프를 돌리면 전원이 답을 못 받는다. 넘으면 Gemini를 부르기 전에
+      # 429 `ASSISTANT_RATE_LIMITED`로 끊는다.
+      #
+      # 적재(업로드) 한도는 여기 없다 — 그쪽은 회원당 일 10회이고 **DB가 센다**(#399). 재기동이
+      # 곧 한도 초기화가 되면 안 되기 때문이며, 업로드 한 건이 임베딩을 수백 번 부른다.
+      member-per-minute: ${SSCCOPS_ASSISTANT_RATE_LIMIT_MEMBER_PER_MINUTE:5}
+      member-per-day: ${SSCCOPS_ASSISTANT_RATE_LIMIT_MEMBER_PER_DAY:50}
+
+      # ⚠️ **실측값이 들어와야 하는 자리다.** 「Gemini RPM의 70%」인데 무료 티어의 실제 RPM이 아직
+      # 실측되지 않아(ssccops#324 · 공개 문서에 수치가 없다) 이 값은 10 RPM을 가정한 잠정값이다.
+      # 콘솔에서 읽은 뒤 고치는 것은 이 줄이 아니라 배포 환경변수 한 줄이다 — 낮게 잡힌 채로 두는
+      # 쪽이 안전한 실패다(덜 답하는 것이지 쿼터를 태우는 것이 아니다).
+      #
+      # **인스턴스를 늘리면 이 값은 뜻을 잃는다**(카운터가 나뉘어 실질 상한이 배수가 된다) —
+      # 그 계획이 생기면 공유 저장소로 옮기기 전에 `AssistantRateLimiter`의 주석을 먼저 볼 것.
+      global-per-minute: ${SSCCOPS_ASSISTANT_RATE_LIMIT_GLOBAL_PER_MINUTE:7}

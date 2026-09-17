@@ -10,6 +10,7 @@ spring:
         jwt:
           # 테스트는 SecurityMockMvcRequestPostProcessors.jwt()로 디코더를 우회하므로 실제 네트워크 호출 없음
           jwk-set-uri: http://localhost/auth/v1/.well-known/jwks.json
+          issuer-uri: http://localhost/auth/v1
   jpa:
     defer-datasource-initialization: true # Hibernate가 스키마를 만든 뒤 시드가 실행되도록 순서 보장
     hibernate:
@@ -44,12 +45,17 @@ spring:
   # 시드가 두 벌이 되어 갈린다 — 이 저장소가 반복해서 데인 자리다. V3는 옛 data.sql을 그대로
   # 옮긴 것이라 H2에서도 돈다(ON CONFLICT 대신 WHERE NOT EXISTS로 멱등성을 보장한다).
   #
+  # **시드 마이그레이션이 늘면 여기도 는다**(#402의 V11). 순서가 곧 실행 순서이고 V11이 V3가
+  # 넣은 SUPER·역할을 참조하므로 뒤에 온다. 빠뜨리면 그 권한이 test DB에만 없어, 새 권한을
+  # 요구하는 엔드포인트의 테스트가 "data.sql이 넣어야 할 권한이 없다"로 죽는다
+  # (AuthorityFixture). SeedScript.LOCATIONS도 같은 목록이어야 한다.
+  #
   # defer-datasource-initialization이 필요한 이유는 여기가 ddl-auto: create이기 때문이다 —
   # Hibernate가 스키마를 만든 뒤에 이 스크립트가 돌아야 한다.
   sql:
     init:
       mode: always
-      data-locations: classpath:db/migration/V3__seed_reference_data.sql
+      data-locations: classpath:db/migration/V3__seed_reference_data.sql,classpath:db/migration/V11__seed_rag_document_manage_authority.sql
       # JVM 기본 문자셋으로 읽으면 한국어 Windows에서 MS949가 되어 한글 기준값이 깨진 채
       # INSERT 된다. 기동은 성공하고 '예산지출'·'최고관리자'로 시드를 찾는 코드만 빗나간다.
       encoding: UTF-8
@@ -117,3 +123,29 @@ ssccops:
   member:
     hard-delete:
       enabled: true
+
+  # 색인 워커의 **자동 실행**을 끈다 (#400).
+  #
+  # 켜 두면 컨텍스트가 뜨자마자 RagIndexingScheduler 가 기동 복구를 돌리고 대기열을 폴링한다 —
+  # 공용 testdb 와 InMemoryRagChunkStore 를 여러 테스트가 나눠 쓰므로 그 순간 상태가 테스트
+  # 사이로 새어 나가고(남이 만든 PENDING 행이 남의 청크가 된다), 실패도 남의 스레드에서 난다.
+  #
+  # 이 값은 폴링·기동 복구만 끈다 — 상태 전이는 RagIndexingWorkerTest 가 워커 메서드를 직접
+  # 불러 검증하므로 잃는 것이 없다. 운영(local·dev·prod)에는 이 키를 두는 곳이 없어 기본값
+  # 그대로 켜져 있다(기능 플래그가 꺼져 있으면 워커의 두 메서드가 즉시 돌아온다).
+  assistant:
+    indexing:
+      auto: false
+
+    # 질의 레이트 리밋 (#404). **전역 분 한도만 올린다.**
+    #
+    # 카운터는 인메모리이고 컨텍스트 하나에 한 벌인데, 한 테스트 클래스의 메서드들은 대개 같은
+    # 벽시계 분 안에서 다 돈다 — 운영 기본값(분 7회)을 그대로 두면 AssistantControllerTest 의
+    # 여덟째 질의쯤부터 **자기가 검증하려던 것과 무관한 이유로** 429가 되고, 그 실패는 메서드
+    # 순서에 따라 나타났다 사라진다.
+    #
+    # **회원당 한도는 기본값 그대로 둔다** — 그 클래스는 테스트마다 회원을 새로 만들어 카운터가
+    # 겹치지 않고, 무엇보다 429 의 HTTP 계약을 그 값(분 5회)으로 실제로 확인한다. 창이 넘어가는
+    # 규칙과 일 한도는 시계를 옮길 수 있는 AssistantRateLimiterTest 가 컨텍스트 없이 본다.
+    rate-limit:
+      global-per-minute: 100000

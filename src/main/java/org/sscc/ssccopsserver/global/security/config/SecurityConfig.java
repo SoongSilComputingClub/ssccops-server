@@ -12,7 +12,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -21,7 +23,9 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.sscc.ssccopsserver.global.mcp.McpProtectedResource;
 import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtAuthenticationConverter;
+import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtValidators;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -50,6 +54,15 @@ public class SecurityConfig {
 
     @Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}")
     private String jwkSetUri;
+
+    /*
+     * `{SUPABASE_URL}/auth/v1` — jwk-set-uri와 같은 env에서 나온다(새 env 없음). jwk-set-uri
+     * 문자열을 잘라 파생하지 않은 것은, 그 파생 규칙이 깨졌을 때 드러나는 자리가 «모든 토큰이
+     * 401»이라 설정 오류인지 코드 오류인지 배포 로그로는 가려지지 않기 때문이다. 스프링 부트의
+     * 표준 프로퍼티 이름을 그대로 써서 두 값이 yaml에서 나란히 보이게 한다.
+     */
+    @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}")
+    private String issuerUri;
 
     @Value("${frontend.url}")
     private String frontendUrl;
@@ -111,18 +124,27 @@ public class SecurityConfig {
      * 뜨지 않는다(주입 모호성이 아니라 정의 중복이라 @Primary의 영역이 아니고, 스프링 부트는
      * 빈 정의 오버라이딩을 기본으로 막는다). 리소스 서버는 이 빈을 타입으로 찾으므로 이름을
      * 비워 두면 테스트가 스텁으로 갈아끼우는 길이 막힌다.
+     *
+     * **iss·aud도 본다** (#383 · ADR-0026). withJwkSetUri의 기본 검증기는 exp·nbf뿐이었다.
+     * 검증기 자체는 SupabaseJwtValidators에 있다 — 단위 테스트가 로컬 키로 서명한 토큰을
+     * 같은 검증기에 통과시켜 본다. 통합 테스트의 스텁 jwtDecoder는 이 빈을 통째로 갈아끼우므로
+     * 영향이 없다.
      */
     @Bean("supabaseJwtDecoder")
     public JwtDecoder jwtDecoder() {
-        return NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
-                .jwsAlgorithms(
-                        algorithms -> {
-                            algorithms.add(SignatureAlgorithm.RS256);
-                            algorithms.add(SignatureAlgorithm.ES256);
-                            algorithms.add(SignatureAlgorithm.ES384);
-                            algorithms.add(SignatureAlgorithm.ES512);
-                        })
-                .build();
+        NimbusJwtDecoder decoder =
+                NimbusJwtDecoder.withJwkSetUri(jwkSetUri)
+                        .jwsAlgorithms(
+                                algorithms -> {
+                                    algorithms.add(SignatureAlgorithm.RS256);
+                                    algorithms.add(SignatureAlgorithm.ES256);
+                                    algorithms.add(SignatureAlgorithm.ES384);
+                                    algorithms.add(SignatureAlgorithm.ES512);
+                                })
+                        .build();
+        OAuth2TokenValidator<Jwt> validator = SupabaseJwtValidators.create(issuerUri);
+        decoder.setJwtValidator(validator);
+        return decoder;
     }
 
     private List<String> allowedOrigins() {
@@ -182,6 +204,18 @@ public class SecurityConfig {
                      * 같다** — 그 응답이 익명에게 나가도 되는지가 유일한 질문이다.
                      */
                     auth.requestMatchers("/public/v1/**").permitAll();
+                    /*
+                     * OAuth 보호 자원 메타데이터 (#384 · RFC 9728 · ADR-0026). MCP 클라이언트가
+                     * 401을 받은 뒤 «어느 인가 서버로 가라»를 읽는 문서라 토큰이 있을 수 없다.
+                     * 서비스 데이터가 아니라 설정에서 온 상수 세 개(자원 URL · issuer · 스코프)뿐
+                     * 이므로 위 /public/v1 규칙(익명 접근은 그 접두사뿐)과 갈리지 않는다 —
+                     * 헬스 프로브·Swagger와 같은 부류다. `/mcp` 자체는 아래 anyRequest에 걸려
+                     * 인증이 필요하다.
+                     */
+                    auth.requestMatchers(
+                                    McpProtectedResource.METADATA_PATH,
+                                    McpProtectedResource.METADATA_PATH + "/**")
+                            .permitAll();
                     // 나머지는 인증만 요구한다. 무엇을 할 수 있는지는 @RequireAuthority가 본다
                     auth.anyRequest().authenticated();
                 });

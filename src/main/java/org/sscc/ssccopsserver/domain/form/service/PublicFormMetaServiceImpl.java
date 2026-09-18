@@ -67,9 +67,14 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
         Optional<UUID> key = FormRefResolver.asKey(formRef);
         Optional<FormEntity> form =
                 key.isPresent()
-                        ? formRepository.findByFormKeyAndDeletedAtIsNullAndStatusIn(key.get(), EVER_OPENED)
+                        ? formRepository.findByFormKeyAndDeletedAtIsNullAndStatusIn(
+                                key.get(), EVER_OPENED)
                         : FormRefResolver.asId(formRef)
-                                .flatMap(id -> formRepository.findByIdAndDeletedAtIsNullAndStatusIn(id, NOW_OPEN));
+                                .flatMap(
+                                        id ->
+                                                formRepository
+                                                        .findByIdAndDeletedAtIsNullAndStatusIn(
+                                                                id, NOW_OPEN));
         return form.map(PublicFormMetaResponse::of)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }

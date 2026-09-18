@@ -85,7 +85,8 @@ public class PublicFormController {
     @GetMapping("/{formId}/public")
     public ApiResponse<PublicFormResponse> getPublicForm(
             @PathVariable String formId, @CurrentMember MemberEntity respondent) {
-        return ApiResponse.success(formResponseService.getPublicForm(formRefResolver.resolveId(formId), respondent));
+        return ApiResponse.success(
+                formResponseService.getPublicForm(formRefResolver.resolveId(formId), respondent));
     }
 
     /*
@@ -147,7 +148,8 @@ public class PublicFormController {
             @CurrentMember MemberEntity respondent) {
 
         FormResponseSubmitResponse response =
-                formResponseService.submitResponse(formRefResolver.resolveId(formId), request, respondent);
+                formResponseService.submitResponse(
+                        formRefResolver.resolveId(formId), request, respondent);
         URI location = URI.create("/v1/forms/" + formId + "/responses/" + response.formRspnsId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
@@ -185,7 +187,8 @@ public class PublicFormController {
     @GetMapping("/{formId}/responses/mine")
     public ApiResponse<List<MyFormResponseSummaryResponse>> getMyFormResponses(
             @PathVariable String formId, @CurrentMember MemberEntity respondent) {
-        return ApiResponse.success(formResponseService.getMyResponses(formRefResolver.resolveId(formId), respondent));
+        return ApiResponse.success(
+                formResponseService.getMyResponses(formRefResolver.resolveId(formId), respondent));
     }
 
     /*
@@ -268,7 +271,8 @@ public class PublicFormController {
             @PathVariable Long formRspnsId,
             @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(
-                formResponseService.getMyResponse(formRefResolver.resolveId(formId), formRspnsId, respondent));
+                formResponseService.getMyResponse(
+                        formRefResolver.resolveId(formId), formRspnsId, respondent));
     }
 
     /*
@@ -296,7 +300,9 @@ public class PublicFormController {
     public ApiResponse<FormResponseDraftResponse> getMyDraft(
             @PathVariable String formId, @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(
-                formResponseService.findMyDraft(formRefResolver.resolveId(formId), respondent).orElse(null));
+                formResponseService
+                        .findMyDraft(formRefResolver.resolveId(formId), respondent)
+                        .orElse(null));
     }
 
     /*
@@ -326,6 +332,8 @@ public class PublicFormController {
             @PathVariable String formId,
             @Valid @RequestBody FormResponseDraftRequest request,
             @CurrentMember MemberEntity respondent) {
-        return ApiResponse.success(formResponseService.saveDraft(formRefResolver.resolveId(formId), request, respondent));
+        return ApiResponse.success(
+                formResponseService.saveDraft(
+                        formRefResolver.resolveId(formId), request, respondent));
     }
 }

@@ -1,8 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.dto;
 
-import java.util.UUID;
-
 import java.util.List;
+import java.util.UUID;
 
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
@@ -29,7 +28,8 @@ public record PublicFormMetaResponse(
         return new PublicFormMetaResponse(
                 form.getId(),
                 form.getFormKey(),
-                form.getTitle(), firstPageDescription(form.getQuestionComposition()));
+                form.getTitle(),
+                firstPageDescription(form.getQuestionComposition()));
     }
 
     /* 첫 페이지가 없거나 설명이 비어 있으면 null — 서버가 대체 문구를 만들어 내지 않는다 */

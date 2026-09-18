@@ -1,15 +1,19 @@
 package org.sscc.ssccopsserver.domain.form.service;
 
+import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -59,6 +63,8 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
 
     private final FormRepository formRepository;
 
+    private final FormReceiptPolicy formReceiptPolicy;
+
     /** 숫자 id로 열리는 상태 — 지금 접수 중인 것뿐 */
     private static final Set<FormStatus> NOW_OPEN = EnumSet.of(FormStatus.OPEN);
 
@@ -77,5 +83,32 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
                                                                 id, NOW_OPEN));
         return form.map(PublicFormMetaResponse::of)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
+    }
+
+    /*
+     * 접수 중인 폼 목록 (ssccops#381 · ADR-0038 «접수 중 폼: 제목·마감·폼 키»). «접수 중»의 판정은
+     * FormReceiptPolicy.filterFor(ACCEPTING)가 만든 조건을 관리자 목록과 같은 질의에 태운 것이다 —
+     * 상태·기간 규칙을 여기서 다시 쓰지 않는다(그 판정의 유일한 구현은 그 클래스다).
+     *
+     * **시스템 폼(기획안 · sys_yn)은 뺀다.** 그 폼은 부원이 lms에서 내는 것이라 익명 홈의 «지금
+     * 지원할 수 있는 것»에 뜨면 로그인 벽에 부딪히는 링크가 된다. 그것 말고는 거르지 않는다 —
+     * 폼에 «공개» 플래그가 따로 없고(form/AGENTS.md — 공개는 링크를 누구나 열 수 있다는 뜻) 접수를
+     * 연 폼은 어차피 링크가 돌고 있는 폼이다. 마감이 가까운 것부터, 마감 없는 것은 맨 뒤다.
+     */
+    @Override
+    public List<PublicOpenFormResponse> getOpenForms() {
+        FormReceiptPolicy.ReceiptFilter accepting =
+                formReceiptPolicy.filterFor(FormReceiptStatus.ACCEPTING);
+        return formRepository
+                .findAllForAdminList(
+                        accepting.statuses(), null, accepting.periodMatch().name(), accepting.now())
+                .stream()
+                .filter(form -> !form.isSystemForm())
+                .sorted(
+                        Comparator.comparing(
+                                FormEntity::getReceiptEndAt,
+                                Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(PublicOpenFormResponse::of)
+                .toList();
     }
 }

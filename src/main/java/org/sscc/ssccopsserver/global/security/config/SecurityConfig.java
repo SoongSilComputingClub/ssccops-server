@@ -202,6 +202,14 @@ public class SecurityConfig {
                      *
                      * 그러므로 **이 접두사 아래에 핸들러를 더하는 것은 permitAll을 더하는 것과
                      * 같다** — 그 응답이 익명에게 나가도 되는지가 유일한 질문이다.
+                     *
+                     * 지금 이 층에 있는 것: 공개 행사·행사 이미지(#156·#208) · 공개 폼 메타(OG,
+                     * ssccops#201) · 공유 토큰 착지 · 그리고 **콘텐츠 셋**(ssccops#381 · ADR-0038) —
+                     * 게시된 페이지(/pages/{slug}) · 게시된 포스트 목록·상세·갤러리 이미지(/posts) ·
+                     * 접수 중인 폼 목록(/forms/open). 콘텐츠 셋의 응답은 «게시 상태인 것의 공개용
+                     * 필드»로 한 문장에 가둔 별도 record(Public*)이고, 그 record의 컴포넌트를
+                     * PublicContentDtoContractTest가 금지 목록(수정자·이력·회원 개인 필드)과 대조한다.
+                     * 익명 범위를 이 밖으로 넓히는 것(집계값·학술 목록)은 새 ADR이다.
                      */
                     auth.requestMatchers("/public/v1/**").permitAll();
                     /*

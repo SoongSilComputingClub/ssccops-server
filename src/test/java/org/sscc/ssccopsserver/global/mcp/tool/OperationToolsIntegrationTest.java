@@ -83,14 +83,15 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("도구 9종이 전부 광고되고 update 도구는 없다")
-    void advertisesNineTools() {
+    @DisplayName("운영 도구 24종이 전부 광고되고 삭제 도구는 없다")
+    void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
                     client.listTools().tools().stream().map(McpSchema.Tool::name).toList();
 
             assertThat(names)
                     .containsExactlyInAnyOrder(
+                            // 1차 (#385)
                             "list_operations",
                             "get_work",
                             "list_sub_works",
@@ -99,8 +100,54 @@ class OperationToolsIntegrationTest {
                             "get_meeting",
                             "get_me",
                             "transition_sub_work",
-                            "check_sub_work_item");
-            assertThat(names).noneMatch(name -> name.startsWith("update_"));
+                            "check_sub_work_item",
+                            // W1 — 업무·하위 업무 (ssccops#365)
+                            "list_works",
+                            "create_work",
+                            "update_work",
+                            "create_sub_work",
+                            "update_sub_work",
+                            "vote_sub_work_approval",
+                            "add_sub_work_checklist_item",
+                            "update_sub_work_checklist_item_article",
+                            // W1 — 회의·승인함·대시보드·유형
+                            "create_meeting",
+                            "transition_meeting",
+                            "list_meeting_agendas",
+                            "add_meeting_agenda",
+                            "list_approvals",
+                            "get_dashboard",
+                            "list_sub_work_types");
+            /*
+             * 삭제 도구는 소프트 삭제만 열기로 했고(ADR-0037) 그것은 W5에서 낸다 — 지금은
+             * 하나도 없어야 한다. 하드 삭제는 어느 파도에서도 열지 않는다.
+             */
+            assertThat(names).noneMatch(name -> name.startsWith("delete_"));
+        }
+    }
+
+    /*
+     * **부분 수정이 다른 값을 지우지 않는다**(F2 · ssccops#365). 서버 PATCH는 전체 교체라
+     * 도구가 상세를 먼저 읽어 빈 필드를 채운다(`WorkPatch.merge`) — 이 테스트가 그 성질을
+     * REST 왕복으로 못 박는다. 깨지면 «마감일만 바꿔»가 총평을 지운다.
+     */
+    @Test
+    @DisplayName("update_work — 준 필드만 바뀌고 나머지는 그대로 남는다")
+    void updateWorkKeepsFieldsThatWereNotGiven() throws Exception {
+        Long workId = createWorkWithReview();
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult result =
+                    call(
+                            client,
+                            "update_work",
+                            Map.of("workId", workId, "patch", Map.of("priority", "HIGH")));
+
+            assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
+            String text = text(result);
+            assertThat(text).contains("\"priority\":\"HIGH\"");
+            // 주지 않은 값이 살아 있다
+            assertThat(text).contains("2026 동아리 박람회").contains("총평을 미리 적어 둔다");
         }
     }
 
@@ -235,6 +282,30 @@ class OperationToolsIntegrationTest {
         Object value = line.get(name);
         assertThat(value).as(name).isInstanceOf(Map.class);
         return (Map<String, Object>) value;
+    }
+
+    /* 총평이 든 업무를 만든다 — 부분 수정이 그것을 지우지 않는지 보려면 지워질 값이 있어야 한다 */
+    private Long createWorkWithReview() throws Exception {
+        String work =
+                mockMvc.perform(
+                                post("/v1/works")
+                                        .header("Authorization", "Bearer " + FOUNDER)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                """
+                                                {
+                                                  "title": "2026 동아리 박람회",
+                                                  "itemType": "EVENT",
+                                                  "ownerId": %d,
+                                                  "review": "총평을 미리 적어 둔다"
+                                                }
+                                                """
+                                                        .formatted(founderId)))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        return JsonPath.parse(work).read("$.data.workId", Long.class);
     }
 
     /* 부모 업무와 하위 업무를 REST로 만든다 — 담당자는 SUPER 본인이라 START 전이가 담당자 판정을 지난다 */

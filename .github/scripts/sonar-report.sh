@@ -7,14 +7,17 @@
 # 브랜치를 가르지 못해 **두 워크플로의 분석이 같은 자리를 덮어썼다** — 그래서 main 쪽을
 # 걷어냈다. 스크립트 형태는 그대로 둔다: PR 분석이 돌아오는 날 부르는 곳이 다시 늘어난다.
 #
-# **Quality Gate가 실패해도 이 스크립트는 0으로 끝난다** (ssccops#231).
-# 처음 분석을 켜면 기존 코드의 지적이 수백 건 나오는데, 그 상태로 게이트를 잠그면
-# 아무것도 머지할 수 없다. 먼저 숫자를 보고, 기준을 정한 뒤에 잠근다.
+# **Quality Gate 결과가 곧 이 스크립트의 종료 코드다** (#477 · ssccops#377).
+# ERROR 면 1 로 끝나 Analyze job 이 빨갛게 된다. 그전(ssccops#231)에는 게이트가 무엇이든 0 으로
+# 끝났는데, 그 결과 develop 이 세 번 연속 ERROR 인 동안 job 은 세 번 다 초록이었다 — 결과가
+# 요약과 로그에만 있어 열어 보기 전에는 아무도 몰랐다. **분석은 develop 푸시에서만 돌므로 이
+# 실패가 막는 머지는 없다**(ADR-0018 은 그대로다) — 바뀌는 것은 develop 커밋의 상태가 사실을
+# 말한다는 것뿐이다. 조건마다 `::error` 주석을 내어 실행 화면 맨 위 Annotations 에도 뜨게 한다.
 #
-# 반대로 **인프라 오류(report-task.txt 없음·CE 태스크 실패)는 그대로 실패시킨다.**
-# 토큰이 비어 분석이 안 된 것과 품질이 나쁜 것은 다른 일인데, 그 둘이 같은 실패로 보고되던
-# 것이 이 이슈의 출발점이었다 — v0.2.1 릴리스까지 다섯 번의 Analyze가 전부 "실패"였고
-# 원인은 언제나 빈 SONAR_TOKEN이었다. 신호를 뭉개면 그 상태로 돌아간다.
+# **인프라 오류(report-task.txt 없음·CE 태스크 실패)도 그대로 실패시킨다.** 토큰이 비어 분석이
+# 안 된 경우는 여기까지 오지 않는다 — 워크플로의 sonar-preflight job 이 Analyze 를 통째로
+# 건너뛴다(회색). 예전에는 그것도 초록이었고, 더 전에는(v0.2.1 까지) 빈 토큰이 다섯 번의
+# "실패"로 보고돼 진짜 실패와 섞였다. 세 상태(통과·실패·건너뜀)가 세 색으로 보여야 한다.
 #
 # 필요한 환경변수:
 #   SONAR_TOKEN · SONAR_HOST_URL   분석 서버 접속
@@ -252,12 +255,19 @@ MEASURES_JSON=$(curl -s -u "$SONAR_TOKEN:" \
 COVERAGE=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="coverage")) | .[0].value // "0"')
 DUPLICATION=$(echo "$MEASURES_JSON" | jq -r '.component.measures // [] | map(select(.metric=="duplicated_lines_density")) | .[0].value // "0"')
 
+# 주석(annotation) — 실행 화면 맨 위 Annotations 상자와 커밋 체크에 뜬다 (#477 · ssccops#377).
+# 조건마다 한 줄이어야 무엇이 걸렸는지 열어 보지 않고도 보인다. `title=` 뒤의 콜론 둘이 구분자다.
 if [ "$QG_STATUS" = "OK" ]; then
-  ICON="✅"
-  RESULT="PASSED"
+  ICON="✅"; RESULT="PASSED"
+  echo "::notice title=Quality Gate PASSED ($PROJECT_KEY)::버그 ${BUGS} · 취약점 ${VULNS} · 코드 스멜 ${SMELLS} · 커버리지 ${COVERAGE}%"
+elif [ "$QG_STATUS" = "ERROR" ]; then
+  ICON="❌"; RESULT="FAILED"
+  echo "$QG_JSON" | jq -r '
+    (.projectStatus.conditions // [])[] | select(.status != "OK")
+    | "::error title=Quality Gate FAILED · \(.metricKey)::실제 \(.actualValue // "?") \(.comparator // "?") 임계값 \(.errorThreshold // "?") — 새 코드 기준"'
 else
-  ICON="⚠️"
-  RESULT="$QG_STATUS"
+  ICON="⚠️"; RESULT="$QG_STATUS"
+  echo "::warning title=Quality Gate $QG_STATUS ($PROJECT_KEY)::게이트 상태를 판정하지 못했다 — 대시보드를 확인할 것"
 fi
 
 BODY=$(cat <<EOF
@@ -282,7 +292,7 @@ Dashboard: ${DASHBOARD_URL}
 >
 > **보안 핫스팟은 따로 세지 않는다** — 이 서버 버전에서 핫스팟은 이슈로 합쳐져 위 취약점 수에 들어 있다 (ssccops#239).
 >
-> Quality Gate는 **머지를 막지 않는다** (ssccops#231). 기준을 정한 뒤에 잠근다.
+> **이 job 의 상태가 곧 게이트 결과다** — ERROR 면 실패로 끝난다(ssccops#377). 분석은 develop 푸시에서만 돌므로 **PR 머지는 여전히 막지 않는다**(ADR-0018). 조건·임계값을 언제 바꿀지는 ssccops#235 의 문제다.
 EOF
 )
 
@@ -370,7 +380,8 @@ if [ -n "$RULES_TABLE" ]; then
   echo "$RULES_TABLE"
 fi
 
-# Quality Gate 실패로 이 스크립트를 실패시키지 않는다 — 위 주석 참고.
+# 게이트 결과가 종료 코드다 — 파일 머리의 주석 참고. 요약·표는 위에서 전부 남겼으니 여기서 끝낸다.
 if [ "$QG_STATUS" != "OK" ]; then
-  echo "::warning::Quality Gate 가 $QG_STATUS 다. 지금은 막지 않는다 (ssccops#231)."
+  echo "Quality Gate $QG_STATUS — job 을 실패로 끝낸다 (ssccops#377)."
+  exit 1
 fi

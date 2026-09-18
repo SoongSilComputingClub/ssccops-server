@@ -9,6 +9,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.sscc.ssccopsserver.domain.content.dto.ContentPageSaveRequest;
+import org.sscc.ssccopsserver.domain.content.dto.ContentPostSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
@@ -46,10 +48,21 @@ class McpPatchContractTest {
      * 실제 동작은 `WorkToolsIntegrationTest`가 REST 왕복으로 본다.
      */
     @Test
+    @DisplayName("ContentPagePatch·ContentPostPatch는 저장 요청 record와 같은 필드 이름·타입을 가진다")
+    void contentPatchesMirrorSaveRequests() {
+        assertThat(componentsOf(ContentPagePatch.class))
+                .containsExactlyInAnyOrderElementsOf(componentsOf(ContentPageSaveRequest.class));
+        assertThat(componentsOf(ContentPostPatch.class))
+                .containsExactlyInAnyOrderElementsOf(componentsOf(ContentPostSaveRequest.class));
+    }
+
+    @Test
     @DisplayName("patch record의 모든 필드는 nullable하다 — 원시 타입이 섞이면 «안 바꿈»을 표현할 수 없다")
     void everyPatchComponentIsNullable() {
         assertThat(rawTypes(WorkPatch.class)).noneMatch(Class::isPrimitive);
         assertThat(rawTypes(SubWorkPatch.class)).noneMatch(Class::isPrimitive);
+        assertThat(rawTypes(ContentPagePatch.class)).noneMatch(Class::isPrimitive);
+        assertThat(rawTypes(ContentPostPatch.class)).noneMatch(Class::isPrimitive);
     }
 
     @Test

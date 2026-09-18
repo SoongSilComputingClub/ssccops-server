@@ -40,7 +40,17 @@ public enum FileTargetType {
      * 재색인의 재료가 이 원본이다. 접근 판정은 RAG_DOCUMENT_MANAGE이고 그 판정은 assistant
      * 도메인이 한다 — 이 도메인은 파일이 버킷의 어디에 있는지만 안다.
      */
-    RAG_DOCUMENT("rag-documents/");
+    RAG_DOCUMENT("rag-documents/"),
+
+    /*
+     * 공개 사이트 포스트의 갤러리 (ssccops#381 · ADR-0038). 대상당 여러 건이 정상이다 —
+     * uk_file_rfrnc_sesn(부분 유니크)은 SESSION에만 걸려 있어 이 값에는 닿지 않는다.
+     * 키는 content-posts/{postId}/{uuid}.{ext}이며 조립하는 자리는 content의
+     * ContentImageLocation 한 곳이다. 행사 본문 이미지(#161)와 달리 **행을 남긴다** — 갤러리는
+     * 본문 마크다운의 링크가 아니라 목록(표지·슬라이드)이라 «무엇이 몇 장인가»를 서버가 답해야
+     * 하고, 표지(cntnt_post.cover_file_id)가 이 행을 FK로 가리킨다.
+     */
+    CONTENT_POST("content-posts/");
 
     /** 이 대상의 오브젝트 키 접두사 */
     private final String objectKeyPrefix;

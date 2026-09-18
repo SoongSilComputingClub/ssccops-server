@@ -55,7 +55,7 @@ spring:
   sql:
     init:
       mode: always
-      data-locations: classpath:db/migration/V3__seed_reference_data.sql,classpath:db/migration/V11__seed_rag_document_manage_authority.sql
+      data-locations: classpath:db/migration/V3__seed_reference_data.sql,classpath:db/migration/V11__seed_rag_document_manage_authority.sql,classpath:db/migration/V16__seed_content_manage_authority.sql
       # JVM 기본 문자셋으로 읽으면 한국어 Windows에서 MS949가 되어 한글 기준값이 깨진 채
       # INSERT 된다. 기동은 성공하고 '예산지출'·'최고관리자'로 시드를 찾는 코드만 빗나간다.
       encoding: UTF-8

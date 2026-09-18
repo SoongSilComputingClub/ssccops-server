@@ -34,6 +34,17 @@ public enum AuditAction {
     ACADEMIC_SESSION_TRANSITION("academic.session.transition", "session"),
     EVENT_STATUS_CHANGE("event.status.change", "event"),
     FORM_STATUS_CHANGE("form.status.change", "form"),
+
+    /*
+     * 콘텐츠 게시·게시 취소 (ssccops#381 · ADR-0038). 익명에게 «무엇이 언제 열리고 닫혔나»가
+     * 곧 이 사건이라 남긴다. 작성·수정은 남기지 않는다 — 그쪽은 이력 테이블(cntnt_*_hstry)이
+     * 본문째 들고 있고, 감사 로그에는 본문 값이 실리지 않는다(ADR-0024). 대상은 식별자와
+     * 결과 상태뿐이다.
+     */
+    CONTENT_PAGE_PUBLISH("content.page.publish", "content_page"),
+    CONTENT_PAGE_UNPUBLISH("content.page.unpublish", "content_page"),
+    CONTENT_POST_PUBLISH("content.post.publish", "content_post"),
+    CONTENT_POST_UNPUBLISH("content.post.unpublish", "content_post"),
     /**
      * @RequireAuthority 거절. 누가 무엇을 시도했는가
      */

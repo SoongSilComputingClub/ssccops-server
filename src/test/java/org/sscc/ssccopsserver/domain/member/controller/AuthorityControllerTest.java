@@ -107,7 +107,8 @@ class AuthorityControllerTest {
      *
      * RAG_DOCUMENT_MANAGE(#402 · V11)가 SUPER 직속인 것도 같은 이유다 — 부여는 회장·부회장·
      * 총무로 시작하지만, EXECUTIVE의 자식으로 두면 거기서 한 역할만 빼는 일이 화면 조작이
-     * 아니라 마이그레이션이 된다.
+     * 아니라 마이그레이션이 된다. CONTENT_MANAGE(ssccops#381 · V16)도 같은 자리다 — 홍보국의
+     * 권한인데 홍보국 역할이 시드에 없어 회장·부회장으로 시작하고 화면에서 넓힌다.
      */
     @Test
     void returnsSeededPermissionTreeAsNestedChildren() throws Exception {
@@ -118,7 +119,7 @@ class AuthorityControllerTest {
                 .andExpect(jsonPath("$.data[0].authrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].upAuthrtCd").doesNotExist())
                 .andExpect(jsonPath("$.data[0].sysYn").value(true))
-                .andExpect(jsonPath("$.data[0].children", hasSize(4)))
+                .andExpect(jsonPath("$.data[0].children", hasSize(5)))
                 .andExpect(jsonPath("$.data[0].children[0].authrtCd").value("EXECUTIVE"))
                 .andExpect(jsonPath("$.data[0].children[0].authrtNm").value("임원"))
                 .andExpect(jsonPath("$.data[0].children[0].upAuthrtCd").value("SUPER"))
@@ -132,6 +133,10 @@ class AuthorityControllerTest {
                 .andExpect(jsonPath("$.data[0].children[3].authrtCd").value("RAG_DOCUMENT_MANAGE"))
                 .andExpect(jsonPath("$.data[0].children[3].upAuthrtCd").value("SUPER"))
                 .andExpect(jsonPath("$.data[0].children[3].sysYn").value(true))
+                // ssccops#381: 공개 사이트 콘텐츠 관리. 코드가 가리키는 권한이라 sys_yn = true다
+                .andExpect(jsonPath("$.data[0].children[4].authrtCd").value("CONTENT_MANAGE"))
+                .andExpect(jsonPath("$.data[0].children[4].upAuthrtCd").value("SUPER"))
+                .andExpect(jsonPath("$.data[0].children[4].sysYn").value(true))
                 .andExpect(jsonPath("$.data[0].children[0].children", hasSize(4)))
                 // 형제 순서는 indct_seqno다
                 .andExpect(jsonPath("$.data[0].children[0].children[0].authrtCd").value("OPERATOR"))

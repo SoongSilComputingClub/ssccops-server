@@ -83,7 +83,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 24종이 전부 광고되고 삭제 도구는 없다")
+    @DisplayName("운영 도구 30종이 전부 광고되고 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -117,7 +117,14 @@ class OperationToolsIntegrationTest {
                             "add_meeting_agenda",
                             "list_approvals",
                             "get_dashboard",
-                            "list_sub_work_types");
+                            "list_sub_work_types",
+                            // 콘텐츠 (ssccops#381 · ADR-0038)
+                            "create_page",
+                            "update_page",
+                            "create_post",
+                            "update_post",
+                            "publish_content",
+                            "request_content_image_upload");
             /*
              * 삭제 도구는 소프트 삭제만 열기로 했고(ADR-0037) 그것은 W5에서 낸다 — 지금은
              * 하나도 없어야 한다. 하드 삭제는 어느 파도에서도 열지 않는다.

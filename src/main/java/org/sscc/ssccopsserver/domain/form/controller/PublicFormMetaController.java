@@ -1,12 +1,17 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
+import java.util.List;
+
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
 import org.sscc.ssccopsserver.domain.form.service.PublicFormMetaService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.apipayload.PublicCacheControl;
 
 import io.swagger.v3.oas.annotations.Operation;
 
@@ -53,5 +58,24 @@ public class PublicFormMetaController {
     @GetMapping("/{formId}/meta")
     public ApiResponse<PublicFormMetaResponse> getFormMeta(@PathVariable String formId) {
         return ApiResponse.success(publicFormMetaService.getFormMeta(formId));
+    }
+
+    /*
+     * 접수 중인 폼 목록 (ssccops#381 · ADR-0038). 익명 콘텐츠 셋(페이지·포스트·이것) 중 폼 도메인에
+     * 있는 하나다 — «접수 중»의 어휘(FormReceiptPolicy)가 여기 있어서다. /forms/open은 /{formId}/meta와
+     * 세그먼트 수가 달라 충돌하지 않는다. Cache-Control은 콘텐츠와 같은 값(PublicCacheControl)이다.
+     */
+    @Operation(
+            summary = "접수 중인 폼 목록(익명)",
+            description =
+                    "지금 응답을 받을 수 있는 폼(OPEN이고 접수 기간 안)의 폼 키·제목·마감(rcptEndDt, 없으면"
+                            + " null)만 내려준다. **인증이 필요 없다.** 마감이 가까운 것부터이며 마감 없는 것은"
+                            + " 뒤에 온다. 시스템 폼(기획안)은 부원 전용이라 뺀다. 새 링크는 /f/{formKey}다."
+                            + " Cache-Control: public, s-maxage=300, stale-while-revalidate=600.")
+    @GetMapping("/open")
+    public ResponseEntity<ApiResponse<List<PublicOpenFormResponse>>> getOpenForms() {
+        return ResponseEntity.ok()
+                .cacheControl(PublicCacheControl.anonymousContent())
+                .body(ApiResponse.success(publicFormMetaService.getOpenForms()));
     }
 }

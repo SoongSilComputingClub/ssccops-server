@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.form.entity;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -15,6 +16,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -83,6 +85,25 @@ public class FormEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "form_id")
     private Long id;
+
+    /*
+     * 공개 폼 주소용 무작위 키 (ADR-0036 · ssccops#359). form_id는 연속 정수라 익명 미리보기를
+     * 1부터 훑을 수 있어, 공개 주소와 익명 경로는 이 값으로 찾는다. form_id를 바꾸지 않은 것은
+     * 이미 뿌린 숫자 링크를 살려야 해서다 — 두 주소가 함께 열리고 새 링크만 이 키로 만든다.
+     *
+     * 값은 저장 전에 여기서 채운다(@PrePersist). DB DEFAULT(gen_random_uuid)도 있지만 그것에
+     * 기대면 저장 직후 응답에 실을 키가 엔티티에 없다. 바꾸는 경로는 없다(updatable = false) —
+     * 키가 바뀌면 뿌린 링크가 죽는다.
+     */
+    @Column(name = "form_key", nullable = false, updatable = false, unique = true)
+    private UUID formKey;
+
+    @PrePersist
+    void assignFormKey() {
+        if (formKey == null) {
+            formKey = UUID.randomUUID();
+        }
+    }
 
     /*
      * 생성자(mbr.mbr_id). 인증 주체를 서버가 기록하며 클라이언트가 지정할 수 없다.
@@ -286,6 +307,7 @@ public class FormEntity {
         FormEntity form =
                 new FormEntity(
                         null,
+                        null, // form_key — 저장 전에 @PrePersist가 채운다
                         creator,
                         title,
                         status,

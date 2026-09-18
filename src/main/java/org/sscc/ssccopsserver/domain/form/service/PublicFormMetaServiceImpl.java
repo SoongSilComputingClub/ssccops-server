@@ -1,13 +1,16 @@
 package org.sscc.ssccopsserver.domain.form.service;
 
 import java.util.EnumSet;
+import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -36,6 +39,14 @@ import lombok.RequiredArgsConstructor;
  * 방에 남는다. 404는 카드를 만들지 않으므로 되살리기가 그대로 복구가 된다.
  *
  * 쓰기는 없다(@Transactional(readOnly = true)). 익명 경로에 쓰기 자리를 두지 않는다.
+ *
+ * **경로 변수가 두 모양이고 허용 조건이 다르다** (ADR-0036 · ssccops#359). 무작위 키(UUID)는
+ * 위 규칙 그대로 «연 적 있는 폼»이 열린다. 예전 숫자 id는 **지금 접수 중(OPEN)인 폼만** 연다 —
+ * 숫자는 1부터 훑을 수 있으므로, 훑어서 얻는 것이 «지금 링크가 돌고 있는 폼의 제목»을 넘지
+ * 않게 한다. 마감된 폼의 옛 숫자 링크는 카드가 기본 문구로 떨어지는데, 그 폼은 새 링크(키)로
+ * 다시 뿌리면 된다. 숫자를 아예 닫지 않은 것은 이미 뿌린 링크를 살리기로 한 운영진 조건이고,
+ * 닫는 시점은 ADR-0036 «폐기 조건»이 든다. FormRefResolver를 쓰지 않는 것은 그쪽이 «어느
+ * 모양이든 같은 폼»으로 푸는 자리라 여기의 조건 차이를 담지 못하기 때문이다.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,11 +59,18 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
 
     private final FormRepository formRepository;
 
+    /** 숫자 id로 열리는 상태 — 지금 접수 중인 것뿐 */
+    private static final Set<FormStatus> NOW_OPEN = EnumSet.of(FormStatus.OPEN);
+
     @Override
-    public PublicFormMetaResponse getFormMeta(Long formId) {
-        return formRepository
-                .findByIdAndDeletedAtIsNullAndStatusIn(formId, EVER_OPENED)
-                .map(PublicFormMetaResponse::of)
+    public PublicFormMetaResponse getFormMeta(String formRef) {
+        Optional<UUID> key = FormRefResolver.asKey(formRef);
+        Optional<FormEntity> form =
+                key.isPresent()
+                        ? formRepository.findByFormKeyAndDeletedAtIsNullAndStatusIn(key.get(), EVER_OPENED)
+                        : FormRefResolver.asId(formRef)
+                                .flatMap(id -> formRepository.findByIdAndDeletedAtIsNullAndStatusIn(id, NOW_OPEN));
+        return form.map(PublicFormMetaResponse::of)
                 .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }
 }

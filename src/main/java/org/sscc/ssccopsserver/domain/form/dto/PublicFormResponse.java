@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.dto;
 
+import java.util.UUID;
+
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -49,6 +51,7 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  */
 public record PublicFormResponse(
         Long formId,
+        UUID formKey,
         String formTtlNm,
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
@@ -85,6 +88,7 @@ public record PublicFormResponse(
 
         return new PublicFormResponse(
                 form.getId(),
+                form.getFormKey(),
                 form.getTitle(),
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),

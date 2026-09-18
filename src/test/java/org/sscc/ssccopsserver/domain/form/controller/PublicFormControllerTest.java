@@ -210,6 +210,27 @@ class PublicFormControllerTest {
     }
 
     /*
+     * 같은 폼을 무작위 키(form_key)로도 연다 (ADR-0036). 응답에는 키가 실려 웹이 새 주소를 그것으로
+     * 만든다. 모르는 키와 모양이 아닌 값은 404 — 없는 폼과 잘못된 주소를 나누지 않는다.
+     */
+    @Test
+    void getPublicFormAcceptsFormKeyAsWellAsNumericId() throws Exception {
+        Long formId = saveForm("키로 여는 지원서", FormStatus.OPEN, null, null, SAMPLE_COMPOSITION);
+        String key = formRepository.findById(formId).orElseThrow().getFormKey().toString();
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + key + "/public"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").value(formId))
+                .andExpect(jsonPath("$.data.formKey").value(key));
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/public"))
+                .andExpect(jsonPath("$.data.formKey").value(key));
+        mockMvc.perform(authenticatedGet("/v1/forms/" + java.util.UUID.randomUUID() + "/public"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(authenticatedGet("/v1/forms/not-a-ref/public"))
+                .andExpect(status().isNotFound());
+    }
+
+    /*
      * 응답자용 조회는 운영자용 상세와 스키마를 나눈다. 생성자·응답 집계·폼 상태 내부값은
      * 공개 링크로 나갈 이유가 없다.
      */

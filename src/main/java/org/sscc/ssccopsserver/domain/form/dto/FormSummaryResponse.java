@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.UUID;
 
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
@@ -43,6 +44,7 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
  */
 public record FormSummaryResponse(
         Long formId,
+        UUID formKey,
         String formTtlNm,
         FormStatus formSttsCd,
         FormReceiptStatus receiptStatus,
@@ -66,6 +68,7 @@ public record FormSummaryResponse(
             long responseCount) {
         return new FormSummaryResponse(
                 form.getId(),
+                form.getFormKey(),
                 form.getTitle(),
                 form.getStatus(),
                 receiptStatus,

@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.dto;
 
 import java.util.List;
+import java.util.UUID;
 
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
@@ -20,11 +21,15 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent.Page
  * JSON 키를 그대로 둔 것은 이 값이 파생이 아니라 그 키의 값 그대로라는 뜻이다. 마크다운을
  * 걷어 한 줄로 줄이는 것은 카드를 만드는 웹의 몫이다(apps/www 행사 OG와 같은 자리).
  */
-public record PublicFormMetaResponse(Long formId, String formTtlNm, String pageDescCn) {
+public record PublicFormMetaResponse(
+        Long formId, UUID formKey, String formTtlNm, String pageDescCn) {
 
     public static PublicFormMetaResponse of(FormEntity form) {
         return new PublicFormMetaResponse(
-                form.getId(), form.getTitle(), firstPageDescription(form.getQuestionComposition()));
+                form.getId(),
+                form.getFormKey(),
+                form.getTitle(),
+                firstPageDescription(form.getQuestionComposition()));
     }
 
     /* 첫 페이지가 없거나 설명이 비어 있으면 null — 서버가 대체 문구를 만들어 내지 않는다 */

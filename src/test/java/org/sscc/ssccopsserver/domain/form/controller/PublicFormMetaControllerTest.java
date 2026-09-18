@@ -99,17 +99,43 @@ class PublicFormMetaControllerTest {
      * 접수 종료 일시가 지난(EXPIRED) OPEN 폼도 같다.
      */
     @Test
-    void closedAndExpiredFormsAreStillReadable() throws Exception {
+    void closedAndExpiredFormsAreStillReadableByKey() throws Exception {
         Long closed = saveForm("마감된 모집", "지난 모집", FormStatus.OPEN, null);
         close(closed);
         Long expired = saveForm("기간 지난 모집", "기간이 지난 모집", FormStatus.OPEN, PAST);
 
-        mockMvc.perform(get(META, closed))
+        mockMvc.perform(get(META, keyOf(closed)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.formTtlNm").value("마감된 모집"));
+                .andExpect(jsonPath("$.data.formTtlNm").value("마감된 모집"))
+                .andExpect(jsonPath("$.data.formKey").value(keyOf(closed).toString()));
+        // 기간이 지났어도 상태가 OPEN이면 숫자로도 열린다 — 판정 재료는 상태뿐이다
         mockMvc.perform(get(META, expired))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.formTtlNm").value("기간 지난 모집"));
+    }
+
+    /*
+     * 숫자 id는 지금 접수 중(OPEN)인 폼만 연다 (ADR-0036). 마감된 폼의 옛 숫자 링크는 카드가
+     * 기본 문구로 떨어지지만, 숫자를 훑어 얻는 것이 «지금 링크가 돌고 있는 폼»을 넘지 않는다.
+     */
+    @Test
+    void closedFormIsNotReadableByNumericId() throws Exception {
+        Long closed = saveForm("마감된 모집", "지난 모집", FormStatus.OPEN, null);
+        close(closed);
+
+        mockMvc.perform(get(META, closed))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    // 키로도 DRAFT는 404 — 키를 안다고 작성 중인 폼의 제목이 새지 않는다. 잘못된 모양도 같은 404
+    @Test
+    void draftByKeyAndMalformedRefAreNotFound() throws Exception {
+        Long draft = saveForm("작성 중", "아직", FormStatus.DRAFT, null);
+
+        mockMvc.perform(get(META, keyOf(draft))).andExpect(status().isNotFound());
+        mockMvc.perform(get(META, UUID.randomUUID())).andExpect(status().isNotFound());
+        mockMvc.perform(get(META, "not-a-ref")).andExpect(status().isNotFound());
     }
 
     // 안내 문구가 비어 있으면 null — 서버가 대체 문구를 만들어 내지 않는다
@@ -167,6 +193,10 @@ class PublicFormMetaControllerTest {
                 .saveAndFlush(
                         FormEntity.create(creator, title, composition, null, receiptEndAt, status))
                 .getId();
+    }
+
+    private UUID keyOf(Long formId) {
+        return formRepository.findById(formId).orElseThrow().getFormKey();
     }
 
     /* 마감은 전이로만 만든다 — DRAFT에서 CLOSED로 가는 길이 없다는 규칙에 예외를 두지 않는다 */

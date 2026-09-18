@@ -22,6 +22,7 @@ import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseOverviewResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
+import org.sscc.ssccopsserver.domain.form.service.FormRefResolver;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -58,6 +59,7 @@ import lombok.RequiredArgsConstructor;
 public class PublicFormController {
 
     private final FormResponseService formResponseService;
+    private final FormRefResolver formRefResolver;
 
     /*
      * 응답자용 폼 조회. 운영자용 상세(GET /v1/forms/{formId})와 경로도 응답도 나눈다.
@@ -82,8 +84,9 @@ public class PublicFormController {
                             + " 일시라, alreadySubmitted가 false인데 값이 있을 수 있다.")
     @GetMapping("/{formId}/public")
     public ApiResponse<PublicFormResponse> getPublicForm(
-            @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
-        return ApiResponse.success(formResponseService.getPublicForm(formId, respondent));
+            @PathVariable String formId, @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(
+                formResponseService.getPublicForm(formRefResolver.resolveId(formId), respondent));
     }
 
     /*
@@ -140,12 +143,13 @@ public class PublicFormController {
                         + " 값(\"\"·[])인 문항은 저장하지 않는다.")
     @PostMapping("/{formId}/responses")
     public ResponseEntity<ApiResponse<FormResponseSubmitResponse>> submitFormResponse(
-            @PathVariable Long formId,
+            @PathVariable String formId,
             @Valid @RequestBody FormResponseSubmitRequest request,
             @CurrentMember MemberEntity respondent) {
 
         FormResponseSubmitResponse response =
-                formResponseService.submitResponse(formId, request, respondent);
+                formResponseService.submitResponse(
+                        formRefResolver.resolveId(formId), request, respondent);
         URI location = URI.create("/v1/forms/" + formId + "/responses/" + response.formRspnsId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
@@ -182,8 +186,9 @@ public class PublicFormController {
                             + " 없는 폼은 404 NOT_FOUND다.")
     @GetMapping("/{formId}/responses/mine")
     public ApiResponse<List<MyFormResponseSummaryResponse>> getMyFormResponses(
-            @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
-        return ApiResponse.success(formResponseService.getMyResponses(formId, respondent));
+            @PathVariable String formId, @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(
+                formResponseService.getMyResponses(formRefResolver.resolveId(formId), respondent));
     }
 
     /*
@@ -262,11 +267,12 @@ public class PublicFormController {
                             + " 이 필드는 재제출을 여는 것이 아니다 — false인 응답에 재제출을 시도하면 제출 경로가 그대로 막는다.")
     @GetMapping("/{formId}/responses/mine/{formRspnsId}")
     public ApiResponse<MyFormResponseDetailResponse> getMyFormResponse(
-            @PathVariable Long formId,
+            @PathVariable String formId,
             @PathVariable Long formRspnsId,
             @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(
-                formResponseService.getMyResponse(formId, formRspnsId, respondent));
+                formResponseService.getMyResponse(
+                        formRefResolver.resolveId(formId), formRspnsId, respondent));
     }
 
     /*
@@ -292,9 +298,11 @@ public class PublicFormController {
                             + " 없는 폼은 404 NOT_FOUND다.")
     @GetMapping("/{formId}/responses/draft")
     public ApiResponse<FormResponseDraftResponse> getMyDraft(
-            @PathVariable Long formId, @CurrentMember MemberEntity respondent) {
+            @PathVariable String formId, @CurrentMember MemberEntity respondent) {
         return ApiResponse.success(
-                formResponseService.findMyDraft(formId, respondent).orElse(null));
+                formResponseService
+                        .findMyDraft(formRefResolver.resolveId(formId), respondent)
+                        .orElse(null));
     }
 
     /*
@@ -321,9 +329,11 @@ public class PublicFormController {
                         + " 저장이 동시에 도착해 부딪히면 409 RESPONSE_SAVE_CONFLICT로 재시도를 알린다.")
     @PutMapping("/{formId}/responses/draft")
     public ApiResponse<FormResponseDraftResponse> saveMyDraft(
-            @PathVariable Long formId,
+            @PathVariable String formId,
             @Valid @RequestBody FormResponseDraftRequest request,
             @CurrentMember MemberEntity respondent) {
-        return ApiResponse.success(formResponseService.saveDraft(formId, request, respondent));
+        return ApiResponse.success(
+                formResponseService.saveDraft(
+                        formRefResolver.resolveId(formId), request, respondent));
     }
 }

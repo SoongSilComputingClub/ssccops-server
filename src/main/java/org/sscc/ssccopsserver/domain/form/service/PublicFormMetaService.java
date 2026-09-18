@@ -15,5 +15,5 @@ public interface PublicFormMetaService {
      * 접수를 연 적 있는(OPEN·CLOSED) 폼의 제목·안내 문구. DRAFT 폼과 없는 폼은 **둘 다**
      * 404 NOT_FOUND다 — 코드를 나누면 그 번호에 폼이 있다는 사실이 새어 나간다.
      */
-    PublicFormMetaResponse getFormMeta(Long formId);
+    PublicFormMetaResponse getFormMeta(String formRef);
 }

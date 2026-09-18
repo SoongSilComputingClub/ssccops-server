@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -88,6 +89,17 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
      * 되어 지울 수 없는 폼을 한 벌 더 세우려다 sys_form_cd UNIQUE에 걸린다.
      */
     Optional<FormEntity> findBySystemFormCode(String systemFormCode);
+
+    /*
+     * 공개 폼 주소의 키로 찾는다 (ADR-0036). 지워진 폼을 거르지 않는 것은 findById와 같은 층에
+     * 두기 위해서다 — 호출부(FormRefResolver)가 id로 바꿔 주면 뒤는 기존 경로가 지워진 폼을
+     * 지금처럼 다룬다.
+     */
+    Optional<FormEntity> findByFormKey(UUID formKey);
+
+    /** 익명 미리보기 — 키로 (ADR-0036). 정수 id 쪽과 상태 조건이 다르다: PublicFormMetaServiceImpl */
+    Optional<FormEntity> findByFormKeyAndDeletedAtIsNullAndStatusIn(
+            UUID formKey, Collection<FormStatus> statuses);
 
     /*
      * 라벨로 거른 폼 목록(#34). 관계 테이블을 지나는 조인이라 파생 쿼리로는 표현이 길어져

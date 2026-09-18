@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.dto;
 
+import java.util.UUID;
+
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 
@@ -30,6 +32,7 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  */
 public record SystemFormResponse(
         Long formId,
+        UUID formKey,
         String formTtlNm,
         String sysFormCd,
         boolean mltplRspnsYn,
@@ -39,6 +42,7 @@ public record SystemFormResponse(
     public static SystemFormResponse of(FormEntity form, boolean acceptingYn) {
         return new SystemFormResponse(
                 form.getId(),
+                form.getFormKey(),
                 form.getTitle(),
                 form.getSystemFormCode(),
                 form.isMultipleResponseAllowed(),

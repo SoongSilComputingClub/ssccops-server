@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.UUID;
 
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
@@ -33,6 +34,7 @@ import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
  */
 public record MyFormResponseOverviewResponse(
         Long formId,
+        UUID formKey,
         String formTtlNm,
         List<FormLabelSummaryResponse> labels,
         Long formRspnsId,
@@ -56,6 +58,7 @@ public record MyFormResponseOverviewResponse(
             String responseTitle) {
         return new MyFormResponseOverviewResponse(
                 response.getForm().getId(),
+                response.getForm().getFormKey(),
                 response.getForm().getTitle(),
                 labels,
                 response.getId(),

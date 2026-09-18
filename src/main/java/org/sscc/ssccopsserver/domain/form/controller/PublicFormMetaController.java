@@ -46,9 +46,12 @@ public class PublicFormMetaController {
                             + "(pageDescCn, 없으면 null)만 내려준다. 접수 기간·접수 상태·문항은 싣지 않는다 —"
                             + " 메신저가 카드를 한 번 캐싱하면 갱신하지 않으므로 시간에 따라 변하는 값을 담지"
                             + " 않는다. 작성 중(DRAFT)인 폼과 없는 폼은 **둘 다 404 NOT_FOUND**다 — 그 번호의"
-                            + " 폼이 있는지 없는지가 드러나지 않는다.")
+                            + " 폼이 있는지 없는지가 드러나지 않는다."
+                            + " **경로 변수는 폼 키(UUID)와 예전 숫자 id를 둘 다 받는다**(ADR-0036). 키면"
+                            + " 연 적 있는 폼이 전부 열리고, 숫자면 **지금 접수 중(OPEN)인 폼만** 열린다 —"
+                            + " 숫자를 훑어도 링크가 돌고 있는 폼의 제목만 얻는다. 새 링크는 키로 만든다.")
     @GetMapping("/{formId}/meta")
-    public ApiResponse<PublicFormMetaResponse> getFormMeta(@PathVariable Long formId) {
+    public ApiResponse<PublicFormMetaResponse> getFormMeta(@PathVariable String formId) {
         return ApiResponse.success(publicFormMetaService.getFormMeta(formId));
     }
 }

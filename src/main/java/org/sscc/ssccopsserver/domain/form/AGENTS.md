@@ -111,6 +111,9 @@
 ## 다른 도메인과 닿는 곳
 
 - 학술: 승인 후속 처리는 `SystemFormApprovalHook`으로만 넘기고 구현체를 모른다(위 항목). 응답 상세의 `academicProgramPreview`는 타입이 `Object`다.
+  - **학술 전용 좁은 저장 메서드가 셋이다** — `createEmptyDraft`(#133) · `changeReceiptPeriod`(#133) · **`changeQuestionComposition`(#483)**. 전부 공개 API가 아니며 이유가 하나다: `updateForm`은 본문 전체를 요구해 이 좁은 용도에 쓰면 학술 도메인이 알지도 못하는 폼 내용(제목·라벨·다중 응답)을 매 저장마다 되쓰게 되고, 폼에 필드가 늘면 그 조립이 조용히 낡는다. **검증·이력은 갈리지 않는다** — `changeQuestionComposition`은 `updateForm`과 같은 `ensureQuestionCompositionReplaceable`(응답이 쓰는 `qitemId` 보호 + 시스템 폼 계약)을 지나고, 버전이 올랐는지도 `FormEntity.update`의 반환값 하나로 판단한다(구성을 다시 비교하면 `qitem_ver`와 `form_qitem_hstry`가 갈릴 수 있다). **접수 기간을 현재 값으로 되먹이므로 #190의 잠금에 걸리지 않는다** — 그 검사는 값이 바뀔 때만 돈다.
+  - **언제까지 고칠 수 있는가는 폼의 규칙이 아니다** (#483). 학술 모집 폼의 리더 편집 창(모집 시작 일시 전)은 부르는 쪽이 판정한다 — 여기에 창을 박으면 폼 도메인이 모집 일정을 알아야 한다. 폼 편집 경로(`PUT /v1/forms/{formId}`)는 **접수 중 문항 수정을 그대로 허용한다**(삭제·변경만 409). 어드민 모집 관리가 그것을 전제로 접수 중에도 편집 링크를 두므로 좁히지 말 것.
+  - **접수 건수 집계는 폼이 답한다** — `countSubmittedResponsesByFormIds`(#483)가 목록의 `responseCount`와 같은 기준(작성 중 제외)을 쓴다. 학술 모집 카드의 «지원 N건»이 이 값이며, 세는 자리가 둘이 되면 같은 폼이 두 화면에서 다른 숫자로 보인다.
 - 행사: 행사가 폼을 **참조만** 한다(`EventServiceImpl.resolveForm`, 지워진 폼은 404). 내 신청 목록의 축이 event라 `findEventApplicationsByMember`에는 폼 `del_dt` 필터를 걸지 않는다(위 소프트 삭제 항목).
 - 회원: 회원 생성 커밋 직후 `MemberCreatedEvent`로 기획안 폼 시드가 돈다(위 시드 항목). 변경자·처리자는 언제나 `@CurrentMember`다.
 

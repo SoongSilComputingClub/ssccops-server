@@ -3,10 +3,14 @@ package org.sscc.ssccopsserver.domain.academicprogram.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -650,6 +654,259 @@ class AcademicProgramRecruitmentControllerTest {
         return "{\"selections\": [%s]}".formatted(rows);
     }
 
+    // ------------------------------------------------- 모집 폼 문항 (GET·PUT .../recruitment/form)
+
+    /*
+     * 모집 시작 전(폼 DRAFT)의 리더 조회 (#483).
+     *
+     * 이 구간에는 모집 시작 일시가 아직 없다 — 학술국장이 모집 관리에서 등록하기 전이라
+     * rcptBgngDt가 null이고, 화면은 그것을 "아직 모집 일정이 정해지지 않았다"로 읽는다.
+     * 그래도 편집은 열려 있어야 한다: 문항을 채워 두지 않으면 학술국장이 모집을 시작할 수
+     * 없기 때문이다(FORM_HAS_NO_QUESTION).
+     */
+    @Test
+    void getRecruitmentFormBeforeRecruitmentIsEditable() throws Exception {
+        AcademicProgramEntity approved = createProgram("아직 모집 전 스터디");
+        FormEntity form = linkForm(approved, "아직 모집 전 스터디");
+
+        mockMvc.perform(authorized(get(recruitmentFormPath(approved)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isEditable").value(true))
+                // 폼 상세를 그대로 품는다 — 편집기가 이 값을 초안으로 받아 쓴다
+                .andExpect(jsonPath("$.data.form.formId").value(form.getId()))
+                .andExpect(jsonPath("$.data.form.receiptStatus").value("DRAFT"))
+                .andExpect(jsonPath("$.data.form.qitemCpstCn.qitems", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data.form.qitemVer").value(1))
+                // 일시가 없는 것이 "기한 없음"이다 — 서버가 대체값을 만들지 않는다
+                .andExpect(jsonPath("$.data.form.rcptBgngDt").doesNotExist());
+    }
+
+    // 국장도 본다 — 신청자 조회와 같은 소유권 OR 관리권한이다
+    @Test
+    void getRecruitmentFormAsManagerReturns200() throws Exception {
+        mockMvc.perform(authorized(get(recruitmentFormPath(recruiting)), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.form.formId").value(recruitmentForm.getId()));
+    }
+
+    /*
+     * 접수가 열린 뒤에도 조회는 200이고 isEditable만 false다 (#483).
+     *
+     * 화면의 '지원서 문항 보기'가 이 응답을 쓴다 — 막는 것은 응답을 받는 도중에 물음이 바뀌는
+     * 것이지 열람이 아니다. setUp의 recruiting은 기간 없이 모집을 시작해 곧바로 ACCEPTING이다.
+     */
+    @Test
+    void getRecruitmentFormWhileAcceptingIsReadOnly() throws Exception {
+        mockMvc.perform(authorized(get(recruitmentFormPath(recruiting)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.form.receiptStatus").value("ACCEPTING"))
+                .andExpect(jsonPath("$.data.isEditable").value(false));
+    }
+
+    /*
+     * 모집 시작 일시를 미래로 잡으면 활동은 ONGOING인데 접수는 아직 열리지 않았다(SCHEDULED).
+     * **창의 기준이 활동 상태가 아니라 그 일시라는 것이 이 테스트다** — 상태로 판정하면 여기서
+     * 닫히고, 화면은 "남은 시간"을 세면서 저장은 409를 받는다.
+     */
+    @Test
+    void getRecruitmentFormWhenScheduledIsEditable() throws Exception {
+        AcademicProgramEntity scheduled = createProgram("예약 모집 스터디");
+        linkForm(scheduled, "예약 모집 스터디");
+        startRecruitment(scheduled, laterBy(7), laterBy(14));
+
+        mockMvc.perform(authorized(get(recruitmentFormPath(scheduled)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.form.receiptStatus").value("SCHEDULED"))
+                .andExpect(jsonPath("$.data.isEditable").value(true))
+                .andExpect(jsonPath("$.data.form.rcptBgngDt").isNotEmpty());
+    }
+
+    @Test
+    void getRecruitmentFormWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(get(recruitmentFormPath(recruiting))).andExpect(status().isUnauthorized());
+    }
+
+    // 팀원도 남이다 — 자격은 리더 본인 또는 학술국장 둘뿐이다
+    @Test
+    void getRecruitmentFormAsTeamMemberReturns403() throws Exception {
+        register(recruiting, applicant, EventParticipantStatus.CONFIRMED);
+
+        mockMvc.perform(authorized(get(recruitmentFormPath(recruiting)), teamMemberToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void getRecruitmentFormAsOutsiderReturns403() throws Exception {
+        mockMvc.perform(authorized(get(recruitmentFormPath(recruiting)), outsiderToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    // 폼이 연결되지 않은 활동은 409다 — 없는 활동(404)과 구별한다
+    @Test
+    void getRecruitmentFormWithoutLinkedFormReturns409() throws Exception {
+        AcademicProgramEntity noForm = createProgram("폼 없는 스터디");
+
+        mockMvc.perform(authorized(get(recruitmentFormPath(noForm)), leaderToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("FORM_NOT_LINKED"));
+    }
+
+    @Test
+    void getRecruitmentFormOfUnknownProgramReturns404() throws Exception {
+        mockMvc.perform(authorized(get(PROGRAMS + "/999999/recruitment/form"), leaderToken))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ACADEMIC_PROGRAM_NOT_FOUND"));
+    }
+
+    /*
+     * 문항 교체 (#483). 버전이 오르고 이력이 남는 것은 폼 도메인의 규칙 그대로다 —
+     * 이 경로가 규칙을 새로 만들지 않는다는 것이 요점이다.
+     */
+    @Test
+    void updateRecruitmentFormQuestionsReplacesComposition() throws Exception {
+        AcademicProgramEntity approved = createProgram("문항 채울 스터디");
+        FormEntity form = linkForm(approved, "문항 채울 스터디");
+
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(approved)), leaderToken)
+                                .content(questionBody("q1", "지원 동기", "q2", "가능한 요일")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isEditable").value(true))
+                .andExpect(jsonPath("$.data.form.qitemCpstCn.qitems", Matchers.hasSize(2)))
+                .andExpect(jsonPath("$.data.form.qitemCpstCn.qitems[1].qitemId").value("q2"))
+                .andExpect(jsonPath("$.data.form.qitemCpstCn.qitems[1].qitemLblNm").value("가능한 요일"))
+                // 구성이 실제로 바뀐 저장에서만 버전이 오른다
+                .andExpect(jsonPath("$.data.form.qitemVer").value(2));
+
+        entityManager.refresh(form);
+        assertThat(form.getQuestionComposition().qitems()).hasSize(2);
+    }
+
+    /*
+     * **접수 기간은 이 경로로 바뀌지 않는다** (#483 요구 3의 방어선).
+     *
+     * 본문이 문항 구성만 받으므로 애초에 덮어쓸 값이 없고, 저장 뒤에도 학술국장이 정한 일시가
+     * 그대로 남는다. 모집 일정을 정하는 길은 START_RECRUITMENT 하나다.
+     */
+    @Test
+    void updateRecruitmentFormQuestionsKeepsReceiptPeriod() throws Exception {
+        AcademicProgramEntity scheduled = createProgram("기간 유지 스터디");
+        FormEntity form = linkForm(scheduled, "기간 유지 스터디");
+        startRecruitment(scheduled, laterBy(7), laterBy(14));
+
+        entityManager.flush();
+        entityManager.refresh(form);
+        Instant beginAt = form.getReceiptBeginAt();
+        Instant endAt = form.getReceiptEndAt();
+
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(scheduled)), leaderToken)
+                                .content(questionBody("q1", "바뀐 문구")))
+                .andExpect(status().isOk());
+
+        entityManager.refresh(form);
+        assertThat(form.getReceiptBeginAt()).isEqualTo(beginAt);
+        assertThat(form.getReceiptEndAt()).isEqualTo(endAt);
+        assertThat(form.getStatus()).isEqualTo(FormStatus.OPEN);
+    }
+
+    /*
+     * 같은 구성을 다시 저장하면 버전이 오르지 않는다 (#483 · 규칙은 #140의 것 그대로).
+     *
+     * 아무것도 바꾸지 않은 저장이 버전을 올리면 form_qitem_hstry에 같은 구성이 한 줄 더 쌓여
+     * 이력이 "그때 무엇이었는가"에 답하지 못하게 된다. 판단은 FormEntity.update가 하고 이
+     * 경로는 그 반환값을 쓸 뿐이라, 저장 경로가 둘이 되어도 기준이 하나다.
+     *
+     * **두 번 다 이 경로로 보낸다.** 픽스처가 심는 구성은 QuestionCompositionValidator를 지나지
+     * 않아(비선택형의 optionList가 null인 채다) 같은 본문을 보내도 정규화 결과와 달라진다 —
+     * 실제 폼은 생성·수정이 모두 그 검사를 지나므로 그 상태가 만들어지지 않는다.
+     */
+    @Test
+    void updateRecruitmentFormQuestionsWithSameCompositionKeepsVersion() throws Exception {
+        AcademicProgramEntity approved = createProgram("그대로 저장 스터디");
+        FormEntity form = linkForm(approved, "그대로 저장 스터디");
+        String body = questionBody("q1", "지원 동기");
+
+        mockMvc.perform(authorized(put(recruitmentFormPath(approved)), leaderToken).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.form.qitemVer").value(2));
+
+        mockMvc.perform(authorized(put(recruitmentFormPath(approved)), leaderToken).content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.form.qitemVer").value(2));
+
+        entityManager.refresh(form);
+        assertThat(form.getQuestionVersion()).isEqualTo(2);
+    }
+
+    // 국장도 이 경로를 쓸 수 있다 — 자격은 조회와 같다
+    @Test
+    void updateRecruitmentFormQuestionsAsManagerReturns200() throws Exception {
+        AcademicProgramEntity approved = createProgram("국장이 채우는 스터디");
+        linkForm(approved, "국장이 채우는 스터디");
+
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(approved)), managerToken)
+                                .content(questionBody("q1", "지원 동기", "q2", "각오")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.form.qitemCpstCn.qitems", Matchers.hasSize(2)));
+    }
+
+    /*
+     * 접수가 열린 뒤의 저장은 409다 (#483).
+     *
+     * setUp의 recruiting은 기간 없이 모집을 시작해 ACCEPTING이며, 그것이 어드민 화면이 안내하는
+     * "모집 기간은 비워 두면 즉시 시작" 경로다 — 그 활동의 리더에게는 편집 구간이 처음부터 없다.
+     * **학술국장에게는 이 제한이 없다**: PUT /v1/forms/{formId}는 접수 중 수정을 그대로 허용한다.
+     */
+    @Test
+    void updateRecruitmentFormQuestionsWhileAcceptingReturns409() throws Exception {
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(recruiting)), leaderToken)
+                                .content(questionBody("q1", "늦게 고친 문구")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RECRUITMENT_FORM_NOT_EDITABLE"));
+    }
+
+    // 접수 기간이 끝난 뒤에도 마찬가지다 — 창은 다시 열리지 않는다
+    @Test
+    void updateRecruitmentFormQuestionsAfterReceiptEndReturns409() throws Exception {
+        AcademicProgramEntity expired = createProgram("기간 끝난 스터디");
+        linkForm(expired, "기간 끝난 스터디");
+        startRecruitment(expired, earlierBy(14), earlierBy(7));
+
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(expired)), leaderToken)
+                                .content(questionBody("q1", "이미 늦은 문구")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RECRUITMENT_FORM_NOT_EDITABLE"));
+    }
+
+    // 자격이 창보다 먼저다 — 남이 부르면 그 활동의 모집 사정을 알 수 없어야 한다
+    @Test
+    void updateRecruitmentFormQuestionsAsOutsiderReturns403() throws Exception {
+        AcademicProgramEntity approved = createProgram("남의 스터디");
+        linkForm(approved, "남의 스터디");
+
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(approved)), outsiderToken)
+                                .content(questionBody("q1", "남이 고친 문구")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    // 본문이 비면 애스펙트보다 @Valid가 먼저다 — 문항 구성은 필수값이다
+    @Test
+    void updateRecruitmentFormQuestionsWithoutBodyReturns400() throws Exception {
+        AcademicProgramEntity approved = createProgram("빈 본문 스터디");
+        linkForm(approved, "빈 본문 스터디");
+
+        mockMvc.perform(authorized(put(recruitmentFormPath(approved)), leaderToken).content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
     private String membersPath(AcademicProgramEntity program) {
         return PROGRAMS + "/" + program.getId() + "/members";
     }
@@ -660,6 +917,66 @@ class AcademicProgramRecruitmentControllerTest {
 
     private String selectPath(AcademicProgramEntity program) {
         return PROGRAMS + "/" + program.getId() + "/recruitment/select";
+    }
+
+    private String recruitmentFormPath(AcademicProgramEntity program) {
+        return PROGRAMS + "/" + program.getId() + "/recruitment/form";
+    }
+
+    /*
+     * 문항 교체 본문. 받는 것이 문항 구성 하나뿐이라 제목·접수 기간·라벨을 실을 자리가 없다 —
+     * 그것이 요구 3("모집 일정은 학술국장이 정한다")의 방어선이다.
+     */
+    private static String questionBody(String... idAndLabelPairs) {
+        StringBuilder qitems = new StringBuilder();
+        for (int i = 0; i < idAndLabelPairs.length; i += 2) {
+            if (i > 0) {
+                qitems.append(",");
+            }
+            qitems.append(
+                    """
+                    {"qitemId": "%s", "qitemLblNm": "%s", "qitemTypeCd": "LONG_TEXT",
+                     "reqYn": true, "pageSeq": 0}
+                    """
+                            .formatted(idAndLabelPairs[i], idAndLabelPairs[i + 1]));
+        }
+        return """
+               {"qitemCpstCn": {"pages": [{"pageTtl": "기본 정보"}], "qitems": [%s]}}
+               """
+                .formatted(qitems);
+    }
+
+    /*
+     * 고정 Clock을 두지 않고 지금을 기준으로 잡는다 — @MockitoBean Clock은 스프링 컨텍스트를
+     * 하나 더 만들고(#103이 줄여 둔 것을 되돌린다), 이 테스트가 보려는 것은 "일시가 지났는가"라
+     * 절대 시각이 필요하지 않다.
+     */
+    private static String laterBy(int days) {
+        return OffsetDateTime.now(ZoneOffset.ofHours(9))
+                .plusDays(days)
+                .truncatedTo(ChronoUnit.SECONDS)
+                .toString();
+    }
+
+    private static String earlierBy(int days) {
+        return laterBy(-days);
+    }
+
+    /** 모집 기간을 정해 시작한다 — 기간 없는 시작(setUp)은 곧바로 ACCEPTING이 된다 */
+    private void startRecruitment(AcademicProgramEntity program, String beginAt, String endAt)
+            throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                        post(PROGRAMS + "/" + program.getId() + "/transitions"),
+                                        managerToken)
+                                .content(
+                                        """
+                                        {"transition": "START_RECRUITMENT",
+                                         "recruitmentStartDt": "%s",
+                                         "recruitmentEndDt": "%s"}
+                                        """
+                                                .formatted(beginAt, endAt)))
+                .andExpect(status().isOk());
     }
 
     private AcademicProgramEntity createProgram(String title) {

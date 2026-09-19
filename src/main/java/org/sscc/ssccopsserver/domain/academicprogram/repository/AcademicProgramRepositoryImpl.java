@@ -37,12 +37,18 @@ public class AcademicProgramRepositoryImpl implements AcademicProgramRepositoryC
      * SELECT_ROWS·SELECT_COUNT 양쪽에 같은 별칭(e·t·l)의 조인을 둔다 — SELECT_ROWS는
      * 화면이 필요로 하는 값을 한 번에 끌어오는 fetch join, SELECT_COUNT는 필터 조건이 같은
      * 별칭을 참조할 수 있게 하는 일반 join이다(WorkRepositoryImpl과 같은 이유).
+     *
+     * **e.form은 SELECT_ROWS에만 있고 별칭도 없다** (#483). 모집 카드가 접수 기간·문항 버전을
+     * 그리는데 그 값을 지연 로딩으로 두면 카드 수만큼 질의가 늘고(DB-13), 폼은 필터 축이
+     * 아니어서 건수 질의가 참조할 일이 없다 — 별칭을 붙이면 쓰지 않는 조인이 조건절에 끼어들
+     * 자리를 만든다. 폼이 없는 활동(이관 전·정합성 깨짐)도 빠지지 않도록 left join이다.
      */
     private static final String SELECT_ROWS =
             "select a from AcademicProgramEntity a"
                     + " join fetch a.event e"
                     + " join fetch a.type t"
-                    + " left join fetch a.leader l";
+                    + " left join fetch a.leader l"
+                    + " left join fetch e.form";
 
     private static final String SELECT_COUNT =
             "select count(a) from AcademicProgramEntity a"

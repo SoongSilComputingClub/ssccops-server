@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.persistence.EntityManager;
@@ -33,7 +34,9 @@ import org.sscc.ssccopsserver.domain.event.repository.EventClassificationReposit
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
+import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -179,6 +182,79 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.page.hasNext").value(false))
                 .andExpect(jsonPath("$.page.totalCount").value(1))
                 .andExpect(jsonPath("$.page.overallCount").value(1));
+    }
+
+    /*
+     * 모집 카드가 쓰는 값이 목록에도 실린다 (#483).
+     *
+     * 그전까지 카드가 필요한 것(접수 상태·접수 기간·정원·지원 건수·문항 버전·승인일) 중
+     * 하나도 없어 화면이 카드마다 활동 상세를 한 번 더 불러야 했다.
+     *
+     * **배지의 축은 sttsCd가 아니라 formReceiptStatus다** — 이 활동은 APPROVED이고 폼은
+     * 아직 DRAFT라, 화면의 "모집 시작 전"이 그 둘을 함께 덮는다.
+     */
+    @Test
+    void searchAcademicProgramsCarryRecruitmentCardFields() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "모집 카드용 스터디", "1주차");
+        FormEntity recruitmentForm = linkRecruitmentForm(academicProgram);
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].formId").value(recruitmentForm.getId()))
+                .andExpect(jsonPath("$.data[0].formReceiptStatus").value("DRAFT"))
+                .andExpect(jsonPath("$.data[0].qitemVer").value(1))
+                // 승인이 곧 생성이라 승인 일시를 담는 컬럼이 따로 없다 — acdm_actv.crt_dt다
+                .andExpect(jsonPath("$.data[0].approvedAt").isNotEmpty())
+                // 접수 전에도 0을 그대로 내린다 — "미모집" 같은 대체값을 만들지 않는다
+                .andExpect(jsonPath("$.data[0].applicationCount").value(0))
+                // 모집 시작 전이라 기간은 아직 없다
+                .andExpect(jsonPath("$.data[0].rcptBgngDt").doesNotExist())
+                .andExpect(jsonPath("$.data[0].rcptEndDt").doesNotExist());
+    }
+
+    /*
+     * 지원 건수는 폼 목록의 responseCount와 **같은 기준**이다 (#483) — 작성 중(DRAFT)은 세지
+     * 않는다. 기준을 학술 쪽에서 다시 세우면 같은 폼이 두 화면에서 다른 숫자로 보인다.
+     */
+    @Test
+    void searchAcademicProgramsCountApplicationsExcludingDrafts() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "지원자 있는 스터디", "1주차");
+        FormEntity recruitmentForm = linkRecruitmentForm(academicProgram);
+        MemberEntity applicant = saveMember(UUID.randomUUID(), "20260811", "지원자");
+        MemberEntity drafter = saveMember(UUID.randomUUID(), "20260812", "작성 중인 사람");
+
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createSubmitted(
+                        recruitmentForm,
+                        applicant,
+                        ResponseContent.of(Map.of("q1", "지원합니다")),
+                        Instant.parse("2026-09-01T03:00:00Z")));
+        formResponseHistoryRepository.saveAndFlush(
+                FormResponseHistoryEntity.createDraft(
+                        recruitmentForm, drafter, ResponseContent.of(Map.of("q1", "작성 중"))));
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].applicationCount").value(1));
+    }
+
+    /*
+     * 폼이 연결되지 않은 활동(이관 전·정합성 깨짐)도 목록에서 빠지지 않는다 (#483).
+     *
+     * 질의가 left join이라 행은 그대로 오고 폼에서 오는 값만 비어 있다 — inner join이면 그
+     * 활동이 목록에서 통째로 사라지는데, 그것은 "폼이 없다"가 아니라 "활동이 없다"로 보인다.
+     */
+    @Test
+    void searchAcademicProgramsWithoutLinkedFormLeavesFormFieldsNull() throws Exception {
+        createAcademicProgram("STUDY", "폼 없는 스터디", "1주차");
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].formId").doesNotExist())
+                .andExpect(jsonPath("$.data[0].formReceiptStatus").doesNotExist())
+                .andExpect(jsonPath("$.data[0].qitemVer").doesNotExist())
+                .andExpect(jsonPath("$.data[0].applicationCount").value(0));
     }
 
     @Test

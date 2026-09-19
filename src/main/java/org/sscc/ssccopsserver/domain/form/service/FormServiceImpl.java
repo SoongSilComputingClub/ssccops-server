@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.form.service;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
@@ -193,14 +194,23 @@ public class FormServiceImpl implements FormService {
      */
     @Override
     public FormDetailResponse getForm(Long formId) {
-        FormEntity form = findForm(formId);
+        return detailOf(findForm(formId));
+    }
+
+    /*
+     * 상세 응답 조립 (#483에서 getForm 본문을 그대로 뽑았다). 저장 경로
+     * (changeQuestionComposition)가 같은 모양을 돌려주려면 이 조립을 두 번 적지 않아야 한다 —
+     * 계약 문항·라벨·응답 요약·학술 연결은 넷 다 파생값이라, 한쪽만 늘면 같은 폼이 경로에 따라
+     * 다른 모양으로 나간다.
+     */
+    private FormDetailResponse detailOf(FormEntity form) {
         return FormDetailResponse.of(
                 form,
                 formReceiptPolicy.receiptStatusOf(form),
                 labelsOf(form),
                 responseSummaryOf(form),
                 systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()),
-                academicFormLinkProvider.academicProgramIdOf(formId).orElse(null));
+                academicFormLinkProvider.academicProgramIdOf(form.getId()).orElse(null));
     }
 
     /*
@@ -266,15 +276,7 @@ public class FormServiceImpl implements FormService {
         FormEntity.requireValidReceiptPeriod(receiptBeginAt, receiptEndAt);
         ensureAcademicReceiptPeriodUnchanged(form, receiptBeginAt, receiptEndAt);
         // 교체 전 구성과 비교해야 하므로 update() 호출보다 먼저 검사한다
-        ensureExistingQuestionItemsKept(form, composition);
-
-        /*
-         * 시스템 폼의 코드 계약 검사 (#140). 응답 유무를 보는 위 검사와 나란히 두지만 기준이
-         * 다르다 — 이쪽은 응답이 한 건도 없어도 코드가 요구하는 qitemId를 지울 수 없다.
-         * 요구 목록은 폼이 아니라 그 폼을 읽는 코드가 선언한다(SystemFormContract).
-         */
-        form.requireSystemContractKept(
-                composition, systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
+        ensureQuestionCompositionReplaceable(form, composition);
 
         /*
          * 본문에 formSttsCd가 실려 와도 무시한다 (#33). 라벨(labelIds)과 해석이 갈리는데, 라벨은
@@ -459,6 +461,59 @@ public class FormServiceImpl implements FormService {
     }
 
     /*
+     * 문항 구성만 교체 (#483). 인터페이스 주석이 "왜 좁은가"를, 여기가 "어떻게 같은가"를 적는다.
+     *
+     * form.update()에 지금 값을 그대로 되먹이는 것은 그 메서드가 구성이 실제로 바뀌었는지를
+     * 판단해 버전을 올리고 그 사실을 돌려주는 유일한 자리이기 때문이다 — 여기서 구성을 한 번 더
+     * 비교하면 "바뀌었는가"라는 같은 규칙이 두 벌이 되고, 그때부터 qitem_ver와 이력이 갈릴 수
+     * 있다(updateForm이 같은 이유로 그 반환값을 쓴다).
+     *
+     * 접수 기간을 현재 값으로 되먹이므로 #190의 학술 잠금(ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED)에
+     * 걸리지 않는다 — 그 검사는 값이 바뀔 때만 도는데 여기서는 애초에 바뀔 수 없다. 요구
+     * "모집 일정은 학술국장만 정한다"의 방어선이 두 겹인 셈이며, 이쪽은 받지 않아서 지킨다.
+     *
+     * flush는 updateForm과 같은 이유다 — mdfcn_dt를 @LastModifiedDate가 flush 시점에 채우므로
+     * 먼저 흘려보내야 응답의 수정 일시가 실제 값이 된다.
+     */
+    @Override
+    @Transactional
+    public FormDetailResponse changeQuestionComposition(
+            Long formId, QuestionCompositionContent requested, MemberEntity actor) {
+        FormEntity form = findForm(formId);
+
+        QuestionCompositionContent composition = questionCompositionValidator.validate(requested);
+        ensureQuestionCompositionReplaceable(form, composition);
+
+        if (form.update(
+                form.getTitle(),
+                composition,
+                form.getReceiptBeginAt(),
+                form.getReceiptEndAt(),
+                form.isMultipleResponseAllowed())) {
+            recordQuestionComposition(form, actor);
+        }
+
+        formRepository.flush();
+        return detailOf(form);
+    }
+
+    /*
+     * 폼별 접수 건수 (#483). 폼 목록의 responseCount와 **같은 집계**(responseSummariesOf)를
+     * 접어 쓴다 — 질의를 따로 두면 "무엇을 접수로 세는가"가 두 벌이 되어, 같은 폼이 폼 목록과
+     * 학술 모집 목록에서 다른 숫자로 보인다.
+     *
+     * 빈 목록을 먼저 끊는 것은 `in ()`이 DB마다 다르게 취급되기 때문이다.
+     */
+    @Override
+    public Map<Long, Long> countSubmittedResponsesByFormIds(Collection<Long> formIds) {
+        if (formIds.isEmpty()) {
+            return Map.of();
+        }
+        return responseSummariesOf(List.copyOf(formIds)).entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().total()));
+    }
+
+    /*
      * 살아 있는 폼 조회 (#329부터 del_dt를 함께 본다). 지워진 폼은 없는 폼과 같은 404다 —
      * 조건을 질의에 넣는 것은 조회한 뒤 isDeleted()로 거르면 그 분기 하나가 빠지는 것으로
      * 지운 폼이 그 화면에서만 계속 보이기 때문이다.
@@ -504,6 +559,27 @@ public class FormServiceImpl implements FormService {
                 && academicFormLinkProvider.academicProgramIdOf(form.getId()).isPresent()) {
             throw new GeneralException(FormErrorCode.ACADEMIC_FORM_RECEIPT_PERIOD_LOCKED);
         }
+    }
+
+    /*
+     * 문항 구성을 이 폼에 저장해도 되는가 — 전체 저장(updateForm)과 문항만 저장
+     * (changeQuestionComposition)이 **함께 지나는 한 자리** (#483에서 뽑았다).
+     *
+     * 두 검사를 나란히 두는 것은 #140부터이고 기준이 서로 다르다: 앞쪽은 이미 들어온 응답이
+     * 쓰는 qitemId를 지키고(응답이 없으면 통과), 뒤쪽은 응답이 한 건도 없어도 코드가 요구하는
+     * qitemId를 지킨다. 뽑아 둔 이유는 저장 경로가 둘이 되었기 때문이며 — 한쪽에만 걸면 그쪽으로
+     * 들어온 저장이 다른 쪽이 막는 것을 통과시킨다.
+     *
+     * 문항 구성 자체의 형식 검사(QuestionCompositionValidator)는 여기 넣지 않는다. 그쪽은
+     * 값을 정리해 **돌려주는** 단계라 호출부가 그 결과를 받아 써야 하고, updateForm은 그 값을
+     * 접수 기간 검사보다 먼저 만들어 둔다 — 순서를 여기로 옮기면 기간이 뒤집힌 요청의 오류가
+     * INVALID_RECEIPT_PERIOD에서 다른 것으로 바뀐다.
+     */
+    private void ensureQuestionCompositionReplaceable(
+            FormEntity form, QuestionCompositionContent composition) {
+        ensureExistingQuestionItemsKept(form, composition);
+        form.requireSystemContractKept(
+                composition, systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
     }
 
     /*

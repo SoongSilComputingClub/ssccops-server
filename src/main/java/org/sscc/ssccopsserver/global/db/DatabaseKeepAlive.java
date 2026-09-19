@@ -1,12 +1,13 @@
 package org.sscc.ssccopsserver.global.db;
 
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+import lombok.extern.slf4j.Slf4j;
 
 /*
  * DB에 하루 한 번 «사용자 쿼리»를 남긴다 — Supabase Free 일시정지 방지 1차 (#487 · ssccops#394 · ADR-0041).
@@ -26,7 +27,10 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "ssccops.db.keepalive.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(
+        name = "ssccops.db.keepalive.enabled",
+        havingValue = "true",
+        matchIfMissing = true)
 public class DatabaseKeepAlive {
 
     private final JdbcTemplate jdbc;
@@ -52,7 +56,10 @@ public class DatabaseKeepAlive {
             Integer one = jdbc.queryForObject("SELECT 1", Integer.class);
             log.info("db keepalive ok ({}) → {}", reason, one);
         } catch (RuntimeException e) {
-            log.error("db keepalive failed ({}) — Supabase가 멈췄거나 DB에 닿지 않는다: {}", reason, e.getMessage());
+            log.error(
+                    "db keepalive failed ({}) — Supabase가 멈췄거나 DB에 닿지 않는다: {}",
+                    reason,
+                    e.getMessage());
         }
     }
 }

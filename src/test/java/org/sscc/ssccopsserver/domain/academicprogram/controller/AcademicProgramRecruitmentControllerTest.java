@@ -897,6 +897,46 @@ class AcademicProgramRecruitmentControllerTest {
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
+    /*
+     * **자기가 맡은 활동만 고친다** (#483 요구 2 · 이 이슈의 핵심 제약).
+     *
+     * 판정은 `AcademicProgramOwnershipPolicy.isLeader`의 `leadr_mbr_id` 비교라 «스터디장인가»가
+     * 아니라 «이 활동의 스터디장인가»다 — 스터디를 하나 맡았다는 사실이 남의 스터디를 여는
+     * 열쇠가 되지 않는다. 스터디장 역할에는 권한이 하나도 없으므로 관리권한 쪽 분기도 닫힌다.
+     *
+     * **폼 생성자여도 소용없다.** 이 픽스처의 폼은 `leader`가 만든 것인데(승인 이관이 리더를
+     * 생성자로 세우는 것을 흉내 낸다) 그래도 403이다 — 자격의 축은 `form.creatr_mbr_id`가
+     * 아니라 `acdm_actv.leadr_mbr_id`이며, 생성자로 판정하면 활동이 위임돼도 옛 리더가 계속
+     * 열게 된다.
+     *
+     * 폼을 연결해 두는 것은 403이 폼 연결 검사(409)를 가리는 것이 아니라 자격 판정 그 자체임을
+     * 드러내기 위해서다.
+     */
+    @Test
+    void updateRecruitmentFormQuestionsOfAnotherLeadersProgramReturns403() throws Exception {
+        MemberEntity anotherLeader = saveMember(UUID.randomUUID(), "20260707", "남의 스터디장");
+        AcademicProgramEntity theirs = createProgram("남이 맡은 스터디", anotherLeader);
+        linkForm(theirs, "남이 맡은 스터디");
+
+        mockMvc.perform(
+                        authorized(put(recruitmentFormPath(theirs)), leaderToken)
+                                .content(questionBody("q1", "남의 폼을 고친다")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    // 조회도 같은 판정을 지난다 — 남의 활동은 문항조차 보이지 않는다
+    @Test
+    void getRecruitmentFormOfAnotherLeadersProgramReturns403() throws Exception {
+        MemberEntity anotherLeader = saveMember(UUID.randomUUID(), "20260708", "남의 프로젝트장");
+        AcademicProgramEntity theirs = createProgram("남이 맡은 프로젝트", anotherLeader);
+        linkForm(theirs, "남이 맡은 프로젝트");
+
+        mockMvc.perform(authorized(get(recruitmentFormPath(theirs)), leaderToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
     // 본문이 비면 애스펙트보다 @Valid가 먼저다 — 문항 구성은 필수값이다
     @Test
     void updateRecruitmentFormQuestionsWithoutBodyReturns400() throws Exception {
@@ -980,6 +1020,11 @@ class AcademicProgramRecruitmentControllerTest {
     }
 
     private AcademicProgramEntity createProgram(String title) {
+        return createProgram(title, leader);
+    }
+
+    /** 리더를 골라 만든다 — "남이 맡은 활동"을 세우는 자리다 (#483) */
+    private AcademicProgramEntity createProgram(String title, MemberEntity owner) {
         return AcademicProgramFixture.save(
                 eventRepository,
                 eventClassificationRepository,
@@ -990,7 +1035,7 @@ class AcademicProgramRecruitmentControllerTest {
                 formResponseHistoryRepository,
                 "STUDY",
                 title,
-                leader,
+                owner,
                 List.of("OT"));
     }
 

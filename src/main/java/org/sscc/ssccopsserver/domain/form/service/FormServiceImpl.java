@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +126,32 @@ public class FormServiceImpl implements FormService {
         return summariesOf(
                 formRepository.findAllForAdminList(
                         filter.statuses(), labelId, filter.periodMatch().name(), filter.now()));
+    }
+
+    /*
+     * 접수 상태 여러 값 (#492 · ssccops#408). 화면 기본이 «작성 중 + 접수 예정 + 접수 중» 셋이라 생겼다.
+     *
+     * 질의를 상태마다 한 번씩 돌려 합치지 않고 **전체를 읽어 판정값으로 거른다.** 판정값
+     * (receiptStatusOf)은 목록 항목이 어차피 계산해 싣는 값이라, 그것으로 거르면 «배지와 목록이
+     * 어긋나지 않는다»(#325)는 계약이 두 경로가 아니라 한 값으로 지켜진다. 대가는 전체를 읽는
+     * 것인데 이 목록은 페이징이 없고(위 주석) 폼은 회차마다 몇 장씩 느는 데이터라 지금은 값싸다 —
+     * 페이징이 붙는 날 filterFor를 합집합으로 넓히는 쪽으로 옮긴다.
+     *
+     * 값 하나면 단일 값 경로(DB 필터)와 같은 결과다 — FormControllerTest가 그것을 본다.
+     */
+    @Override
+    public List<FormSummaryResponse> getFormsByReceiptStatuses(
+            Collection<FormReceiptStatus> receiptStatuses, Long labelId) {
+        if (receiptStatuses == null || receiptStatuses.isEmpty()) {
+            return getForms(null, labelId);
+        }
+        Set<FormReceiptStatus> wanted = EnumSet.copyOf(receiptStatuses);
+        if (wanted.size() == 1) {
+            return getForms(wanted.iterator().next(), labelId);
+        }
+        return getForms(null, labelId).stream()
+                .filter(summary -> wanted.contains(summary.receiptStatus()))
+                .toList();
     }
 
     /*

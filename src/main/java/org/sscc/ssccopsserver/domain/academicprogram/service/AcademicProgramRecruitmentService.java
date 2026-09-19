@@ -6,6 +6,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberRe
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -110,4 +112,33 @@ public interface AcademicProgramRecruitmentService {
             Long academicProgramId,
             RecruitmentFormQuestionUpdateRequest request,
             MemberEntity actor);
+
+    /*
+     * 모집 일정 조회. 자격은 모집 폼 조회와 같다("리더 본인 또는 학술국장") — 리더는 자기
+     * 공고가 언제 열리고 닫히는지 알아야 문항 편집 창이 언제까지인지 계산할 수 있다.
+     *
+     * 모집 시작 전(APPROVED)에도 200이며 그때는 두 일시가 비어 있다 — 아직 정해지지 않았다는
+     * 뜻이고, 그 구간을 RECRUITMENT_NOT_STARTED로 끊으면 화면이 "미정"을 그릴 수 없다.
+     */
+    RecruitmentScheduleResponse getRecruitmentSchedule(
+            Long academicProgramId, MemberEntity requester);
+
+    /*
+     * 모집 일정 변경 — 모집을 시작한 뒤 접수 기간을 다시 정하는 유일한 경로다.
+     *
+     * **학술국장 전용이다**(ACADEMIC_PROGRAM_MANAGE). 조회는 리더에게도 열지만 변경은 열지
+     * 않는다 — 모집 일정을 정하는 사람이 학술국장이라는 것이 #483이 잠가 둔 규칙이고(PUT
+     * .../form이 접수 기간을 본문에 받지 않는 이유), 여기서 리더에게 열면 그 잠금이 뒷문으로
+     * 풀린다. 그 판정은 컨트롤러의 @RequireAuthority가 한다.
+     *
+     * **모집이 시작된 뒤에만 부를 수 있다**(409 RECRUITMENT_NOT_STARTED). 시작 전 활동의 일정은
+     * START_RECRUITMENT가 정하므로 이 경로가 그 자리를 겸하면 "모집을 시작하지 않은 채 접수
+     * 기간만 든 활동"이 생기고, 그 상태는 폼이 DRAFT라 화면이 읽을 수 없다.
+     *
+     * 저장 규칙은 폼 도메인이 갖는다(FormService.changeReceiptPeriod) — 기간 역전은 400
+     * INVALID_RECEIPT_PERIOD로 그쪽에서 나온다. #190이 폼 편집(PUT /v1/forms/{id})에 걸어 둔
+     * 잠금은 그대로다: 접수 기간이 바뀌는 경로는 여전히 학술 도메인 안에만 있다.
+     */
+    RecruitmentScheduleResponse updateRecruitmentSchedule(
+            Long academicProgramId, RecruitmentScheduleUpdateRequest request, MemberEntity actor);
 }

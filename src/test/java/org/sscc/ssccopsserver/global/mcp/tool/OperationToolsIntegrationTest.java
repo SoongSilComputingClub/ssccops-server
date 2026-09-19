@@ -83,7 +83,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 30종이 전부 광고되고 삭제 도구는 없다")
+    @DisplayName("운영 도구 38종이 전부 광고되고 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -91,6 +91,15 @@ class OperationToolsIntegrationTest {
 
             assertThat(names)
                     .containsExactlyInAnyOrder(
+                            // W2 — 행사·폼 (#494)
+                            "list_events",
+                            "get_event",
+                            "create_event",
+                            "update_event",
+                            "change_event_status",
+                            "list_forms",
+                            "get_form",
+                            "change_form_status",
                             // 1차 (#385)
                             "list_operations",
                             "get_work",

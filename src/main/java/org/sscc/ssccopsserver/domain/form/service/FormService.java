@@ -1,7 +1,9 @@
 package org.sscc.ssccopsserver.domain.form.service;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
@@ -12,6 +14,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 /** 폼 조회·생성·수정·복제(#32)와 접수 상태 전이(#33). 폼 관리 화면이 전부 이 인터페이스를 소비한다. */
@@ -94,4 +97,40 @@ public interface FormService {
      * 도메인이 알지도 못하는 폼 내용을 덮어쓰게 된다.
      */
     void changeReceiptPeriod(Long formId, Instant receiptBeginAt, Instant receiptEndAt);
+
+    /*
+     * 문항 구성만 교체 (#483 학술 모집 폼의 리더 편집 전용, 공개 API 아님).
+     *
+     * changeReceiptPeriod와 **같은 자리**이며 이유도 같다 — updateForm은 본문 전체를 요구해
+     * 이 좁은 용도에 쓰면 학술 도메인이 알지도 못하는 폼 내용(제목·라벨·다중 응답)을 매 저장마다
+     * 되쓰게 되고, 폼에 필드가 늘면 그 조립이 조용히 낡는다. 여기서 바뀌는 것은 qitem_cpst_cn과
+     * (실제로 달라졌을 때) qitem_ver뿐이다.
+     *
+     * **검증·이력은 updateForm과 같은 경로를 지난다** — 문항 구성 검사 · 응답이 쓰는 qitemId
+     * 보호(409 QUESTION_ITEM_IN_USE) · 시스템 폼 계약(400 SYSTEM_FORM_CONTRACT_VIOLATION) ·
+     * 버전이 오른 저장만 form_qitem_hstry에 한 행. 규칙을 옮겨 적으면 두 저장 경로가 다른 것을
+     * 거절하기 시작한다.
+     *
+     * **접수 기간·상태는 보지 않는다.** 언제까지 고칠 수 있는가는 폼의 규칙이 아니라 부르는
+     * 쪽(학술 모집)의 규칙이라 그쪽이 판정한다 — 여기에 창을 박으면 폼 도메인이 모집 일정을
+     * 알아야 한다.
+     *
+     * 돌려주는 것이 상세 응답인 것은 호출부가 곧바로 화면에 실어야 하기 때문이다. 저장 뒤
+     * getForm을 한 번 더 부르게 하면 라벨·응답 요약·계약 문항을 조립하는 자리가 두 번 돈다.
+     */
+    FormDetailResponse changeQuestionComposition(
+            Long formId, QuestionCompositionContent composition, MemberEntity actor);
+
+    /*
+     * 폼별 접수 건수(제출 이상) 일괄 집계 (#483 학술 모집 목록의 "지원 N건").
+     *
+     * 목록 카드마다 세면 그대로 N+1이라 한 번에 모아 온다(DB-13). **무엇을 "접수"로 세는가를
+     * 폼 도메인 안에 둔 것이 요점이다** — 폼 목록의 responseCount와 같은 기준(작성 중 제외)을
+     * 쓰므로 같은 폼을 두 화면에서 보면 숫자가 같다. 학술이 직접 세면 그 기준이 두 벌이 된다.
+     *
+     * 응답이 한 건도 없는 폼은 **키 자체가 없다.** 0으로 채우지 않는 것은 "그 폼을 묻지
+     * 않았다"와 "0건이다"를 호출부가 가를 수 있어야 해서이며, 0으로 읽을지는 호출부가 정한다
+     * (FormResponseCount가 세운 규칙 그대로다).
+     */
+    Map<Long, Long> countSubmittedResponsesByFormIds(Collection<Long> formIds);
 }

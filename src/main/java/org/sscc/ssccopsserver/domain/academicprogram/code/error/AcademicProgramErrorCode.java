@@ -149,6 +149,27 @@ public enum AcademicProgramErrorCode implements ErrorCode {
     RECRUITMENT_NOT_STARTED(HttpStatus.CONFLICT, "RECRUITMENT_NOT_STARTED", "아직 모집이 시작되지 않았습니다."),
 
     /*
+     * 409 — 모집 시작 일시가 지난 뒤 스터디장/팀장이 모집 폼 문항을 고치려 했을 때 (#483).
+     *
+     * 창의 기준은 활동 상태가 아니라 **학술국장이 모집 관리에서 등록한 모집 시작 일시**다.
+     * 서버에서는 form.rcpt_bgng_dt이고, 판정은 FormReceiptPolicy가 준 파생 접수 상태가
+     * DRAFT(일시 미등록) 또는 SCHEDULED(일시 등록 · 아직 그 전)인가 하나다 — 시각까지 보는
+     * 판정은 그 클래스가 유일한 주인이라, 여기서 FormStatus와 일시를 다시 비교하지 않는다.
+     *
+     * 조회(GET)에는 걸지 않는다. 접수 중·접수 종료에도 리더는 자기 공고의 문항을 볼 수 있어야
+     * 하고, 막는 것은 "응답을 받는 도중에 물음이 바뀌는 것"이지 열람이 아니다.
+     *
+     * **학술국장에게는 이 제한이 없다.** 폼 편집 경로(PUT /v1/forms/{formId})는 접수 중 문항
+     * 수정을 그대로 허용하며(삭제·변경만 QUESTION_ITEM_IN_USE로 막는다) 어드민 모집 관리 화면이
+     * 그것을 전제로 접수 중에도 편집 링크를 둔다. 좁히는 것은 이 경로 하나다.
+     *
+     * 404로 감추지 않는 것은 요청자가 이미 그 활동의 리더라 활동의 존재를 아는 상태이기
+     * 때문이다(SESSION_NOT_EDITABLE과 같은 자리).
+     */
+    RECRUITMENT_FORM_NOT_EDITABLE(
+            HttpStatus.CONFLICT, "RECRUITMENT_FORM_NOT_EDITABLE", "모집이 시작되어 지원서 문항을 고칠 수 없습니다."),
+
+    /*
      * 400 — 인증사진 업로드(#137)의 fileExt가 허용 목록 밖일 때. 허용 목록 자체는 행사 이미지와
      * 같은 ImageFileType이며(형식을 늘리는 자리를 한 곳으로 묶는다) SVG를 빼는 이유도 같다 —
      * 공개 도메인에서 그대로 열리므로 스크립트를 담을 수 있는 문서를 허용하면 XSS 경로가 된다.

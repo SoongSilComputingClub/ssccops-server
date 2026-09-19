@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -152,9 +153,25 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         boolean hasNext = fetched.size() > query.size();
         List<AcademicProgramEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
+        Map<Long, Long> applicationCounts = applicationCountsOf(rows);
         List<AcademicProgramSummaryResponse> academicPrograms =
                 rows.stream()
-                        .map(program -> AcademicProgramSummaryResponse.of(program, viewer))
+                        .map(
+                                program -> {
+                                    FormEntity form = program.getEvent().getForm();
+                                    return AcademicProgramSummaryResponse.of(
+                                            program,
+                                            viewer,
+                                            form == null
+                                                    ? null
+                                                    : formReceiptPolicy
+                                                            .receiptStatusOf(form)
+                                                            .name(),
+                                            form == null
+                                                    ? 0L
+                                                    : applicationCounts.getOrDefault(
+                                                            form.getId(), 0L));
+                                })
                         .toList();
 
         PageResponse page =
@@ -166,6 +183,25 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                         academicProgramRepository.countMatching(query),
                         academicProgramRepository.count());
         return new AcademicProgramSearchResponse(academicPrograms, page);
+    }
+
+    /*
+     * 이 페이지의 폼들에 들어온 접수 건수 (#483 · 카드의 "지원 N건").
+     *
+     * 카드마다 세면 그대로 N+1이라 한 페이지치를 한 번에 모아 온다(DB-13). **무엇을 접수로
+     * 세는가는 폼 도메인이 정한다**(FormService.countSubmittedResponsesByFormIds) — 폼 목록의
+     * responseCount와 같은 기준이라 같은 폼을 두 화면에서 보면 숫자가 같다.
+     *
+     * 응답이 없는 폼은 결과에 키가 없으므로 호출부가 0으로 읽는다(그 규칙은 그쪽 주석).
+     */
+    private Map<Long, Long> applicationCountsOf(List<AcademicProgramEntity> rows) {
+        List<Long> formIds =
+                rows.stream()
+                        .map(program -> program.getEvent().getForm())
+                        .filter(Objects::nonNull)
+                        .map(FormEntity::getId)
+                        .toList();
+        return formService.countSubmittedResponsesByFormIds(formIds);
     }
 
     // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다

@@ -131,6 +131,23 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **머지는 곧 dev 배포다**(Coolify가 `develop` 푸시를 자동 배포한다, #202). 마이그레이션이
   깨지면 dev가 즉시 죽으므로 `FlywayMigrationValidateTest`를 통과시키고 머지한다.
 
+### 앱 DB는 Supabase Free다 — 일시정지와 anon 권한 (#487 · [ADR-0040](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0040-supabase-free-keepalive-two-layers.md))
+
+- dev·prod의 앱 DB(이 Flyway가 관리하는 그 DB)는 **Supabase Postgres Free**이고 인증(Auth · MCP OAuth)도
+  같은 프로젝트다. Free는 **7일간 사용자 DB 쿼리가 적으면 프로젝트를 멈춘다** — 멈추면 헬스체크가 DB를
+  포함하므로(ADR-0022) autoheal 재시작 루프 = API 전체 장애이고, 되살리는 것은 대시보드에서 사람이 한다.
+- 그래서 `global/db/DatabaseKeepAlive`가 하루 한 번(04:00 KST + 기동 직후) `SELECT 1`을 보낸다(1차 ·
+  `ssccops.db.keepalive.enabled`, test 프로필만 끈다). 2차는 메타 레포 워크플로가 치는 `public.heartbeat()`
+  (V17 · anon에 EXECUTE만) — 멈추면 그 job이 빨개진다. `@EnableScheduling`은 이 작업으로 켰다
+  (`global/config/SchedulingConfig`) — RagIndexingScheduler는 자기 이유로 여전히 자기 실행기를 쓴다.
+- **anon에 테이블 grant를 주지 않는다.** Flyway가 만든 테이블에는 Supabase 기본 grant가 없어 anon 키
+  (웹 번들에 실린다)로는 `42501`이다(2026-09-19 실측) — 그 상태가 곧 보안이다. Supabase는 **`postgres`
+  역할이 만든 객체**에 기본 권한(anon·authenticated·service_role)을 붙이므로 Flyway·앱의 DB 사용자는
+  `postgres`가 아니어야 한다(지금 그렇다). 대시보드 SQL Editor(= postgres)로 테이블을 만들지 말 것 —
+  그 순간 anon이 그 테이블을 읽는다.
+- `anon` 역할은 Supabase에만 있다 — 마이그레이션에서 grant는 `pg_roles`를 보고 조건부로(V17 참고).
+  로컬 Postgres·Testcontainers에는 없다.
+
 ## 결정 기록 (ADR)
 
 되돌리기 어려운 결정 — 여러 컴포넌트에 걸치거나 운영·보안에 영향을 주는 것 — 은 기획 저장소의

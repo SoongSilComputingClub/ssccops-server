@@ -406,6 +406,13 @@ logging:
 # 다른 값은 환경변수로 주고, 여기에는 «아무도 주지 않았을 때의 값»만 둔다. `application-test.yaml`
 # 이 몇 줄을 덮어쓰는 것은 예외이며 그 이유는 그 파일의 주석에 있다(프로필 yaml이 이 파일을 이긴다).
 ssccops:
+  db:
+    keepalive:
+      # 하루 한 번 `SELECT 1` — Supabase Free 일시정지 방지 1차 (#487 · ADR-0040). 앱 DB가 Supabase
+      # Postgres이고 7일간 사용자 쿼리가 적으면 프로젝트가 멈춘다(멈추면 헬스체크가 DB를 포함해
+      # API 전체가 재시작 루프). `false`면 DatabaseKeepAlive 빈이 서지 않는다 — test 프로필이 끈다.
+      enabled: ${SSCCOPS_DB_KEEPALIVE_ENABLED:true}
+
   assistant:
     # 질의·적재·색인 워커를 **함께** 연다 (#396). 기본값이 `false`인 것은 **머지가 곧 dev
     # 배포**이기 때문이다(#202) — 스위치가 없으면 색인 워커가 배포 직후부터 대기열을 돌며 무료

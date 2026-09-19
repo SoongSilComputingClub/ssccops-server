@@ -1,9 +1,12 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -12,6 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
@@ -22,10 +29,15 @@ import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.service.EventParticipationService;
+import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
+import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.service.FormReceiptPolicy;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
+import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -58,10 +70,31 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     private static final FormResponseReviewRequest ACCEPT_REVIEW =
             new FormResponseReviewRequest(ResponseStatus.ACCEPTED, null);
 
+    /*
+     * 리더가 모집 폼 문항을 고칠 수 있는 접수 상태 (#483).
+     *
+     * DRAFT는 학술국장이 아직 모집 시작 일시를 등록하지 않은 구간이고(기한 없음), SCHEDULED는
+     * 등록했지만 아직 그 시각 전인 구간이다(기한 = rcpt_bgng_dt). 둘을 한 집합으로 두는 것은
+     * 화면의 배지가 둘 다 "모집 시작 전"이기 때문이다.
+     *
+     * **ACCEPTING이 여기 없는 것이 이 이슈의 전부다.** 접수 기간을 비우고 모집을 시작하면
+     * rcpt_bgng_dt가 NULL이라 곧바로 ACCEPTING이고(NULL은 "제한 없음"이지 "지금이 아님"이
+     * 아니다 — FormReceiptPolicy), 그 활동의 리더에게는 창이 처음부터 없다. 그것을 여기서
+     * 되돌리지 않는 것은 NULL의 뜻을 뒤집으면 학술과 무관한 폼의 접수 판정까지 함께 바뀌기
+     * 때문이며, 안내는 모집 시작 화면의 몫이다.
+     */
+    private static final Set<FormReceiptStatus> EDITABLE_RECEIPT_STATUSES =
+            EnumSet.of(FormReceiptStatus.DRAFT, FormReceiptStatus.SCHEDULED);
+
     private final AcademicProgramRepository academicProgramRepository;
     private final EventParticipantRepository eventParticipantRepository;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
     private final FormResponseService formResponseService;
+    private final FormService formService;
+
+    /* 창 판정의 유일한 근거. 상태 코드만이 아니라 지금 시각까지 보는 자리는 여기 하나다 */
+    private final FormReceiptPolicy formReceiptPolicy;
+
     private final EventParticipationService eventParticipationService;
 
     @Override
@@ -143,6 +176,112 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
         List<AcademicProgramMemberResponse> members = membersOf(academicProgram, null);
         warnIfCapacityExceeded(academicProgram, members);
         return members;
+    }
+
+    /*
+     * 모집 폼 조회 (#483).
+     *
+     * 검사 순서는 신청자 조회와 같다 — 활동 404 → 자격 403 → 폼 연결 409. 자격을 상태보다 먼저
+     * 보는 것은 번호를 바꿔 가며 불러 남의 활동 사정을 알아낼 수 없게 하기 위해서다.
+     *
+     * 창이 닫혀 있어도 200이며 isEditable이 false로 나간다 — 근거는 인터페이스 주석.
+     */
+    @Override
+    public RecruitmentFormResponse getRecruitmentForm(
+            Long academicProgramId, MemberEntity requester) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        return RecruitmentFormResponse.of(
+                formService.getForm(form.getId()), isQuestionEditable(form));
+    }
+
+    /*
+     * 모집 폼 문항 교체 (#483).
+     *
+     * 조회와 같은 순서에 창 검사(409)가 폼 연결 뒤에 붙는다. 창을 자격보다 나중에 보는 것도
+     * 같은 이유이며, 저장 규칙 자체는 한 줄도 여기 적지 않는다 — 문항 구성 검사·qitemId 보호·
+     * 시스템 폼 계약·버전과 이력은 전부 FormService.changeQuestionComposition이 갖는다.
+     *
+     * 트랜잭션을 여는 것은 이 메서드뿐이다(클래스 기본이 readOnly다). 폼 도메인의 저장도 같은
+     * 트랜잭션에 참여하므로 이력 한 행과 qitem_ver가 따로 커밋되는 경로가 없다.
+     */
+    @Override
+    @Transactional
+    public RecruitmentFormResponse updateRecruitmentFormQuestions(
+            Long academicProgramId,
+            RecruitmentFormQuestionUpdateRequest request,
+            MemberEntity actor) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, actor);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        requireQuestionEditable(academicProgram, form);
+
+        /*
+         * 저장 뒤에 창을 다시 묻는다. 방금 열려 있었으니 true가 맞지만 상수로 박으면 "저장이
+         * 접수 기간을 건드리지 않는다"는 전제가 코드가 아니라 기억에 남는다 — 재계산은 질의를
+         * 더하지 않는다(폼은 이미 손에 있다).
+         */
+        FormDetailResponse saved =
+                formService.changeQuestionComposition(form.getId(), request.qitemCpstCn(), actor);
+        return RecruitmentFormResponse.of(saved, isQuestionEditable(form));
+    }
+
+    /*
+     * 모집 일정 조회. 검사 순서는 모집 폼 조회와 같다 — 활동 404 → 자격 403 → 폼 연결 409.
+     * 모집 시작 여부를 보지 않는 것도 그쪽과 같으며, 시작 전에는 두 일시가 비어서 나간다.
+     */
+    @Override
+    public RecruitmentScheduleResponse getRecruitmentSchedule(
+            Long academicProgramId, MemberEntity requester) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        return RecruitmentScheduleResponse.of(
+                academicProgram.getId(), form, formReceiptPolicy.receiptStatusOf(form));
+    }
+
+    /*
+     * 모집 일정 변경.
+     *
+     * 자격은 컨트롤러가 끊는다(@RequireAuthority) — 여기서는 "모집이 시작됐는가"만 더한다.
+     * 검사 순서는 선발 저장과 같다(활동 404 → 모집 시작 409 → 폼 연결 409).
+     *
+     * 기간 정합성과 저장은 폼 도메인에 맡긴다. 이 메서드가 새로 만드는 규칙은 하나도 없으며,
+     * 하는 일은 "학술국장이 이 활동의 접수 기간을 고칠 수 있다"는 경로를 여는 것뿐이다 —
+     * 그 값을 쓰는 다른 경로(START_RECRUITMENT)와 같은 FormService.changeReceiptPeriod를
+     * 부르므로 검증이 두 벌이 되지 않는다.
+     */
+    @Override
+    @Transactional
+    public RecruitmentScheduleResponse updateRecruitmentSchedule(
+            Long academicProgramId, RecruitmentScheduleUpdateRequest request, MemberEntity actor) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        requireRecruitmentStarted(academicProgram);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        formService.changeReceiptPeriod(
+                form.getId(), toInstant(request.rcptBgngDt()), toInstant(request.rcptEndDt()));
+
+        log.info(
+                "모집 일정을 변경했다. academicProgramId={}, formId={}, rcptBgngDt={}, rcptEndDt={},"
+                        + " actor={}",
+                academicProgram.getId(),
+                form.getId(),
+                request.rcptBgngDt(),
+                request.rcptEndDt(),
+                actor.getId());
+
+        /*
+         * 접수 상태를 저장 뒤에 다시 묻는다 — 날짜를 옮기면 배지가 함께 바뀌는데, 그 판정은
+         * Clock을 쥔 FormReceiptPolicy의 몫이다. 폼은 이미 손에 있고 changeReceiptPeriod가
+         * 같은 영속성 컨텍스트에서 값을 바꿨으므로 질의가 더 늘지 않는다.
+         */
+        return RecruitmentScheduleResponse.of(
+                academicProgram.getId(), form, formReceiptPolicy.receiptStatusOf(form));
     }
 
     // ------------------------------------------------------------------ 헬퍼
@@ -228,11 +367,37 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * (AcademicProgramServiceImpl.requireFormId와 같은 자리).
      */
     private Long recruitmentFormId(AcademicProgramEntity academicProgram) {
+        return requireRecruitmentForm(academicProgram).getId();
+    }
+
+    /* 위 주석의 방어선을 엔티티째 돌려주는 쪽 (#483) — 문항 편집은 접수 상태를 봐야 해서 id로는 부족하다 */
+    private FormEntity requireRecruitmentForm(AcademicProgramEntity academicProgram) {
         EventEntity event = academicProgram.getEvent();
         if (event.getForm() == null) {
             throw new GeneralException(AcademicProgramErrorCode.FORM_NOT_LINKED);
         }
-        return event.getForm().getId();
+        return event.getForm();
+    }
+
+    /*
+     * 지금 문항을 고칠 수 있는가 (#483). 활동 상태(APPROVED/ONGOING)가 아니라 **폼의 파생 접수
+     * 상태**를 본다 — 학술국장이 미래 시작일로 모집을 시작하면 활동은 곧바로 ONGOING이 되지만
+     * 접수는 아직 열리지 않았고(SCHEDULED), 화면이 "남은 시간"을 세는 구간이 바로 그쪽이다.
+     */
+    private boolean isQuestionEditable(FormEntity form) {
+        return EDITABLE_RECEIPT_STATUSES.contains(formReceiptPolicy.receiptStatusOf(form));
+    }
+
+    private void requireQuestionEditable(AcademicProgramEntity academicProgram, FormEntity form) {
+        if (isQuestionEditable(form)) {
+            return;
+        }
+        log.warn(
+                "모집 폼 문항 편집 창이 닫혔다. academicProgramId={}, formId={}, receiptStatus={}",
+                academicProgram.getId(),
+                form.getId(),
+                formReceiptPolicy.receiptStatusOf(form));
+        throw new GeneralException(AcademicProgramErrorCode.RECRUITMENT_FORM_NOT_EDITABLE);
     }
 
     /*
@@ -261,5 +426,10 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
                     confirmed,
                     capacity);
         }
+    }
+
+    /* OffsetDateTime → Instant. AcademicProgramServiceImpl.toInstant와 같은 변환이다 */
+    private static Instant toInstant(OffsetDateTime value) {
+        return value == null ? null : value.toInstant();
     }
 }

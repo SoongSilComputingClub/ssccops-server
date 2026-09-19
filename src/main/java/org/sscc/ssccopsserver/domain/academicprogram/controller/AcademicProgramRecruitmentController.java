@@ -5,14 +5,20 @@ import java.util.List;
 import jakarta.validation.Valid;
 
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramRecruitmentService;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -41,6 +47,12 @@ import lombok.RequiredArgsConstructor;
  * 그 결과 이 컨트롤러에는 '자격이 걸리지 않은 핸들러'가 없다 — 하나는 애노테이션이, 하나는
  * 정책이 끊는다. 인증만으로 열리는 팀원 명단은 이 클래스가 아니라
  * AcademicProgramMemberController에 있다.
+ *
+ * **모집 폼 2종(#483)도 그 정책 쪽이다.** 스터디장/프로젝트장 역할에는 권한이 하나도 없어
+ * (V3 시드 — "국원·프로젝트장·스터디장은 부여하지 않는다") FORM_READ·FORM_WRITE로 잠긴 폼
+ * 경로에 닿지 못했고, 그래서 지원서 문항을 실제로 채우는 사람이 리더가 아니라 학술국장이었다.
+ * 정적 권한 코드를 새로 만들지 않은 것은 "이 활동 한정 관계"가 역할로 표현되지 않기 때문이며
+ * (학술관리_API설계.md §4), 그 판단은 신청자 조회가 이미 한 것과 같다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -118,5 +130,118 @@ public class AcademicProgramRecruitmentController {
         return ApiResponse.success(
                 academicProgramRecruitmentService.selectMembers(
                         academicProgramId, request, performer));
+    }
+
+    /*
+     * 모집 폼(지원서) 조회 (#483). lms "모집 관리"의 '지원서 문항 편집/보기'가 이 경로로 들어온다.
+     *
+     * 폼 상세를 통째로 품어 내리므로 문항 편집기가 그대로 초안으로 받아 쓴다 —
+     * GET /v1/forms/{formId}와 같은 몸통이되 자격이 권한이 아니라 소유권이라는 점만 다르다.
+     */
+    @Operation(
+            summary = "학술 활동 모집 폼(지원서) 조회",
+            description =
+                    "연결된 모집 폼의 상세를 그대로 싣고(GET /v1/forms/{formId}와 같은 모양)"
+                            + " 지금 문항을 고칠 수 있는지(isEditable)를 함께 내린다."
+                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** ACADEMIC_PROGRAM_MANAGE이며"
+                            + " 어느 쪽도 아니면 403 FORBIDDEN이다."
+                            + " **접수가 시작된 뒤에도 200이다** — 그때는 isEditable만 false이고 문항은"
+                            + " 그대로 보인다(화면의 '지원서 문항 보기')."
+                            + " 모집 시작 전(APPROVED)에도 열린다 — 신청자 목록과 달리"
+                            + " RECRUITMENT_NOT_STARTED를 걸지 않으며, 문항을 채우는 구간이 바로 그때다."
+                            + " 폼이 연결되지 않은 활동은 409 FORM_NOT_LINKED,"
+                            + " 없는 활동은 404 ACADEMIC_PROGRAM_NOT_FOUND다.")
+    @GetMapping("/form")
+    public ApiResponse<RecruitmentFormResponse> getRecruitmentForm(
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.getRecruitmentForm(academicProgramId, requester));
+    }
+
+    /*
+     * 모집 폼 문항 교체 (#483). 문항 구성은 부분 갱신이 아니라 전체 교체라 PATCH가 아니라
+     * PUT이다(AP-06 · PUT /v1/forms/{formId}와 같은 판단).
+     *
+     * 본문에 접수 기간이 없다 — 받지 않으므로 이 경로로는 덮어쓸 수 없다. 모집 시작·종료 일시를
+     * 정하는 길은 POST /v1/academic-programs/{id}/transitions(START_RECRUITMENT) 하나이며
+     * 학술국장 전용이다.
+     */
+    @Operation(
+            summary = "학술 활동 모집 폼 문항 수정",
+            description =
+                    "문항 구성(qitemCpstCn)을 통째로 교체한다. **모집 시작 일시 전까지만 고칠 수 있다** —"
+                            + " 학술국장이 모집 관리에서 등록한 그 일시가 지나면 409"
+                            + " RECRUITMENT_FORM_NOT_EDITABLE이다(모집 기간을 비워 두고 시작하면 즉시 접수가"
+                            + " 열리므로 그 활동에는 편집 구간이 없다). 자격은 조회와 같고, 접수 기간·제목·라벨·다중"
+                            + " 응답은 본문에 **받지 않는다** — 모집 일정은 학술국장의 전이 API로만 정한다."
+                            + " 문항 구성이 규칙을 어기면 400 INVALID_QUESTION_COMPOSITION,"
+                            + " 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 바꾸면 409 QUESTION_ITEM_IN_USE다"
+                            + " (접수 전이라 정상 흐름에서는 응답이 없다)."
+                            + " 문항 구성이 실제로 바뀐 저장에서만 qitemVer가 1 오르고 그 시점 구성이 이력에 남는다.")
+    @PutMapping("/form")
+    public ApiResponse<RecruitmentFormResponse> updateRecruitmentFormQuestions(
+            @PathVariable Long academicProgramId,
+            @Valid @RequestBody RecruitmentFormQuestionUpdateRequest request,
+            @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.updateRecruitmentFormQuestions(
+                        academicProgramId, request, actor));
+    }
+
+    /*
+     * 모집 일정 조회. 자격은 모집 폼 조회와 같은 소유권 판정이라 애노테이션이 아니라 서비스가
+     * 끊는다(클래스 주석의 AND/OR 설명 참고).
+     */
+    @Operation(
+            summary = "학술 활동 모집 일정 조회",
+            description =
+                    "연결된 모집 폼의 접수 시작·종료 일시와 그것에서 파생된 접수 상태를 내린다."
+                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** ACADEMIC_PROGRAM_MANAGE이며"
+                            + " 어느 쪽도 아니면 403 FORBIDDEN이다."
+                            + " **모집 시작 전(APPROVED)에도 200이다** — 그때는 두 일시가 null이고"
+                            + " 아직 일정이 정해지지 않았다는 뜻이다."
+                            + " 폼이 연결되지 않은 활동은 409 FORM_NOT_LINKED,"
+                            + " 없는 활동은 404 ACADEMIC_PROGRAM_NOT_FOUND다.")
+    @GetMapping("/schedule")
+    public ApiResponse<RecruitmentScheduleResponse> getRecruitmentSchedule(
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.getRecruitmentSchedule(
+                        academicProgramId, requester));
+    }
+
+    /*
+     * 모집 일정 변경 — 모집을 시작한 뒤 접수 기간을 고치는 유일한 경로다.
+     *
+     * 모집 시작(START_RECRUITMENT)이 이 값을 처음 정하지만 그 전이는 APPROVED에서만 일어나,
+     * 이미 ONGOING인 활동의 날짜를 고칠 길이 없었다(ssccops-web#194가 폼 편집의 입력란을 없애며
+     * "모집 관리에서 설정한다"고 안내한 뒤로 그 자리가 어디에도 없었다). 전이와 나눈 것은 이
+     * 조작이 상태를 바꾸지 않기 때문이며, 그래서 POST /transitions가 아니라 PATCH다.
+     *
+     * 자격이 조회와 갈린다 — 조회는 리더에게도 열지만 변경은 학술국장 전용이다(#483이 잠가 둔
+     * "모집 일정은 학술국장이 정한다"). 그래서 이 핸들러에만 메서드 레벨 애노테이션이 붙는다.
+     */
+    @Operation(
+            summary = "학술 활동 모집 일정 변경",
+            description =
+                    "모집을 시작한 뒤 접수 시작·종료 일시를 다시 정한다. **학술국장 전용**"
+                            + "(ACADEMIC_PROGRAM_MANAGE) — 스터디장/팀장은 조회만 할 수 있다."
+                            + " 두 필드는 **전체 교체**이며 null은 '제한 없음'이다: 종료를 비우면"
+                            + " 수동으로 마감할 때까지 열리고, 시작을 비우면 곧바로 접수가 열린다."
+                            + " 활동 상태는 바뀌지 않는다(폼의 접수 기간만 고친다) — 접수 상태"
+                            + " 배지는 바뀐 일시에서 다시 파생돼 응답에 실린다."
+                            + " 모집 시작 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED다"
+                            + "(그 구간의 일정은 START_RECRUITMENT가 정한다)."
+                            + " 종료가 시작보다 빠르면 400 INVALID_RECEIPT_PERIOD,"
+                            + " 폼이 연결되지 않은 활동은 409 FORM_NOT_LINKED다.")
+    @PatchMapping("/schedule")
+    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
+    public ApiResponse<RecruitmentScheduleResponse> updateRecruitmentSchedule(
+            @PathVariable Long academicProgramId,
+            @Valid @RequestBody RecruitmentScheduleUpdateRequest request,
+            @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.updateRecruitmentSchedule(
+                        academicProgramId, request, actor));
     }
 }

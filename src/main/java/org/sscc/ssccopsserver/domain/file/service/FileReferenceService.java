@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.file.service;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
@@ -39,6 +40,49 @@ public class FileReferenceService {
 
     public Optional<FileReferenceEntity> findByTarget(FileTargetType targetType, Long targetId) {
         return fileReferenceRepository.findByTargetTypeAndTargetId(targetType, targetId);
+    }
+
+    /*
+     * 대상당 여러 건인 대상의 참조 목록 (ssccops#381 · CONTENT_POST 갤러리). 단건 findByTarget를
+     * 그 대상에 쓰면 두 번째 행부터 조용히 사라진다(저장소 주석) — 갤러리는 반드시 이쪽이다.
+     */
+    public List<FileReferenceEntity> findAllByTarget(FileTargetType targetType, Long targetId) {
+        return fileReferenceRepository.findAllByTargetTypeAndTargetIdOrderByIdAsc(
+                targetType, targetId);
+    }
+
+    public Optional<FileReferenceEntity> findOneOfTarget(
+            FileTargetType targetType, Long targetId, Long fileId) {
+        return fileReferenceRepository.findByIdAndTargetTypeAndTargetId(
+                fileId, targetType, targetId);
+    }
+
+    /*
+     * 참조 한 건 추가 (ssccops#381). upsert와 달리 옛 행을 갈아 끼우지 않는다 — 다중 첨부 대상의
+     * «한 장 더»다. 오브젝트가 실제로 올라왔는지는 여기서도 모른다(발급형 업로드는 PUT이
+     * 서버를 지나지 않는다) — 올라오지 않은 행은 대상 도메인이 지우는 경로로 정리한다.
+     */
+    @Transactional
+    public FileReferenceEntity add(FileTargetType targetType, Long targetId, String objectKey) {
+        return fileReferenceRepository.saveAndFlush(
+                FileReferenceEntity.of(targetType, targetId, objectKey));
+    }
+
+    /*
+     * 참조 한 건 삭제 (ssccops#381). deleteByTarget이 대상의 전부를 지우는 것과 달리 지목한
+     * 한 장만 지우며, 오브젝트는 같은 규칙으로 커밋 뒤에 지운다(FileEraser — 잘못된 데이터보다
+     * 고아가 낫다). 대상 조건이 함께 걸려 남의 포스트의 파일은 여기 오지 않는다(없으면 false).
+     */
+    @Transactional
+    public boolean deleteOneOfTarget(FileTargetType targetType, Long targetId, Long fileId) {
+        return findOneOfTarget(targetType, targetId, fileId)
+                .map(
+                        reference -> {
+                            fileReferenceRepository.delete(reference);
+                            fileEraser.eraseAfterCommit(reference.objectKey());
+                            return true;
+                        })
+                .orElse(false);
     }
 
     /**

@@ -4,6 +4,10 @@ import java.util.List;
 
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -79,4 +83,62 @@ public interface AcademicProgramRecruitmentService {
      */
     List<AcademicProgramMemberResponse> selectMembers(
             Long academicProgramId, RecruitmentSelectRequest request, MemberEntity performer);
+
+    /*
+     * 모집 폼(지원서) 조회 (#483). 자격은 신청자 조회와 같은 "이 활동의 리더 본인 또는 학술국장"이다.
+     *
+     * **창이 닫혀도 돌려준다.** 접수 중·접수 종료에도 리더는 자기 공고의 문항을 볼 수 있어야
+     * 하고(화면의 "지원서 문항 보기"), 막는 것은 응답을 받는 도중에 물음이 바뀌는 것이지
+     * 열람이 아니다. 지금 고칠 수 있는지는 isEditable이 말한다.
+     *
+     * 모집 시작 여부(RECRUITMENT_NOT_STARTED)를 보지 않는다 — 이 경로가 있어야 하는 구간이
+     * 바로 모집 전이다. 신청자 조회와 갈리는 유일한 지점이며, 그쪽은 "아직 물어볼 것이 없다"를
+     * 빈 배열로 답하지 않기 위해 그 검사를 둔다.
+     */
+    RecruitmentFormResponse getRecruitmentForm(Long academicProgramId, MemberEntity requester);
+
+    /*
+     * 모집 폼 문항 교체 (#483). 조회와 같은 자격에 **창이 열려 있을 것**이 더 붙는다.
+     *
+     * 창은 학술국장이 모집 관리에서 등록한 모집 시작 일시 전까지다(= form.rcpt_bgng_dt).
+     * 닫힌 뒤의 요청은 409 RECRUITMENT_FORM_NOT_EDITABLE이며, 그 판정의 근거와 학술국장에게는
+     * 같은 제한이 없는 이유는 그 에러 코드의 주석에 있다.
+     *
+     * 저장 규칙 자체는 폼 도메인이 갖는다(FormService.changeQuestionComposition) — 문항 구성
+     * 검사·응답이 쓰는 qitemId 보호·시스템 폼 계약·이력과 버전이 전부 그쪽이고, 이 서비스가
+     * 더하는 것은 "누가, 언제까지" 둘뿐이다.
+     */
+    RecruitmentFormResponse updateRecruitmentFormQuestions(
+            Long academicProgramId,
+            RecruitmentFormQuestionUpdateRequest request,
+            MemberEntity actor);
+
+    /*
+     * 모집 일정 조회. 자격은 모집 폼 조회와 같다("리더 본인 또는 학술국장") — 리더는 자기
+     * 공고가 언제 열리고 닫히는지 알아야 문항 편집 창이 언제까지인지 계산할 수 있다.
+     *
+     * 모집 시작 전(APPROVED)에도 200이며 그때는 두 일시가 비어 있다 — 아직 정해지지 않았다는
+     * 뜻이고, 그 구간을 RECRUITMENT_NOT_STARTED로 끊으면 화면이 "미정"을 그릴 수 없다.
+     */
+    RecruitmentScheduleResponse getRecruitmentSchedule(
+            Long academicProgramId, MemberEntity requester);
+
+    /*
+     * 모집 일정 변경 — 모집을 시작한 뒤 접수 기간을 다시 정하는 유일한 경로다.
+     *
+     * **학술국장 전용이다**(ACADEMIC_PROGRAM_MANAGE). 조회는 리더에게도 열지만 변경은 열지
+     * 않는다 — 모집 일정을 정하는 사람이 학술국장이라는 것이 #483이 잠가 둔 규칙이고(PUT
+     * .../form이 접수 기간을 본문에 받지 않는 이유), 여기서 리더에게 열면 그 잠금이 뒷문으로
+     * 풀린다. 그 판정은 컨트롤러의 @RequireAuthority가 한다.
+     *
+     * **모집이 시작된 뒤에만 부를 수 있다**(409 RECRUITMENT_NOT_STARTED). 시작 전 활동의 일정은
+     * START_RECRUITMENT가 정하므로 이 경로가 그 자리를 겸하면 "모집을 시작하지 않은 채 접수
+     * 기간만 든 활동"이 생기고, 그 상태는 폼이 DRAFT라 화면이 읽을 수 없다.
+     *
+     * 저장 규칙은 폼 도메인이 갖는다(FormService.changeReceiptPeriod) — 기간 역전은 400
+     * INVALID_RECEIPT_PERIOD로 그쪽에서 나온다. #190이 폼 편집(PUT /v1/forms/{id})에 걸어 둔
+     * 잠금은 그대로다: 접수 기간이 바뀌는 경로는 여전히 학술 도메인 안에만 있다.
+     */
+    RecruitmentScheduleResponse updateRecruitmentSchedule(
+            Long academicProgramId, RecruitmentScheduleUpdateRequest request, MemberEntity actor);
 }

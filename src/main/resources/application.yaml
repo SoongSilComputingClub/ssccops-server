@@ -408,7 +408,7 @@ logging:
 ssccops:
   db:
     keepalive:
-      # 하루 한 번 `SELECT 1` — Supabase Free 일시정지 방지 1차 (#487 · ADR-0040). 앱 DB가 Supabase
+      # 하루 한 번 `SELECT 1` — Supabase Free 일시정지 방지 1차 (#487 · ADR-0041). 앱 DB가 Supabase
       # Postgres이고 7일간 사용자 쿼리가 적으면 프로젝트가 멈춘다(멈추면 헬스체크가 DB를 포함해
       # API 전체가 재시작 루프). `false`면 DatabaseKeepAlive 빈이 서지 않는다 — test 프로필이 끈다.
       enabled: ${SSCCOPS_DB_KEEPALIVE_ENABLED:true}

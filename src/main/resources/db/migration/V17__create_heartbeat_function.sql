@@ -1,4 +1,4 @@
--- Supabase Free 일시정지 방지 — GitHub Actions가 칠 heartbeat 함수 (#487 · ssccops#394 · ADR-0040).
+-- Supabase Free 일시정지 방지 — GitHub Actions가 칠 heartbeat 함수 (#487 · ssccops#394 · ADR-0041).
 --
 -- dev·prod의 앱 DB는 Supabase Postgres이고 Free 플랜은 7일간 «사용자 DB 쿼리»가 적으면 프로젝트를
 -- 멈춘다. 1차는 서버 안 스케줄러(DatabaseKeepAlive · 하루 한 번 SELECT 1)이고, 이 함수는 2차 —

@@ -131,7 +131,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **머지는 곧 dev 배포다**(Coolify가 `develop` 푸시를 자동 배포한다, #202). 마이그레이션이
   깨지면 dev가 즉시 죽으므로 `FlywayMigrationValidateTest`를 통과시키고 머지한다.
 
-### 앱 DB는 Supabase Free다 — 일시정지와 anon 권한 (#487 · [ADR-0040](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0040-supabase-free-keepalive-two-layers.md))
+### 앱 DB는 Supabase Free다 — 일시정지와 anon 권한 (#487 · [ADR-0041](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0041-supabase-free-keepalive-two-layers.md))
 
 - dev·prod의 앱 DB(이 Flyway가 관리하는 그 DB)는 **Supabase Postgres Free**이고 인증(Auth · MCP OAuth)도
   같은 프로젝트다. Free는 **7일간 사용자 DB 쿼리가 적으면 프로젝트를 멈춘다** — 멈추면 헬스체크가 DB를

@@ -4,7 +4,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /*
- * `@Scheduled`의 문을 연다 (#487 · ADR-0040).
+ * `@Scheduled`의 문을 연다 (#487 · ADR-0041).
  *
  * RagIndexingScheduler가 이 문을 열지 않은 이유 셋 중 셋째가 «이 저장소에는 아직 스케줄링이 없다 —
  * 한 기능을 위해 여는 것은 대가가 비대칭»이었다. DatabaseKeepAlive(하루 한 번 SELECT 1)가 둘째

@@ -9,7 +9,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /*
- * DB에 하루 한 번 «사용자 쿼리»를 남긴다 — Supabase Free 일시정지 방지 1차 (#487 · ssccops#394 · ADR-0040).
+ * DB에 하루 한 번 «사용자 쿼리»를 남긴다 — Supabase Free 일시정지 방지 1차 (#487 · ssccops#394 · ADR-0041).
  *
  * dev·prod의 앱 DB는 Supabase Postgres이고 Free 플랜은 7일간 사용자 DB 쿼리가 적으면 프로젝트를
  * 멈춘다. 멈추면 헬스체크(DB 포함 · ADR-0022)가 unhealthy → autoheal 재시작 루프 → API 전체 장애다.

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.sscc.ssccopsserver.domain.content.dto.ContentPageSaveRequest;
 import org.sscc.ssccopsserver.domain.content.dto.ContentPostSaveRequest;
+import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
@@ -33,6 +34,13 @@ class McpPatchContractTest {
     void workPatchMirrorsUpdateRequest() {
         assertThat(componentsOf(WorkPatch.class))
                 .containsExactlyInAnyOrderElementsOf(componentsOf(WorkUpdateRequest.class));
+    }
+
+    @Test
+    @DisplayName("EventPatch는 EventSaveRequest와 같은 필드 이름·타입을 가진다")
+    void eventPatchMirrorsSaveRequest() {
+        assertThat(componentsOf(EventPatch.class))
+                .containsExactlyInAnyOrderElementsOf(componentsOf(EventSaveRequest.class));
     }
 
     @Test

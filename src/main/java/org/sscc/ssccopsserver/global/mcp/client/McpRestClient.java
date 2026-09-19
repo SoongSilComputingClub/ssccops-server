@@ -159,6 +159,11 @@ public class McpRestClient {
         return exchange(HttpMethod.PATCH, path, Map.of(), body, context, type).data();
     }
 
+    /** 행사 수정처럼 PUT(전체 교체)인 경로 — 읽고-합치기는 도구가 한다 (W2 · #494) */
+    public <T> T put(McpTransportContext context, String path, Object body, Class<T> type) {
+        return exchange(HttpMethod.PUT, path, Map.of(), body, context, type).data();
+    }
+
     /** `data`와 `page`를 함께 든 응답. */
     public record Envelope<T>(T data, PageResponse page) {}
 

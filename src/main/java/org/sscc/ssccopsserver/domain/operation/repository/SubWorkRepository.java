@@ -38,6 +38,9 @@ public interface SubWorkRepository
             })
     Optional<SubWorkEntity> findByIdAndOperationDeletedAtIsNull(Long id);
 
+    /** oper 행으로 하위 업무를 찾는다 — 첨부 권한 판정이 담당자를 봐야 해서 (#493) */
+    Optional<SubWorkEntity> findByOperationId(Long operationId);
+
     /*
      * 상위 업무 상세(OPS-003)의 하위 업무 목록. 목록에 필요한 것은 제목·담당자·상태·진행률
      * 뿐이라 유형·등록자는 끌어오지 않는다 (AP-14 — 목록에는 요약만).

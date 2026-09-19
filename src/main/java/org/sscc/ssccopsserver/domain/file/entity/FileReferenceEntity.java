@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.file.entity;
 
+import java.time.Instant;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -86,9 +88,47 @@ public class FileReferenceEntity {
     @Column(name = "file_url_addr", nullable = false, length = 255)
     private String fileUrl;
 
+    /*
+     * 첨부 메타 (#493 · V18). 운영 건 첨부만 채운다 — 사용자에게 «무슨 파일인가»를 보여야 하는
+     * 첫 대상이라서다. 다른 대상(회차 사진·규정 문서·갤러리)은 NULL이고 읽지 않는다.
+     * 올린 사람은 표시용 식별자라 FK도 연관도 걸지 않는다(회원이 지워져도 첨부는 남는다).
+     */
+    @Column(name = "orgnl_file_nm", length = 255)
+    private String originalFileName;
+
+    @Column(name = "file_size")
+    private Long fileSize;
+
+    @Column(name = "rgtr_mbr_id")
+    private Long uploaderId;
+
+    @Column(name = "crt_dt")
+    private Instant createdAt;
+
     public static FileReferenceEntity of(
             FileTargetType targetType, Long targetId, String objectKey) {
-        return new FileReferenceEntity(null, targetType, targetId, objectKey);
+        return new FileReferenceEntity(
+                null, targetType, targetId, objectKey, null, null, null, null);
+    }
+
+    /** 첨부 — 메타를 함께 남긴다 (#493) */
+    public static FileReferenceEntity attachment(
+            FileTargetType targetType,
+            Long targetId,
+            String objectKey,
+            String originalFileName,
+            long fileSize,
+            Long uploaderId,
+            Instant createdAt) {
+        return new FileReferenceEntity(
+                null,
+                targetType,
+                targetId,
+                objectKey,
+                originalFileName,
+                fileSize,
+                uploaderId,
+                createdAt);
     }
 
     /*

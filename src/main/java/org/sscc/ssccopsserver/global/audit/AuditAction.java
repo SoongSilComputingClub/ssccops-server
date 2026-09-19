@@ -28,6 +28,8 @@ public enum AuditAction {
     MEMBER_DELETE("member.delete", "member"),
     MEMBER_IMPORT("member.import", "member_import"),
     SUBWORK_TRANSITION("subwork.transition", "sub_work"),
+    /** 운영 건 첨부 삭제 (#493) — 추가는 감사하지 않는다(파일이 곧 증거), 지운 것만 남긴다 */
+    OPERATION_ATTACHMENT_DELETE("operation.attachment.delete", "file_rfrnc"),
     SUBWORK_APPROVAL_VOTE("subwork.approval.vote", "sub_work"),
     FORM_RESPONSE_REVIEW("form.response.review", "form_response"),
     ACADEMIC_PROGRAM_TRANSITION("academic.program.transition", "academic_program"),

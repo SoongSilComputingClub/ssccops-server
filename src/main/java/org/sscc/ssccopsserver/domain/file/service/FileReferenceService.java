@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.file.service;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -62,6 +63,27 @@ public class FileReferenceService {
      * «한 장 더»다. 오브젝트가 실제로 올라왔는지는 여기서도 모른다(발급형 업로드는 PUT이
      * 서버를 지나지 않는다) — 올라오지 않은 행은 대상 도메인이 지우는 경로로 정리한다.
      */
+    /** 첨부 한 건 — 메타를 함께 (#493). 대상당 여러 건이 정상이라 upsert가 아니다 */
+    @Transactional
+    public FileReferenceEntity addAttachment(
+            FileTargetType targetType,
+            Long targetId,
+            String objectKey,
+            String originalFileName,
+            long fileSize,
+            Long uploaderId,
+            Instant now) {
+        return fileReferenceRepository.save(
+                FileReferenceEntity.attachment(
+                        targetType,
+                        targetId,
+                        objectKey,
+                        originalFileName,
+                        fileSize,
+                        uploaderId,
+                        now));
+    }
+
     @Transactional
     public FileReferenceEntity add(FileTargetType targetType, Long targetId, String objectKey) {
         return fileReferenceRepository.saveAndFlush(

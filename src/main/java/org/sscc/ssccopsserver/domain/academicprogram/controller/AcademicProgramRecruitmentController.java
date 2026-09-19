@@ -5,6 +5,7 @@ import java.util.List;
 import jakarta.validation.Valid;
 
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -16,6 +17,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberRe
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramRecruitmentService;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -182,6 +185,63 @@ public class AcademicProgramRecruitmentController {
             @CurrentMember MemberEntity actor) {
         return ApiResponse.success(
                 academicProgramRecruitmentService.updateRecruitmentFormQuestions(
+                        academicProgramId, request, actor));
+    }
+
+    /*
+     * 모집 일정 조회. 자격은 모집 폼 조회와 같은 소유권 판정이라 애노테이션이 아니라 서비스가
+     * 끊는다(클래스 주석의 AND/OR 설명 참고).
+     */
+    @Operation(
+            summary = "학술 활동 모집 일정 조회",
+            description =
+                    "연결된 모집 폼의 접수 시작·종료 일시와 그것에서 파생된 접수 상태를 내린다."
+                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** ACADEMIC_PROGRAM_MANAGE이며"
+                            + " 어느 쪽도 아니면 403 FORBIDDEN이다."
+                            + " **모집 시작 전(APPROVED)에도 200이다** — 그때는 두 일시가 null이고"
+                            + " 아직 일정이 정해지지 않았다는 뜻이다."
+                            + " 폼이 연결되지 않은 활동은 409 FORM_NOT_LINKED,"
+                            + " 없는 활동은 404 ACADEMIC_PROGRAM_NOT_FOUND다.")
+    @GetMapping("/schedule")
+    public ApiResponse<RecruitmentScheduleResponse> getRecruitmentSchedule(
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.getRecruitmentSchedule(
+                        academicProgramId, requester));
+    }
+
+    /*
+     * 모집 일정 변경 — 모집을 시작한 뒤 접수 기간을 고치는 유일한 경로다.
+     *
+     * 모집 시작(START_RECRUITMENT)이 이 값을 처음 정하지만 그 전이는 APPROVED에서만 일어나,
+     * 이미 ONGOING인 활동의 날짜를 고칠 길이 없었다(ssccops-web#194가 폼 편집의 입력란을 없애며
+     * "모집 관리에서 설정한다"고 안내한 뒤로 그 자리가 어디에도 없었다). 전이와 나눈 것은 이
+     * 조작이 상태를 바꾸지 않기 때문이며, 그래서 POST /transitions가 아니라 PATCH다.
+     *
+     * 자격이 조회와 갈린다 — 조회는 리더에게도 열지만 변경은 학술국장 전용이다(#483이 잠가 둔
+     * "모집 일정은 학술국장이 정한다"). 그래서 이 핸들러에만 메서드 레벨 애노테이션이 붙는다.
+     */
+    @Operation(
+            summary = "학술 활동 모집 일정 변경",
+            description =
+                    "모집을 시작한 뒤 접수 시작·종료 일시를 다시 정한다. **학술국장 전용**"
+                            + "(ACADEMIC_PROGRAM_MANAGE) — 스터디장/팀장은 조회만 할 수 있다."
+                            + " 두 필드는 **전체 교체**이며 null은 '제한 없음'이다: 종료를 비우면"
+                            + " 수동으로 마감할 때까지 열리고, 시작을 비우면 곧바로 접수가 열린다."
+                            + " 활동 상태는 바뀌지 않는다(폼의 접수 기간만 고친다) — 접수 상태"
+                            + " 배지는 바뀐 일시에서 다시 파생돼 응답에 실린다."
+                            + " 모집 시작 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED다"
+                            + "(그 구간의 일정은 START_RECRUITMENT가 정한다)."
+                            + " 종료가 시작보다 빠르면 400 INVALID_RECEIPT_PERIOD,"
+                            + " 폼이 연결되지 않은 활동은 409 FORM_NOT_LINKED다.")
+    @PatchMapping("/schedule")
+    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
+    public ApiResponse<RecruitmentScheduleResponse> updateRecruitmentSchedule(
+            @PathVariable Long academicProgramId,
+            @Valid @RequestBody RecruitmentScheduleUpdateRequest request,
+            @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.updateRecruitmentSchedule(
                         academicProgramId, request, actor));
     }
 }

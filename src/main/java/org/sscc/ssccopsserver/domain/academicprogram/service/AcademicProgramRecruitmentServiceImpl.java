@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
+import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -15,6 +17,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberRe
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
@@ -225,6 +229,61 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
         return RecruitmentFormResponse.of(saved, isQuestionEditable(form));
     }
 
+    /*
+     * 모집 일정 조회. 검사 순서는 모집 폼 조회와 같다 — 활동 404 → 자격 403 → 폼 연결 409.
+     * 모집 시작 여부를 보지 않는 것도 그쪽과 같으며, 시작 전에는 두 일시가 비어서 나간다.
+     */
+    @Override
+    public RecruitmentScheduleResponse getRecruitmentSchedule(
+            Long academicProgramId, MemberEntity requester) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        return RecruitmentScheduleResponse.of(
+                academicProgram.getId(), form, formReceiptPolicy.receiptStatusOf(form));
+    }
+
+    /*
+     * 모집 일정 변경.
+     *
+     * 자격은 컨트롤러가 끊는다(@RequireAuthority) — 여기서는 "모집이 시작됐는가"만 더한다.
+     * 검사 순서는 선발 저장과 같다(활동 404 → 모집 시작 409 → 폼 연결 409).
+     *
+     * 기간 정합성과 저장은 폼 도메인에 맡긴다. 이 메서드가 새로 만드는 규칙은 하나도 없으며,
+     * 하는 일은 "학술국장이 이 활동의 접수 기간을 고칠 수 있다"는 경로를 여는 것뿐이다 —
+     * 그 값을 쓰는 다른 경로(START_RECRUITMENT)와 같은 FormService.changeReceiptPeriod를
+     * 부르므로 검증이 두 벌이 되지 않는다.
+     */
+    @Override
+    @Transactional
+    public RecruitmentScheduleResponse updateRecruitmentSchedule(
+            Long academicProgramId, RecruitmentScheduleUpdateRequest request, MemberEntity actor) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        requireRecruitmentStarted(academicProgram);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        formService.changeReceiptPeriod(
+                form.getId(), toInstant(request.rcptBgngDt()), toInstant(request.rcptEndDt()));
+
+        log.info(
+                "모집 일정을 변경했다. academicProgramId={}, formId={}, rcptBgngDt={}, rcptEndDt={},"
+                        + " actor={}",
+                academicProgram.getId(),
+                form.getId(),
+                request.rcptBgngDt(),
+                request.rcptEndDt(),
+                actor.getId());
+
+        /*
+         * 접수 상태를 저장 뒤에 다시 묻는다 — 날짜를 옮기면 배지가 함께 바뀌는데, 그 판정은
+         * Clock을 쥔 FormReceiptPolicy의 몫이다. 폼은 이미 손에 있고 changeReceiptPeriod가
+         * 같은 영속성 컨텍스트에서 값을 바꿨으므로 질의가 더 늘지 않는다.
+         */
+        return RecruitmentScheduleResponse.of(
+                academicProgram.getId(), form, formReceiptPolicy.receiptStatusOf(form));
+    }
+
     // ------------------------------------------------------------------ 헬퍼
 
     private AcademicProgramEntity findAcademicProgram(Long academicProgramId) {
@@ -367,5 +426,10 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
                     confirmed,
                     capacity);
         }
+    }
+
+    /* OffsetDateTime → Instant. AcademicProgramServiceImpl.toInstant와 같은 변환이다 */
+    private static Instant toInstant(OffsetDateTime value) {
+        return value == null ? null : value.toInstant();
     }
 }

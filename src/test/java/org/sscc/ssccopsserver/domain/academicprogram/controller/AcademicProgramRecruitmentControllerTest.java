@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -947,6 +948,134 @@ class AcademicProgramRecruitmentControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ------------------------------------------------------- 모집 일정 (GET·PATCH .../schedule)
+
+    /*
+     * 이 묶음이 지키는 규칙 하나 — **모집을 시작한 뒤에도 접수 기간을 고칠 수 있다.**
+     *
+     * START_RECRUITMENT는 APPROVED에서만 일어나므로 그 전이로는 이미 모집 중인 활동의 날짜를
+     * 고칠 수 없고(409), 폼 편집(PUT /v1/forms/{id})은 #190이 학술 연결 폼에 대해 400으로
+     * 잠갔다. 그래서 두 경로 모두 막힌 채 "모집 관리에서 설정합니다"라는 안내만 남아 있었다.
+     */
+
+    @Test
+    void getScheduleReturnsReceiptPeriodAndDerivedStatus() throws Exception {
+        mockMvc.perform(authorized(get(schedulePath(recruiting)), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.academicProgramId").value(recruiting.getId()))
+                .andExpect(jsonPath("$.data.formId").value(recruitmentForm.getId()))
+                // 파생 접수 상태를 함께 싣는다 — 화면이 날짜로 되짚어 다시 세지 않게 한다
+                .andExpect(jsonPath("$.data.receiptStatus").exists());
+    }
+
+    // 조회는 리더에게도 열린다 — 자기 공고가 언제까지인지는 알아야 한다(소유권 OR 관리권한)
+    @Test
+    void getScheduleAsLeaderReturns200() throws Exception {
+        mockMvc.perform(authorized(get(schedulePath(recruiting)), leaderToken))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void updateScheduleChangesReceiptPeriod() throws Exception {
+        mockMvc.perform(
+                        authorized(patch(schedulePath(recruiting)), managerToken)
+                                .content(
+                                        """
+                                        {"rcptBgngDt": "2026-10-01T00:00:00+09:00",
+                                         "rcptEndDt": "2026-10-31T23:59:00+09:00"}
+                                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rcptBgngDt").value(Matchers.startsWith("2026-10-01")))
+                .andExpect(jsonPath("$.data.rcptEndDt").value(Matchers.startsWith("2026-10-31")));
+
+        entityManager.flush();
+        entityManager.refresh(recruitmentForm);
+        assertThat(recruitmentForm.getReceiptBeginAt())
+                .isEqualTo(Instant.parse("2026-09-30T15:00:00Z"));
+    }
+
+    /*
+     * 활동 상태는 건드리지 않는다 — 이 경로는 전이가 아니라 폼의 접수 기간만 고친다.
+     * 상태까지 움직이면 "일정을 고쳤을 뿐인데 활동이 다시 모집으로 돌아갔다"가 된다.
+     */
+    @Test
+    void updateScheduleKeepsProgramStatus() throws Exception {
+        mockMvc.perform(
+                        authorized(patch(schedulePath(recruiting)), managerToken)
+                                .content(
+                                        """
+                                        {"rcptBgngDt": "2026-10-01T00:00:00+09:00",
+                                         "rcptEndDt": "2026-10-31T23:59:00+09:00"}
+                                        """))
+                .andExpect(status().isOk());
+
+        entityManager.flush();
+        entityManager.refresh(recruiting);
+        assertThat(recruiting.getStatus()).isEqualTo(AcademicProgramStatus.ONGOING);
+    }
+
+    /** null은 "제한 없음"이다 — 비워 보내면 그 끝을 지운다(전체 교체) */
+    @Test
+    void updateScheduleWithNullsClearsPeriod() throws Exception {
+        mockMvc.perform(
+                        authorized(patch(schedulePath(recruiting)), managerToken)
+                                .content("{\"rcptBgngDt\": null, \"rcptEndDt\": null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rcptBgngDt").doesNotExist())
+                .andExpect(jsonPath("$.data.rcptEndDt").doesNotExist());
+
+        entityManager.flush();
+        entityManager.refresh(recruitmentForm);
+        assertThat(recruitmentForm.getReceiptBeginAt()).isNull();
+        assertThat(recruitmentForm.getReceiptEndAt()).isNull();
+    }
+
+    // 변경은 학술국장 전용이다 — 조회와 갈리는 자리이며 #483이 잠가 둔 규칙을 지킨다
+    @Test
+    void updateScheduleAsLeaderReturns403() throws Exception {
+        mockMvc.perform(
+                        authorized(patch(schedulePath(recruiting)), leaderToken)
+                                .content(
+                                        """
+                                        {"rcptBgngDt": "2026-10-01T00:00:00+09:00",
+                                         "rcptEndDt": "2026-10-31T23:59:00+09:00"}
+                                        """))
+                .andExpect(status().isForbidden());
+    }
+
+    // 기간 역전은 폼 도메인의 코드를 그대로 전파한다 — 학술 쪽에 규칙을 한 벌 더 두지 않는다
+    @Test
+    void updateScheduleWithInvertedPeriodReturns400() throws Exception {
+        mockMvc.perform(
+                        authorized(patch(schedulePath(recruiting)), managerToken)
+                                .content(
+                                        """
+                                        {"rcptBgngDt": "2026-10-31T00:00:00+09:00",
+                                         "rcptEndDt": "2026-10-01T00:00:00+09:00"}
+                                        """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RECEIPT_PERIOD"));
+    }
+
+    /*
+     * 모집 시작 전 활동의 일정은 START_RECRUITMENT가 정한다 — 이 경로가 그 자리를 겸하면
+     * "모집을 시작하지 않았는데 접수 기간만 든" 활동이 생기고 그 폼은 DRAFT라 열리지 않는다.
+     */
+    @Test
+    void updateScheduleBeforeRecruitmentReturns409() throws Exception {
+        AcademicProgramEntity approved = createProgram("아직 모집 전");
+
+        mockMvc.perform(
+                        authorized(patch(schedulePath(approved)), managerToken)
+                                .content(
+                                        """
+                                        {"rcptBgngDt": "2026-10-01T00:00:00+09:00",
+                                         "rcptEndDt": "2026-10-31T23:59:00+09:00"}
+                                        """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RECRUITMENT_NOT_STARTED"));
+    }
+
     private String membersPath(AcademicProgramEntity program) {
         return PROGRAMS + "/" + program.getId() + "/members";
     }
@@ -961,6 +1090,10 @@ class AcademicProgramRecruitmentControllerTest {
 
     private String recruitmentFormPath(AcademicProgramEntity program) {
         return PROGRAMS + "/" + program.getId() + "/recruitment/form";
+    }
+
+    private String schedulePath(AcademicProgramEntity program) {
+        return PROGRAMS + "/" + program.getId() + "/recruitment/schedule";
     }
 
     /*

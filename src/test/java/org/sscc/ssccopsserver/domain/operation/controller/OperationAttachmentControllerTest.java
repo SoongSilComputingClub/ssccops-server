@@ -7,7 +7,6 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -107,7 +106,7 @@ class OperationAttachmentControllerTest {
     }
 
     @Test
-    @DisplayName("발급 → 목록 → 내려받기(302) → 삭제 — file_rfrnc에 OPERATION 행이 메타와 함께 남았다 사라진다")
+    @DisplayName("발급 → 목록 → 내려받기 URL → 삭제 — file_rfrnc에 OPERATION 행이 메타와 함께 남았다 사라진다")
     void lifecycle() throws Exception {
         Long operationId = createWorkOperation();
 
@@ -142,9 +141,12 @@ class OperationAttachmentControllerTest {
                 .andExpect(jsonPath("$.data[0].uploader.memberId").value(ownerId))
                 .andExpect(jsonPath("$.data[0].uploadedAt").isNotEmpty());
 
-        mockMvc.perform(authorized(get(url(operationId) + "/" + fileId + "/download"), DIRECTOR))
-                .andExpect(status().isFound())
-                .andExpect(header().string("Location", containsString("X-Amz-Signature=stub")));
+        mockMvc.perform(
+                        authorized(
+                                get(url(operationId) + "/" + fileId + "/download-url"), DIRECTOR))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url", containsString("X-Amz-Signature=stub")))
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(900));
 
         mockMvc.perform(authorized(delete(url(operationId) + "/" + fileId), DIRECTOR))
                 .andExpect(status().isOk());

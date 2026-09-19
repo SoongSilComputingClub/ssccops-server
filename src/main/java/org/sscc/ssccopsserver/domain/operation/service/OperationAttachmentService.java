@@ -18,5 +18,7 @@ public interface OperationAttachmentService {
     /** 내려받기 서명 URL — 조회 권한이면 된다 */
     String downloadUrlOf(Long operationId, Long fileId, MemberEntity performer);
 
+    long downloadUrlTtlSeconds();
+
     void delete(Long operationId, Long fileId, MemberEntity performer);
 }

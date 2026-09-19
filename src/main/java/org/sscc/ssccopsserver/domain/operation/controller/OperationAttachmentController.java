@@ -1,6 +1,5 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
-import java.net.URI;
 import java.util.List;
 
 import jakarta.validation.Valid;
@@ -15,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationAttachmentDownloadResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationAttachmentResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationAttachmentUploadRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationAttachmentUploadResponse;
@@ -34,8 +34,8 @@ import lombok.RequiredArgsConstructor;
  * 붙기 때문이다. 화면은 상세 응답의 operationId로 부른다. 권한은 종류마다 그 건을 보는/고치는 권한을
  * 그대로 따르므로(OperationAttachmentAccessPolicy) 여기에는 @RequireAuthority가 없다 — 인증만 필요하다.
  *
- * 내려받기는 302다. 서명 URL을 JSON으로 주면 화면이 한 번 더 왕복하고, 서명 URL은 15분짜리라 링크로
- * 저장할 값이 아니다 — 행사 이미지·콘텐츠 갤러리와 같은 판단.
+ * 내려받기는 302가 아니라 JSON이다. 행사 이미지·갤러리는 <img>가 익명 경로를 따라가면 되지만 첨부는
+ * 인증이 필요한 경로라 브라우저 이동으로는 헤더를 못 붙인다 — 화면이 서명 URL을 받아 그 주소로 간다.
  */
 @Tag(name = "Operation Attachments", description = "운영 건(업무·하위 업무·회의) 첨부")
 @RestController
@@ -72,15 +72,20 @@ public class OperationAttachmentController {
     }
 
     @Operation(
-            summary = "첨부 내려받기",
-            description = "원본 이름이 붙은 15분짜리 서명 URL로 302. 링크로 저장하지 말 것 — 매번 이 경로를 부른다.")
-    @GetMapping("/{fileId}/download")
-    public ResponseEntity<Void> download(
+            summary = "첨부 내려받기 URL",
+            description =
+                    "원본 이름이 붙은 15분짜리 서명 URL. 302로 보내지 않는 것은 화면이 Bearer 헤더를 붙여야 이 경로를"
+                            + " 부를 수 있어 브라우저 이동으로는 못 쓰기 때문이다 — JSON으로 받아 그 URL로 이동한다."
+                            + " 링크로 저장하지 말 것.")
+    @GetMapping("/{fileId}/download-url")
+    public ApiResponse<OperationAttachmentDownloadResponse> downloadUrl(
             @PathVariable Long operationId,
             @PathVariable Long fileId,
             @CurrentMember MemberEntity performer) {
         String url = attachmentService.downloadUrlOf(operationId, fileId, performer);
-        return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(url)).build();
+        return ApiResponse.success(
+                new OperationAttachmentDownloadResponse(
+                        url, attachmentService.downloadUrlTtlSeconds()));
     }
 
     @Operation(summary = "첨부 삭제", description = "참조 행을 지우고 오브젝트는 커밋 뒤 지운다. 감사 로그에 남는다.")

@@ -5,7 +5,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -140,6 +139,11 @@ public class OperationAttachmentServiceImpl implements OperationAttachmentServic
     }
 
     @Override
+    public long downloadUrlTtlSeconds() {
+        return filePresigner.viewUrlTtlSeconds();
+    }
+
+    @Override
     @Transactional
     public void delete(Long operationId, Long fileId, MemberEntity performer) {
         OperationEntity operation = operationOf(operationId);
@@ -156,10 +160,5 @@ public class OperationAttachmentServiceImpl implements OperationAttachmentServic
         return operationRepository
                 .findByIdAndDeletedAtIsNull(operationId)
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
-    }
-
-    /** 테스트·문서용 — 상한을 한 곳에서 읽는다 */
-    static Function<Long, Boolean> tooLarge() {
-        return size -> size > MAX_ATTACHMENT_SIZE_BYTES;
     }
 }

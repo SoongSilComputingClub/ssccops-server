@@ -109,6 +109,12 @@ frontend:
 # 하나이고, 그 클래스가 자기 전용 DB와 함께 이 값을 스스로 켜기 때문이다. 기동 시드(ApplicationRunner)는
 # 이 값과 무관하게 그대로 돈다.
 ssccops:
+  # DB keepalive를 끈다 (#487) — 공용 컨텍스트가 뜰 때마다 기동 쿼리를 얹을 이유가 없고, 계약은
+  # DatabaseKeepAliveTest가 컨텍스트 없이 본다.
+  db:
+    keepalive:
+      enabled: false
+
   form:
     proposal-seed:
       on-member-created: false

@@ -56,13 +56,18 @@ public class PublicContentServiceImpl implements PublicContentService {
             ContentCategory category, int size, String cursor) {
         ContentPostCursor decoded = ContentPostCursor.decode(cursor);
 
+        // 커서 유무로 질의를 가른다 — 날짜 파라미터를 `is null`로 검사하면 PostgreSQL이 거절한다(#481)
+        PageRequest limit = PageRequest.of(0, size + 1);
         List<ContentPostEntity> fetched =
-                postRepository.findAllForPublicList(
-                        ContentPublishStatus.PUBLISHED,
-                        category,
-                        decoded == null ? null : decoded.activityDate(),
-                        decoded == null ? null : decoded.postId(),
-                        PageRequest.of(0, size + 1));
+                decoded == null
+                        ? postRepository.findFirstPageForPublicList(
+                                ContentPublishStatus.PUBLISHED, category, limit)
+                        : postRepository.findAfterCursorForPublicList(
+                                ContentPublishStatus.PUBLISHED,
+                                category,
+                                decoded.activityDate(),
+                                decoded.postId(),
+                                limit);
         boolean hasNext = fetched.size() > size;
         List<ContentPostEntity> rows = hasNext ? fetched.subList(0, size) : fetched;
 

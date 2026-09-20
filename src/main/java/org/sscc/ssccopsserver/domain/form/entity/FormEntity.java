@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.entity;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -488,6 +489,41 @@ public class FormEntity {
         if (!QuestionCompositionContent.qitemIdsOf(next).containsAll(requiredQitemIds)) {
             throw new GeneralException(FormErrorCode.SYSTEM_FORM_CONTRACT_VIOLATION);
         }
+    }
+
+    /*
+     * 시스템 폼 문항 잠금 (#498 · ssccops#416 · 409 SYSTEM_FORM_QUESTIONS_LOCKED).
+     *
+     * 시스템 폼의 문항은 코드가 읽는 구성이라 **바뀌는 저장을 통째로 거절한다.** 위 계약 검사는
+     * 코드가 요구하는 qitemId가 사라지는 것만 막는데, 코드가 읽는 것은 식별자만이 아니다 —
+     * 기획안 폼의 유형 선택지는 acdm_actv_type.type_nm과 글자까지 같아야 하고(응답이 문자열이라
+     * 이관이 그것을 코드로 되돌린다), 커리큘럼 문항의 안내 문구는 곧 파서의 명세다(#173). 선택지
+     * 하나를 고치는 것만으로 승인 이관이 조용히 깨지는데 #140·#155의 잠금은 그것을 막지 못했다.
+     *
+     * **비교 대상은 qitems뿐이다.** pages(제목·안내 문구 pageDescCn)는 코드가 읽지 않고 운영진이
+     * 회차마다 손대는 값이라 제목·접수 기간·라벨과 함께 열어 둔다(ssccops#416 «설명 변경은 가능»).
+     * 구성 전체(record equals)로 비교하면 안내 문구 한 줄을 고친 저장이 409가 된다.
+     * 비교는 update()와 같은 List equals이고 들어오는 값은 QuestionCompositionValidator가 정규화한
+     * 결과여야 한다 — 정규화 전 값과 비교하면 잔여 속성이 정리된 것만으로 잠금에 걸려 편집 자동
+     * 저장(상세 응답의 구성을 그대로 되보낸다)이 통째로 멈춘다.
+     *
+     * requireSystemContractKept를 지우지 않은 것은 그쪽이 이 잠금 안쪽의 세부 판정이기 때문이다 —
+     * 이 검사를 먼저 지나므로 저장 경로에서 400이 나갈 일은 없지만, 계약 자체(무엇을 코드가 읽는가)는
+     * 여전히 SystemFormContract가 선언하고 폼 상세가 systemRequiredQitemIds로 내린다(#155).
+     */
+    public void requireSystemQuestionItemsUnchanged(QuestionCompositionContent next) {
+        if (!isSystemForm()) {
+            return;
+        }
+        // 검증기가 null qitems를 빈 목록으로 정규화하므로, 저장된 쪽도 같은 눈으로 본다
+        if (!Objects.equals(qitemsOrEmpty(this.questionComposition), qitemsOrEmpty(next))) {
+            throw new GeneralException(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
+        }
+    }
+
+    private static List<QuestionCompositionContent.QuestionItem> qitemsOrEmpty(
+            QuestionCompositionContent content) {
+        return content == null || content.qitems() == null ? List.of() : content.qitems();
     }
 
     /*

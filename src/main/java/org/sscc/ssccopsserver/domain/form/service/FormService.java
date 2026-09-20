@@ -111,7 +111,8 @@ public interface FormService {
      * (실제로 달라졌을 때) qitem_ver뿐이다.
      *
      * **검증·이력은 updateForm과 같은 경로를 지난다** — 문항 구성 검사 · 응답이 쓰는 qitemId
-     * 보호(409 QUESTION_ITEM_IN_USE) · 시스템 폼 계약(400 SYSTEM_FORM_CONTRACT_VIOLATION) ·
+     * 보호(409 QUESTION_ITEM_IN_USE) · 시스템 폼 문항 잠금(409 SYSTEM_FORM_QUESTIONS_LOCKED, #498) ·
+     * 시스템 폼 계약(400 SYSTEM_FORM_CONTRACT_VIOLATION) ·
      * 버전이 오른 저장만 form_qitem_hstry에 한 행. 규칙을 옮겨 적으면 두 저장 경로가 다른 것을
      * 거절하기 시작한다.
      *

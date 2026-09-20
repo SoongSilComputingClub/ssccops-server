@@ -261,6 +261,28 @@ public enum FormErrorCode implements ErrorCode {
             "시스템 폼이 요구하는 문항은 삭제할 수 없습니다."),
 
     /*
+     * 409 — 시스템 폼의 문항(qitems)이 바뀌는 저장 (#498 · ssccops#416).
+     *
+     * 시스템 폼의 문항은 코드가 읽는 구성이다 — SystemFormContract가 요구하는 qitemId뿐 아니라
+     * 유형 선택지가 acdm_actv_type.type_nm과 글자까지 같아야 하고, 커리큘럼 문항의 안내 문구가
+     * 곧 파서(ProposalResponseParser)의 명세다(#173). 그래서 계약 문항 삭제만 막던
+     * SYSTEM_FORM_CONTRACT_VIOLATION으로는 선택지 하나를 고치는 것만으로 승인 이관이 조용히
+     * 깨지는 자리가 남아 있었다. 문항 추가·삭제·순서·문구·선택지·정규식 전부를 한 번에 잠근다.
+     *
+     * **문항이 같으면 통과한다** — 제목·접수 기간·라벨·다중 응답·페이지 안내 문구(pageDescCn)는
+     * 운영진이 회차마다 손대는 값이라 종전대로 열어 둔다. 편집 자동 저장이 상세 응답의 구성을
+     * 그대로 되보내는 저장도 문항이 같으므로 여기 걸리지 않는다.
+     *
+     * 400이 아니라 409인 것은 SYSTEM_FORM_IMMUTABLE과 같은 이유다 — 요청 자체는 올바르고 대상
+     * 폼의 성격이 거절 이유다. CONTRACT_VIOLATION(400)을 지우지 않은 것은 그쪽이 이 잠금 안쪽의
+     * 세부 판정(엔티티 requireSystemContractKept)으로 남아 있기 때문이다.
+     */
+    SYSTEM_FORM_QUESTIONS_LOCKED(
+            HttpStatus.CONFLICT,
+            "SYSTEM_FORM_QUESTIONS_LOCKED",
+            "시스템 폼의 문항은 바꿀 수 없습니다 — 코드가 읽는 구성입니다."),
+
+    /*
      * 422 — 저장된 문항 구성(qitem_cpst_cn) JSON을 읽을 수 없을 때.
      *
      * JSONB는 DB가 문법만 보장할 뿐 우리 구조까지 보장하지 않는다. 기준 코드 밖의

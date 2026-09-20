@@ -138,7 +138,7 @@ class FormControllerTest {
      */
     private static final String TWO_QUESTION_SYSTEM_FORM_CODE = "TEST_SYSTEM_FORM_TWO";
 
-    /** 계약 문항(q1)을 지운 구성. 시스템 폼에서는 400, 평범한 폼에서는 통과해야 한다 */
+    /** 계약 문항(q1)을 지운 구성. 시스템 폼에서는 409(#498부터 문항 잠금이 먼저다), 평범한 폼에서는 통과해야 한다 */
     private static final String COMPOSITION_WITHOUT_CONTRACT_QUESTION =
             """
             {
@@ -152,7 +152,7 @@ class FormControllerTest {
             }
             """;
 
-    /** 계약 문항(q1)은 남기되 문구를 고치고 문항을 더하고 순서를 바꾼 구성. 전부 허용돼야 한다 */
+    /** 계약 문항(q1)은 남기되 문구를 고치고 문항을 더하고 순서를 바꾼 구성. 시스템 폼에서는 #498부터 409다 */
     private static final String CONTRACT_KEPT_COMPOSITION =
             """
             {
@@ -998,8 +998,12 @@ class FormControllerTest {
     /* ── 시스템 폼 잠금 · 문항 구성 버전 (#140) ───────────── */
 
     /*
-     * 코드가 요구하는 qitemId를 지우면 400이다. 이 판정은 응답 유무를 보지 않는다 —
+     * 코드가 요구하는 qitemId를 지우는 저장은 거절된다. 이 판정은 응답 유무를 보지 않는다 —
      * 응답이 한 건도 없어도 코드가 그 식별자로 값을 읽으므로 사라지면 조용히 빈 값이 읽힌다.
+     *
+     * #498부터 코드는 400 SYSTEM_FORM_CONTRACT_VIOLATION이 아니라 409 SYSTEM_FORM_QUESTIONS_LOCKED다 —
+     * 계약 문항 삭제도 '문항이 바뀐 저장'이라 더 넓은 잠금이 먼저 끊는다. 계약 판정 자체는
+     * 엔티티에 그대로 남아 있고(FormSystemLockTest) 저장 경로에서는 이 잠금 안쪽에 있다.
      */
     @Test
     void systemFormRejectsRemovingContractQuestionItem() throws Exception {
@@ -1007,17 +1011,70 @@ class FormControllerTest {
         designateAsSystemForm(formId);
 
         mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_CONTRACT_VIOLATION"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_QUESTIONS_LOCKED"));
     }
 
     /*
-     * 잠금 범위는 authrt.sys_yn 선례와 같다 — 계약을 지키는 한 제목·접수 기간·문구·문항 추가는
-     * 전부 열어 둔다. 운영진이 회차마다 손대는 값이라 잠그면 시스템 폼은 한 번 세운 뒤 아무도
-     * 운영할 수 없는 폼이 된다.
+     * 시스템 폼 문항 잠금 (#498 · ssccops#416). 문항이 같으면 제목·접수 기간은 종전대로 열려 있다 —
+     * 운영진이 회차마다 손대는 값이라 잠그면 시스템 폼은 한 번 세운 뒤 아무도 운영할 수 없는 폼이
+     * 된다. 편집 자동 저장이 상세 응답의 구성을 그대로 되보내는 본문이 정확히 이 모양이라, 정규화
+     * 왕복이 같은 구성으로 읽히는지도 여기서 함께 확인된다(다르게 읽히면 자동 저장이 통째로 멈춘다).
      */
     @Test
-    void systemFormAllowsChangesThatKeepTheContract() throws Exception {
+    void systemFormAllowsTitleAndPeriodChangeWhenQuestionsAreUnchanged() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId,
+                                saveBody(
+                                        "제목을 바꾼 시스템 폼",
+                                        null,
+                                        "2026-03-01T00:00:00+09:00",
+                                        null,
+                                        "[]")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formTtlNm").value("제목을 바꾼 시스템 폼"));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.sysYn").value(true))
+                .andExpect(jsonPath("$.data.sysFormCd").value(SYSTEM_FORM_CODE))
+                .andExpect(jsonPath("$.data.qitemVer").value(1))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(2));
+    }
+
+    /*
+     * 페이지 안내 문구(pageDescCn)는 문항이 아니다 — ssccops#416이 «설명 변경은 가능»으로 열어 둔
+     * 값이고 코드가 읽지 않는다. 구성 전체(record equals)로 비교했다면 이 저장이 409였을 것이라,
+     * 잠금이 qitems만 보는지를 못 박는다. 구성이 바뀐 저장이므로 버전은 종전대로 오른다.
+     */
+    @Test
+    void systemFormAllowsPageDescriptionChange() throws Exception {
+        Long formId = createForm("시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        String body =
+                """
+                {"formTtlNm": "시스템 폼", "qitemCpstCn": %s}
+                """
+                        .formatted(VALID_COMPOSITION.replace("지원자 정보를 입력해주세요.", "회차 안내를 고쳤습니다."));
+
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, body)).andExpect(status().isOk());
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.qitemVer").value(2))
+                .andExpect(
+                        jsonPath("$.data.qitemCpstCn.pages[0].pageDescCn").value("회차 안내를 고쳤습니다."));
+    }
+
+    /*
+     * 계약 문항을 전부 지키더라도 문항을 더하거나 문구·순서를 바꾸면 409다. #140의 잠금은 이것을
+     * 허용했는데(계약 문항 삭제만 막았다), 기획안 폼의 유형 선택지·커리큘럼 안내 문구처럼 코드가
+     * 식별자 밖에서 읽는 것이 있어 문항 단위로 통째로 잠근다. 거절된 저장은 아무것도 바꾸지 않는다.
+     */
+    @Test
+    void systemFormRejectsAddingQuestionItemEvenWhenContractIsKept() throws Exception {
         Long formId = createForm("시스템 폼", null, "[]");
         designateAsSystemForm(formId);
 
@@ -1025,28 +1082,23 @@ class FormControllerTest {
                         authenticatedPut(
                                 "/v1/forms/" + formId,
                                 """
-                                {"formTtlNm": "제목을 바꾼 시스템 폼",
-                                 "rcptBgngDt": "2026-03-01T00:00:00+09:00",
-                                 "qitemCpstCn": %s}
+                                {"formTtlNm": "제목을 바꾼 시스템 폼", "qitemCpstCn": %s}
                                 """
                                         .formatted(CONTRACT_KEPT_COMPOSITION)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.formTtlNm").value("제목을 바꾼 시스템 폼"));
-
-        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
-                .andExpect(jsonPath("$.data.sysYn").value(true))
-                .andExpect(jsonPath("$.data.sysFormCd").value(SYSTEM_FORM_CODE))
-                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(2))
-                .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemId").value("q3"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_QUESTIONS_LOCKED"));
     }
 
-    // 시스템 폼이 아닌 폼에는 계약이 걸리지 않는다 — 선언이 있어도 그 코드를 달고 있어야 성립한다
+    // 시스템 폼이 아닌 폼에는 잠금도 계약도 걸리지 않는다 — 선언이 있어도 그 코드를 달고 있어야 성립한다
     @Test
     void ordinaryFormCanRemoveTheSameQuestionItem() throws Exception {
         Long formId = createForm("평범한 폼", null, "[]");
 
         mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
                 .andExpect(status().isOk());
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId))
+                .andExpect(jsonPath("$.data.qitemVer").value(2))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(1));
     }
 
     /*
@@ -1219,9 +1271,10 @@ class FormControllerTest {
 
     /*
      * 화면이 미리 잠그는 목록과 서버가 거절하는 목록은 같아야 한다. 상세가 알려 준 문항을 실제로 지워
-     * 저장해 400이 나는 것까지를 한 시험에 묶는 것은, 둘이 갈라지면 화면은 잠기지 않았는데 서버는 거절하는
-     * — #155가 없애려는 바로 그 상황으로 돌아가기 때문이다. 미리 잠그는 것은 편의이고 서버의 400이
-     * 방어선이며, 이번 변경은 뒤에 손대지 않았다.
+     * 저장해 거절되는 것까지를 한 시험에 묶는 것은, 둘이 갈라지면 화면은 잠기지 않았는데 서버는 거절하는
+     * — #155가 없애려는 바로 그 상황으로 돌아가기 때문이다. 미리 잠그는 것은 편의이고 서버의 거절이
+     * 방어선이다. #498부터 그 거절은 409 SYSTEM_FORM_QUESTIONS_LOCKED다 — 시스템 폼은 문항 전체가
+     * 잠겨 계약 문항 삭제도 그 안에 든다. systemRequiredQitemIds는 여전히 계약 선언에서 온다.
      */
     @Test
     void exposedContractMatchesWhatTheSavePathRejects() throws Exception {
@@ -1240,8 +1293,8 @@ class FormControllerTest {
 
         // 상세가 알려 준 바로 그 문항(q1)을 지운 구성이다
         mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_CONTRACT_VIOLATION"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_QUESTIONS_LOCKED"));
     }
 
     /* ── 접수 상태 전이 (#33) ─────────────────────────────── */

@@ -28,7 +28,8 @@ public final class SeedScript {
             List.of(
                     "db/migration/V3__seed_reference_data.sql",
                     "db/migration/V11__seed_rag_document_manage_authority.sql",
-                    "db/migration/V16__seed_content_manage_authority.sql");
+                    "db/migration/V16__seed_content_manage_authority.sql",
+                    "db/migration/V19__seed_track_program_type.sql");
 
     private SeedScript() {}
 

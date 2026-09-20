@@ -92,7 +92,7 @@ class CodeSeedDataTest {
     @Test
     void ordersPositionRolesInBylawOrder() {
         assertThat(rolesOfClassification("POSITION"))
-                .containsExactly("회장", "부회장", "총무", "국장", "국원", "프로젝트장", "스터디장");
+                .containsExactly("회장", "부회장", "총무", "국장", "국원", "프로젝트장", "스터디장", "트랙장");
     }
 
     /*
@@ -305,6 +305,8 @@ class CodeSeedDataTest {
                         type -> type.getDisplayOrder(),
                         type -> type.isActive())
                 .containsExactlyInAnyOrder(
-                        tuple("STUDY", "스터디", 1, true), tuple("PROJECT", "프로젝트", 2, true));
+                        tuple("STUDY", "스터디", 1, true),
+                        tuple("PROJECT", "프로젝트", 2, true),
+                        tuple("TRACK", "트랙", 3, true));
     }
 }

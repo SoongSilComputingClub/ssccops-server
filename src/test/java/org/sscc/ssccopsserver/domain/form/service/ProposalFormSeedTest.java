@@ -153,7 +153,7 @@ class ProposalFormSeedTest {
                         .map(AcademicProgramTypeEntity::getName)
                         .toList();
 
-        assertThat(referenceNames).containsExactly("스터디", "프로젝트");
+        assertThat(referenceNames).containsExactly("스터디", "프로젝트", "트랙");
         assertThat(ProposalFormSeed.PROGRAM_TYPE_OPTIONS).isEqualTo(referenceNames);
         assertThat(
                         ProposalFormSeed.composition().qitems().stream()

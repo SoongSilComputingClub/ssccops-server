@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramTypeEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
@@ -101,6 +102,61 @@ class AcademicProgramApprovalEffectsServiceImplTest {
         assertThat(assignments)
                 .extracting(assignment -> assignment.getRole().getName())
                 .contains("프로젝트장");
+    }
+
+    @Test
+    void assignsTrackLeaderRoleForTrackType() {
+        MemberEntity leader = saveMember("20260404", "트랙리더");
+        AcademicProgramEntity academicProgram = createAcademicProgram("TRACK", "백엔드 트랙", leader);
+
+        effectsService.applyPostApprovalEffects(academicProgram);
+        flushAndClear();
+
+        List<MemberRoleAssignmentEntity> assignments =
+                memberRoleAssignmentRepository.findCurrentByMemberId(leader.getId());
+        assertThat(assignments)
+                .extracting(assignment -> assignment.getRole().getName())
+                .contains("트랙장");
+    }
+
+    /*
+     * **시드된 유형 전부가 이 자리를 지날 수 있어야 한다** (#510).
+     *
+     * 유형은 배포 없이 acdm_actv_type에 행을 더하는 것으로 늘어나는데(AcademicProgramTypeEntity
+     * 주석) 리더 역할명은 이 서비스의 코드 상수다. 그래서 «유형만 늘고 맵은 그대로»가 가능하고,
+     * 실제로 트랙에서 그 일이 일어났다 — 접수는 되는데 승인이 막혔다.
+     *
+     * 유형별 테스트를 하나씩 더하는 것으로는 막지 못한다. 새 유형을 더하는 사람이 그 테스트도
+     * 함께 빠뜨리면 그만이기 때문이다. 그래서 목록을 **기준정보에서 읽어** 전수로 돈다 —
+     * V13이 CHECK 제약과 enum을 전수 대조로 바꾼 것과 같은 판단이다. 시드에 유형을 더하고
+     * 맵이나 role 시드를 빠뜨리면 여기서 깨진다.
+     *
+     * 역할명을 값으로 대조하지 않는 것은 그 표가 곧 검사 대상이기 때문이다 — 테스트에 옮겨
+     * 적으면 두 벌이 되어 같이 틀린다. 여기서 보는 것은 «어떤 역할이든 붙었는가»다.
+     */
+    @Test
+    void everySeededProgramTypeGetsItsLeaderRole() {
+        List<String> typeCodes =
+                academicProgramTypeRepository.findAllByOrderByDisplayOrderAsc().stream()
+                        .map(AcademicProgramTypeEntity::getCode)
+                        .toList();
+        assertThat(typeCodes).isNotEmpty();
+
+        for (int index = 0; index < typeCodes.size(); index++) {
+            String typeCd = typeCodes.get(index);
+            MemberEntity leader = saveMember("20269%03d".formatted(index), typeCd + " 리더");
+            AcademicProgramEntity academicProgram =
+                    createAcademicProgram(typeCd, typeCd + " 활동", leader);
+
+            effectsService.applyPostApprovalEffects(academicProgram);
+            flushAndClear();
+
+            assertThat(memberRoleAssignmentRepository.findCurrentByMemberId(leader.getId()))
+                    .as(
+                            "%s 유형의 리더 역할 — 맵(LEADER_ROLE_NAME_BY_TYPE_CODE)과 role 시드가 함께 있어야 한다",
+                            typeCd)
+                    .isNotEmpty();
+        }
     }
 
     /*

@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.content.service;
 
+import java.util.Comparator;
 import java.util.List;
 
 import org.springframework.data.domain.PageRequest;
@@ -10,6 +11,7 @@ import org.sscc.ssccopsserver.domain.content.code.ContentPublishStatus;
 import org.sscc.ssccopsserver.domain.content.code.error.ContentErrorCode;
 import org.sscc.ssccopsserver.domain.content.dto.ContentPostCursor;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPageResponse;
+import org.sscc.ssccopsserver.domain.content.dto.PublicContentPageSummaryResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostDetailResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostSearchResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostSummaryResponse;
@@ -49,6 +51,23 @@ public class PublicContentServiceImpl implements PublicContentService {
                 .findBySlugAndPublishStatus(slug, ContentPublishStatus.PUBLISHED)
                 .map(PublicContentPageResponse::of)
                 .orElseThrow(() -> new GeneralException(ContentErrorCode.PAGE_NOT_FOUND));
+    }
+
+    /*
+     * 접두사 목록 (#513 · ssccops#425). www 역대 운영진이 «어떤 대수가 게시돼 있나»를 묻는 자리다 —
+     * 그전에는 www가 손으로 적은 상수(`[44]`)를 들고 있어 43대 페이지가 게시돼 있어도 갈 길이 없었다.
+     * ADR-0038의 기준(게시 상태인 것의 공개용 필드) 안이고 초안은 목록에 나타나지 않는다. 정렬은
+     * slug 오름차순 — 숫자 대수의 내림차순은 www가 파싱해서 한다(슬러그는 문자열이라 `operators-9`가
+     * `operators-44` 뒤에 온다).
+     */
+    @Override
+    public List<PublicContentPageSummaryResponse> getPublishedPagesBySlugPrefix(String slugPrefix) {
+        return pageRepository
+                .findBySlugStartingWithAndPublishStatus(slugPrefix, ContentPublishStatus.PUBLISHED)
+                .stream()
+                .map(PublicContentPageSummaryResponse::of)
+                .sorted(Comparator.comparing(PublicContentPageSummaryResponse::slug))
+                .toList();
     }
 
     @Override

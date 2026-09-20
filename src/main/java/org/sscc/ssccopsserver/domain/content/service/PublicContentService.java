@@ -1,7 +1,10 @@
 package org.sscc.ssccopsserver.domain.content.service;
 
+import java.util.List;
+
 import org.sscc.ssccopsserver.domain.content.code.ContentCategory;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPageResponse;
+import org.sscc.ssccopsserver.domain.content.dto.PublicContentPageSummaryResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostDetailResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostSearchResponse;
 
@@ -12,6 +15,9 @@ import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostSearchResponse
 public interface PublicContentService {
 
     PublicContentPageResponse getPublishedPage(String slug);
+
+    /** 접두사로 시작하는 슬러그의 게시된 페이지 — slug 오름차순 (#513 · ssccops#425) */
+    List<PublicContentPageSummaryResponse> getPublishedPagesBySlugPrefix(String slugPrefix);
 
     PublicContentPostSearchResponse getPublishedPosts(
             ContentCategory category, int size, String cursor);

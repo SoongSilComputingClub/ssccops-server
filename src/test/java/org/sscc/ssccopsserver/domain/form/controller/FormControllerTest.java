@@ -409,6 +409,43 @@ class FormControllerTest {
     }
 
     /*
+     * 접수 상태 여러 값 (#492). 쉼표 구분·반복 파라미터 둘 다 목록으로 묶이고, receiptStatus와 함께
+     * 오면 receiptStatuses가 이긴다. 값 하나면 단일 값 경로와 같은 결과다.
+     */
+    @Test
+    void getFormsUnionsMultipleReceiptStatuses() throws Exception {
+        Long open = createForm("접수 중", "OPEN", "[]");
+        Long draft = createForm("작성 중", null, "[]");
+        Long closed = createForm("마감", "CLOSED", "[]");
+
+        mockMvc.perform(authenticatedGet("/v1/forms?receiptStatuses=DRAFT,ACCEPTING"))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(
+                        jsonPath(
+                                "$.data[*].formId",
+                                Matchers.hasItems(open.intValue(), draft.intValue())));
+
+        mockMvc.perform(authenticatedGet("/v1/forms?receiptStatuses=DRAFT&receiptStatuses=CLOSED"))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(
+                        jsonPath(
+                                "$.data[*].formId",
+                                Matchers.hasItems(draft.intValue(), closed.intValue())));
+
+        // 둘 다 오면 다중 값이 이긴다
+        mockMvc.perform(
+                        authenticatedGet(
+                                "/v1/forms?receiptStatus=ACCEPTING&receiptStatuses=CLOSED"))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].formId").value(closed));
+
+        // 값 하나는 단일 값 경로와 같다
+        mockMvc.perform(authenticatedGet("/v1/forms?receiptStatuses=DRAFT"))
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].formId").value(draft));
+    }
+
+    /*
      * 목록은 문항 구성을 싣지 않는다 — 폼 하나에 문항이 수십 개면 목록 응답이 그만큼 곱해진다.
      * 상세에는 그대로 실려야 하므로 두 응답을 같이 본다.
      */

@@ -29,6 +29,10 @@ public interface FormService {
      */
     List<FormSummaryResponse> getForms(FormReceiptStatus receiptStatus, Long labelId);
 
+    /** 접수 상태 여러 값의 합집합 (#492). 빈 목록은 전체 */
+    List<FormSummaryResponse> getFormsByReceiptStatuses(
+            Collection<FormReceiptStatus> receiptStatuses, Long labelId);
+
     /*
      * 휴지통 목록 (#329). 지워진 폼만, 지운 시각 역순으로 돌려준다.
      *

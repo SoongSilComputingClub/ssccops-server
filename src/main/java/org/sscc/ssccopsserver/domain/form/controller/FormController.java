@@ -77,17 +77,30 @@ public class FormController {
             description =
                     "폼 관리 화면의 카드 목록. receiptStatus·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다. **필터는 접수 상태"
                         + " 파생값(receiptStatus)으로 거른다** — DRAFT·SCHEDULED·ACCEPTING·EXPIRED·CLOSED"
-                        + " 다섯 값이며 응답의 receiptStatus 필드(배지)와 같은 값이라 목록과 배지가 어긋나지 않는다. 접수 기간이 끝난 폼은"
-                        + " form_stts_cd가 OPEN인 채로 EXPIRED이므로 CLOSED(운영자가 직접 마감)와 구분된다. 접수 기간이 비어"
-                        + " 있는 폼은 '제한 없음'이라 열려 있으면 ACCEPTING이고, 시작 정각·종료 정각은 양쪽 모두 접수 중이다. 저장"
-                        + " 컬럼(form_stts_cd)으로 거르던 statusCode 파라미터는 없어졌다. 응답 건수(responseCount)는 제출"
+                        + " 다섯 값이며 응답의 receiptStatus 필드(배지)와 같은 값이라 목록과 배지가 어긋나지 않는다. 여러 값을 함께 보려면"
+                        + " receiptStatuses(쉼표 구분 또는 반복)로 — receiptStatus와 둘 다 오면 receiptStatuses가"
+                        + " 이긴다. 접수 기간이 끝난 폼은 form_stts_cd가 OPEN인 채로 EXPIRED이므로 CLOSED(운영자가 직접 마감)와"
+                        + " 구분된다. 접수 기간이 비어 있는 폼은 '제한 없음'이라 열려 있으면 ACCEPTING이고, 시작 정각·종료 정각은 양쪽 모두"
+                        + " 접수 중이다. 저장 컬럼(form_stts_cd)으로 거르던 statusCode 파라미터는 없어졌다. 응답"
+                        + " 건수(responseCount)는 제출"
                         + " 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 세며 작성 중인 임시저장 응답은 세지"
                         + " 않는다. 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping
     public ApiResponse<List<FormSummaryResponse>> getForms(
             @RequestParam(required = false) FormReceiptStatus receiptStatus,
+            @RequestParam(required = false) List<FormReceiptStatus> receiptStatuses,
             @RequestParam(required = false) Long labelId) {
+        /*
+         * 다중 값(#492 · ssccops#408)은 파라미터를 **하나 더 두었다** — `receiptStatus`의 타입을 목록으로
+         * 바꾸면 OpenAPI 하위 호환 게이트(#412)가 막고 옛 링크(`?receiptStatus=ACCEPTING`)가 깨진다.
+         * 둘 다 오면 다중 값이 이긴다: 화면이 다중 값을 보내는 쪽으로 옮겨 갔다는 뜻이다.
+         * `?receiptStatuses=DRAFT,SCHEDULED,ACCEPTING`과 반복 파라미터 둘 다 Spring이 목록으로 묶는다.
+         */
+        if (receiptStatuses != null && !receiptStatuses.isEmpty()) {
+            return ApiResponse.success(
+                    formService.getFormsByReceiptStatuses(receiptStatuses, labelId));
+        }
         return ApiResponse.success(formService.getForms(receiptStatus, labelId));
     }
 

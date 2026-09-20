@@ -81,7 +81,9 @@ public class PublicFormController {
                             + " 않는다). **반려된(REJECTED) 응답도 세우지 않는다** — 반려는 그 응답에 대한 종결이지"
                             + " 그 폼에 대한 종결이 아니라, 단일 응답 폼이라도 다시 낼 수 있다(#192)."
                             + " myResponseCount는 내가 낸 건수(임시저장 제외, 반려 포함)이고 submittedAt은 마지막 제출"
-                            + " 일시라, alreadySubmitted가 false인데 값이 있을 수 있다.")
+                            + " 일시라, alreadySubmitted가 false인데 값이 있을 수 있다."
+                            + " sysFormCd는 시스템 폼(기획안 PROPOSAL)일 때만 값이 있고 일반 폼은 null이다 —"
+                            + " www가 시스템 폼을 알아보고 응답자를 lms로 보내기 위한 값이다(#499).")
     @GetMapping("/{formId}/public")
     public ApiResponse<PublicFormResponse> getPublicForm(
             @PathVariable String formId, @CurrentMember MemberEntity respondent) {

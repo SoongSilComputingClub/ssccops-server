@@ -205,8 +205,25 @@ class PublicFormControllerTest {
                 .andExpect(jsonPath("$.data.formTtlNm").value("2026 신규모집 지원서"))
                 .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3))
                 .andExpect(jsonPath("$.data.qitemCpstCn.qitems[0].qitemId").value("q1"))
+                .andExpect(jsonPath("$.data.sysFormCd").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.alreadySubmitted").value(false))
                 .andExpect(jsonPath("$.data.submittedAt").value(Matchers.nullValue()));
+    }
+
+    /*
+     * 시스템 폼은 sysFormCd를 싣는다 (#499 · ssccops#417). www 공개 폼 화면이 기획안을 알아보고
+     * 응답자를 lms로 보내기 위한 값이다 — 409로 막지 않고 문항도 종전대로 싣는다(www가 어디로
+     * 보낼지 알아야 하고, 안내 한 줄을 그리려면 제목이 필요하다). 일반 폼은 위 테스트가 null을 본다.
+     */
+    @Test
+    void getPublicFormCarriesSystemFormCode() throws Exception {
+        Long formId = saveSystemForm("기획안", "PROPOSAL", FormStatus.OPEN, null, null, true);
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + formId + "/public"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.formId").value(formId))
+                .andExpect(jsonPath("$.data.sysFormCd").value("PROPOSAL"))
+                .andExpect(jsonPath("$.data.qitemCpstCn.qitems.length()").value(3));
     }
 
     /*

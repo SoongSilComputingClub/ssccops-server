@@ -59,6 +59,11 @@ public enum OperationErrorCode implements ErrorCode {
 
     // 404
     OPERATION_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "운영 건을 찾을 수 없습니다."),
+    // 첨부 (#493)
+    ATTACHMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "ATTACHMENT_NOT_FOUND", "첨부 파일을 찾을 수 없습니다."),
+    UNSUPPORTED_ATTACHMENT_TYPE(
+            HttpStatus.BAD_REQUEST, "UNSUPPORTED_ATTACHMENT_TYPE", "첨부할 수 없는 파일 형식입니다."),
+    ATTACHMENT_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "ATTACHMENT_TOO_LARGE", "첨부 파일이 너무 큽니다."),
     WORK_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "업무를 찾을 수 없습니다."),
 
     // 404 — 선택한 하위 업무 유형이 없을 때. 유형은 기준 데이터라 삭제·변경될 수 있다

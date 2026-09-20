@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -125,6 +126,32 @@ public class FormServiceImpl implements FormService {
         return summariesOf(
                 formRepository.findAllForAdminList(
                         filter.statuses(), labelId, filter.periodMatch().name(), filter.now()));
+    }
+
+    /*
+     * 접수 상태 여러 값 (#492 · ssccops#408). 화면 기본이 «작성 중 + 접수 예정 + 접수 중» 셋이라 생겼다.
+     *
+     * 질의를 상태마다 한 번씩 돌려 합치지 않고 **전체를 읽어 판정값으로 거른다.** 판정값
+     * (receiptStatusOf)은 목록 항목이 어차피 계산해 싣는 값이라, 그것으로 거르면 «배지와 목록이
+     * 어긋나지 않는다»(#325)는 계약이 두 경로가 아니라 한 값으로 지켜진다. 대가는 전체를 읽는
+     * 것인데 이 목록은 페이징이 없고(위 주석) 폼은 회차마다 몇 장씩 느는 데이터라 지금은 값싸다 —
+     * 페이징이 붙는 날 filterFor를 합집합으로 넓히는 쪽으로 옮긴다.
+     *
+     * 값 하나면 단일 값 경로(DB 필터)와 같은 결과다 — FormControllerTest가 그것을 본다.
+     */
+    @Override
+    public List<FormSummaryResponse> getFormsByReceiptStatuses(
+            Collection<FormReceiptStatus> receiptStatuses, Long labelId) {
+        if (receiptStatuses == null || receiptStatuses.isEmpty()) {
+            return getForms(null, labelId);
+        }
+        Set<FormReceiptStatus> wanted = EnumSet.copyOf(receiptStatuses);
+        if (wanted.size() == 1) {
+            return getForms(wanted.iterator().next(), labelId);
+        }
+        return getForms(null, labelId).stream()
+                .filter(summary -> wanted.contains(summary.receiptStatus()))
+                .toList();
     }
 
     /*
@@ -573,10 +600,24 @@ public class FormServiceImpl implements FormService {
      * 문항 구성 자체의 형식 검사(QuestionCompositionValidator)는 여기 넣지 않는다. 그쪽은
      * 값을 정리해 **돌려주는** 단계라 호출부가 그 결과를 받아 써야 하고, updateForm은 그 값을
      * 접수 기간 검사보다 먼저 만들어 둔다 — 순서를 여기로 옮기면 기간이 뒤집힌 요청의 오류가
-     * INVALID_RECEIPT_PERIOD에서 다른 것으로 바뀐다.
+     * INVALID_RECEIPT_PERIOD에서 다른 것으로 바뀐다. 대신 **여기로 오는 composition은 그 검증기가
+     * 정규화한 값이어야 한다** — 두 호출부 모두 그렇다. 시스템 폼 잠금이 현재 구성과 비교하므로
+     * 정규화 전 값을 넘기면 잔여 속성이 정리된 것만으로 같은 구성이 '바뀐 것'으로 읽힌다.
+     *
+     * **시스템 폼 잠금(#498 · ssccops#416)이 맨 앞이다.** 시스템 폼의 문항은 코드가 읽는 구성이라
+     * — SystemFormContract의 qitemId, acdm_actv_type.type_nm과 글자까지 같아야 하는 유형 선택지,
+     * 파서 명세인 커리큘럼 줄 포맷 — 문항이 바뀌는 저장은 무엇이 바뀌었든 409로 끊는다. 그전까지의
+     * 잠금은 계약 문항 삭제(400 SYSTEM_FORM_CONTRACT_VIOLATION)만이라 선택지 수정·문항 추가가
+     * 승인 이관을 조용히 깨뜨릴 수 있었다. 앞에 두는 것은 이 판정이 뒤 둘을 포함하기 때문이다 —
+     * 시스템 폼에서 문항이 바뀌지 않았으면 뒤 두 검사는 통과가 자명하고, 바뀌었으면 어느 문항이
+     * 어떻게 바뀌었든 답은 같은 409여야 한다. 뒤 둘은 지우지 않는다: 응답 보호는 평범한 폼의
+     * 규칙이고, 계약 검사는 이 잠금 안쪽의 세부 판정으로 남아 선언(SystemFormContract)이 폼 상세에
+     * 실리는 근거를 지킨다. 화면 잠금(웹)은 편의이고 이 409가 방어선이다 — MCP·API로 오는 저장도
+     * 같은 자리를 지난다.
      */
     private void ensureQuestionCompositionReplaceable(
             FormEntity form, QuestionCompositionContent composition) {
+        form.requireSystemQuestionItemsUnchanged(composition);
         ensureExistingQuestionItemsKept(form, composition);
         form.requireSystemContractKept(
                 composition, systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));

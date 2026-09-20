@@ -20,6 +20,7 @@
 - 지연·마감임박 판정은 응답값(`SubWorkEntity.isDelayedBefore`)과 목록 필터(`SubWorkRepositoryImpl`)가 `DeadlinePolicy` 한 곳의 경계를 함께 쓴다 — 각자 오늘 0시를 계산하지 않는다.
 - 쿼리 수는 테스트가 못 박는다(승인함 12회 · 상세·목록도 각각) — 세지 않은 쿼리는 늘어도 아무도 모른다(#62). 페이지 단위 집계로 N+1을 막는다.
 - 회의 전이(개회·회의록작성·종료)는 회의 책임자 본인만, 책임자는 언제나 `oper.pic_id`와 같다(`MeetingEntity` 주석).
+- **첨부는 oper에 붙는다** (#493 · ssccops#410 · ADR-0042 «추가»라 이력 대상 아님). `/v1/operations/{operationId}/attachments` 하나로 업무·하위 업무·회의를 다 받는다 — 셋이 전부 `oper`의 확장이라서. `FileTargetType.OPERATION` + `file_rfrnc`의 메타 열(V18 `orgnl_file_nm`·`file_size`·`rgtr_mbr_id`·`crt_dt`). 권한은 `@RequireAuthority`가 아니라 `OperationAttachmentAccessPolicy` — 종류마다 그 건을 보는/고치는 권한 그대로(업무 `WORK_READ`/`WORK_MANAGE` · 하위 업무 읽기 `WORK_READ`, 쓰기 담당자 또는 `WORK_MANAGE` · 회의 `MEETING_READ`/`MEETING_MANAGE`). 형식은 `AttachmentFileType`(문서·표·발표·압축·이미지 · 이름의 확장자로), 상한 25MB(이미지 10MB와 별개), 발급이 곧 참조 행(PUT 실패는 웹이 DELETE), 내려받기는 원본 이름을 `response-content-disposition`에 실은 서명 URL을 **JSON**으로(`…/download-url` — 인증 경로라 브라우저 이동으로는 헤더를 못 붙여 302가 안 된다), 삭제만 감사 로그(`operation.attachment.delete`).
 
 ## 다른 도메인과 닿는 곳
 

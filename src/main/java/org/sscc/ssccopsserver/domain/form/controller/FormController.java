@@ -77,17 +77,30 @@ public class FormController {
             description =
                     "폼 관리 화면의 카드 목록. receiptStatus·labelId는 각각 선택이며 둘 다 주면 AND로 걸린다. **필터는 접수 상태"
                         + " 파생값(receiptStatus)으로 거른다** — DRAFT·SCHEDULED·ACCEPTING·EXPIRED·CLOSED"
-                        + " 다섯 값이며 응답의 receiptStatus 필드(배지)와 같은 값이라 목록과 배지가 어긋나지 않는다. 접수 기간이 끝난 폼은"
-                        + " form_stts_cd가 OPEN인 채로 EXPIRED이므로 CLOSED(운영자가 직접 마감)와 구분된다. 접수 기간이 비어"
-                        + " 있는 폼은 '제한 없음'이라 열려 있으면 ACCEPTING이고, 시작 정각·종료 정각은 양쪽 모두 접수 중이다. 저장"
-                        + " 컬럼(form_stts_cd)으로 거르던 statusCode 파라미터는 없어졌다. 응답 건수(responseCount)는 제출"
+                        + " 다섯 값이며 응답의 receiptStatus 필드(배지)와 같은 값이라 목록과 배지가 어긋나지 않는다. 여러 값을 함께 보려면"
+                        + " receiptStatuses(쉼표 구분 또는 반복)로 — receiptStatus와 둘 다 오면 receiptStatuses가"
+                        + " 이긴다. 접수 기간이 끝난 폼은 form_stts_cd가 OPEN인 채로 EXPIRED이므로 CLOSED(운영자가 직접 마감)와"
+                        + " 구분된다. 접수 기간이 비어 있는 폼은 '제한 없음'이라 열려 있으면 ACCEPTING이고, 시작 정각·종료 정각은 양쪽 모두"
+                        + " 접수 중이다. 저장 컬럼(form_stts_cd)으로 거르던 statusCode 파라미터는 없어졌다. 응답"
+                        + " 건수(responseCount)는 제출"
                         + " 이상(SUBMITTED·CHANGES_REQUESTED·ACCEPTED·REJECTED)만 세며 작성 중인 임시저장 응답은 세지"
                         + " 않는다. 목록에는 문항 구성(qitemCpstCn)을 싣지 않는다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping
     public ApiResponse<List<FormSummaryResponse>> getForms(
             @RequestParam(required = false) FormReceiptStatus receiptStatus,
+            @RequestParam(required = false) List<FormReceiptStatus> receiptStatuses,
             @RequestParam(required = false) Long labelId) {
+        /*
+         * 다중 값(#492 · ssccops#408)은 파라미터를 **하나 더 두었다** — `receiptStatus`의 타입을 목록으로
+         * 바꾸면 OpenAPI 하위 호환 게이트(#412)가 막고 옛 링크(`?receiptStatus=ACCEPTING`)가 깨진다.
+         * 둘 다 오면 다중 값이 이긴다: 화면이 다중 값을 보내는 쪽으로 옮겨 갔다는 뜻이다.
+         * `?receiptStatuses=DRAFT,SCHEDULED,ACCEPTING`과 반복 파라미터 둘 다 Spring이 목록으로 묶는다.
+         */
+        if (receiptStatuses != null && !receiptStatuses.isEmpty()) {
+            return ApiResponse.success(
+                    formService.getFormsByReceiptStatuses(receiptStatuses, labelId));
+        }
         return ApiResponse.success(formService.getForms(receiptStatus, labelId));
     }
 
@@ -130,8 +143,8 @@ public class FormController {
                     "폼 상세·편집 화면이 진입 시 호출한다. 문항 구성을 통째로 싣고 있어 편집기가 그대로 초안으로 받아 쓴다."
                             + " systemRequiredQitemIds는 코드가 이 폼에서 반드시 읽는 qitemId 목록이다 — 편집 화면은 이"
                             + " 문항들의 삭제를 미리 잠그면 된다. 시스템 폼이 아니거나 요구 문항이 없으면 빈 배열이며 null은"
-                            + " 내려가지 않는다. 미리 잠그는 것은 편의일 뿐이고 지우고 저장하면 서버가 여전히 400"
-                            + " SYSTEM_FORM_CONTRACT_VIOLATION으로 거절한다."
+                            + " 내려가지 않는다. 미리 잠그는 것은 편의일 뿐이고 시스템 폼(sysYn = true)의 문항을 바꿔"
+                            + " 저장하면 서버가 409 SYSTEM_FORM_QUESTIONS_LOCKED로 거절한다."
                             + " 없는 폼은 404 FORM_NOT_FOUND로 응답한다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping("/{formId}")
@@ -177,8 +190,9 @@ public class FormController {
                             + " labelIds를 생략하거나 빈 배열로 보내면 라벨을 모두 뗀다."
                             + " 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 바꾸면 409 QUESTION_ITEM_IN_USE로"
                             + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다."
-                            + " 시스템 폼(sysYn = true)에서 코드가 요구하는 qitemId를 지우면 400"
-                            + " SYSTEM_FORM_CONTRACT_VIOLATION이며, 문구 수정·문항 추가·순서 변경은 허용한다."
+                            + " 시스템 폼(sysYn = true)은 문항(qitems)이 바뀌는 저장을 409"
+                            + " SYSTEM_FORM_QUESTIONS_LOCKED로 거절한다 — 코드가 읽는 구성이라 추가·삭제·문구·선택지"
+                            + " 전부 잠기며, 제목·접수 기간·라벨·페이지 안내 문구처럼 문항이 그대로인 저장은 통과한다."
                             + " 문항 구성이 실제로 바뀐 저장에서만 qitemVer가 1 오르고 그 시점 구성이 이력에 남는다"
                             + " — 제목·접수 기간만 바꾼 저장에는 버전이 오르지 않는다."
                             + " **mltplRspnsYn(다중 응답 허용)은 이 API로 바꾼다** — 생략하면 false로 저장되므로"

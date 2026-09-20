@@ -50,7 +50,15 @@ public enum FileTargetType {
      * 본문 마크다운의 링크가 아니라 목록(표지·슬라이드)이라 «무엇이 몇 장인가»를 서버가 답해야
      * 하고, 표지(cntnt_post.cover_file_id)가 이 행을 FK로 가리킨다.
      */
-    CONTENT_POST("content-posts/");
+    CONTENT_POST("content-posts/"),
+    /*
+     * 운영 건(업무·하위 업무·회의) 첨부 (#493 · ssccops#410). 대상은 **oper 행**이다 — 셋이 전부
+     * oper의 확장 테이블이라 대상 종류 하나로 충분하고, 어느 종류인지는 oper.oper_type_cd가 안다.
+     * 대상당 여러 건. 키는 operations/{operId}/{uuid}.{ext}. 원본 파일명·크기·올린 사람·시각은
+     * V18이 file_rfrnc에 붙인 열(orgnl_file_nm·file_size·rgtr_mbr_id·crt_dt)에 — 사용자에게 «무슨
+     * 파일인가»를 보여야 하는 첫 대상이다(이미지 갤러리는 그림 자체가 답이었다).
+     */
+    OPERATION("operations/");
 
     /** 이 대상의 오브젝트 키 접두사 */
     private final String objectKeyPrefix;

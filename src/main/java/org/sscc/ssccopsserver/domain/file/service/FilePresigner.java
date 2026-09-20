@@ -147,8 +147,25 @@ public class FilePresigner {
      * 것이라 조건에 넣을 것이 키뿐이다.
      */
     public String presignGet(String objectKey) {
-        GetObjectRequest getObjectRequest =
-                GetObjectRequest.builder().bucket(bucketName).key(objectKey).build();
+        return presignGet(objectKey, null);
+    }
+
+    /*
+     * 내려받기 이름을 붙인 읽기 허가 (#493). 오브젝트 키는 uuid라 브라우저가 그대로 저장하면 이름이
+     * 없다 — `response-content-disposition`을 서명에 넣어 R2가 원본 이름으로 내려주게 한다.
+     * RFC 5987(`filename*=UTF-8''…`)로 적어야 한글 이름이 깨지지 않는다.
+     */
+    public String presignGet(String objectKey, String downloadFileName) {
+        GetObjectRequest.Builder builder =
+                GetObjectRequest.builder().bucket(bucketName).key(objectKey);
+        if (downloadFileName != null && !downloadFileName.isBlank()) {
+            String encoded =
+                    java.net.URLEncoder.encode(
+                                    downloadFileName, java.nio.charset.StandardCharsets.UTF_8)
+                            .replace("+", "%20");
+            builder.responseContentDisposition("attachment; filename*=UTF-8''" + encoded);
+        }
+        GetObjectRequest getObjectRequest = builder.build();
 
         return r2Presigner
                 .presignGetObject(

@@ -24,6 +24,10 @@ public interface ContentPageRepository extends JpaRepository<ContentPageEntity, 
     Optional<ContentPageEntity> findBySlugAndPublishStatus(
             String slug, ContentPublishStatus publishStatus);
 
+    /** 접두사로 시작하는 슬러그의 게시본 — 역대 운영진 대수 목록 (#513). 정렬은 호출자가 한다 */
+    List<ContentPageEntity> findBySlugStartingWithAndPublishStatus(
+            String slugPrefix, ContentPublishStatus publishStatus);
+
     /*
      * 어드민 목록 — id 내림차순 커서. 상태 필터는 선택이다. size + 1건을 읽어 hasNext를 판정하는
      * 것은 다른 목록과 같다(Pageable은 limit로만 쓴다 — offset 페이징은 AP-13이 금한다).

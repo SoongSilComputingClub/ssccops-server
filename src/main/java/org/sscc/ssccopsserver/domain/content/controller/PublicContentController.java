@@ -13,8 +13,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPageResponse;
+import org.sscc.ssccopsserver.domain.content.dto.PublicContentPageSummaryResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostDetailResponse;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostListCondition;
 import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostSearchResponse;
@@ -22,6 +24,8 @@ import org.sscc.ssccopsserver.domain.content.dto.PublicContentPostSummaryRespons
 import org.sscc.ssccopsserver.domain.content.service.PublicContentService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.apipayload.PublicCacheControl;
+import org.sscc.ssccopsserver.global.apipayload.code.error.CommonErrorCode;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import io.swagger.v3.oas.annotations.Operation;
 
@@ -56,6 +60,28 @@ public class PublicContentController {
     public ResponseEntity<ApiResponse<PublicContentPageResponse>> getPage(
             @PathVariable String slug) {
         return cached(ApiResponse.success(publicContentService.getPublishedPage(slug)));
+    }
+
+    /*
+     * 접두사 목록 (#513 · ssccops#425). 접두사가 필수인 것은 «게시된 페이지 전부»를 익명에게 열지
+     * 않기 위해서다 — 카탈로그(무슨 페이지가 있나)는 www 코드가 알고, 이 경로가 답하는 것은 «이
+     * 패턴의 페이지 중 게시된 것»뿐이다(역대 운영진 `operators-`). 비거나 50자를 넘으면 400.
+     */
+    @Operation(
+            summary = "공개 페이지 목록(익명 · 접두사)",
+            description =
+                    "slugPrefix로 시작하는 슬러그 중 게시(PUBLISHED)된 페이지의 slug·제목·게시일을 slug"
+                            + " 오름차순으로. 본문은 없다. 접두사는 필수(1~50자)이며 초안은 나타나지 않는다."
+                            + " 역대 운영진 대수 탭이 `operators-`로 부른다.")
+    @GetMapping("/pages")
+    public ResponseEntity<ApiResponse<List<PublicContentPageSummaryResponse>>> getPages(
+            @RequestParam String slugPrefix) {
+        if (slugPrefix.isBlank() || slugPrefix.length() > 50) {
+            throw new GeneralException(CommonErrorCode.VALIDATION_FAILED);
+        }
+        return cached(
+                ApiResponse.success(
+                        publicContentService.getPublishedPagesBySlugPrefix(slugPrefix)));
     }
 
     @Operation(

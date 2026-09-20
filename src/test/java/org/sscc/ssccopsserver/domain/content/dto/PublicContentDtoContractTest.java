@@ -26,6 +26,7 @@ class PublicContentDtoContractTest {
     private static final List<Class<?>> PUBLIC_RECORDS =
             List.of(
                     PublicContentPageResponse.class,
+                    PublicContentPageSummaryResponse.class,
                     PublicContentPostSummaryResponse.class,
                     PublicContentPostDetailResponse.class,
                     ContentImageResponse.class,

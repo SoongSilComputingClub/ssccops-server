@@ -113,6 +113,10 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V14__add_form_key.sql` | `form.form_key`(UUID · NOT NULL · DEFAULT gen_random_uuid()). 공개 폼 주소의 식별자 (ADR-0036 · ssccops#359) |
 | `V15__create_content_tables.sql` | `cntnt_page`·`cntnt_page_hstry`·`cntnt_post`·`cntnt_post_hstry` — 공개 사이트 콘텐츠 넷(페이지·포스트와 전체 스냅샷 이력, 6개 enum 컬럼 전부 CHECK). 그리고 `file_rfrnc.trgt_se_cd` CHECK를 `CONTENT_POST`까지 세 값으로 넓힌다(V13의 규칙이 처음 정상 적용된 자리) + `idx_file_rfrnc_trgt` (ssccops#381 · ADR-0038) |
 | `V16__seed_content_manage_authority.sql` | `CONTENT_MANAGE` 권한 한 줄(`SUPER` 직속 · `sys_yn`)과 회장·부회장 부여. 홍보국 역할은 시드에 없어 화면에서 켠다. `test`의 `data-locations`·`SeedScript.LOCATIONS`가 V3·V11과 함께 이 파일도 가리킨다 (ssccops#381) |
+| `V17__create_heartbeat_function.sql` | `public.heartbeat()`(anon에 EXECUTE만). Supabase Free 일시정지 방지의 2차이며 메타 레포 워크플로가 친다. `anon` 역할이 없는 로컬·Testcontainers를 위해 grant는 `pg_roles`를 보고 조건부다 (#487 · ADR-0041) |
+| `V18__operation_attachments.sql` | `file_rfrnc.trgt_se_cd` CHECK에 `OPERATION`을 더하고(V13 규칙 그대로) 첨부 메타 열 넷(원본 파일명·크기·올린 사람·시각)을 전부 NULL 허용으로 더한다 — 기존 행(회차 사진·규정 문서·갤러리)은 채울 값이 없다 (#493 · ADR-0042) |
+| `V19__seed_track_program_type.sql` | 학술 활동 유형 `TRACK`(`트랙`)과 리더 역할 `트랙장`. **유형은 배포 없이 늘어나게 설계됐지만 리더 역할 매핑만 코드 상수라**(`AcademicProgramApprovalEffectsServiceImpl`) 셋이 같은 배포에 있어야 한다 — 유형만 넣으면 승인이 400에서 500으로 바뀔 뿐이다. `test`의 `data-locations`·`SeedScript.LOCATIONS`가 V3·V11·V16과 함께 이 파일도 가리킨다 (#510) |
+| `V20__add_track_option_to_proposal_form.sql` | 라이브 기획안 폼(`PROPOSAL`)의 `programType` 선택지에 «트랙»을 더한다. **시드가 아니라 «이미 선 DB 수리»라 `data-locations`·`SeedScript.LOCATIONS`에 넣지 않는다**(V4와 같은 성격 — 새 환경은 시더가 이미 셋으로 세운다). 시더 멱등(#510)과 문항 잠금(#498)에 양쪽으로 막혀 UI·API·배포 어느 길로도 넣을 수 없던 값이다. 선택지 문자열은 리터럴이 아니라 `acdm_actv_type`에서 읽고, `qitem_ver`를 올린 뒤 변경자 NULL로 이력 한 줄을 남긴다(`form_rspns_hstry.qitem_ver`가 «몇 번 구성에 답했나»를 기록하기 때문) (#512) |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**
@@ -191,7 +195,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `member` | 회원 · 등급/상태와 그 이력 · 역할 배정 · 권한 트리(`authrt`) · 가입/계정 연결/CSV 이관/하드 삭제 | [domain/member/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/member/AGENTS.md) |
 | `operation` | 업무 · 하위 업무(전이·승인·투표·체크리스트) · 회의 · 승인함 · 대시보드 — `oper` 공통 테이블의 확장 | [domain/operation/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/operation/AGENTS.md) |
 | `form` | 폼(JSONB 문항) · 응답과 검토 이력 · 시스템 폼(기획안) · 템플릿 · 소프트 삭제 | [domain/form/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/form/AGENTS.md) |
-| `academicprogram` | 스터디·프로젝트 — 기획안 승인 이관으로만 생기는 행사의 1:1 확장 · 회차·출석·인증사진 · 모집 선발 | [domain/academicprogram/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/academicprogram/AGENTS.md) |
+| `academicprogram` | 스터디·프로젝트·트랙 — 기획안 승인 이관으로만 생기는 행사의 1:1 확장 · 회차·출석·인증사진 · 모집 선발 | [domain/academicprogram/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/academicprogram/AGENTS.md) |
 | `event` | 행사 게시물 · 참가자 · 본문 이미지(presigned PUT · 영구 리다이렉트) · 익명 공개 조회 · 소프트 삭제 | [domain/event/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/event/AGENTS.md) |
 | `content` | 공개 사이트 콘텐츠 — 페이지(slug 단건)·포스트(분류·활동일·표지·갤러리) · 전체 스냅샷 개정 이력 · 게시/게시 취소 · from-event 복사 · `file_rfrnc` 갤러리 · 익명 조회(`/public/v1/pages`·`/posts`, 공개 전용 record) · MCP 도구 6 | [domain/content/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/content/AGENTS.md) |
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |

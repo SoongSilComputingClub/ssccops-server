@@ -52,19 +52,26 @@ public class AcademicProgramApprovalEffectsServiceImpl
     private static final String RECRUITMENT_FORM_TITLE_SUFFIX = " 모집";
 
     /*
-     * 학술 활동 유형 → 리더 역할명. STUDY/PROJECT 2종은 data.sql이 시드하는 role_nm
-     * "스터디장"/"프로젝트장"과 각각 대응한다(#130 유형 코드테이블, #71~ role 시드).
+     * 학술 활동 유형 → 리더 역할명. STUDY/PROJECT/TRACK 3종은 마이그레이션이 시드하는 role_nm
+     * "스터디장"/"프로젝트장"/"트랙장"과 각각 대응한다(#130 유형 코드테이블, #71~ role 시드,
+     * #510 트랙).
      *
      * type.getName() + "장" 같은 자동 유도를 쓰지 않는 것은 의도된 것이다 —
      * acdm_actv_type.type_nm은 관리 화면에서 바꿀 수 있는 값이라(AcademicProgramType
      * ServiceImpl.update), 코드 상수인 typeCd를 키로 둬야 이름이 바뀌어도 매핑이 흔들리지
-     * 않는다. 새 유형(세미나 등)이 늘면 이 맵과 role 시드를 함께 늘려야 한다 — 매핑이 없는
-     * typeCd는 missingSeed로 막는다.
+     * 않는다.
+     *
+     * **새 유형은 여기까지 와야 끝난다** (#510). 유형 자체는 배포 없이 acdm_actv_type에 행을
+     * 더하는 것으로 늘어나지만(그렇게 설계됐다 — AcademicProgramTypeEntity 주석), 이 맵은 코드라
+     * 배포가 필요하다. 그래서 유형만 넣으면 승인이 400에서 **500**으로 바뀔 뿐 여전히 막힌다 —
+     * 아래 missingSeed는 IllegalStateException이라 GlobalExceptionHandler의 최후 핸들러가 받는다.
+     * 유형 행 · role 시드 · 이 한 줄 셋이 같은 배포에 있어야 한다.
      */
     private static final Map<String, String> LEADER_ROLE_NAME_BY_TYPE_CODE =
             Map.of(
                     "STUDY", "스터디장",
-                    "PROJECT", "프로젝트장");
+                    "PROJECT", "프로젝트장",
+                    "TRACK", "트랙장");
 
     private final MemberRoleRepository memberRoleRepository;
     private final MemberRoleAssignmentService memberRoleAssignmentService;

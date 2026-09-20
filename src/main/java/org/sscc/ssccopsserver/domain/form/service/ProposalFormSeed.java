@@ -50,7 +50,7 @@ public final class ProposalFormSeed {
      * 않는다 — 여기 있는 것은 시드가 처음 넣는 값일 뿐이다. 라벨을 굳이 함께 시드하는 것은
      * 폼 목록에서 기획안 폼을 눈으로 찾는 유일한 단서가 라벨이기 때문이다.
      */
-    public static final String FORM_TITLE = "스터디·프로젝트 기획안";
+    public static final String FORM_TITLE = "스터디·프로젝트·트랙 기획안";
 
     public static final String LABEL_NAME = "기획안";
 
@@ -61,7 +61,7 @@ public final class ProposalFormSeed {
      * 이미 바꿀 수 없는 값이다. 반대로 화면 문구(qitemLblNm)를 키로 삼지 않는 것도 같은 이유다.
      */
 
-    /** 유형(스터디/프로젝트) → acdm_actv_type_cd */
+    /** 유형(스터디/프로젝트/트랙) → acdm_actv_type_cd */
     public static final String QITEM_PROGRAM_TYPE = "programType";
 
     /** 활동명 → event.event_ttl */
@@ -118,15 +118,24 @@ public final class ProposalFormSeed {
     /*
      * ── 유형 선택지 ────────────────────────────────────────────
      * acdm_actv_type 기준정보의 type_nm과 **글자 하나까지** 같아야 한다(현재 시드는
-     * STUDY = '스터디', PROJECT = '프로젝트'). 응답은 문자열로 저장되는데 이관(#150)은 그것을
-     * 코드로 되돌려야 하므로, 이름이 갈리면 매핑이 끊긴다.
+     * STUDY = '스터디', PROJECT = '프로젝트', TRACK = '트랙'). 응답은 문자열로 저장되는데
+     * 이관(#150)은 그것을 코드로 되돌려야 하므로, 이름이 갈리면 매핑이 끊긴다.
      *
      * 시드가 기준정보를 조회해 선택지를 만들지 않는 것은 의도된 것이다. 그렇게 하면 폼의
      * 문항 구성이 기동 시점의 DB 상태에 따라 달라져, 어느 환경에 무엇이 들어갔는지 코드만 보고
      * 알 수 없다. 대신 ProposalFormSeedTest가 두 값이 같은지 못 박는다 — 기준정보의 이름을
      * 바꾸면 그 테스트가 빨개져 매핑이 끊긴 사실이 배포 전에 드러난다.
+     *
+     * **순서는 indct_seqno 순이다** — 위 테스트가 findAllByOrderByDisplayOrderAsc()의 결과와
+     * 이 목록을 그대로 비교한다. 트랙(#510)이 프로젝트 뒤에 오는 것은 시드가 3을 줬기 때문이고,
+     * 3인 이유는 2를 주려면 이미 시드된 프로젝트를 UPDATE로 밀어야 하는데 그것이 «배포가
+     * 운영진이 고친 값을 되돌리지 않는다»를 어기기 때문이다(V19 주석).
+     *
+     * ⚠️ **여기를 고쳐도 이미 선 폼은 바뀌지 않는다.** 시드는 멱등이라 폼이 있으면 아무것도
+     * 하지 않는다(ProposalFormSeeder) — 이 값이 닿는 곳은 폼을 처음 세우는 환경뿐이고, 배포된
+     * 폼에 선택지를 더하는 것은 폼 편집 화면의 일이다.
      */
-    public static final List<String> PROGRAM_TYPE_OPTIONS = List.of("스터디", "프로젝트");
+    public static final List<String> PROGRAM_TYPE_OPTIONS = List.of("스터디", "프로젝트", "트랙");
 
     /*
      * ── 코드가 잠그는 문항 (SystemFormContract에 실린다) ───────
@@ -163,7 +172,7 @@ public final class ProposalFormSeed {
     private static final String PAGE_TITLE = "기획안";
 
     private static final String PAGE_DESCRIPTION =
-            "스터디·프로젝트 기획안을 제출합니다. 승인되면 여기에 적은 내용이 그대로 학술 활동으로"
+            "스터디·프로젝트·트랙 기획안을 제출합니다. 승인되면 여기에 적은 내용이 그대로 학술 활동으로"
                     + " 옮겨지므로, 활동명·기간·커리큘럼은 실제 운영할 계획대로 적어 주세요.";
 
     /** 페이지 하나짜리 폼이라 모든 문항이 0번 페이지에 있다 */

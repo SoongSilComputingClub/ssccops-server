@@ -88,11 +88,14 @@ class AcademicProgramTypeControllerTest {
     void returnsSeededTypesOrderedByDisplaySeqno() throws Exception {
         mockMvc.perform(authorized(get(TYPES), outsiderToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data", hasSize(2)))
+                .andExpect(jsonPath("$.data", hasSize(3)))
                 .andExpect(jsonPath("$.data[0].typeCd").value("STUDY"))
                 .andExpect(jsonPath("$.data[0].typeNm").value("스터디"))
                 .andExpect(jsonPath("$.data[0].useYn").value(true))
-                .andExpect(jsonPath("$.data[1].typeCd").value("PROJECT"));
+                .andExpect(jsonPath("$.data[1].typeCd").value("PROJECT"))
+                // 트랙은 뒤에 붙는다 (#510) — 어휘 순서에 맞추려면 프로젝트를 UPDATE로 밀어야 한다
+                .andExpect(jsonPath("$.data[2].typeCd").value("TRACK"))
+                .andExpect(jsonPath("$.data[2].typeNm").value("트랙"));
     }
 
     // 비활성 유형도 관리 목록에는 남는다 — 되돌릴 길이 없어지면 안 된다
@@ -108,7 +111,7 @@ class AcademicProgramTypeControllerTest {
 
         mockMvc.perform(authorized(get(TYPES), outsiderToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data", hasSize(2)))
+                .andExpect(jsonPath("$.data", hasSize(3)))
                 .andExpect(jsonPath("$.data[0].typeCd").value("STUDY"))
                 .andExpect(jsonPath("$.data[0].useYn").value(false));
     }

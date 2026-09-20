@@ -116,6 +116,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V17__create_heartbeat_function.sql` | `public.heartbeat()`(anon에 EXECUTE만). Supabase Free 일시정지 방지의 2차이며 메타 레포 워크플로가 친다. `anon` 역할이 없는 로컬·Testcontainers를 위해 grant는 `pg_roles`를 보고 조건부다 (#487 · ADR-0041) |
 | `V18__operation_attachments.sql` | `file_rfrnc.trgt_se_cd` CHECK에 `OPERATION`을 더하고(V13 규칙 그대로) 첨부 메타 열 넷(원본 파일명·크기·올린 사람·시각)을 전부 NULL 허용으로 더한다 — 기존 행(회차 사진·규정 문서·갤러리)은 채울 값이 없다 (#493 · ADR-0042) |
 | `V19__seed_track_program_type.sql` | 학술 활동 유형 `TRACK`(`트랙`)과 리더 역할 `트랙장`. **유형은 배포 없이 늘어나게 설계됐지만 리더 역할 매핑만 코드 상수라**(`AcademicProgramApprovalEffectsServiceImpl`) 셋이 같은 배포에 있어야 한다 — 유형만 넣으면 승인이 400에서 500으로 바뀔 뿐이다. `test`의 `data-locations`·`SeedScript.LOCATIONS`가 V3·V11·V16과 함께 이 파일도 가리킨다 (#510) |
+| `V20__add_track_option_to_proposal_form.sql` | 라이브 기획안 폼(`PROPOSAL`)의 `programType` 선택지에 «트랙»을 더한다. **시드가 아니라 «이미 선 DB 수리»라 `data-locations`·`SeedScript.LOCATIONS`에 넣지 않는다**(V4와 같은 성격 — 새 환경은 시더가 이미 셋으로 세운다). 시더 멱등(#510)과 문항 잠금(#498)에 양쪽으로 막혀 UI·API·배포 어느 길로도 넣을 수 없던 값이다. 선택지 문자열은 리터럴이 아니라 `acdm_actv_type`에서 읽고, `qitem_ver`를 올린 뒤 변경자 NULL로 이력 한 줄을 남긴다(`form_rspns_hstry.qitem_ver`가 «몇 번 구성에 답했나»를 기록하기 때문) (#512) |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**

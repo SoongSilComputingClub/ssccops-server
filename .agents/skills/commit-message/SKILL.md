@@ -11,7 +11,7 @@ description: Draft and create a git commit message following this repo's CONTRIB
 
 1. `git status`와 `git diff --staged`(스테이징된 게 없으면 `git diff`)로 변경 내용을 파악한다. 스테이징된 파일이 없으면 어떤 파일을 커밋할지 사용자에게 확인한다 — 임의로 `git add -A`를 하지 않는다 (의도치 않은 파일이 섞일 위험).
 2. `git branch --show-current`로 현재 브랜치명을 확인한다.
-   - 브랜치가 `{type}/#{이슈번호}-{슬러그}` 형식이면 이슈 번호를 추출한다.
+   - 브랜치가 `{type}/#{이슈번호}` 형식(옛 `{type}/#{이슈번호}-{슬러그}` 포함)이면 이슈 번호를 추출한다.
    - `main`/`develop`이거나 패턴이 안 맞으면 이슈 번호 없이 진행한다 (사용자가 이슈 번호를 직접 알려주면 그것을 우선한다).
 3. 변경 내용에 맞는 커밋 타입을 고른다:
    - `feat` 새 기능 추가

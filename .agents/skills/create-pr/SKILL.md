@@ -10,7 +10,7 @@ description: Create a GitHub PR for the current branch following this repo's CON
 ## 절차
 
 1. `git branch --show-current`로 현재 브랜치명을 확인한다. `main`이나 `develop` 위에 있으면 작업 브랜치가 아니므로 사용자에게 알리고 중단한다.
-2. 브랜치명에서 이슈 번호를 추출한다 — 형식은 `{type}/#{이슈번호}-{슬러그}` (예: `feat/#23-member-detail` → `23`). 패턴에 안 맞으면 이슈 번호 없이 진행할지 사용자에게 확인한다.
+2. 브랜치명에서 이슈 번호를 추출한다 — 형식은 `{type}/#{이슈번호}` (예: `feat/#23` → `23`; 옛 `feat/#23-member-detail`도 같다). 패턴에 안 맞으면 이슈 번호 없이 진행할지 사용자에게 확인한다.
 3. 로컬 커밋이 원격에 푸시돼 있는지 확인한다 (`git status`, 필요하면 `git log @{u}..HEAD`). 안 돼 있으면 푸시해도 되는지 사용자에게 확인 후 `git push -u origin {현재 브랜치명}`.
 4. 이슈 번호가 있으면 `gh issue view {번호}`로 제목을 확인해 PR 제목에 참고한다. 이슈 제목 앞의 태그(`[Feat]` 등)는 제거하고 자연스러운 설명으로 다듬는다.
 5. PR 제목을 `[#{이슈번호}] {총 작업 내용}` 형식으로 만든다 (이슈 번호가 없으면 대괄호 없이 설명만 사용).

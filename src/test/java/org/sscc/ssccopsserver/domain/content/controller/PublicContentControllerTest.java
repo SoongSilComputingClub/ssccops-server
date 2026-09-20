@@ -112,6 +112,30 @@ class PublicContentControllerTest {
     }
 
     @Test
+    @DisplayName("접두사 목록은 게시본만 slug 오름차순으로, 본문 없이, 접두사가 비면 400이다 (#513)")
+    void pagesBySlugPrefixListsPublishedOnly() throws Exception {
+        savePage("operators-44", "44대 운영진", true);
+        savePage("operators-43", "43대 운영진", true);
+        savePage("operators-42", "42대 운영진(초안)", false);
+        savePage("operators", "운영진", true);
+        savePage("about", "소개", true);
+
+        mockMvc.perform(get("/public/v1/pages?slugPrefix=operators-"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", PublicCacheControl.HEADER_VALUE))
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].slug").value("operators-43"))
+                .andExpect(jsonPath("$.data[1].slug").value("operators-44"))
+                .andExpect(jsonPath("$.data[1].ttl").value("44대 운영진"))
+                .andExpect(jsonPath("$.data[1].pubDt").isNotEmpty())
+                .andExpect(jsonPath("$.data[1].mtxt").doesNotExist());
+
+        mockMvc.perform(get("/public/v1/pages?slugPrefix="))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
     @DisplayName("초안 페이지와 없는 slug는 같은 404 PAGE_NOT_FOUND이고 공개 캐시가 붙지 않는다")
     void draftPageLooksLikeMissingPage() throws Exception {
         savePage("draft-page", "초안", false);

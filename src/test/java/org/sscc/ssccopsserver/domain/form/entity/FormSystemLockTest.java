@@ -114,6 +114,59 @@ class FormSystemLockTest {
         assertThatThrownBy(form::requireDeletable).isInstanceOf(GeneralException.class);
     }
 
+    /* ── 문항 잠금 (#498 · ssccops#416) ─────────────────── */
+
+    /*
+     * 계약 문항을 다 지켜도 문항이 하나 늘면 409다. 계약 검사(위)가 통과시키던 것을 이 잠금이 끊는다 —
+     * 코드가 읽는 것은 qitemId만이 아니라 선택지·안내 문구까지라 문항 단위로 통째로 잠근다.
+     */
+    @Test
+    void systemFormRejectsAnyQuestionItemChange() {
+        FormEntity form = form(composition("q1", "q2"));
+        form.designateAsSystemForm("PROPOSAL");
+
+        QuestionCompositionContent added = composition("q1", "q2", "q3");
+        QuestionCompositionContent reordered = composition("q2", "q1");
+
+        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(added))
+                .isInstanceOf(GeneralException.class)
+                .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
+                .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
+        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(reordered))
+                .isInstanceOf(GeneralException.class)
+                .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
+                .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
+    }
+
+    /*
+     * 비교 대상은 qitems뿐이다 — 페이지 안내 문구는 코드가 읽지 않고 ssccops#416이 열어 둔 값이라,
+     * 같은 문항에 pages만 다른 구성은 통과한다. 구성 전체로 비교하면 안내 문구 한 줄이 409가 된다.
+     */
+    @Test
+    void systemFormLockIgnoresPagesAndPassesIdenticalQuestionItems() {
+        FormEntity form = form(composition("q1", "q2"));
+        form.designateAsSystemForm("PROPOSAL");
+
+        QuestionCompositionContent sameQuestions = composition("q1", "q2");
+        QuestionCompositionContent otherPageDescription =
+                new QuestionCompositionContent(
+                        List.of(new Page("한 장", "안내 문구를 고쳤다")), sameQuestions.qitems());
+
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(sameQuestions))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(otherPageDescription))
+                .doesNotThrowAnyException();
+    }
+
+    // 시스템 폼이 아니면 문항 잠금 자체가 없다 — 계약과 같은 갈래다
+    @Test
+    void ordinaryFormIgnoresTheQuestionLock() {
+        FormEntity form = form(composition("q1", "q2"));
+
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(composition("other")))
+                .doesNotThrowAnyException();
+    }
+
     /* ── 문항 구성 버전 ──────────────────────────────────── */
 
     @Test

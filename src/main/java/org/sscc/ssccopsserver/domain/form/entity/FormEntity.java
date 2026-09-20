@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.form.entity;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -29,6 +30,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
+import org.sscc.ssccopsserver.domain.form.code.QuestionItemType;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -500,12 +502,17 @@ public class FormEntity {
      * 이관이 그것을 코드로 되돌린다), 커리큘럼 문항의 안내 문구는 곧 파서의 명세다(#173). 선택지
      * 하나를 고치는 것만으로 승인 이관이 조용히 깨지는데 #140·#155의 잠금은 그것을 막지 못했다.
      *
-     * **비교 대상은 qitems뿐이다.** pages(제목·안내 문구 pageDescCn)는 코드가 읽지 않고 운영진이
-     * 회차마다 손대는 값이라 제목·접수 기간·라벨과 함께 열어 둔다(ssccops#416 «설명 변경은 가능»).
-     * 구성 전체(record equals)로 비교하면 안내 문구 한 줄을 고친 저장이 409가 된다.
-     * 비교는 update()와 같은 List equals이고 들어오는 값은 QuestionCompositionValidator가 정규화한
-     * 결과여야 한다 — 정규화 전 값과 비교하면 잔여 속성이 정리된 것만으로 잠금에 걸려 편집 자동
-     * 저장(상세 응답의 구성을 그대로 되보낸다)이 통째로 멈춘다.
+     * **비교 대상은 qitems의 구조 속성뿐이다** (#505 · ssccops#421). 이관이 읽는 것은 답이지 문구가
+     * 아니다 — qitemId 집합과 순서 · 유형 · 필수 여부 · 페이지 · 선택지(유형 이름과 글자까지 같아야
+     * 한다) · 분기 · 정규식 · 최대 선택 수는 답의 키·형식·값을 바꾸므로 잠그고, 질문 문구(qitemLblNm) ·
+     * 문항 설명(qitemDescCn) · 형식 오류 안내(ptrnNm·ptrnMsgCn)는 사람이 읽는 값이라 연다. #498의 첫
+     * 판은 문항 record 전체를 비교해 문구 한 줄도 409였는데, 운영진이 학기마다 안내를 다듬는 자리가
+     * 그 문구라 «지장 없는 것은 열어 둔다»로 좁혔다. 커리큘럼 안내(CURRICULUM_LINE_FORMAT)가 파서
+     * 명세라는 사실은 그대로다 — 문구를 고칠 때 형식 설명을 남기는 것은 사람의 몫이지 코드가 막을
+     * 일이 아니다. pages(제목·안내 문구)는 처음부터 보지 않았다.
+     * 들어오는 값은 QuestionCompositionValidator가 정규화한 결과여야 한다 — 정규화 전 값과
+     * 비교하면 잔여 속성이 정리된 것만으로 잠금에 걸려 편집 자동 저장(상세 응답의 구성을 그대로
+     * 되보낸다)이 통째로 멈춘다.
      *
      * requireSystemContractKept를 지우지 않은 것은 그쪽이 이 잠금 안쪽의 세부 판정이기 때문이다 —
      * 이 검사를 먼저 지나므로 저장 경로에서 400이 나갈 일은 없지만, 계약 자체(무엇을 코드가 읽는가)는
@@ -516,14 +523,39 @@ public class FormEntity {
             return;
         }
         // 검증기가 null qitems를 빈 목록으로 정규화하므로, 저장된 쪽도 같은 눈으로 본다
-        if (!Objects.equals(qitemsOrEmpty(this.questionComposition), qitemsOrEmpty(next))) {
+        if (!Objects.equals(structureOf(this.questionComposition), structureOf(next))) {
             throw new GeneralException(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
         }
     }
 
-    private static List<QuestionCompositionContent.QuestionItem> qitemsOrEmpty(
-            QuestionCompositionContent content) {
-        return content == null || content.qitems() == null ? List.of() : content.qitems();
+    /** 문항의 구조 속성 — 이관이 답을 읽는 데 쓰는 것만. 문구·설명·오류 안내는 여기 없다 (#505) */
+    private record QuestionItemStructure(
+            String qitemId,
+            QuestionItemType qitemTypeCd,
+            Boolean reqYn,
+            Integer pageSeq,
+            List<String> optionList,
+            Map<String, Integer> branchMap,
+            String ptrnCn,
+            Integer maxSlctCnt) {
+        static QuestionItemStructure of(QuestionCompositionContent.QuestionItem item) {
+            return new QuestionItemStructure(
+                    item.qitemId(),
+                    item.qitemTypeCd(),
+                    item.reqYn(),
+                    item.pageSeq(),
+                    item.optionList(),
+                    item.branchMap(),
+                    item.ptrnCn(),
+                    item.maxSlctCnt());
+        }
+    }
+
+    private static List<QuestionItemStructure> structureOf(QuestionCompositionContent content) {
+        if (content == null || content.qitems() == null) {
+            return List.of();
+        }
+        return content.qitems().stream().map(QuestionItemStructure::of).toList();
     }
 
     /*

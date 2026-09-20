@@ -118,10 +118,86 @@ class FormSystemLockTest {
 
     /*
      * 계약 문항을 다 지켜도 문항이 하나 늘면 409다. 계약 검사(위)가 통과시키던 것을 이 잠금이 끊는다 —
-     * 코드가 읽는 것은 qitemId만이 아니라 선택지·안내 문구까지라 문항 단위로 통째로 잠근다.
+     * 코드가 읽는 것은 qitemId만이 아니라 유형·선택지·필수 여부까지라 구조 속성으로 잠근다.
      */
     @Test
-    void systemFormRejectsAnyQuestionItemChange() {
+    void systemFormRejectsStructuralQuestionItemChange() {
+        FormEntity form = form(composition("q1", "q2"));
+        form.designateAsSystemForm("PROPOSAL");
+
+        QuestionCompositionContent required =
+                withItem(
+                        composition("q1", "q2"),
+                        0,
+                        q ->
+                                item(
+                                        q,
+                                        q.qitemLblNm(),
+                                        q.qitemDescCn(),
+                                        QuestionItemType.SHORT_TEXT,
+                                        true,
+                                        q.optionList()));
+        QuestionCompositionContent retyped =
+                withItem(
+                        composition("q1", "q2"),
+                        0,
+                        q ->
+                                item(
+                                        q,
+                                        q.qitemLblNm(),
+                                        q.qitemDescCn(),
+                                        QuestionItemType.LONG_TEXT,
+                                        false,
+                                        q.optionList()));
+        QuestionCompositionContent options =
+                withItem(
+                        composition("q1", "q2"),
+                        0,
+                        q ->
+                                item(
+                                        q,
+                                        q.qitemLblNm(),
+                                        q.qitemDescCn(),
+                                        QuestionItemType.SHORT_TEXT,
+                                        false,
+                                        List.of("스터디")));
+
+        for (QuestionCompositionContent changed : List.of(required, retyped, options)) {
+            assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(changed))
+                    .isInstanceOf(GeneralException.class)
+                    .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
+                    .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
+        }
+    }
+
+    /*
+     * 문구·설명만 다른 저장은 통과한다 (#505 · ssccops#421). 이관은 답을 읽지 문구를 읽지 않으므로
+     * 운영진이 학기마다 안내를 다듬는 자리를 잠그지 않는다.
+     */
+    @Test
+    void systemFormAllowsLabelAndDescriptionChange() {
+        FormEntity form = form(composition("q1", "q2"));
+        form.designateAsSystemForm("PROPOSAL");
+
+        QuestionCompositionContent reworded =
+                withItem(
+                        composition("q1", "q2"),
+                        1,
+                        q ->
+                                item(
+                                        q,
+                                        "다시 쓴 질문",
+                                        "한 줄에 한 회차씩 적어 주세요",
+                                        q.qitemTypeCd(),
+                                        q.reqYn(),
+                                        q.optionList()));
+
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(reworded))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void systemFormRejectsAddingOrReorderingQuestionItems() {
         FormEntity form = form(composition("q1", "q2"));
         form.designateAsSystemForm("PROPOSAL");
 
@@ -231,6 +307,38 @@ class FormSystemLockTest {
 
     private FormEntity form(QuestionCompositionContent composition) {
         return FormEntity.create(null, "표본 폼", composition, null, null);
+    }
+
+    /** i번째 문항을 바꾼 사본 */
+    private static QuestionCompositionContent withItem(
+            QuestionCompositionContent base,
+            int index,
+            java.util.function.UnaryOperator<QuestionItem> change) {
+        List<QuestionItem> items = new java.util.ArrayList<>(base.qitems());
+        items.set(index, change.apply(items.get(index)));
+        return new QuestionCompositionContent(base.pages(), items);
+    }
+
+    private static QuestionItem item(
+            QuestionItem base,
+            String label,
+            String description,
+            QuestionItemType type,
+            boolean required,
+            List<String> options) {
+        return new QuestionItem(
+                base.qitemId(),
+                label,
+                description,
+                type,
+                required,
+                base.pageSeq(),
+                options,
+                base.branchMap(),
+                base.ptrnCn(),
+                base.ptrnNm(),
+                base.ptrnMsgCn(),
+                base.maxSlctCnt());
     }
 
     /** 지정한 qitemId를 순서대로 담은 한 페이지짜리 구성 */

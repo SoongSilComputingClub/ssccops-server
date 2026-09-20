@@ -46,12 +46,21 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
  * myResponseCount·submittedAt은 그대로 반려된 응답을 포함한다 — 그 둘이 묻는 것은 "냈는가"이고
  * 반려된 응답도 낸 것이 맞다. 셋 중 alreadySubmitted만 기준이 다르다.
  *
+ * ── sysFormCd (#499 · ssccops#417) ──────────────────────────────
+ * www 공개 폼 화면이 시스템 폼(기획안)을 알아보고 응답자를 lms로 보내기 위한 값이다. 기획안은
+ * lms의 전용 화면(GET /v1/forms/system/{code})에서 내는 것이라, 링크로 www에 들어온 응답자에게
+ * 그 자리에서 문항을 그려 주면 lms가 붙이는 흐름(재제출·내 기획안)이 빠진 채 접수된다. 일반 폼은
+ * null이다. 코드를 실을 뿐 409로 막지 않는 것은 www가 «어디로 보낼지»를 알아야 하기 때문이고,
+ * 문항도 종전대로 싣는다 — 제목·문항 없이 코드만 내리면 화면이 안내 한 줄도 못 그린다.
+ * sysYn을 함께 싣지 않는 것은 코드가 있으면 곧 시스템 폼이라 같은 사실이 두 벌이 되어서다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record PublicFormResponse(
         Long formId,
         UUID formKey,
         String formTtlNm,
+        String sysFormCd,
         OffsetDateTime rcptBgngDt,
         OffsetDateTime rcptEndDt,
         QuestionCompositionContent qitemCpstCn,
@@ -89,6 +98,7 @@ public record PublicFormResponse(
                 form.getId(),
                 form.getFormKey(),
                 form.getTitle(),
+                form.getSystemFormCode(),
                 toOffsetDateTime(form.getReceiptBeginAt()),
                 toOffsetDateTime(form.getReceiptEndAt()),
                 form.getQuestionComposition(),

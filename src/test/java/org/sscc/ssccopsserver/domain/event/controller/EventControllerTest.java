@@ -35,10 +35,15 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventSummaryResponse;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
+import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.event.service.EventService;
@@ -58,6 +63,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationR
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
+import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
@@ -109,9 +115,13 @@ class EventControllerTest {
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @Autowired private EventRepository eventRepository;
+    @Autowired private EventClassificationRepository eventClassificationRepository;
     @Autowired private EventParticipantRepository eventParticipantRepository;
     @Autowired private FormRepository formRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private AcademicProgramRepository academicProgramRepository;
+    @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
+    @Autowired private CurriculumItemRepository curriculumItemRepository;
     @Autowired private EventService eventService;
 
     private UUID managerToken;
@@ -308,11 +318,11 @@ class EventControllerTest {
     /* ── N+1 회귀 방지 ───────────────────────────────────── */
 
     /*
-     * 목록 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1로 2회다. 행사가 몇 건이든
-     * 참가자가 몇 명이든 이 수는 그대로다 (DB-13 · 폼 목록의 3회 선례).
+     * 목록 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1 + 학술 프로그램 조회 1(#519)로
+     * 3회다. 행사가 몇 건이든 참가자가 몇 명이든 이 수는 그대로다 (DB-13 · 폼 목록의 3회 선례).
      */
     @Test
-    void getEventsRunsTwoQueriesRegardlessOfEventAndParticipantCount() throws Exception {
+    void getEventsRunsThreeQueriesRegardlessOfEventAndParticipantCount() throws Exception {
         for (int index = 0; index < 3; index++) {
             Long eventId = createEvent("EVENT", "집계 행사 " + index);
             saveConfirmedParticipant(eventId, "2026010" + index);
@@ -332,7 +342,81 @@ class EventControllerTest {
         assertThat(events)
                 .hasSize(3)
                 .allSatisfy(event -> assertThat(event.confirmedCount()).isEqualTo(1));
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(2);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
+    }
+
+    /* ── 학술 프로그램 여부·유형과 분류 잠금 (#519 · ADR-0043) ── */
+
+    /*
+     * 학술 프로그램 행사는 운영 목록·상세 모두 academicProgram { academicProgramId, typeCd,
+     * typeNm }을 싣고, 일반 행사는 null이다. 어드민 목록의 «학술 프로그램» 필터·배지가 이 값으로
+     * 그려지며, 판정은 분류가 아니라 acdm_actv 행의 존재다(픽스처의 분류는 일반 "EVENT").
+     */
+    @Test
+    void academicProgramRefIsCarriedInAdminListAndDetail() throws Exception {
+        AcademicProgramEntity program = saveAcademicProgram("스터디 행사");
+        Long programEventId = program.getEvent().getId();
+        Long plainEventId = createEvent("EVENT", "일반 행사");
+
+        String response =
+                mockMvc.perform(authorized(get(EVENTS + "?eventClsfCd=EVENT"), managerToken))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.length()").value(2))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        List<Map<String, Object>> items = JsonPath.parse(response).read("$.data");
+        Map<String, Object> programItem = itemOf(items, programEventId);
+        Map<String, Object> plainItem = itemOf(items, plainEventId);
+        assertThat(programItem)
+                .extractingByKey("academicProgram")
+                .isEqualTo(
+                        Map.of(
+                                "academicProgramId",
+                                program.getId().intValue(),
+                                "typeCd",
+                                "STUDY",
+                                "typeNm",
+                                "스터디"));
+        assertThat(plainItem).containsEntry("academicProgram", null);
+
+        mockMvc.perform(authorized(get(EVENTS + "/" + programEventId), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.data.academicProgram.academicProgramId").value(program.getId()))
+                .andExpect(jsonPath("$.data.academicProgram.typeCd").value("STUDY"))
+                .andExpect(jsonPath("$.data.academicProgram.typeNm").value("스터디"));
+        mockMvc.perform(authorized(get(EVENTS + "/" + plainEventId), managerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.academicProgram").isEmpty());
+    }
+
+    /*
+     * 프로그램 행사의 분류는 잠겨 있다 — 같은 분류로 보내는 저장(제목 편집)은 통과하고, 분류를
+     * 바꾸는 저장만 409다. 값이 바뀔 때만 보는 것은 편집 화면이 상세를 그대로 되돌려 보내는 저장이
+     * 막히면 제목·본문 편집까지 함께 막히기 때문이다. 일반 행사의 분류 변경이 그대로 열려 있는
+     * 것은 updateEventKeepsStatusAndReplacesContent가 본다. 실패 요청은 마지막 하나다(참여
+     * 트랜잭션의 rollback-only 표시).
+     */
+    @Test
+    void changingClassificationOfProgramEventReturns409ButSameClassificationSaves()
+            throws Exception {
+        Long eventId = saveAcademicProgram("분류 잠긴 스터디").getEvent().getId();
+
+        mockMvc.perform(
+                        authorized(put(EVENTS + "/" + eventId), managerToken)
+                                .content(eventBody("EVENT", "제목만 고친 스터디", null, null, null)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.eventTtl").value("제목만 고친 스터디"))
+                .andExpect(jsonPath("$.data.eventClsfCd").value("EVENT"))
+                .andExpect(jsonPath("$.data.academicProgram.typeCd").value("STUDY"));
+
+        mockMvc.perform(
+                        authorized(put(EVENTS + "/" + eventId), managerToken)
+                                .content(eventBody("SEMINAR", "분류를 옮긴 스터디", null, null, null)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM"));
     }
 
     /*
@@ -689,6 +773,33 @@ class EventControllerTest {
 
     private Long createEvent(String classificationCode, String title) throws Exception {
         return createEventWithBody(eventBody(classificationCode, title, null, null, null));
+    }
+
+    /*
+     * 학술 프로그램 행사 — 분류 "EVENT" + acdm_actv 1:1 연결 (#519). 픽스처가 리포지토리로 직접
+     * 심는 것은 이관 API가 기획안 승인 흐름 전체를 요구하기 때문이다(PublicEventControllerTest와
+     * 같은 방식). 게시 여부는 운영 목록·상세에 영향이 없어 DRAFT 그대로 둔다.
+     */
+    private Map<String, Object> itemOf(List<Map<String, Object>> items, Long eventId) {
+        return items.stream()
+                .filter(item -> ((Number) item.get("eventId")).longValue() == eventId)
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private AcademicProgramEntity saveAcademicProgram(String title) {
+        return AcademicProgramFixture.save(
+                eventRepository,
+                eventClassificationRepository,
+                academicProgramRepository,
+                academicProgramTypeRepository,
+                curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
+                "STUDY",
+                title,
+                manager,
+                List.of("1주차"));
     }
 
     private Long createEventWithPeriod(

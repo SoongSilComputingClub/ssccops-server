@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
+import org.sscc.ssccopsserver.domain.event.dto.AcademicProgramRef;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
@@ -105,8 +106,9 @@ public class EventServiceImpl implements EventService {
     private final FileCopier fileCopier;
 
     /*
-     * 삭제 가드(#347)가 "이 행사에 학술 활동이 딸려 있는가"를 묻는 포트. 공개 조회(#187)가 이미
-     * 같은 포트로 학술 event를 판별하고 있어 새로 선언하지 않았다 — 학술 저장소를 직접 부르면
+     * "이 행사에 학술 프로그램이 딸려 있는가, 어느 유형인가"를 묻는 포트. 삭제 가드(#347)와 공개
+     * 조회(#187)가 존재 여부를 묻던 자리이고, #519(ADR-0043)부터 목록·상세 응답의 academicProgram과
+     * 분류 잠금(updateEvent)도 같은 포트로 값을 받는다 — 학술 저장소를 직접 부르면
      * event → academicprogram → event 순환이 된다(DomainCycleTest · AcademicEventLinkProvider 주석).
      */
     private final AcademicEventLinkProvider academicEventLinkProvider;
@@ -117,8 +119,10 @@ public class EventServiceImpl implements EventService {
     private final AuditLog auditLog;
 
     /*
-     * 행사 목록. 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1로 2회다 — 행사마다
-     * 참가자를 세면 그대로 N+1이 된다 (DB-13, 폼 목록의 3회 선례).
+     * 행사 목록. 쿼리는 행사(분류·폼 페치 포함) 1 + 확정 참가자 집계 1 + 학술 프로그램 조회 1로
+     * 3회다 — 행사마다 참가자를 세거나 학술 프로그램을 물으면 그대로 N+1이 된다 (DB-13, 폼 목록의
+     * 3회 선례). 세 번째는 #519(ADR-0043)가 더한 것이며 학술 프로그램이 하나도 없는 목록에서도
+     * 한 번은 나간다 — 없다는 사실도 물어봐야 안다.
      *
      * 페이징을 두지 않은 것은 폼 목록(#32)과 같은 결정이다 — 화면이 필터 결과를 한 번에 그린다.
      */
@@ -150,6 +154,8 @@ public class EventServiceImpl implements EventService {
                                 Collectors.toMap(
                                         EventParticipantCount::getEventId,
                                         EventParticipantCount::getConfirmedCount));
+        Map<Long, AcademicProgramRef> academicProgramByEventId =
+                academicEventLinkProvider.academicProgramsAmong(eventIds);
 
         return events.stream()
                 .map(
@@ -158,7 +164,8 @@ public class EventServiceImpl implements EventService {
                                         event,
                                         eventPhasePolicy.phaseOf(event),
                                         eventReceiptPolicy.receiptStatusOf(event),
-                                        confirmedCountByEventId.getOrDefault(event.getId(), 0L)))
+                                        confirmedCountByEventId.getOrDefault(event.getId(), 0L),
+                                        academicProgramByEventId.get(event.getId())))
                 .toList();
     }
 
@@ -211,13 +218,23 @@ public class EventServiceImpl implements EventService {
      *
      * 폼 연결 규칙(D11)은 연결이 실제로 바뀔 때만 검사한다. 같은 formId를 그대로 되돌려
      * 보내는 저장(편집 화면이 늘 하는 일)에는 볼 것이 없다 — 이미 이 행사에 붙어 있는 폼이라
-     * 전속 검사(FORM_ALREADY_LINKED)에 걸릴 것이 없고, 그 검사가 남은 유일한 규칙이다.
+     * 전속 검사(FORM_ALREADY_LINKED)에 걸릴 것이 없다.
+     *
+     * **학술 프로그램 행사의 분류는 잠겨 있다** (#519 · ADR-0043 · 409
+     * EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM). 폼 연결과 같은 방식으로 **값이 바뀔 때만** 본다 —
+     * 편집 화면이 상세를 그대로 되돌려 보내는 저장이 프로그램 행사라는 이유로 막히면 제목·본문
+     * 편집까지 함께 막힌다. 분류 존재 확인(404)보다 먼저 보는 것은 «바꾸려 한다»는 사실 자체가
+     * 거절 이유라 어느 값으로 바꾸려 했는지는 볼 필요가 없어서다.
      */
     @Override
     @Transactional
     public EventDetailResponse updateEvent(Long eventId, EventSaveRequest request) {
         EventEntity event = findEvent(eventId);
         requireContentWithinLimit(request.mtxtCn());
+        if (!event.getClassification().getCode().equals(request.eventClsfCd())
+                && academicProgramOf(eventId) != null) {
+            throw new GeneralException(EventErrorCode.EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM);
+        }
         EventClassificationEntity classification = findClassification(request.eventClsfCd());
 
         FormEntity currentForm = event.getForm();
@@ -442,7 +459,7 @@ public class EventServiceImpl implements EventService {
         if (event.isDeleted()) {
             throw new GeneralException(EventErrorCode.EVENT_ALREADY_DELETED);
         }
-        if (academicEventLinkProvider.academicEventIdsAmong(List.of(eventId)).contains(eventId)) {
+        if (academicProgramOf(eventId) != null) {
             throw new GeneralException(EventErrorCode.EVENT_HAS_ACADEMIC_PROGRAM);
         }
         event.softDelete(Instant.now(clock));
@@ -629,7 +646,17 @@ public class EventServiceImpl implements EventService {
                 event,
                 eventPhasePolicy.phaseOf(event),
                 eventReceiptPolicy.receiptStatusOf(event),
-                confirmedCount);
+                confirmedCount,
+                academicProgramOf(event.getId()));
+    }
+
+    /*
+     * 단건 경로(상세·수정·삭제)가 "이 행사의 학술 프로그램"을 묻는 자리. 목록과 같은 묶음
+     * 메서드를 원소 하나로 부른다 — 단건 전용 질의를 두면 두 질의가 갈릴 자리가 생긴다
+     * (AcademicEventLinkProvider 주석). 학술 프로그램이 아니면 null이다.
+     */
+    private AcademicProgramRef academicProgramOf(Long eventId) {
+        return academicEventLinkProvider.academicProgramsAmong(List.of(eventId)).get(eventId);
     }
 
     private Instant toInstant(OffsetDateTime dateTime) {

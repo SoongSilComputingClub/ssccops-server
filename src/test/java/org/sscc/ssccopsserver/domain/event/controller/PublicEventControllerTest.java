@@ -328,6 +328,52 @@ class PublicEventControllerTest {
         mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId)).andExpect(status().isOk());
     }
 
+    /* ── 학술 프로그램 여부·유형이 응답에 실린다 (#519 · ADR-0043) ── */
+
+    /*
+     * 학술 프로그램 행사는 목록·상세 모두 academicProgram { academicProgramId, typeCd, typeNm }을
+     * 싣는다. 판정은 분류가 아니라 acdm_actv 행의 존재이고(픽스처의 분류는 일반 "EVENT"다), 유형
+     * 이름은 acdm_actv_type 시드 그대로다 — 화면이 이 값으로 행사형과 프로그램을 가른다.
+     */
+    @Test
+    void academicEventCarriesAcademicProgramRefInListAndDetail() throws Exception {
+        AcademicProgramEntity program = saveAcademicProgram("스터디 모집", saveOpenForm(null));
+        Long eventId = program.getEvent().getId();
+
+        mockMvc.perform(get(PUBLIC_EVENTS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].eventClsfCd").value("EVENT"))
+                .andExpect(
+                        jsonPath("$.data[0].academicProgram.academicProgramId")
+                                .value(program.getId()))
+                .andExpect(jsonPath("$.data[0].academicProgram.typeCd").value("STUDY"))
+                .andExpect(jsonPath("$.data[0].academicProgram.typeNm").value("스터디"));
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.data.academicProgram.academicProgramId").value(program.getId()))
+                .andExpect(jsonPath("$.data.academicProgram.typeCd").value("STUDY"))
+                .andExpect(jsonPath("$.data.academicProgram.typeNm").value("스터디"));
+    }
+
+    /*
+     * 일반 행사는 academicProgram이 null이다 — 필드는 내리되 값이 없다(AP-15). 서버가 «일반
+     * 행사» 같은 대체값을 만들지 않으며, 분류가 무엇이든 관계없다.
+     */
+    @Test
+    void plainEventHasNullAcademicProgramInListAndDetail() throws Exception {
+        Long eventId = saveEvent("RECRUIT", "일반 모집", true, saveOpenForm(null), null);
+
+        mockMvc.perform(get(PUBLIC_EVENTS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].eventId").value(eventId))
+                .andExpect(jsonPath("$.data[0].academicProgram").isEmpty());
+        mockMvc.perform(get(PUBLIC_EVENTS + "/" + eventId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.academicProgram").isEmpty());
+    }
+
     /* ── 픽스처 ───────────────────────────────────────────── */
 
     private Long saveEvent(String classificationCode, String title, boolean published) {
@@ -346,6 +392,11 @@ class PublicEventControllerTest {
      * 모집용 폼은 인자로 받아 접수 상태(ACCEPTING / EXPIRED)를 테스트가 정한다.
      */
     private Long saveAcademicEvent(String title, FormEntity recruitmentForm) {
+        return saveAcademicProgram(title, recruitmentForm).getEvent().getId();
+    }
+
+    /** 프로그램 식별자까지 필요한 검증(#519)을 위해 활동 자체를 돌려주는 쪽 */
+    private AcademicProgramEntity saveAcademicProgram(String title, FormEntity recruitmentForm) {
         AcademicProgramEntity program =
                 AcademicProgramFixture.save(
                         eventRepository,
@@ -362,7 +413,8 @@ class PublicEventControllerTest {
         EventEntity event = eventRepository.findById(program.getEvent().getId()).orElseThrow();
         event.linkForm(recruitmentForm);
         event.changeStatus(EventStatusAction.PUBLISH);
-        return eventRepository.saveAndFlush(event).getId();
+        eventRepository.saveAndFlush(event);
+        return program;
     }
 
     private Long saveEvent(

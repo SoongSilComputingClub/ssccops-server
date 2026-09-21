@@ -1,8 +1,8 @@
 package org.sscc.ssccopsserver.domain.academicprogram.repository;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -30,13 +30,22 @@ public interface AcademicProgramRepository
     boolean existsByFormResponse(FormResponseHistoryEntity formResponse);
 
     /*
-     * 공개 행사 조회(#187)가 "이 event가 학술 활동에서 이관된 것인가"를 묻는 자리다. event ↔
-     * acdm_actv은 1:1(uk_acdm_actv_event)이라 event_id 존재만 보면 되고, 공개 목록이 이미
-     * 읽어 온 event 집합에 대해서만 물으므로 IN 하나로 끝난다 — event 도메인이 이 판별을
-     * 직접 구현하지 않고 학술 도메인에 물어보는 유일한 진입점이다.
+     * 행사 도메인이 "이 event가 학술 프로그램인가, 어느 유형인가"를 묻는 자리다 (#187 · #519 ·
+     * ADR-0043). event ↔ acdm_actv은 1:1(uk_acdm_actv_event)이라 event_id로 찾으면 행이 최대
+     * 하나이고, 호출부(공개·운영 목록)가 이미 읽어 온 event 집합에 대해서만 물으므로 IN 하나로
+     * 끝난다 — event 도메인이 이 판별을 직접 구현하지 않고 학술 도메인에 물어보는 유일한
+     * 진입점이다(AcademicEventLinkProvider).
+     *
+     * 처음(#187)에는 event id 집합만 돌려줬는데, 행사 응답이 유형까지 싣게 되면서 프로그램
+     * 식별자·유형 코드·유형 이름을 함께 뽑는다 — 존재 여부만 묻던 자리(공개 노출 판정·삭제
+     * 가드)도 같은 질의를 쓴다. 같은 사실에 질의를 두 벌 두지 않기 위해서다.
      */
-    @Query("select ap.event.id from AcademicProgramEntity ap where ap.event.id in :eventIds")
-    Set<Long> findEventIdsByEventIdIn(@Param("eventIds") Collection<Long> eventIds);
+    @Query(
+            "select ap.event.id as eventId, ap.id as academicProgramId,"
+                    + " ap.type.code as typeCd, ap.type.name as typeNm"
+                    + " from AcademicProgramEntity ap where ap.event.id in :eventIds")
+    List<AcademicProgramEventLink> findEventLinksByEventIdIn(
+            @Param("eventIds") Collection<Long> eventIds);
 
     /*
      * 폼 상세(#190)와 폼 수정 방어선이 "이 폼이 학술 활동에 연결됐는가"를 묻는 자리다. form ↔

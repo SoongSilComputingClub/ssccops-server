@@ -36,6 +36,10 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
  * 본문(mtxtCn)은 md 원문 그대로다 — 렌더링·sanitize는 공개 앱의 안전 렌더러 책임이고 원시
  * HTML은 허용하지 않는다(D12). 서버가 여기서 HTML을 벗기지 않는 것은 저장된 것과 서빙되는 것이
  * 갈리면 운영자가 편집기에서 본 문서와 방문자가 보는 문서가 달라지기 때문이다.
+ *
+ * **academicProgram(#519 · ssccops#435 · ADR-0043)은 이 행사가 학술 프로그램(스터디·프로젝트·
+ * 트랙)일 때 그 식별자·유형이고, 아니면 null이다.** 판정은 분류가 아니라 acdm_actv 행의 존재이며
+ * 유형 어휘는 acdm_actv_type이다 — 왜 분류로 가르지 않는지는 AcademicProgramRef 주석.
  */
 public record PublicEventDetailResponse(
         Long eventId,
@@ -52,13 +56,15 @@ public record PublicEventDetailResponse(
         OffsetDateTime eventEndDt,
         String plcNm,
         Integer ptcpLmtCnt,
-        long confirmedCount) {
+        long confirmedCount,
+        AcademicProgramRef academicProgram) {
 
     public static PublicEventDetailResponse of(
             EventEntity event,
             EventPhase eventPhase,
             FormReceiptStatus receiptStatus,
-            long confirmedCount) {
+            long confirmedCount,
+            AcademicProgramRef academicProgram) {
         return new PublicEventDetailResponse(
                 event.getId(),
                 event.getClassification().getCode(),
@@ -74,6 +80,7 @@ public record PublicEventDetailResponse(
                 PublicEventSummaryResponse.toOffsetDateTime(event.getEndAt()),
                 event.getPlaceName(),
                 event.getParticipantLimitCount(),
-                confirmedCount);
+                confirmedCount,
+                academicProgram);
     }
 }

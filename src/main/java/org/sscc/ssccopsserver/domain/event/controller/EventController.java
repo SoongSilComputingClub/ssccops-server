@@ -74,6 +74,8 @@ public class EventController {
                             + " eventPhase는 행사 일시에서 조회 시점에 파생한 값이고, receiptStatus는"
                             + " 연결된 폼의 접수 상태다(폼이 없으면 null)."
                             + " confirmedCount는 확정(CONFIRMED) 참가자만 센다."
+                            + " academicProgram은 학술 프로그램(스터디·프로젝트·트랙) 행사일 때"
+                            + " 그 식별자·유형이고 아니면 null이다(ADR-0043)."
                             + " 목록에는 본문(mtxtCn)을 싣지 않는다.")
     @GetMapping
     public ApiResponse<List<EventSummaryResponse>> getEvents(
@@ -111,6 +113,7 @@ public class EventController {
             summary = "행사 단건 조회",
             description =
                     "행사 상세·편집 화면이 진입 시 호출한다. 본문(mtxtCn)은 md 원문 그대로다(D12)."
+                            + " academicProgram이 있으면 학술 프로그램 행사이며 편집 화면은 분류 칸을 잠근다."
                             + " 없는 행사와 소프트 삭제된 행사는 같은 404 EVENT_NOT_FOUND로 응답한다.")
     @GetMapping("/{eventId}")
     public ApiResponse<EventDetailResponse> getEvent(@PathVariable Long eventId) {
@@ -145,7 +148,9 @@ public class EventController {
                             + " 폼 연결은 신청(제출 이후 응답·참가자)이 있어도 바꾸거나 해제할 수 있다 —"
                             + " 옛 폼의 응답은 그 폼에 남고 이미 등록된 참가자도 행사에 남지만,"
                             + " 옛 폼의 응답으로는 이 행사의 참가자를 등록할 수 없게 된다(404)."
-                            + " 다른 행사에 전속된 폼을 연결하면 409 FORM_ALREADY_LINKED로 응답한다.")
+                            + " 다른 행사에 전속된 폼을 연결하면 409 FORM_ALREADY_LINKED로 응답한다."
+                            + " 학술 프로그램 행사(academicProgram이 있는 행사)의 분류(eventClsfCd)를 바꾸면"
+                            + " 409 EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM으로 응답한다(ADR-0043).")
     @PutMapping("/{eventId}")
     public ApiResponse<EventDetailResponse> updateEvent(
             @PathVariable Long eventId, @Valid @RequestBody EventSaveRequest request) {

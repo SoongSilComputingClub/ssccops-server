@@ -1,12 +1,15 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import java.util.Collection;
+import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramEventLink;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
+import org.sscc.ssccopsserver.domain.event.dto.AcademicProgramRef;
 import org.sscc.ssccopsserver.domain.event.service.AcademicEventLinkProvider;
 import org.sscc.ssccopsserver.domain.form.service.AcademicFormLinkProvider;
 
@@ -47,14 +50,28 @@ public class AcademicLinkageProvider
     }
 
     /*
-     * event ↔ acdm_actv은 1:1(uk_acdm_actv_event)이라 event_id 존재만 보면 된다. 빈 입력에
-     * 질의를 보내지 않는 것은 호출부(공개 목록)가 행사가 없는 페이지에서도 부르기 때문이다.
+     * event ↔ acdm_actv은 1:1(uk_acdm_actv_event)이라 event_id로 찾은 행이 곧 그 행사의
+     * 프로그램이다. 빈 입력에 질의를 보내지 않는 것은 호출부(공개·운영 목록)가 행사가 없는
+     * 페이지에서도 부르기 때문이다.
+     *
+     * 유형(typeCd·typeNm)을 여기서 acdm_actv_type 그대로 옮겨 싣는다 (#519 · ADR-0043) — 행사
+     * 응답의 «학술 프로그램 유형» 어휘가 학술 유형 관리 화면의 그것과 같아야 하고, 이 도메인만이
+     * 그 테이블을 안다. 행사 쪽 DTO(AcademicProgramRef)를 이쪽이 만드는 것은 포트의 답을 묻는
+     * 쪽 모양으로 돌려주는 것이라 방향 규칙(학술 → 행사)에 어긋나지 않는다.
      */
     @Override
-    public Set<Long> academicEventIdsAmong(Collection<Long> eventIds) {
+    public Map<Long, AcademicProgramRef> academicProgramsAmong(Collection<Long> eventIds) {
         if (eventIds.isEmpty()) {
-            return Set.of();
+            return Map.of();
         }
-        return academicProgramRepository.findEventIdsByEventIdIn(eventIds);
+        return academicProgramRepository.findEventLinksByEventIdIn(eventIds).stream()
+                .collect(
+                        Collectors.toMap(
+                                AcademicProgramEventLink::getEventId,
+                                link ->
+                                        new AcademicProgramRef(
+                                                link.getAcademicProgramId(),
+                                                link.getTypeCd(),
+                                                link.getTypeNm())));
     }
 }

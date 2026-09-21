@@ -11,6 +11,7 @@ import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicSystemFormMetaResponse;
 
 /*
  * 익명 응답 record의 필드 대조 (ssccops#381 · ADR-0038 «응답 DTO는 어드민 DTO와 다른 record로
@@ -30,7 +31,8 @@ class PublicContentDtoContractTest {
                     PublicContentPostSummaryResponse.class,
                     PublicContentPostDetailResponse.class,
                     ContentImageResponse.class,
-                    PublicOpenFormResponse.class);
+                    PublicOpenFormResponse.class,
+                    PublicSystemFormMetaResponse.class);
 
     /** 익명 응답에 절대 실리지 않는 것 — 소문자 부분 일치 */
     private static final Set<String> DENY_LIST =
@@ -104,6 +106,18 @@ class PublicContentDtoContractTest {
     void openFormResponseIsExactlyThreeFields() {
         assertThat(componentNames(PublicOpenFormResponse.class))
                 .containsExactlyInAnyOrder("formKey", "formTtlNm", "rcptEndDt");
+    }
+
+    /*
+     * 지정 시스템 폼 메타 (#520 · ADR-0044). 페이지 재료라 접수 상태·기간을 싣는 것이 OG 카드용
+     * /forms/{id}/meta와 갈리는 지점이고, 숫자 id·문항·안내 문구는 없다.
+     */
+    @Test
+    @DisplayName("지정 시스템 폼 메타는 폼 키·제목·접수 상태·기간 다섯뿐이다")
+    void systemFormMetaResponseIsExactlyFiveFields() {
+        assertThat(componentNames(PublicSystemFormMetaResponse.class))
+                .containsExactlyInAnyOrder(
+                        "formKey", "formTtlNm", "receiptStatus", "rcptBgngDt", "rcptEndDt");
     }
 
     private static List<String> componentNames(Class<?> record) {

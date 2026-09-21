@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicSystemFormMetaResponse;
 
 /*
  * 익명 폼 메타 조회 (ssccops#201). 공개 폼 링크를 메신저에 붙였을 때 크롤러가 카드를 만들
@@ -22,4 +23,11 @@ public interface PublicFormMetaService {
 
     /** 지금 접수 중인 공개 폼 — 마감이 가까운 것부터, 마감 없는 것은 뒤에 (ssccops#381) */
     List<PublicOpenFormResponse> getOpenForms();
+
+    /*
+     * 지정 시스템 폼의 익명 메타 (#520 · ADR-0044). 익명에게 여는 코드는 RECRUIT 하나이며 그 밖의
+     * 코드(기획안 PROPOSAL 포함) · 아직 지정되지 않음 · 지정됐지만 연 적 없음(DRAFT)은 **전부 404
+     * NOT_FOUND**다 — 코드를 나누면 어느 코드가 존재하는지, 지정 전인지가 익명에게 드러난다.
+     */
+    PublicSystemFormMetaResponse getSystemFormMeta(String systemFormCode);
 }

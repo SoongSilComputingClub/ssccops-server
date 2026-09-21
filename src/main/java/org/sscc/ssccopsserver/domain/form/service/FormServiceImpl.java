@@ -15,6 +15,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.form.code.DesignatableSystemForm;
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -28,6 +29,8 @@ import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormDesignateRequest;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormDesignateResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormQuestionHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
@@ -459,6 +462,68 @@ public class FormServiceImpl implements FormService {
     }
 
     /*
+     * 시스템 폼 지정 이동 (#520 · PUT /v1/forms/system/{sysFormCd} · ssccops#436 · ADR-0044).
+     *
+     * 신입회원 모집은 «학기마다 새 폼을 지정하는 포인터»다 — 한 폼을 몇 년 재사용하면 응답이 학기
+     * 구분 없이 쌓이고 반려된 사람은 다음 학기에 못 낸다(RESPONSE_ALREADY_REJECTED). 그래서 이 경로가
+     * 하는 일은 sys_form_cd 값을 옛 폼에서 새 폼으로 옮기는 것뿐이고 폼 내용에는 손대지 않는다.
+     *
+     * ── 순서가 요점이다 ──
+     * ① 코드가 허용 목록(DesignatableSystemForm)에 있는가 → 아니면 400. 기획안(PROPOSAL)은 시드가
+     *    세우고 계약이 잠그는 폼이라 화면에서 포인터를 옮기는 대상이 아니다.
+     * ② 대상 폼은 살아 있어야 한다(findForm · 지워진 폼은 404). 지워진 폼을 지정하면 익명 /join이
+     *    존재하지 않는 폼을 가리킨다.
+     * ③ 이전 지정 폼을 먼저 풀고 **flush** 한 뒤 새 폼에 붙인다. sys_form_cd가 UNIQUE라 같은 flush
+     *    안에서 두 UPDATE의 순서가 어긋나면 제약 위반이다 — Hibernate는 UPDATE끼리의 순서를 보장하지
+     *    않으므로 해제를 먼저 흘려보낸다. 트랜잭션은 하나라 밖에서는 «둘 다 바뀌었거나 아무것도
+     *    안 바뀌었거나»뿐이다.
+     * ④ 같은 폼을 다시 지정하면 아무것도 바꾸지 않고 200이다(멱등). 두 운영진이 같은 화면에서 같은
+     *    폼을 누른 경우이고 409로 끊을 이유가 없다 — 감사도 남기지 않는다(바뀐 것이 없는 사건이 쌓이면
+     *    실제 이동 시점을 못 찾는다, #78의 NO_CHANGE와 같은 판단).
+     *
+     * 감사(form.system.designate)는 대상 = 새 폼, decision = 코드, change = 이전 form_id → 새 form_id다.
+     * 익명 /join이 이 폼을 그리므로 «누가 언제 어느 폼으로»가 곧 남겨야 할 것이다.
+     *
+     * 이전 폼 조회가 findBySystemFormCode인 것은 코드가 폼을 찾는 유일한 경로이기 때문이다(#140) —
+     * del_dt를 보지 않지만 지정된 폼은 지울 수 없어(requireDeletable) 지워진 이전 폼이라는 상태가
+     * 없다.
+     */
+    @Override
+    @Transactional
+    public SystemFormDesignateResponse designateSystemForm(
+            String systemFormCode, SystemFormDesignateRequest request) {
+        String code =
+                DesignatableSystemForm.of(systemFormCode)
+                        .map(DesignatableSystemForm::code)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                FormErrorCode.SYSTEM_FORM_NOT_DESIGNATABLE));
+        FormEntity target = findForm(request.formId());
+        FormEntity previous = formRepository.findBySystemFormCode(code).orElse(null);
+        Long previousId = previous == null ? null : previous.getId();
+
+        if (previous != null && previous.getId().equals(target.getId())) {
+            return new SystemFormDesignateResponse(code, previousId, detailOf(target));
+        }
+
+        if (previous != null) {
+            previous.revokeSystemForm();
+            formRepository.flush();
+        }
+        target.designateAsSystemForm(code);
+        formRepository.flush();
+
+        auditLog.record(
+                AuditEvent.success(AuditAction.FORM_SYSTEM_DESIGNATE)
+                        .target(target.getId())
+                        .decision(code)
+                        .change(previousId, target.getId())
+                        .build());
+        return new SystemFormDesignateResponse(code, previousId, detailOf(target));
+    }
+
+    /*
      * 문항 0개인 DRAFT 폼 생성 (#133). requireOpenable()은 DRAFT를 만들 때는 돌지 않으므로
      * 빈 qitems가 그대로 통과한다 — 문항 0개 금지는 여는(OPEN) 쪽에만 걸린다(FormEntity 주석).
      *
@@ -614,13 +679,18 @@ public class FormServiceImpl implements FormService {
      * 규칙이고, 계약 검사는 이 잠금 안쪽의 세부 판정으로 남아 선언(SystemFormContract)이 폼 상세에
      * 실리는 근거를 지킨다. 화면 잠금(웹)은 편의이고 이 409가 방어선이다 — MCP·API로 오는 저장도
      * 같은 자리를 지난다.
+     *
+     * **잠금은 계약이 있는 시스템 폼에만 건다** (#520 · ssccops#436 · ADR-0044). 계약 표를 한 번만
+     * 읽어(requiredQitemIdsOf) 그 집합이 비었는지를 잠금에, 집합 자체를 계약 검사에 넘긴다 — 두 판정이
+     * 같은 조회에서 나와야 «계약이 있는데 잠기지 않는» 어긋남이 생기지 않는다. 신입회원 모집 지정 폼
+     * (RECRUIT)은 계약이 없어 문항이 자유이고, 그 폼의 저장은 평범한 폼처럼 응답 보호만 지난다.
      */
     private void ensureQuestionCompositionReplaceable(
             FormEntity form, QuestionCompositionContent composition) {
-        form.requireSystemQuestionItemsUnchanged(composition);
+        Set<String> contract = systemFormContract.requiredQitemIdsOf(form.getSystemFormCode());
+        form.requireSystemQuestionItemsUnchanged(composition, !contract.isEmpty());
         ensureExistingQuestionItemsKept(form, composition);
-        form.requireSystemContractKept(
-                composition, systemFormContract.requiredQitemIdsOf(form.getSystemFormCode()));
+        form.requireSystemContractKept(composition, contract);
     }
 
     /*

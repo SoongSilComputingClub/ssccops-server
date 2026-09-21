@@ -13,6 +13,8 @@ import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormDesignateRequest;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormDesignateResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -64,6 +66,19 @@ public interface FormService {
      * 회원 여부 자체는 컨트롤러의 @CurrentMember가 끊는다.
      */
     FormStatusChangeResponse changeStatus(Long formId, FormStatusChangeRequest request);
+
+    /*
+     * 시스템 폼 지정 이동 (#520 · PUT /v1/forms/system/{sysFormCd} · ssccops#436 · ADR-0044).
+     *
+     * 허용 목록(DesignatableSystemForm · 지금은 RECRUIT)의 코드를 대상 폼에 붙이고, 그 코드가
+     * 가리키던 이전 폼의 지정을 **한 트랜잭션에서** 푼다 — sys_form_cd가 UNIQUE라 두 폼이 같은
+     * 코드를 가질 수 없고, 두 트랜잭션으로 나누면 «아무 폼도 가리키지 않는» 순간이 익명 /join에
+     * 보인다. 목록 밖 코드는 400 SYSTEM_FORM_NOT_DESIGNATABLE, 지워진 폼은 404, 이미 다른 코드가
+     * 가리키는 폼은 409 SYSTEM_FORM_ALREADY_DESIGNATED. 같은 폼을 다시 지정하면 아무것도 바꾸지
+     * 않고 200이다.
+     */
+    SystemFormDesignateResponse designateSystemForm(
+            String systemFormCode, SystemFormDesignateRequest request);
 
     /** 복제. 생성자는 원본 생성자가 아니라 복제를 수행한 회원이다 */
     FormDuplicateResponse duplicateForm(Long formId, MemberEntity creator);

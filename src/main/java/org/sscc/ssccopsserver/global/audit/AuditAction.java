@@ -36,6 +36,12 @@ public enum AuditAction {
     ACADEMIC_SESSION_TRANSITION("academic.session.transition", "session"),
     EVENT_STATUS_CHANGE("event.status.change", "event"),
     FORM_STATUS_CHANGE("form.status.change", "form"),
+    /*
+     * 시스템 폼 포인터 이동 (#520 · ssccops#436 · ADR-0044). 신입회원 모집 지정 폼(RECRUIT)을 어느
+     * 폼으로 옮겼는가 — 익명 /join이 그 폼을 그리므로 «누가 언제 어느 폼으로»가 곧 감사 대상이다.
+     * 대상은 새로 지정된 form_id, decision은 코드(RECRUIT), change는 이전 form_id → 새 form_id다.
+     */
+    FORM_SYSTEM_DESIGNATE("form.system.designate", "form"),
 
     /*
      * 콘텐츠 게시·게시 취소 (ssccops#381 · ADR-0038). 익명에게 «무엇이 언제 열리고 닫혔나»가

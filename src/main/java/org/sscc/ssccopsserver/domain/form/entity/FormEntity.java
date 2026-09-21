@@ -394,10 +394,40 @@ public class FormEntity {
      *
      * 지정과 잠금이 한 호출인 것은 authrt와 같은 판단이다 — 코드가 가리키는데 잠기지 않은 폼은
      * 표시만 있고 보호가 없는 상태라, 두 값을 따로 세울 수 있게 두면 반드시 한쪽만 세워진다.
+     *
+     * **#520부터 화면 경로가 하나 열렸다** (ssccops#436 · ADR-0044) — PUT /v1/forms/system/{sysFormCd}.
+     * 위 «요청 본문으로 받는 길을 두지 않는다»는 그대로다: 그 경로는 코드를 본문이 아니라 서버의
+     * 허용 목록(DesignatableSystemForm · 지금은 RECRUIT 하나)에서 고르고, 그 목록에 있는 코드는
+     * 계약(SystemFormContract)이 없어 «코드가 기대하는 문항이 없는 폼»이라는 걱정 자체가 없다.
+     * 기획안(PROPOSAL)은 목록에 없으므로 종전대로 시드만 세운다.
+     *
+     * **이미 다른 코드가 가리키는 폼에는 붙이지 않는다**(409 SYSTEM_FORM_ALREADY_DESIGNATED). 컬럼이
+     * 하나라 «옮기기»는 곧 «옛 코드 지우기»이고, 기획안 폼이 RECRUIT로 덮이면 시드와 이관이 폼을 잃는다.
+     * 같은 코드를 다시 붙이는 것은 통과한다(지정 이동의 멱등 경로).
      */
     public void designateAsSystemForm(String systemFormCode) {
+        if (isSystemForm() && !Objects.equals(this.systemFormCode, systemFormCode)) {
+            throw new GeneralException(FormErrorCode.SYSTEM_FORM_ALREADY_DESIGNATED);
+        }
         this.systemFormCode = systemFormCode;
         this.systemDefined = true;
+    }
+
+    /*
+     * 시스템 폼 지정 해제 (#520 · ADR-0044). designateAsSystemForm의 짝이며 **코드가 폼을 놓는 유일한
+     * 자리**다 — 지정을 옮길 때(FormServiceImpl.designateSystemForm) 이전 폼이 이것을 지난다.
+     *
+     * 해제만 하는 API는 없다. 학기마다 새 폼을 지정하는 흐름에서 «아무 폼도 아님»은 첫 지정 전에만
+     * 있는 상태고, 비우는 길을 열면 익명 /join이 폼 없는 상태로 떨어지는 조작이 하나 더 생긴다 —
+     * 다음 폼을 지정하는 것이 곧 이전 폼을 놓는 것이다. 코드와 잠금을 함께 내리는 것은 세울 때
+     * 함께 세운 것과 같은 이유다(한쪽만 남으면 «가리키지 않는데 지울 수 없는 폼»이 된다).
+     *
+     * 응답·문항·상태는 그대로다 — 지난 학기 지원서와 그 응답은 지정이 풀린 뒤에도 평범한 폼으로
+     * 남아 있어야 한다(그것이 «한 폼 재사용» 안을 기각한 이유다).
+     */
+    public void revokeSystemForm() {
+        this.systemFormCode = null;
+        this.systemDefined = false;
     }
 
     public boolean isSystemForm() {
@@ -425,6 +455,10 @@ public class FormEntity {
      *
      * 400이 아니라 409인 것은 요청 자체는 올바르고 폼의 성격이 거절 이유이기 때문이다
      * (SYSTEM_AUTHORITY_IMMUTABLE과 같은 판단).
+     *
+     * 계약 유무를 보지 않는다 (#520 · ADR-0044). 문항 잠금은 «계약이 있는 시스템 폼»으로 좁혀졌지만
+     * 삭제는 코드가 가리키는 한 막는다 — 신입회원 모집 지정 폼(RECRUIT)이 지워지면 익명 /join이
+     * 갈 곳을 잃는다. 지난 학기 폼을 지우려면 먼저 다음 폼을 지정해 포인터를 옮긴다.
      */
     public void requireDeletable() {
         if (isSystemForm()) {
@@ -517,9 +551,21 @@ public class FormEntity {
      * requireSystemContractKept를 지우지 않은 것은 그쪽이 이 잠금 안쪽의 세부 판정이기 때문이다 —
      * 이 검사를 먼저 지나므로 저장 경로에서 400이 나갈 일은 없지만, 계약 자체(무엇을 코드가 읽는가)는
      * 여전히 SystemFormContract가 선언하고 폼 상세가 systemRequiredQitemIds로 내린다(#155).
+     *
+     * **잠기는 것은 계약이 있는 시스템 폼뿐이다** (#520 · ssccops#436 · ADR-0044). 잠그는 근거가
+     * «코드가 읽는 구성»이므로 코드가 읽는 문항이 없으면 잠글 것도 없다 — 신입회원 모집 지정 폼
+     * (RECRUIT)은 학기마다 문항이 바뀌는 지원서라 계약이 없고, 지정된 동안 막히는 것은 삭제
+     * (requireDeletable)뿐이다. 기획안(PROPOSAL)은 계약이 있어 종전대로 잠긴다.
+     *
+     * 계약 유무(hasContract)를 인자로 받는 것은 계약 표(SystemFormContract)가 빈이라 엔티티가 스스로
+     * 찾아볼 수 없기 때문이며, 그 판단을 여기서 다시 하지 않는다 — 호출부(ensureQuestionComposition
+     * Replaceable)가 requiredQitemIdsOf 한 번으로 계약 검사와 이 잠금에 같은 답을 준다. 비어 있는지가
+     * 잠금 여부이므로 집합 대신 boolean 하나만 받는다: 이 메서드가 qitemId 집합을 받으면 «어느 문항이
+     * 계약인가»까지 아는 것처럼 읽히는데 그 판정은 requireSystemContractKept의 몫이다.
      */
-    public void requireSystemQuestionItemsUnchanged(QuestionCompositionContent next) {
-        if (!isSystemForm()) {
+    public void requireSystemQuestionItemsUnchanged(
+            QuestionCompositionContent next, boolean hasContract) {
+        if (!isSystemForm() || !hasContract) {
             return;
         }
         // 검증기가 null qitems를 빈 목록으로 정규화하므로, 저장된 쪽도 같은 눈으로 본다

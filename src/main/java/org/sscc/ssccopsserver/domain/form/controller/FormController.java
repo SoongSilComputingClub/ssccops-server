@@ -23,6 +23,8 @@ import org.sscc.ssccopsserver.domain.form.dto.FormSaveResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormDesignateRequest;
+import org.sscc.ssccopsserver.domain.form.dto.SystemFormDesignateResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -143,8 +145,10 @@ public class FormController {
                     "폼 상세·편집 화면이 진입 시 호출한다. 문항 구성을 통째로 싣고 있어 편집기가 그대로 초안으로 받아 쓴다."
                             + " systemRequiredQitemIds는 코드가 이 폼에서 반드시 읽는 qitemId 목록이다 — 편집 화면은 이"
                             + " 문항들의 삭제를 미리 잠그면 된다. 시스템 폼이 아니거나 요구 문항이 없으면 빈 배열이며 null은"
-                            + " 내려가지 않는다. 미리 잠그는 것은 편의일 뿐이고 시스템 폼(sysYn = true)의 문항을 바꿔"
-                            + " 저장하면 서버가 409 SYSTEM_FORM_QUESTIONS_LOCKED로 거절한다."
+                            + " 내려가지 않는다. 미리 잠그는 것은 편의일 뿐이고 **계약이 있는 시스템 폼**(이 배열이 비지"
+                            + " 않은 폼 — 기획안)의 문항을 바꿔 저장하면 서버가 409 SYSTEM_FORM_QUESTIONS_LOCKED로"
+                            + " 거절한다. 계약이 없는 시스템 폼(신입회원 모집 지정 폼 RECRUIT)은 sysYn = true여도"
+                            + " 문항이 자유다 — 잠기는 것은 삭제뿐이다(ADR-0044)."
                             + " 없는 폼은 404 FORM_NOT_FOUND로 응답한다.")
     @RequireAuthority(AuthorityCode.FORM_READ)
     @GetMapping("/{formId}")
@@ -190,9 +194,11 @@ public class FormController {
                             + " labelIds를 생략하거나 빈 배열로 보내면 라벨을 모두 뗀다."
                             + " 이미 응답이 있는 폼에서 기존 qitemId를 지우거나 바꾸면 409 QUESTION_ITEM_IN_USE로"
                             + " 응답한다 — 응답 내용의 key가 qitemId라 끊기면 과거 응답을 읽을 수 없다."
-                            + " 시스템 폼(sysYn = true)은 문항(qitems)이 바뀌는 저장을 409"
-                            + " SYSTEM_FORM_QUESTIONS_LOCKED로 거절한다 — 코드가 읽는 구성이라 추가·삭제·문구·선택지"
-                            + " 전부 잠기며, 제목·접수 기간·라벨·페이지 안내 문구처럼 문항이 그대로인 저장은 통과한다."
+                            + " 계약이 있는 시스템 폼(systemRequiredQitemIds가 비지 않은 폼 — 기획안)은 문항(qitems)의"
+                            + " 구조가 바뀌는 저장을 409 SYSTEM_FORM_QUESTIONS_LOCKED로 거절한다 — 코드가 읽는 구성이라"
+                            + " 추가·삭제·순서·유형·선택지가 잠기며, 제목·접수 기간·라벨·문구·페이지 안내처럼 구조가"
+                            + " 그대로인 저장은 통과한다. 계약이 없는 시스템 폼(신입회원 모집 지정 폼 RECRUIT)은"
+                            + " 평범한 폼처럼 문항이 자유다(ADR-0044)."
                             + " 문항 구성이 실제로 바뀐 저장에서만 qitemVer가 1 오르고 그 시점 구성이 이력에 남는다"
                             + " — 제목·접수 기간만 바꾼 저장에는 버전이 오르지 않는다."
                             + " **mltplRspnsYn(다중 응답 허용)은 이 API로 바꾼다** — 생략하면 false로 저장되므로"
@@ -323,5 +329,46 @@ public class FormController {
             @Valid @RequestBody FormStatusChangeRequest request,
             @CurrentMember MemberEntity actor) {
         return ApiResponse.success(formService.changeStatus(formId, request));
+    }
+
+    /*
+     * 시스템 폼 지정 이동 (#520 · ssccops#436 · ADR-0044). «이번 학기 신입회원 모집 폼은 이것»을
+     * 정하는 조작이며, 본문의 formId로 포인터(sys_form_cd = RECRUIT)를 옮기고 이전 폼의 지정은 풀린다.
+     *
+     * 경로가 /v1/forms/system/{sysFormCd}인 것은 회원용 GET /v1/forms/system/{sysFormCd}(#181 ·
+     * PublicFormController)와 같은 자원을 가리키기 위해서다 — 읽기는 인증만, 쓰기는 여기서 권한을 건다.
+     * PUT인 것은 «RECRUIT라는 이름의 자리에 어느 폼을 놓는가»가 통째로 바뀌는 조작이라 멱등이기
+     * 때문이다(같은 폼을 두 번 놓아도 결과가 같다). POST /v1/forms/{formId}/designate 같은 모양은
+     * 기각했다 — 그러면 자원이 폼이 되어 «어느 코드로»를 본문이 받게 되고, #140이 막아 둔 «요청
+     * 본문으로 시스템 폼을 세우는 길»이 그 자리다.
+     *
+     * **권한은 FORM_STATUS_CHANGE를 재사용한다.** 지정은 «어느 폼이 지금 신입회원 모집을 받는가»를
+     * 정하는 운영 조작이라 접수를 열고 닫는 것과 같은 층이고, 그 권한을 가진 사람이 곧 모집을 운영하는
+     * 사람이다. FORM_SYSTEM_DESIGNATE 같은 코드를 새로 만들지 않은 것은 권한 하나가 authrt 시드
+     * 마이그레이션 한 벌과 SUPER 트리 배선을 함께 요구하기 때문이며(FORM_DELETE를 만들지 않은 것과
+     * 같은 저울, form/AGENTS.md) — «지정만 따로 떼어 준다»는 요구가 생기면 그때 나눈다.
+     *
+     * actor는 changeStatus와 같은 이유로 받는다 — @CurrentMember가 미가입 주체를 403으로 끊는다.
+     * 수행자는 감사 로그(form.system.designate)가 SecurityContext에서 채우므로 서비스로 넘기지 않는다.
+     */
+    @Operation(
+            summary = "시스템 폼 지정 이동",
+            description =
+                    "경로의 sysFormCd 자리에 본문의 formId 폼을 놓는다 — 지정할 수 있는 코드는 **RECRUIT**"
+                            + "(신입회원 모집) 하나이며 그 밖의 코드(PROPOSAL 포함)는 400"
+                            + " SYSTEM_FORM_NOT_DESIGNATABLE이다. 그 코드가 가리키던 이전 폼의 지정은 같은"
+                            + " 트랜잭션에서 풀리고(prevFormId), 같은 폼을 다시 지정하면 아무것도 바꾸지 않고"
+                            + " 200이다. 지워진 폼은 404 NOT_FOUND, 이미 다른 코드가 가리키는 폼(기획안)은"
+                            + " 409 SYSTEM_FORM_ALREADY_DESIGNATED. 지정된 동안 그 폼은 삭제할 수 없지만"
+                            + " (409 SYSTEM_FORM_IMMUTABLE) 문항은 자유다 — 문항 잠금은 계약이 있는 시스템 폼"
+                            + "(기획안)에만 걸린다. 익명 /join은 GET /public/v1/forms/system/RECRUIT/meta로"
+                            + " 이 폼을 읽는다. ssccops#436 · ADR-0044.")
+    @RequireAuthority(AuthorityCode.FORM_STATUS_CHANGE)
+    @PutMapping("/system/{sysFormCd}")
+    public ApiResponse<SystemFormDesignateResponse> designateSystemForm(
+            @PathVariable String sysFormCd,
+            @Valid @RequestBody SystemFormDesignateRequest request,
+            @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(formService.designateSystemForm(sysFormCd, request));
     }
 }

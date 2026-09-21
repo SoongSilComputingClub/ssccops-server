@@ -215,6 +215,26 @@ public enum EventErrorCode implements ErrorCode {
             HttpStatus.CONFLICT, "EVENT_HAS_ACADEMIC_PROGRAM", "학술 활동에 연결된 행사는 삭제할 수 없습니다."),
 
     /*
+     * 409 — 학술 프로그램 행사의 분류(eventClsfCd)를 바꾸려 할 때 (#519 · ssccops#435 · ADR-0043).
+     *
+     * 학술 프로그램은 분류가 아니라 구조(acdm_actv 행)와 유형(acdm_actv_type — 스터디·프로젝트·
+     * 트랙)으로 구분한다. 이관은 분류를 EVENT로 고정하는데 그 뒤 운영진이 바꾸는 것을 «정상»으로
+     * 두었더니 dev의 프로그램 행사 4건이 EVENT 2 · RECRUIT 2로 갈렸다 — 화면이 분류 칸을 잠그고,
+     * 이 코드는 그 잠금의 서버 쪽 방어선이다. 값이 같은 저장(편집 화면이 늘 하는 일)은 통과하고
+     * **바뀔 때만** 본다 — 프로그램 행사의 제목·본문·일시 편집은 그대로 열려 있어야 한다.
+     *
+     * 이미 갈린 2건은 되돌리지 않는다(ADR-0043 «포기하는 것») — 분류는 정본이 아니라 고칠
+     * 이유가 없고, 그 행사들도 이 코드에 걸려 더는 움직이지 않는다.
+     *
+     * 400이 아니라 409인 것은 요청 자체는 올바르고 행사의 현재 관계(학술 프로그램이 딸려 있다)가
+     * 거절 이유이기 때문이다 — EVENT_HAS_ACADEMIC_PROGRAM과 같은 판단이며, 판정도 같은 포트다.
+     */
+    EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM(
+            HttpStatus.CONFLICT,
+            "EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM",
+            "학술 프로그램 행사의 분류는 바꿀 수 없습니다 — 학술 프로그램은 유형(스터디·프로젝트·트랙)으로 구분합니다."),
+
+    /*
      * 409 — 이미 지워진 행사를 다시 지우려 할 때 (#347).
      *
      * 조회 계열이 지워진 행사를 없는 행사와 같은 404 EVENT_NOT_FOUND로 묶는 것과 **일부러

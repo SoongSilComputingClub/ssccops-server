@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.global.audit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
@@ -22,6 +23,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.QuestionItemType;
+import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
+import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
+import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
@@ -72,12 +78,14 @@ class AuditPointsTest {
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
+    @Autowired private FormRepository formRepository;
 
     private final ListAppender<ILoggingEvent> captured = new ListAppender<>();
     private final EcsJsonEncoder encoder = new EcsJsonEncoder();
     private final ObjectMapper mapper = new ObjectMapper();
     private Long managerId;
     private Long targetId;
+    private MemberEntity managerEntity;
 
     /* 트랜잭션이 없어 픽스처가 DB에 남는다 — 클래스당 한 번만 세운다 */
     @BeforeAll
@@ -100,6 +108,16 @@ class AuditPointsTest {
                 roleAuthorityRelationRepository,
                 manager,
                 AuthorityCode.MEMBER_MANAGE);
+        // 시스템 폼 지정(#520)은 FORM_STATUS_CHANGE를 재사용한다 — 접수를 여는 것과 같은 층의 조작
+        AuthorityFixture.grant(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                manager,
+                AuthorityCode.FORM_STATUS_CHANGE);
+        managerEntity = manager;
         MemberFixture.save(
                 memberRepository,
                 memberGradeRepository,
@@ -183,6 +201,75 @@ class AuditPointsTest {
                                 .header("Authorization", "Bearer " + MANAGER))
                 .andExpect(status().isOk());
         assertThat(captured.list).isEmpty();
+    }
+
+    /*
+     * 시스템 폼 지정 이동 (#520 · ADR-0044) — 대상은 새 폼, decision은 코드, change는 이전 폼 → 새 폼.
+     * 익명 /join이 이 폼을 그리므로 «누가 언제 어느 폼으로»가 남아야 한다. 첫 지정은 before가 없고,
+     * 같은 폼을 다시 지정하면(멱등) 아무 줄도 남지 않는다 — 바뀐 것이 없는 사건이 쌓이면 실제 이동
+     * 시점을 못 찾는다.
+     */
+    @Test
+    void systemFormDesignationIsAuditedWithPreviousFormId() throws Exception {
+        Long first = saveForm("2026-1 신입회원 모집");
+        Long second = saveForm("2026-2 신입회원 모집");
+
+        designate(first);
+        Map<String, Object> firstLine = onlyLine("form.system.designate");
+        assertThat(section(firstLine, "event")).containsEntry("outcome", "success");
+        assertThat(section(firstLine, "user")).containsEntry("id", String.valueOf(managerId));
+        Map<String, Object> firstAudit = section(firstLine, "audit");
+        assertThat(section(firstAudit, "target"))
+                .containsEntry("type", "form")
+                .containsEntry("id", String.valueOf(first));
+        assertThat(firstAudit).containsEntry("decision", "RECRUIT");
+        assertThat(section(firstAudit, "change"))
+                .doesNotContainKey("before")
+                .containsEntry("after", String.valueOf(first));
+
+        captured.list.clear();
+        designate(second);
+        Map<String, Object> secondLine = onlyLine("form.system.designate");
+        assertThat(section(section(secondLine, "audit"), "change"))
+                .containsEntry("before", String.valueOf(first))
+                .containsEntry("after", String.valueOf(second));
+
+        captured.list.clear();
+        designate(second);
+        assertThat(captured.list).isEmpty();
+    }
+
+    private void designate(Long formId) throws Exception {
+        mockMvc.perform(
+                        put("/v1/forms/system/RECRUIT")
+                                .header("Authorization", "Bearer " + MANAGER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"formId\": " + formId + "}"))
+                .andExpect(status().isOk());
+    }
+
+    private Long saveForm(String title) {
+        QuestionCompositionContent composition =
+                new QuestionCompositionContent(
+                        List.of(new QuestionCompositionContent.Page("기본 정보", null)),
+                        List.of(
+                                new QuestionCompositionContent.QuestionItem(
+                                        "q1",
+                                        "이름",
+                                        QuestionItemType.SHORT_TEXT,
+                                        true,
+                                        0,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null)));
+        return formRepository
+                .saveAndFlush(
+                        FormEntity.create(
+                                managerEntity, title, composition, null, null, FormStatus.DRAFT))
+                .getId();
     }
 
     /* ── 헬퍼: 실제 인코더로 JSON을 만들어 Map으로 — Kibana가 보는 모양 그대로 ─────── */

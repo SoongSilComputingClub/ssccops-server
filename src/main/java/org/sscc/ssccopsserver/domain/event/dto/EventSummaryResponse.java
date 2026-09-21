@@ -28,6 +28,10 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
  * 목록에 필드가 늘 때마다 한쪽만 늘어 두 화면이 갈린다(FormSummaryResponse.delDt와 같은 판단).
  * 빼지 않고 null로 내리는 것은 AP-15(값이 없어도 필드는 내린다)다.
  *
+ * **academicProgram(#519 · ssccops#435 · ADR-0043)은 이 행사가 학술 프로그램(스터디·프로젝트·
+ * 트랙)일 때 그 식별자·유형이고, 아니면 null이다.** 판정은 분류가 아니라 acdm_actv 행의 존재이며
+ * 유형 어휘는 acdm_actv_type이다 — 왜 분류로 가르지 않는지는 AcademicProgramRef 주석.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record EventSummaryResponse(
@@ -46,7 +50,8 @@ public record EventSummaryResponse(
         long confirmedCount,
         OffsetDateTime crtDt,
         OffsetDateTime mdfcnDt,
-        OffsetDateTime delDt) {
+        OffsetDateTime delDt,
+        AcademicProgramRef academicProgram) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -54,7 +59,8 @@ public record EventSummaryResponse(
             EventEntity event,
             EventPhase eventPhase,
             FormReceiptStatus receiptStatus,
-            long confirmedCount) {
+            long confirmedCount,
+            AcademicProgramRef academicProgram) {
         return new EventSummaryResponse(
                 event.getId(),
                 event.getClassification().getCode(),
@@ -71,7 +77,8 @@ public record EventSummaryResponse(
                 confirmedCount,
                 toOffsetDateTime(event.getCreatedAt()),
                 toOffsetDateTime(event.getUpdatedAt()),
-                toOffsetDateTime(event.getDeletedAt()));
+                toOffsetDateTime(event.getDeletedAt()),
+                academicProgram);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

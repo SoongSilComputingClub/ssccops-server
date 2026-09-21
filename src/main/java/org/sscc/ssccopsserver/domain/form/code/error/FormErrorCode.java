@@ -220,6 +220,29 @@ public enum FormErrorCode implements ErrorCode {
     SYSTEM_FORM_IMMUTABLE(HttpStatus.CONFLICT, "SYSTEM_FORM_IMMUTABLE", "시스템 폼은 삭제할 수 없습니다."),
 
     /*
+     * 400 — 운영진이 지정할 수 없는 시스템 폼 코드 (#520 · ssccops#436 · ADR-0044).
+     *
+     * PUT /v1/forms/system/{sysFormCd}의 경로 변수가 DesignatableSystemForm(지금은 RECRUIT 하나)에
+     * 없을 때다. 기획안(PROPOSAL)은 시드가 세우고 계약이 잠그는 폼이라 화면에서 포인터를 옮기는
+     * 대상이 아니고, 모르는 코드는 붙여 봐야 읽는 코드가 없다. 404가 아니라 400인 것은 «그 코드의
+     * 폼이 없다»가 아니라 «그 코드는 이 경로로 다룰 수 없다»이기 때문이다 — 404로 내리면 화면이
+     * «아직 지정 전»으로 오해한다.
+     */
+    SYSTEM_FORM_NOT_DESIGNATABLE(
+            HttpStatus.BAD_REQUEST, "SYSTEM_FORM_NOT_DESIGNATABLE", "지정할 수 없는 시스템 폼 코드입니다."),
+
+    /*
+     * 409 — 이미 다른 코드가 가리키는 폼을 지정하려 할 때 (#520).
+     *
+     * 기획안 폼(PROPOSAL)의 form_id를 RECRUIT로 지정하면 sys_form_cd가 덮여 기획안 시드가 폼을
+     * 잃고 승인 이관이 갈 곳을 잃는다. 코드는 폼당 하나(sys_form_cd 한 컬럼)라 «옮기기»는 성립하지
+     * 않고, 그 폼을 쓰려면 복제해서 사본을 지정하면 된다. 판정은 FormEntity.designateAsSystemForm이
+     * 던진다. 요청 자체는 올바르고 대상 폼의 성격이 거절 이유라 409다(SYSTEM_FORM_IMMUTABLE과 같다).
+     */
+    SYSTEM_FORM_ALREADY_DESIGNATED(
+            HttpStatus.CONFLICT, "SYSTEM_FORM_ALREADY_DESIGNATED", "이미 다른 코드가 가리키는 시스템 폼입니다."),
+
+    /*
      * 409 — 이미 지워진 폼을 다시 지우려 할 때 (#329).
      *
      * 조회 계열이 지워진 폼을 없는 폼과 같은 404 FORM_NOT_FOUND로 묶는 것과 **일부러 갈린다.**
@@ -276,11 +299,15 @@ public enum FormErrorCode implements ErrorCode {
      * 400이 아니라 409인 것은 SYSTEM_FORM_IMMUTABLE과 같은 이유다 — 요청 자체는 올바르고 대상
      * 폼의 성격이 거절 이유다. CONTRACT_VIOLATION(400)을 지우지 않은 것은 그쪽이 이 잠금 안쪽의
      * 세부 판정(엔티티 requireSystemContractKept)으로 남아 있기 때문이다.
+     *
+     * **#520부터 걸리는 것은 «계약이 있는 시스템 폼»뿐이다** (ssccops#436 · ADR-0044). 잠그는 근거가
+     * «코드가 읽는 구성»이므로 코드가 읽는 문항이 없는 시스템 폼 — 신입회원 모집 지정 폼(RECRUIT) —
+     * 에는 잠글 것이 없다. 메시지도 그 근거를 말한다: 시스템 폼이라서가 아니라 계약이 있어서 막힌다.
      */
     SYSTEM_FORM_QUESTIONS_LOCKED(
             HttpStatus.CONFLICT,
             "SYSTEM_FORM_QUESTIONS_LOCKED",
-            "시스템 폼의 문항은 바꿀 수 없습니다 — 코드가 읽는 구성입니다."),
+            "코드가 읽는 문항 계약이 있는 시스템 폼이라 문항을 바꿀 수 없습니다."),
 
     /*
      * 422 — 저장된 문항 구성(qitem_cpst_cn) JSON을 읽을 수 없을 때.

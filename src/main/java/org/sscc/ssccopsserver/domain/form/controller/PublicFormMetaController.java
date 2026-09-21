@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicSystemFormMetaResponse;
 import org.sscc.ssccopsserver.domain.form.service.PublicFormMetaService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.apipayload.PublicCacheControl;
@@ -77,5 +78,34 @@ public class PublicFormMetaController {
         return ResponseEntity.ok()
                 .cacheControl(PublicCacheControl.anonymousContent())
                 .body(ApiResponse.success(publicFormMetaService.getOpenForms()));
+    }
+
+    /*
+     * 지정 시스템 폼 메타 (#520 · ssccops#436 · ADR-0044). www의 모집 페이지(/join)가 «지원하기»
+     * CTA를 그리는 재료 — 신입회원 모집 폼(RECRUIT)의 키·제목·접수 상태·기간이다.
+     *
+     * /forms/open이 시스템 폼을 빼는 규칙(ADR-0038)의 예외가 아니라 그 옆의 다른 문이다: 저쪽은
+     * «지금 지원할 수 있는 것» 목록이고 이쪽은 «모집 페이지가 가리키는 폼 하나»다. RECRUIT 폼은
+     * 여전히 /forms/open에 뜨지 않는다 — 신입회원 모집은 /join이 그리는 것이지 목록 카드가 아니다.
+     *
+     * 경로 /system/{sysFormCd}/meta는 /{formId}/meta와 세그먼트 수가 달라 충돌하지 않는다.
+     * receiptStatus를 싣는 것은 /{formId}/meta와 갈리는 지점이다(PublicSystemFormMetaResponse 주석).
+     */
+    @Operation(
+            summary = "지정 시스템 폼 메타 조회(익명)",
+            description =
+                    "신입회원 모집 지정 폼(sysFormCd = RECRUIT)의 폼 키·제목·접수 상태(receiptStatus)·접수 기간을 내려준다."
+                        + " **인증이 필요 없다.** www의 /join이 이 값으로 «지원하기» 링크(/f/{formKey})와 모집 기간 안내를"
+                        + " 그린다. **RECRUIT 말고는 열리지 않는다** — 다른 코드(기획안 PROPOSAL 포함)·아직 지정된 폼이 없음·지정된"
+                        + " 폼이 아직 작성 중(DRAFT)은 전부 404 NOT_FOUND다. 마감된 폼(CLOSED·EXPIRED)은 200이고"
+                        + " receiptStatus가 그것을 말한다. /forms/{formId}/meta와 달리 접수 상태·기간을 싣는 것은 이것이 OG"
+                        + " 카드가 아니라 페이지 재료라 CDN 캐시 뒤 갱신되기 때문이다. Cache-Control: public,"
+                        + " s-maxage=300, stale-while-revalidate=600. ADR-0044.")
+    @GetMapping("/system/{sysFormCd}/meta")
+    public ResponseEntity<ApiResponse<PublicSystemFormMetaResponse>> getSystemFormMeta(
+            @PathVariable String sysFormCd) {
+        return ResponseEntity.ok()
+                .cacheControl(PublicCacheControl.anonymousContent())
+                .body(ApiResponse.success(publicFormMetaService.getSystemFormMeta(sysFormCd)));
     }
 }

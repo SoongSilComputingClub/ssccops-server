@@ -27,6 +27,11 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
  * eventPhase는 행사 일시에서 조회 시점에 파생한 값이고(EventPhasePolicy), receiptStatus는
  * 연결된 폼의 파생 값이다(EventReceiptPolicy) — 폼이 없는 공지는 null이다.
  *
+ *
+ * **academicProgram(#519 · ssccops#435 · ADR-0043)은 이 행사가 학술 프로그램(스터디·프로젝트·
+ * 트랙)일 때 그 식별자·유형이고, 아니면 null이다.** 판정은 분류가 아니라 acdm_actv 행의 존재이며
+ * 유형 어휘는 acdm_actv_type이다 — 왜 분류로 가르지 않는지는 AcademicProgramRef 주석.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record PublicEventSummaryResponse(
@@ -39,12 +44,16 @@ public record PublicEventSummaryResponse(
         FormReceiptStatus receiptStatus,
         OffsetDateTime eventBgngDt,
         OffsetDateTime eventEndDt,
-        String plcNm) {
+        String plcNm,
+        AcademicProgramRef academicProgram) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static PublicEventSummaryResponse of(
-            EventEntity event, EventPhase eventPhase, FormReceiptStatus receiptStatus) {
+            EventEntity event,
+            EventPhase eventPhase,
+            FormReceiptStatus receiptStatus,
+            AcademicProgramRef academicProgram) {
         return new PublicEventSummaryResponse(
                 event.getId(),
                 event.getClassification().getCode(),
@@ -55,7 +64,8 @@ public record PublicEventSummaryResponse(
                 receiptStatus,
                 toOffsetDateTime(event.getBeginAt()),
                 toOffsetDateTime(event.getEndAt()),
-                event.getPlaceName());
+                event.getPlaceName(),
+                academicProgram);
     }
 
     static OffsetDateTime toOffsetDateTime(Instant instant) {

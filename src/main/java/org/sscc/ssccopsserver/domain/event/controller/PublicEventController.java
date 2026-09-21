@@ -56,6 +56,8 @@ public class PublicEventController {
                             + " 작성 중(DRAFT)·보관(ARCHIVED) 행사는 존재 자체를 노출하지 않는다."
                             + " eventClsfCd는 선택 필터다. eventPhase는 행사 일시에서 조회 시점에"
                             + " 파생한 값이고, receiptStatus는 연결된 폼의 접수 상태다(폼이 없으면 null)."
+                            + " academicProgram은 학술 프로그램(스터디·프로젝트·트랙) 모집 행사일 때"
+                            + " 그 식별자·유형이고 아니면 null이다 — 화면이 행사형과 프로그램을 가르는 축이다(ADR-0043)."
                             + " 목록에는 본문(mtxtCn)을 싣지 않으며 작성자·참가자 정보도 싣지 않는다.")
     @GetMapping
     public ApiResponse<List<PublicEventSummaryResponse>> getPublishedEvents(
@@ -70,6 +72,7 @@ public class PublicEventController {
                             + " 렌더링·sanitize는 공개 앱의 안전 렌더러 책임이다(D12)."
                             + " 참가 인원은 확정 인원(confirmedCount)과 정원(ptcpLmtCnt) 숫자까지만"
                             + " 내려주고 명단은 공개하지 않는다."
+                            + " academicProgram은 학술 프로그램 행사일 때 그 식별자·유형이고 아니면 null이다(ADR-0043)."
                             + " 게시되지 않은 행사(DRAFT·ARCHIVED)와 없는 행사는 모두"
                             + " 404 EVENT_NOT_FOUND다 — 존재를 감춘다.")
     @GetMapping("/{eventId}")

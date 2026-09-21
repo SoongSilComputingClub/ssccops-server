@@ -9,11 +9,13 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.form.code.DesignatableSystemForm;
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicSystemFormMetaResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
@@ -68,6 +70,10 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
     /** 숫자 id로 열리는 상태 — 지금 접수 중인 것뿐 */
     private static final Set<FormStatus> NOW_OPEN = EnumSet.of(FormStatus.OPEN);
 
+    /** 익명 메타를 내주는 시스템 폼 코드 (#520). 지정 가능 목록과는 다른 축이다 — getSystemFormMeta 주석 */
+    private static final Set<String> ANONYMOUS_SYSTEM_FORM_CODES =
+            Set.of(DesignatableSystemForm.RECRUIT.code());
+
     @Override
     public PublicFormMetaResponse getFormMeta(String formRef) {
         Optional<UUID> key = FormRefResolver.asKey(formRef);
@@ -110,5 +116,34 @@ public class PublicFormMetaServiceImpl implements PublicFormMetaService {
                                 Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(PublicOpenFormResponse::of)
                 .toList();
+    }
+
+    /*
+     * 지정 시스템 폼의 익명 메타 (#520 · ssccops#436 · ADR-0044). www의 /join이 «지원하기» CTA를
+     * 그리는 재료이며 신입회원 모집 폼(RECRUIT)만 연다.
+     *
+     * **익명에게 여는 코드를 여기서 한 번 더 좁힌다.** 지정할 수 있는 코드(DesignatableSystemForm)와
+     * 익명에게 내주는 코드는 다른 축이다 — 지금은 둘 다 RECRUIT 하나지만, 운영진이 지정하는 폼이
+     * 늘어도 익명 홈에 실을 폼은 따로 골라야 한다(기획안이 /forms/open에서 빠지는 것과 같은 이유:
+     * 부원이 lms에서 내는 폼이 익명 페이지에 뜨면 로그인 벽에 부딪히는 링크가 된다). 그래서
+     * PROPOSAL은 지정 목록에 없을 뿐 아니라 이 집합에도 없고, 어느 쪽이든 404다.
+     *
+     * 404를 한 코드로 묶는다: 허용 밖 코드 · 아직 지정되지 않음 · 지정됐지만 DRAFT. /forms/{id}/meta가
+     * DRAFT와 없는 폼을 나누지 않는 것과 같은 이유이며, «연 적 있는» 판정(EVER_OPENED)도 그쪽과 같은
+     * 집합을 질의 조건에 넣는다. www는 404를 «지금은 모집 기간이 아닙니다»로 그린다 — 마감(CLOSED ·
+     * EXPIRED)은 200이고 receiptStatus가 말하므로 화면이 마감 안내와 «준비 중»을 가를 수 있다.
+     */
+    @Override
+    public PublicSystemFormMetaResponse getSystemFormMeta(String systemFormCode) {
+        if (!ANONYMOUS_SYSTEM_FORM_CODES.contains(systemFormCode)) {
+            throw new GeneralException(FormErrorCode.FORM_NOT_FOUND);
+        }
+        return formRepository
+                .findBySystemFormCodeAndStatusIn(systemFormCode, EVER_OPENED)
+                .map(
+                        form ->
+                                PublicSystemFormMetaResponse.of(
+                                        form, formReceiptPolicy.receiptStatusOf(form)))
+                .orElseThrow(() -> new GeneralException(FormErrorCode.FORM_NOT_FOUND));
     }
 }

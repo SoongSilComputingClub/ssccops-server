@@ -2,13 +2,14 @@ package org.sscc.ssccopsserver.domain.event.service;
 
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
+import org.sscc.ssccopsserver.domain.event.dto.AcademicProgramRef;
 import org.sscc.ssccopsserver.domain.event.dto.PublicEventDetailResponse;
 import org.sscc.ssccopsserver.domain.event.dto.PublicEventSummaryResponse;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
@@ -57,27 +58,31 @@ public class PublicEventServiceImpl implements PublicEventService {
     private final AcademicEventLinkProvider academicEventLinkProvider;
 
     /*
-     * 공개 목록. 질의는 하나다 — 분류·연결 폼은 목록 질의가 함께 페치하고(EventRepository),
-     * 확정 인원은 목록에 싣지 않으므로 집계도 필요 없다. 운영자 목록이 2회인 것과 갈리는 지점이며
-     * 근거는 계약이다: 공개 목록에는 confirmedCount가 없다.
+     * 공개 목록. 질의는 둘이다 — 분류·연결 폼은 목록 질의가 함께 페치하고(EventRepository),
+     * 학술 프로그램 여부·유형은 IN 하나로 받는다(academicProgramsAmong). 확정 인원은 목록에 싣지
+     * 않으므로 집계는 없다. 운영자 목록이 3회인 것과 갈리는 지점이며 근거는 계약이다: 공개
+     * 목록에는 confirmedCount가 없다.
      *
      * 상태 필터를 파라미터로 열지 않는다. 열면 "?eventSttsCd=DRAFT"가 곧 작성 중 행사 목록이 된다.
+     * **학술 프로그램 필터도 열지 않는다**(#519 «하지 않는 것») — 공개 목록은 전량이라 화면이
+     * academicProgram으로 가른다(www /events는 행사형만, /academic이 프로그램 모집 · ADR-0043).
      */
     @Override
     public List<PublicEventSummaryResponse> getPublishedEvents(String classificationCode) {
         List<EventEntity> events =
                 eventRepository.findAllForList(
                         EnumSet.of(EventStatus.PUBLISHED), classificationCode);
-        Set<Long> academicEventIds = academicEventIdsAmong(events);
+        Map<Long, AcademicProgramRef> academicPrograms = academicProgramsAmong(events);
 
         return events.stream()
-                .filter(event -> isVisibleToPublic(event, academicEventIds))
+                .filter(event -> isVisibleToPublic(event, academicPrograms))
                 .map(
                         event ->
                                 PublicEventSummaryResponse.of(
                                         event,
                                         eventPhasePolicy.phaseOf(event),
-                                        eventReceiptPolicy.receiptStatusOf(event)))
+                                        eventReceiptPolicy.receiptStatusOf(event),
+                                        academicPrograms.get(event.getId())))
                 .toList();
     }
 
@@ -87,7 +92,8 @@ public class PublicEventServiceImpl implements PublicEventService {
      */
     @Override
     public PublicEventDetailResponse getPublishedEvent(Long eventId) {
-        EventEntity event = findVisibleEvent(eventId);
+        VisibleEvent visible = findVisibleEvent(eventId);
+        EventEntity event = visible.event();
 
         long confirmedCount =
                 eventParticipantRepository
@@ -100,7 +106,8 @@ public class PublicEventServiceImpl implements PublicEventService {
                 event,
                 eventPhasePolicy.phaseOf(event),
                 eventReceiptPolicy.receiptStatusOf(event),
-                confirmedCount);
+                confirmedCount,
+                visible.academicProgram());
     }
 
     /*
@@ -114,34 +121,43 @@ public class PublicEventServiceImpl implements PublicEventService {
     }
 
     /*
+     * 익명에게 보이는 행사와 그 학술 프로그램(없으면 null). 노출 판정과 응답 조립이 같은 사실을
+     * 쓰므로 한 번 물어 함께 돌려준다 — 상세가 판정 뒤에 다시 물으면 같은 질의가 두 번 나간다.
+     * 이미지 리다이렉트(requirePublishedEvent)는 event만 쓰고 나머지를 버린다.
+     */
+    private record VisibleEvent(EventEntity event, AcademicProgramRef academicProgram) {}
+
+    /*
      * 익명에게 보이는 행사를 찾는다. 없거나 보이지 않으면 **둘 다** 404 EVENT_NOT_FOUND다 —
      * 코드를 나누면 "그 번호에 무엇인가 있다"가 새어 나간다 (findByIdAndStatus와 같은 태도).
      *
      * 접수가 끝난 학술 event는 목록에서 빠지는 것과 같은 기준으로 여기서도 404다(#187).
      */
-    private EventEntity findVisibleEvent(Long eventId) {
+    private VisibleEvent findVisibleEvent(Long eventId) {
         EventEntity event =
                 eventRepository
                         .findByIdAndDeletedAtIsNullAndStatus(eventId, EventStatus.PUBLISHED)
                         .orElseThrow(() -> new GeneralException(EventErrorCode.EVENT_NOT_FOUND));
 
-        if (!isVisibleToPublic(event, academicEventIdsAmong(List.of(event)))) {
+        Map<Long, AcademicProgramRef> academicPrograms = academicProgramsAmong(List.of(event));
+        if (!isVisibleToPublic(event, academicPrograms)) {
             throw new GeneralException(EventErrorCode.EVENT_NOT_FOUND);
         }
-        return event;
+        return new VisibleEvent(event, academicPrograms.get(eventId));
     }
 
     /*
-     * 주어진 event 중 학술 활동에서 이관된 것들의 id (#187). 공개 목록/상세가 이미 읽어 온
-     * event에 대해서만 물으므로 질의는 IN 하나다 — event 도메인이 학술 도메인에 묻는 유일한
-     * 자리이며, 판별 규칙(1:1 관계)의 주인은 학술 도메인이다 — 그래서 리포지토리를 직접 부르지
-     * 않고 이 도메인이 선언한 포트로 묻는다(AcademicEventLinkProvider, ssccops#242).
+     * 주어진 event 중 학술 프로그램인 것들 — event id → 프로그램 식별자·유형 (#187 · #519).
+     * 공개 목록/상세가 이미 읽어 온 event에 대해서만 물으므로 질의는 IN 하나다 — event 도메인이
+     * 학술 도메인에 묻는 유일한 자리이며, 판별 규칙(1:1 관계)의 주인은 학술 도메인이다 — 그래서
+     * 리포지토리를 직접 부르지 않고 이 도메인이 선언한 포트로 묻는다(AcademicEventLinkProvider,
+     * ssccops#242). 노출 판정(#187)과 응답의 academicProgram(ADR-0043)이 같은 답을 나눠 쓴다.
      */
-    private Set<Long> academicEventIdsAmong(List<EventEntity> events) {
+    private Map<Long, AcademicProgramRef> academicProgramsAmong(List<EventEntity> events) {
         if (events.isEmpty()) {
-            return Set.of();
+            return Map.of();
         }
-        return academicEventLinkProvider.academicEventIdsAmong(
+        return academicEventLinkProvider.academicProgramsAmong(
                 events.stream().map(EventEntity::getId).toList());
     }
 
@@ -150,8 +166,9 @@ public class PublicEventServiceImpl implements PublicEventService {
      * 무관하게 그대로 노출한다 — 기존 동작이다. 폼이 없어 receiptStatus가 null인 학술 event는
      * (정상 흐름에서는 승인 후속 처리가 늘 폼을 붙이므로 생기지 않는다) 공개하지 않는다.
      */
-    private boolean isVisibleToPublic(EventEntity event, Set<Long> academicEventIds) {
-        if (!academicEventIds.contains(event.getId())) {
+    private boolean isVisibleToPublic(
+            EventEntity event, Map<Long, AcademicProgramRef> academicPrograms) {
+        if (!academicPrograms.containsKey(event.getId())) {
             return true;
         }
         return eventReceiptPolicy.receiptStatusOf(event) == FormReceiptStatus.ACCEPTING;

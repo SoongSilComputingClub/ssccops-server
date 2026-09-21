@@ -62,9 +62,13 @@ public class AcademicProgramMigrationServiceImpl implements AcademicProgramMigra
     /*
      * 이관이 만드는 Event의 분류. 학술 활동 전용 분류(스터디·프로젝트)를 새로 시드하지 않는 것은
      * 그 어휘가 이미 acdm_actv_type에 있기 때문이다 — 같은 구분을 두 코드테이블이 나눠
-     * 가지면 운영진이 한쪽만 늘렸을 때 어느 쪽이 참인지 알 수 없다. event_clsf는 화면에서
-     * 추가·수정하는 운영 데이터이므로(ssccops#134) 여기서 고정하는 것은 **초기값**이며,
-     * 운영진이 만들어진 행사의 분류를 바꾸는 것은 정상이다(행사 수정 API).
+     * 가지면 운영진이 한쪽만 늘렸을 때 어느 쪽이 참인지 알 수 없다.
+     *
+     * **만들어진 뒤에도 이 값은 잠긴다** (#519 · ssccops#435 · ADR-0043). 처음에는 «초기값이며
+     * 운영진이 행사 수정 API로 바꾸는 것은 정상»이라 두었는데, 그 결과 dev의 프로그램 행사
+     * 4건이 EVENT 2 · RECRUIT 2로 갈렸다 — 학술 프로그램의 구분은 분류가 아니라 구조(acdm_actv
+     * 행)와 유형(acdm_actv_type)이고, 행사 수정 API는 프로그램 행사의 분류 변경을 409
+     * EVENT_CLASSIFICATION_LOCKED_FOR_PROGRAM으로 거절한다. 이미 갈린 행은 되돌리지 않는다.
      *
      * 'PROJECT' 분류가 있으니 유형별로 갈라 넣는 쪽도 후보였지만, 스터디에 대응하는 분류가 없어
      * 절반만 맞는 매핑이 된다 — 반쯤 맞는 규칙은 없는 규칙보다 읽기 어렵다.

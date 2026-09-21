@@ -24,6 +24,8 @@
 
 ## 다른 도메인과 닿는 곳
 
+- 알림: `SubWorkServiceImpl.transitionSubWork`가 끝에서 `SubWorkTransitionedEvent(subWorkId, action, performerId)`(`operation/event/`)를 `ApplicationEventPublisher`로 발행한다 (ssccops#446 · ADR-0045). **이 도메인은 누가 듣는지 모른다** — 알림 도메인이 AFTER_COMMIT + `@Async`로 듣는다. 포트 인터페이스가 아니라 이벤트인 이유는 그 record 주석에 있다(알림은 전이를 막으면 안 된다 · 롤백된 전이의 알림은 없어야 한다). 테스트가 `new SubWorkServiceImpl(...)`을 직접 부르면 마지막 인자가 `ApplicationEventPublisher`다(`event -> {}`).
+
 - 회원: `SubWorkOwnerLoadProvider`가 담당 건수를 답한다. 인가 판정은 회원 도메인 `AuthorityPolicy`를 부르고 여기서 펼침을 다시 적지 않는다(BR-M28).
 - 공유: 하위 업무·업무·회의의 공유 링크 발급·폐기 엔드포인트는 이 도메인 컨트롤러에 있고(`WORK_READ`), 미리보기 내용은 `*SharePreviewProvider`가 만든다.
 - MCP: 1차 도구 9종(`global/mcp/tool/OperationTools`)이 이 도메인의 REST를 자기 호출한다 — 루트 AGENTS.md «MCP» 절.

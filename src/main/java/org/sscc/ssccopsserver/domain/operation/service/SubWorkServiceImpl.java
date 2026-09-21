@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import jakarta.persistence.EntityManager;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -53,6 +54,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.VoteChoice;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
+import org.sscc.ssccopsserver.domain.operation.event.SubWorkTransitionedEvent;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalVoteRepository;
@@ -112,6 +114,13 @@ public class SubWorkServiceImpl implements SubWorkService {
      * SubWorkDetailResponse를 만들면 방금 바꾼 값인데도 updatedAt이 직전 값 그대로 나간다.
      */
     private final EntityManager entityManager;
+
+    /*
+     * 전이를 알림 도메인에 알리는 통로 (ssccops#446 · ADR-0045). 이 서비스는 누가 듣는지 모른다 —
+     * 이벤트 record(`SubWorkTransitionedEvent`)가 운영 패키지의 것이라 알림을 import하지 않는다.
+     * 왜 포트 인터페이스가 아니라 이벤트인지는 그 record의 주석에 있다(알림은 전이를 막으면 안 된다).
+     */
+    private final ApplicationEventPublisher eventPublisher;
 
     /*
      * oper(공통)·sub_work(확장)·체크리스트를 한 트랜잭션에서 INSERT 한다. 체크리스트 없이
@@ -563,6 +572,13 @@ public class SubWorkServiceImpl implements SubWorkService {
                         .target(subWorkId)
                         .decision(action)
                         .build());
+
+        /*
+         * 알림 (ssccops#446). 트랜잭션 안에서 발행하지만 듣는 쪽은 AFTER_COMMIT이라 이 전이가 롤백되면
+         * 알림도 없다. 실패한 전이(위의 예외 경로)는 여기까지 오지 않는다.
+         */
+        eventPublisher.publishEvent(
+                new SubWorkTransitionedEvent(subWorkId, action, performer.getId()));
 
         return SubWorkTransitionResponse.of(
                 subWork,

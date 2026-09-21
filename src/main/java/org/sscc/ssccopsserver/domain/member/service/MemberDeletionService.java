@@ -16,7 +16,8 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberDeletionPreviewResponse;
  * 한 빈에 모여 있으면 플래그·오류 코드·번역 표가 어디 있는지 한눈에 보인다.
  *
  * ── 경계는 DB가 강제한다 ───────────────────────────────────────
- * mbr을 가리키는 FK 29개 중 본인 데이터 9개(와 딸린 3개)는 V9가 ON DELETE CASCADE로 바꿨고,
+ * mbr을 가리키는 FK 중 본인 데이터 9개(와 딸린 3개)는 V9가 ON DELETE CASCADE로 바꿨고(알림 도메인의
+ * 푸시 구독·알림 둘은 V21이 처음부터 cascade로 만들었다 · ssccops#446),
  * 행위자 참조 20개는 NO ACTION 그대로다. 그래서 삭제는 deleteById 한 줄이고, 남의 기록을
  * 가리키는 회원은 DB가 막는다 — 코드로 20개 도메인을 조회해 막으면 도메인 순환이 걸리고 하나
  * 빠뜨리면 500이다(ADR-0021 A안). 이 서비스가 하는 일은 그 실패를 409로 번역하는 것뿐이다.

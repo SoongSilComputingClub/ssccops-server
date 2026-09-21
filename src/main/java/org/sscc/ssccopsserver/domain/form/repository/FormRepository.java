@@ -102,6 +102,15 @@ public interface FormRepository extends JpaRepository<FormEntity, Long> {
             UUID formKey, Collection<FormStatus> statuses);
 
     /*
+     * 익명 지정 시스템 폼 메타 (#520 · ADR-0044) — 코드로, 접수를 연 적 있는 상태만. 조건을 질의에
+     * 넣는 것은 위 두 조회와 같은 태도다(조회 뒤 거르면 그 분기 하나가 빠지는 것으로 DRAFT 폼의
+     * 제목이 익명에게 나간다). del_dt는 findBySystemFormCode와 같은 이유로 보지 않는다 — 코드가
+     * 가리키는 폼은 지울 수 없어(requireDeletable) 지워진 지정 폼이라는 상태가 없다.
+     */
+    Optional<FormEntity> findBySystemFormCodeAndStatusIn(
+            String systemFormCode, Collection<FormStatus> statuses);
+
+    /*
      * 라벨로 거른 폼 목록(#34). 관계 테이블을 지나는 조인이라 파생 쿼리로는 표현이 길어져
      * 연관 경로를 그대로 쓰는 파생 이름 대신 여기서 이름을 고정한다.
      */

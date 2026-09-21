@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -29,6 +30,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.global.apipayload.PublicCacheControl;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
@@ -51,7 +53,12 @@ class PublicFormMetaControllerTest {
 
     private static final Instant PAST = Instant.parse("2026-03-01T00:00:00Z");
 
+    /** 접수 기간 안 판정을 시스템 시각으로 두어도 흔들리지 않게 충분히 먼 미래 */
+    private static final Instant FUTURE = Instant.parse("2099-12-31T00:00:00Z");
+
     private static final String META = "/public/v1/forms/{formId}/meta";
+
+    private static final String SYSTEM_META = "/public/v1/forms/system/{sysFormCd}/meta";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
@@ -169,10 +176,104 @@ class PublicFormMetaControllerTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
+    /* ── 지정 시스템 폼 메타 (#520 · ssccops#436 · ADR-0044) ─────────── */
+
+    /*
+     * 지정된 RECRUIT 폼은 토큰 없이 200이고 실리는 것은 키·제목·접수 상태·기간 다섯뿐이다. 숫자 id·
+     * 문항·안내 문구는 없다. /forms/{id}/meta와 달리 접수 상태·기간을 싣는 것은 OG 카드가 아니라
+     * 페이지 재료이기 때문이며, CDN 캐시 헤더가 함께 나간다.
+     */
+    @Test
+    void designatedRecruitFormMetaIsReadableByAnonymous() throws Exception {
+        Long formId = saveFormWithPeriod("2026-2 신입회원 모집", FormStatus.OPEN, PAST, FUTURE);
+        designate(formId, "RECRUIT");
+
+        mockMvc.perform(get(SYSTEM_META, "RECRUIT"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", PublicCacheControl.HEADER_VALUE))
+                .andExpect(jsonPath("$.data.formKey").value(keyOf(formId).toString()))
+                .andExpect(jsonPath("$.data.formTtlNm").value("2026-2 신입회원 모집"))
+                .andExpect(jsonPath("$.data.receiptStatus").value("ACCEPTING"))
+                .andExpect(jsonPath("$.data.rcptBgngDt").isNotEmpty())
+                .andExpect(jsonPath("$.data.rcptEndDt").isNotEmpty())
+                .andExpect(jsonPath("$.data.formId").doesNotExist())
+                .andExpect(jsonPath("$.data.pageDescCn").doesNotExist())
+                .andExpect(jsonPath("$.data.qitemCpstCn").doesNotExist())
+                .andExpect(jsonPath("$.data.sysFormCd").doesNotExist());
+    }
+
+    // 마감된 지정 폼은 200이고 receiptStatus가 마감을 말한다 — www가 «준비 중»과 «마감»을 가른다
+    @Test
+    void closedRecruitFormMetaReportsClosed() throws Exception {
+        Long formId = saveForm("지난 모집", "끝", FormStatus.OPEN, null);
+        close(formId);
+        designate(formId, "RECRUIT");
+
+        mockMvc.perform(get(SYSTEM_META, "RECRUIT"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.receiptStatus").value("CLOSED"));
+    }
+
+    /*
+     * 404 하나로 묶는다 — 아직 지정된 폼이 없음 · 지정된 폼이 아직 DRAFT · RECRUIT 밖의 코드(기획안
+     * PROPOSAL 포함). 코드를 나누면 어느 코드가 있는지, 지정 전인지가 익명에게 드러난다.
+     */
+    @Test
+    void undesignatedDraftAndOtherCodesAreAllNotFound() throws Exception {
+        mockMvc.perform(get(SYSTEM_META, "RECRUIT"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+
+        Long draft = saveForm("준비 중인 모집", "아직", FormStatus.DRAFT, null);
+        designate(draft, "RECRUIT");
+        mockMvc.perform(get(SYSTEM_META, "RECRUIT"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+
+        Long proposal = saveForm("기획안", "부원 전용", FormStatus.OPEN, null);
+        designate(proposal, "PROPOSAL");
+        mockMvc.perform(get(SYSTEM_META, "PROPOSAL"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        mockMvc.perform(get(SYSTEM_META, "NO_SUCH_CODE"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /*
+     * RECRUIT 폼은 /forms/open에 여전히 뜨지 않는다 — 시스템 폼을 빼는 ADR-0038의 규칙은 그대로이고,
+     * 신입회원 모집은 /join이 위 메타로 그리는 것이지 «지금 지원할 수 있는 것» 카드가 아니다.
+     */
+    @Test
+    void openFormsListStillExcludesTheRecruitForm() throws Exception {
+        Long recruit = saveForm("신입회원 모집", "모집", FormStatus.OPEN, null);
+        designate(recruit, "RECRUIT");
+        saveForm("평범한 설문", "설문", FormStatus.OPEN, null);
+
+        mockMvc.perform(get("/public/v1/forms/open"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].formTtlNm").value("평범한 설문"));
+    }
+
     /* ── 표본 ───────────────────────────────────────────────── */
 
     private Long saveForm(
             String title, String pageDescription, FormStatus status, Instant receiptEndAt) {
+        return saveForm(title, pageDescription, status, null, receiptEndAt);
+    }
+
+    private Long saveFormWithPeriod(
+            String title, FormStatus status, Instant receiptBeginAt, Instant receiptEndAt) {
+        return saveForm(title, null, status, receiptBeginAt, receiptEndAt);
+    }
+
+    private Long saveForm(
+            String title,
+            String pageDescription,
+            FormStatus status,
+            Instant receiptBeginAt,
+            Instant receiptEndAt) {
         QuestionCompositionContent composition =
                 new QuestionCompositionContent(
                         List.of(new Page("기본 정보", pageDescription)),
@@ -191,8 +292,19 @@ class PublicFormMetaControllerTest {
                                         null)));
         return formRepository
                 .saveAndFlush(
-                        FormEntity.create(creator, title, composition, null, receiptEndAt, status))
+                        FormEntity.create(
+                                creator, title, composition, receiptBeginAt, receiptEndAt, status))
                 .getId();
+    }
+
+    /*
+     * 시스템 폼으로 세운다 (#520). API(PUT /v1/forms/system/{code})가 아니라 엔티티로 하는 것은
+     * 이 테스트가 익명 경로만 보기 때문이다 — 지정 API의 배선은 FormControllerTest가 본다.
+     */
+    private void designate(Long formId, String systemFormCode) {
+        FormEntity form = formRepository.findById(formId).orElseThrow();
+        form.designateAsSystemForm(systemFormCode);
+        formRepository.saveAndFlush(form);
     }
 
     private UUID keyOf(Long formId) {

@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.form.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -1297,6 +1298,126 @@ class FormControllerTest {
                 .andExpect(jsonPath("$.code").value("SYSTEM_FORM_QUESTIONS_LOCKED"));
     }
 
+    /* ── 시스템 폼 지정 이동 (#520 · ssccops#436 · ADR-0044) ─────────── */
+
+    /*
+     * 지정은 포인터 이동이다 — 새 폼에 RECRUIT가 붙고 이전 폼의 지정은 같은 요청에서 풀린다.
+     * 같은 폼을 다시 지정하면 200이고 아무것도 바뀌지 않는다(두 운영진이 같은 폼을 누른 경우).
+     */
+    @Test
+    void designateMovesRecruitPointerAndClearsPreviousForm() throws Exception {
+        Long spring = createForm("2026-1 신입회원 모집", null, "[]");
+        Long fall = createForm("2026-2 신입회원 모집", null, "[]");
+
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(spring)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sysFormCd").value("RECRUIT"))
+                .andExpect(jsonPath("$.data.prevFormId").isEmpty())
+                .andExpect(jsonPath("$.data.form.formId").value(spring))
+                .andExpect(jsonPath("$.data.form.sysFormCd").value("RECRUIT"))
+                .andExpect(jsonPath("$.data.form.sysYn").value(true))
+                .andExpect(jsonPath("$.data.form.systemRequiredQitemIds").isEmpty());
+
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(fall)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.prevFormId").value(spring))
+                .andExpect(jsonPath("$.data.form.formId").value(fall));
+
+        mockMvc.perform(authenticatedGet("/v1/forms/" + spring))
+                .andExpect(jsonPath("$.data.sysFormCd").isEmpty())
+                .andExpect(jsonPath("$.data.sysYn").value(false));
+        mockMvc.perform(authenticatedGet("/v1/forms/" + fall))
+                .andExpect(jsonPath("$.data.sysFormCd").value("RECRUIT"))
+                .andExpect(jsonPath("$.data.sysYn").value(true));
+
+        // 멱등 — 같은 폼을 다시 놓아도 결과는 같다
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(fall)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.prevFormId").value(fall))
+                .andExpect(jsonPath("$.data.form.formId").value(fall));
+    }
+
+    /*
+     * 지정된 폼은 계약이 없어 문항이 자유이고 삭제만 잠긴다. 지정을 옮기면 이전 폼은 평범한 폼으로
+     * 돌아가 지울 수 있다 — «한 폼 재사용»을 기각한 결정이 이 두 줄에 들어 있다.
+     */
+    @Test
+    void recruitFormIsFreeToRestructureQuestionsButNotDeletableWhileDesignated() throws Exception {
+        Long formId = createForm("신입회원 모집", null, "[]");
+        Long next = createForm("다음 학기 모집", null, "[]");
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(formId)))
+                .andExpect(status().isOk());
+
+        // 계약이 있는 시스템 폼(TEST_SYSTEM_FORM)에서는 409였던 같은 본문이 여기서는 통과한다
+        mockMvc.perform(
+                        authenticatedPut(
+                                "/v1/forms/" + formId,
+                                """
+                                {"formTtlNm": "문항을 갈아엎은 모집 폼", "qitemCpstCn": %s}
+                                """
+                                        .formatted(CONTRACT_KEPT_COMPOSITION)))
+                .andExpect(status().isOk());
+        assertQuestionVersion(formId, 2);
+        mockMvc.perform(authenticatedPut("/v1/forms/" + formId, bodyWithoutContractQuestion()))
+                .andExpect(status().isOk());
+        assertQuestionVersion(formId, 3);
+
+        // 지정을 옮기면 이전 폼은 평범한 폼이라 지워진다
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(next)))
+                .andExpect(status().isOk());
+        mockMvc.perform(authenticatedDelete("/v1/forms/" + formId)).andExpect(status().isOk());
+
+        // 실패 요청은 마지막 하나 — 지정된 동안은 삭제 409
+        mockMvc.perform(authenticatedDelete("/v1/forms/" + next))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_IMMUTABLE"));
+    }
+
+    // 지정할 수 있는 코드는 허용 목록뿐이다 — 기획안(PROPOSAL)도 모르는 코드도 400
+    @Test
+    void designatingProposalOrUnknownCodeReturns400() throws Exception {
+        Long formId = createForm("아무 폼", null, "[]");
+
+        mockMvc.perform(authenticatedPut("/v1/forms/system/PROPOSAL", designateBody(formId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_NOT_DESIGNATABLE"));
+        mockMvc.perform(authenticatedPut("/v1/forms/system/NO_SUCH_CODE", designateBody(formId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_NOT_DESIGNATABLE"));
+    }
+
+    // 지워진 폼은 없는 폼과 같은 404 — 익명 /join이 존재하지 않는 폼을 가리키게 두지 않는다
+    @Test
+    void designatingDeletedOrMissingFormReturns404() throws Exception {
+        Long deleted = createForm("지운 폼", null, "[]");
+        mockMvc.perform(authenticatedDelete("/v1/forms/" + deleted)).andExpect(status().isOk());
+
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(deleted)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(999_999L)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    // 이미 다른 코드가 가리키는 폼(기획안)은 RECRUIT로 덮을 수 없다 — 시드와 이관이 폼을 잃는다
+    @Test
+    void designatingAnotherSystemFormReturns409() throws Exception {
+        Long formId = createForm("계약 있는 시스템 폼", null, "[]");
+        designateAsSystemForm(formId);
+
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", designateBody(formId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SYSTEM_FORM_ALREADY_DESIGNATED"));
+    }
+
+    @Test
+    void designateWithoutFormIdReturnsValidationFailed() throws Exception {
+        mockMvc.perform(authenticatedPut("/v1/forms/system/RECRUIT", "{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
     /* ── 접수 상태 전이 (#33) ─────────────────────────────── */
 
     /*
@@ -1492,6 +1613,11 @@ class FormControllerTest {
         mockMvc.perform(post("/v1/forms").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(post("/v1/forms/1/duplicate")).andExpect(status().isUnauthorized());
+        mockMvc.perform(
+                        put("/v1/forms/system/RECRUIT")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"formId\": 1}"))
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(
                         post("/v1/forms/1/status")
                                 .contentType(MediaType.APPLICATION_JSON)
@@ -1697,6 +1823,15 @@ class FormControllerTest {
                 .header("Authorization", "Bearer " + AUTH_USER_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body);
+    }
+
+    private MockHttpServletRequestBuilder authenticatedDelete(String path) {
+        return delete(path).header("Authorization", "Bearer " + AUTH_USER_ID);
+    }
+
+    /** 시스템 폼 지정 본문 (#520) */
+    private String designateBody(Long formId) {
+        return "{\"formId\": " + formId + "}";
     }
 
     @TestConfiguration

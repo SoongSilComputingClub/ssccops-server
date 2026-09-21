@@ -23,6 +23,10 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * 삭제 잠금(requireDeletable)을 여기서만 확인하는 것은 **폼 삭제 API가 아직 없어서다.**
  * 그 경로가 생기면 이 판정을 그대로 부르면 되고, 잠금 규칙을 그 이슈에서 새로 적으면
  * 규칙이 두 벌이 된다 (FormEntity.requireDeletable 주석).
+ *
+ * 문항 잠금(requireSystemQuestionItemsUnchanged)의 둘째 인자 hasContract는 #520부터다 — 계약이
+ * 있는 시스템 폼만 잠기므로(ADR-0044) 종전 케이스는 전부 true로 부르고, false 쪽은 아래
+ * «계약 없는 시스템 폼» 절이 본다.
  */
 class FormSystemLockTest {
 
@@ -163,7 +167,7 @@ class FormSystemLockTest {
                                         List.of("스터디")));
 
         for (QuestionCompositionContent changed : List.of(required, retyped, options)) {
-            assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(changed))
+            assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(changed, true))
                     .isInstanceOf(GeneralException.class)
                     .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
                     .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
@@ -192,7 +196,7 @@ class FormSystemLockTest {
                                         q.reqYn(),
                                         q.optionList()));
 
-        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(reworded))
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(reworded, true))
                 .doesNotThrowAnyException();
     }
 
@@ -204,11 +208,11 @@ class FormSystemLockTest {
         QuestionCompositionContent added = composition("q1", "q2", "q3");
         QuestionCompositionContent reordered = composition("q2", "q1");
 
-        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(added))
+        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(added, true))
                 .isInstanceOf(GeneralException.class)
                 .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
                 .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
-        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(reordered))
+        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(reordered, true))
                 .isInstanceOf(GeneralException.class)
                 .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
                 .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
@@ -228,9 +232,9 @@ class FormSystemLockTest {
                 new QuestionCompositionContent(
                         List.of(new Page("한 장", "안내 문구를 고쳤다")), sameQuestions.qitems());
 
-        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(sameQuestions))
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(sameQuestions, true))
                 .doesNotThrowAnyException();
-        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(otherPageDescription))
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(otherPageDescription, true))
                 .doesNotThrowAnyException();
     }
 
@@ -239,8 +243,66 @@ class FormSystemLockTest {
     void ordinaryFormIgnoresTheQuestionLock() {
         FormEntity form = form(composition("q1", "q2"));
 
-        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(composition("other")))
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(composition("other"), true))
                 .doesNotThrowAnyException();
+    }
+
+    /* ── 계약 없는 시스템 폼 (#520 · ssccops#436 · ADR-0044) ─────────── */
+
+    /*
+     * 계약이 없는 시스템 폼(신입회원 모집 지정 폼 RECRUIT)은 문항이 자유다 — 잠그는 근거가 «코드가
+     * 읽는 구성»인데 읽는 문항이 없다. 같은 폼이라도 hasContract가 참이면 잠기므로 이 판정이 코드
+     * 문자열이 아니라 계약 유무에서 온다는 것이 여기서 못 박힌다. 삭제는 여전히 막힌다.
+     */
+    @Test
+    void systemFormWithoutContractIsNotQuestionLockedButStillNotDeletable() {
+        FormEntity form = form(composition("q1", "q2"));
+        form.designateAsSystemForm("RECRUIT");
+
+        QuestionCompositionContent restructured = composition("q3", "q1");
+
+        assertThatCode(() -> form.requireSystemQuestionItemsUnchanged(restructured, false))
+                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> form.requireSystemQuestionItemsUnchanged(restructured, true))
+                .isInstanceOf(GeneralException.class)
+                .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
+                .isEqualTo(FormErrorCode.SYSTEM_FORM_QUESTIONS_LOCKED);
+        assertThatThrownBy(form::requireDeletable)
+                .isInstanceOf(GeneralException.class)
+                .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
+                .isEqualTo(FormErrorCode.SYSTEM_FORM_IMMUTABLE);
+    }
+
+    /* ── 지정 · 해제 (#520) ───────────────────────────────── */
+
+    // 해제는 코드와 잠금을 함께 내린다 — 한쪽만 남으면 «가리키지 않는데 지울 수 없는 폼»이 된다
+    @Test
+    void revokeClearsCodeAndUnlocksDeletion() {
+        FormEntity form = form(composition("q1"));
+        form.designateAsSystemForm("RECRUIT");
+
+        form.revokeSystemForm();
+
+        assertThat(form.isSystemForm()).isFalse();
+        assertThat(form.getSystemFormCode()).isNull();
+        assertThatCode(form::requireDeletable).doesNotThrowAnyException();
+    }
+
+    /*
+     * 이미 다른 코드가 가리키는 폼에는 붙이지 않는다 — 기획안 폼을 RECRUIT로 덮으면 시드와 이관이
+     * 폼을 잃는다. 같은 코드를 다시 붙이는 것은 통과한다(지정 이동의 멱등 경로).
+     */
+    @Test
+    void designateRejectsOverwritingAnotherCodeButAcceptsTheSameCode() {
+        FormEntity form = form(composition("q1"));
+        form.designateAsSystemForm("PROPOSAL");
+
+        assertThatThrownBy(() -> form.designateAsSystemForm("RECRUIT"))
+                .isInstanceOf(GeneralException.class)
+                .extracting(thrown -> ((GeneralException) thrown).getErrorCode())
+                .isEqualTo(FormErrorCode.SYSTEM_FORM_ALREADY_DESIGNATED);
+        assertThatCode(() -> form.designateAsSystemForm("PROPOSAL")).doesNotThrowAnyException();
+        assertThat(form.getSystemFormCode()).isEqualTo("PROPOSAL");
     }
 
     /* ── 문항 구성 버전 ──────────────────────────────────── */

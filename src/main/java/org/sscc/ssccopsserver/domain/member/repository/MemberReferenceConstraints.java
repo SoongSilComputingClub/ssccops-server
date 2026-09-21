@@ -7,7 +7,7 @@ import java.util.Optional;
 /*
  * 회원 하드 삭제를 **막는** 참조의 표 (#361 · ADR-0021).
  *
- * mbr을 가리키는 FK 30개 중 본인 데이터 9개는 V9가 ON DELETE CASCADE로 바꿨고, 나머지 21개
+ * mbr을 가리키는 FK 32개 중 본인 데이터 11개(V9의 9개 + V21의 푸시 구독·알림)는 ON DELETE CASCADE이고, 나머지 21개
  * — 이 회원이 남의 것에 한 일(작성자·검토자·변경자·담당자·발급자·등록자…) — 는 NO ACTION
  * 그대로다. 그 21개에 학술 활동의 원본 기획안(acdm_actv.form_rspns_id → form_rspns_hstry, 2차)을
  * 더한 22개가 여기 있다. **mbr을 가리키는 FK를 더하면 이 표도 함께 는다** — 빠뜨리면 그 참조가

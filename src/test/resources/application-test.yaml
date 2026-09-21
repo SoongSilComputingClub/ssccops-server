@@ -115,6 +115,19 @@ ssccops:
     keepalive:
       enabled: false
 
+  # Web Push를 끈다 (ssccops#446). 발송기는 NoopWebPushSender — 알림 행은 만들어지고 푸시 서비스에
+  # HTTP가 나가지 않는다. 키 없이도 컨텍스트가 뜨는 것이 #446의 수용 기준이고, 암호화·서명 자체는
+  # WebPushEncryptorTest·VapidWebPushSenderTest가 컨텍스트 없이 RFC 값과 대조한다.
+  push:
+    enabled: false
+
+  # 마감 알림 스케줄러를 끈다 (ssccops#446). 공용 컨텍스트에서 09:00에 실제 알림이 생기면 «알림이
+  # 0건»을 전제한 테스트가 시각에 따라 흔들린다 — 판정·중복 방지는 DeadlineNotificationServiceTest가
+  # 서비스를 직접 불러 본다(DatabaseKeepAlive와 같은 판단).
+  notification:
+    deadline:
+      enabled: false
+
   form:
     proposal-seed:
       on-member-created: false

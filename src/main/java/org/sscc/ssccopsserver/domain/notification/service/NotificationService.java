@@ -1,0 +1,22 @@
+package org.sscc.ssccopsserver.domain.notification.service;
+
+import org.sscc.ssccopsserver.domain.notification.dto.NotificationListResponse;
+import org.sscc.ssccopsserver.domain.notification.dto.NotificationReadAllResponse;
+import org.sscc.ssccopsserver.domain.notification.dto.NotificationReadResponse;
+import org.sscc.ssccopsserver.domain.notification.dto.UnreadCountResponse;
+
+/*
+ * 알림 목록·읽음 (ssccops#446). 전부 «내 것»이다 — 회원 식별자가 모든 메서드의 첫 인자다.
+ */
+public interface NotificationService {
+
+    /** 최신부터 커서로. `unreadCount`를 함께 싣는다(#446 계약) */
+    NotificationListResponse list(Long memberId, int size, String cursor);
+
+    UnreadCountResponse unreadCount(Long memberId);
+
+    /** 없거나 남의 알림은 404 NOT_FOUND. 이미 읽은 것은 그대로 200(처음 읽은 시각) */
+    NotificationReadResponse markRead(Long memberId, Long notificationId);
+
+    NotificationReadAllResponse markAllRead(Long memberId);
+}

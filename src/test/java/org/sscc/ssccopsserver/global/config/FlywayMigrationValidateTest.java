@@ -280,7 +280,8 @@ class FlywayMigrationValidateTest {
                     .isEqualTo("NO ACTION");
         }
 
-        // mbr을 가리키는 FK는 29개이고 그중 cascade는 본인 데이터 9개뿐이다
+        // mbr을 가리키는 FK 중 cascade는 본인 데이터 9개(V9) + 알림 도메인의 둘(V21 · push_sbscrp ·
+        // noti — 구독은 그 사람의 브라우저이고 알림은 그 사람이 받은 것이라 회원이 없어지면 뜻을 잃는다)
         Integer cascadingToMember =
                 jdbc.queryForObject(
                         "SELECT count(*) FROM information_schema.referential_constraints rc"
@@ -289,7 +290,7 @@ class FlywayMigrationValidateTest {
                                 + " WHERE rc.constraint_schema = 'public' AND tc.table_name = 'mbr'"
                                 + " AND rc.delete_rule = 'CASCADE'",
                         Integer.class);
-        assertThat(cascadingToMember).as("mbr을 가리키는 cascade FK").isEqualTo(9);
+        assertThat(cascadingToMember).as("mbr을 가리키는 cascade FK").isEqualTo(11);
     }
 
     /*

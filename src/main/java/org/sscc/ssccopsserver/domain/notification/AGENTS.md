@@ -1,0 +1,41 @@
+# domain/notification
+
+이 도메인 규칙의 정본. 루트 AGENTS.md는 여기를 가리키기만 한다.
+
+## 무엇이 있나
+
+- 엔티티: `NotificationEntity`(`noti` · 사람이 보는 알림 한 행) · `PushSubscriptionEntity`(`push_sbscrp` · 회원이 등록한 브라우저 하나). 코드: `NotificationType`(5 사건) · `NotificationApp`(ADMIN·LMS·WWW) · `NotificationTargetType`(SUB_WORK) · `PushProvider`(WEB_PUSH). 스키마는 `V21__notification.sql`(ssccops#446 · [ADR-0045](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0045-pwa-phase2-all-apps-web-push-vapid.md)).
+- 컨트롤러 둘, **인증만**(`@RequireAuthority` 없음 — 전부 «내 것»이다): `PushSubscriptionController`(`GET /v1/push/config` · `POST`/`DELETE /v1/push/subscriptions`) · `NotificationController`(`GET /v1/notifications?cursor&size` → `{items, nextCursor, unreadCount}` · `GET …/unread-count` · `POST …/{id}/read` · `POST …/read-all`). 응답 필드 이름은 #446 «API 계약» 그대로다 — 웹(#447)이 그 모양으로 먼저 갔으므로 **바꾸면 web Sub-task에 알린다.**
+- 서비스: `NotificationService`(목록·읽음) · `PushSubscriptionService`(upsert·해지) · `SubWorkNotificationService`(전이 → 알림 행 · `REQUIRES_NEW`) · `DeadlineNotificationService`(D-1·첫 지연일 · 90일 정리) · `PushDispatcher`(행 → 구독별 푸시 · 죽은 구독 삭제).
+- 듣는 자리·시계: `SubWorkTransitionNotificationListener`(`@TransactionalEventListener(AFTER_COMMIT)` + `@Async`) · `DeadlineNotificationScheduler`(`0 0 9 * * *` Asia/Seoul + 월 04:30 정리 · `ssccops.notification.deadline.enabled`, test만 끈다).
+- 발송기 포트 `WebPushSender`(결과는 `WebPushOutcome` 넷) · 구현 `push/VapidWebPushSender`(RFC 8291·8292 직접 구현 — `P256`·`WebPushEncryptor`·`VapidCredentials`) · `push/NoopWebPushSender`. 어느 쪽이 서는지는 `push/WebPushSenderConfig`(`ssccops.push.*`).
+
+## 규칙
+
+- **운영 도메인은 알림을 모른다.** 운영이 `SubWorkTransitionedEvent`(자기 패키지 `operation/event/`)를 `ApplicationEventPublisher`로 발행하고 알림이 듣는다. 이 저장소의 도메인 간 연동은 원래 포트 인터페이스인데(`SystemFormApprovalHook`이 이벤트를 기각한 이유는 원자성), 여기는 그 반대라 이벤트가 맞다 — **알림은 전이를 절대 막으면 안 되고**, 롤백된 전이의 알림이 남으면 안 된다. 세 겹으로 뗀다: AFTER_COMMIT · `@Async`(`global/config/AsyncConfig`가 이 리스너를 위해 `@EnableAsync`를 켰다) · 알림 행은 `REQUIRES_NEW`, 푸시는 그 트랜잭션이 닫힌 뒤. 이벤트에는 **식별자 셋만** 싣는다(엔티티를 실으면 다른 스레드에서 `LazyInitializationException`).
+- **수신자는 기존 정책으로만 계산한다.** 승인 요청 → `AuthorityPolicy.memberIdsWithAuthority(그 유형의 결재 권한)` − 수행자, 승인·반려 → `oper.personInCharge`(수행자 본인이면 생략). 여기서 규칙을 새로 만들면 «승인 버튼은 안 보이는데 알림은 오는» 사람이 생긴다. 그래서 회장은 '예산지출'(총무 결재) 승인 요청을 받지 않는다 — `SUB_WORK_APPROVE_PRESIDENT`는 형제 권한이지 조상이 아니고 `ApprovalAuthorityPolicy`도 같은 답이다(`SubWorkNotificationListenerTest`가 SUPER를 두 번째 승인자로 쓰는 이유). 승인이 필요 없는 유형·결재 권한이 비어 있는 유형은 아무에게도 가지 않는다.
+- **문구는 만들 때 굳힌다**(`SubWorkNotificationText`): 제목 «[승인 요청]·[승인]·[반려]·[마감 D-1]·[지연] {하위 업무명}», 내용 «{업무명} · 담당 {이름} · 마감 {날짜|없음}». 제목 200·내용 500자는 컬럼 길이라 넘치면 자른다. `linkPath`는 어드민 실제 라우트 `/operations/sub-works/{id}`이고 `app = ADMIN` — 서버는 origin을 모르므로 경로만 싣고 서비스워커가 자기 origin을 붙인다(ADR-0045 · env를 늘리지 않는다).
+- **마감 알림은 하루 한 번 09:00 KST**이지 마감 시각 기준이 아니다 — 마감 판정이 일자 단위(`DeadlinePolicy`)이고 밤에 울리는 알림은 꺼진다. «내일»은 서비스 시간대의 내일 0시 ≤ `ddln_dt` < 모레 0시(조회가 양끝 포함이라 1ms를 뺀다). 완료(`DONE`)·지워진 건은 조회가 거른다.
+- **같은 사건을 두 번 알리지 않는다.** `noti_key = "{유형}:SUB_WORK:{id}:{마감일}"` + `uk_noti_mbr_key(mbr_id, noti_key)`. `exists`로 먼저 걸러 건너뛰고 경쟁은 UNIQUE 위반으로 잡되 **행마다 리포지토리 `save` 자체의 트랜잭션**이라(배치 메서드는 트랜잭션 밖) 한 건의 위반이 그날 배치를 롤백시키지 않는다. 전이 알림은 키가 NULL이다(반려 뒤 재요청은 두 번째 알림이 맞다). 담당자·마감일이 바뀌면 새 키라 다시 간다 — 의도다.
+- **발송 이력 표는 없다**(ADR-0045). `noti` 행이 «만들어졌다»의 기록 전부이고 푸시는 최선 노력이다 — 404·410이면 구독 행을 지우고(`WebPushOutcome.GONE`), 그 밖의 실패는 ERROR 로그뿐(401/403은 «VAPID 키가 구독 때의 키와 다르다»를 문장에 박는다). 재시도 없음 — 다음 알림이 곧 다음 시도다.
+- **endpoint를 로그에 싣지 않는다.** 푸시 서비스의 capability URL이라 아는 사람은 누구나 그 브라우저에 보낼 수 있다. 로그는 구독 행 id와 상태 코드까지다.
+- **endpoint가 구독의 정체성이다**(`uk_push_sbscrp_endpt`). 등록은 upsert(새로 201 · 갱신 200)이고 한 기기를 두 사람이 번갈아 쓰면 마지막에 등록한 사람의 것이다. 해지는 자기 것만 지우되 **언제나 204**(로그아웃 경로가 부른다). 구독 값의 형식은 등록 때 검사하지 않는다 — 깨진 값은 발송기가 첫 발송에서 GONE으로 판정한다(Noop 환경까지 검증을 두 벌로 만들지 않는다).
+- **남의 알림과 없는 알림은 같은 404다**(`NotificationErrorCode.NOTIFICATION_NOT_FOUND` · 코드 문자열 `NOT_FOUND`). `@RequireAuthority`의 403(권한)과 층이 다르다 — 이쪽은 소유 판정이고, 나누면 연속 정수인 식별자 중 어느 것이 존재하는지가 드러난다. 읽음은 멱등(처음 읽은 시각을 덮지 않는다), 모두 읽음은 벌크 UPDATE.
+- **목록 응답이 `ApiResponse.success(data, page)`(AP-11)가 아니다** — `{items, nextCursor, unreadCount}`를 data로 싣는다. 종 아이콘 배지가 목록과 같은 응답에서 `unreadCount`를 받아야 하는데 `PageResponse`에는 그 자리가 없다. 커서는 id 하나(`NotificationCursor` · 콘텐츠 어드민 목록과 같은 꼴), 깨진 커서는 400.
+- **라이브러리 `nl.martijndwars:web-push`를 쓰지 않았다.** ADR-0045·#446의 1순위였지만 5.1.1의 POM은 `async-http-client`(netty) · `httpasyncclient`(HC4) · `jcommander` · `jose4j`를 끌고 오고 정작 BouncyCastle은 사용자가 `Security.addProvider`로 전역 등록하기를 요구한다. 필요한 것은 RFC 8291 한 레코드 암호화와 ES256 서명뿐이라 JDK 17 표준 프로바이더로 세 클래스(300줄 미만)에 담았고, **RFC 8291 부록 A의 값과 바이트 단위로 대조된다**(`WebPushEncryptorTest`). VAPID JWT 서명은 JDK ECDSA로 실제 검증한다(`VapidWebPushSenderTest`). 발송기 인터페이스는 이슈가 말한 대로 유지했다 — 되돌리는 것은 `push/` 안의 일이다. tika의 bcprov는 프로바이더로 등록돼 있지 않으며 등록하지 말 것(JVM 전역 알고리즘 해석 순서가 바뀐다).
+- **JDK `KeyFactory`는 점이 곡선 위에 있는지 검사하지 않는다**(실측 — `KeyAgreement.doPhase`에서야 던진다). 구독 등록이 아무 문자열이나 받으므로 `P256.publicKeyOf`가 y² ≡ x³ + ax + b를 직접 확인한다(RFC 8291 §7 — 무효한 점으로 ECDH를 하면 개인키가 샌다).
+- 설정은 `application.yaml`의 `ssccops.push`(`enabled` · `vapid.public-key/private-key/subject` ← env `SSCCOPS_PUSH_ENABLED`·`SSCCOPS_PUSH_VAPID_PUBLIC_KEY`·`…_PRIVATE_KEY`·`…_SUBJECT`)와 `ssccops.notification.deadline.enabled` 한 곳이다(규정 도우미 손잡이와 같은 규칙 — 프로필 파일에 옮겨 적지 않는다). **키가 비어 있으면 부팅하고 Noop이 선다**(부팅 로그 한 줄 · 기여자 로컬·CI·아직 키를 넣지 않은 배포가 정당하다), **키가 있는데 형식이 틀리면 세운다**(전 구독 401로만 드러나는 실패). 키는 `npx web-push generate-vapid-keys`, dev·prod에 **다른 키**를 넣는다(키를 바꾸면 그 키로 만든 구독 전부가 무효 — 브라우저가 다시 구독한다).
+- 감사 로그는 남기지 않는다 — 전이는 이미 `SUBWORK_TRANSITION`으로 남고, 알림 행은 그 결과이지 누군가의 행위가 아니다.
+
+## 다른 도메인과 닿는 곳
+
+- 운영 → 알림은 이벤트 한 방향이다(`SubWorkTransitionedEvent` · `SubWorkServiceImpl.transitionSubWork` 끝). 알림 → 운영은 `SubWorkRepository`(다시 읽기 · 마감 조회 `findAllDueBetweenExcludingStatus`)와 엔티티 getter를 직접 쓴다 — 한 방향이라 `DomainCycleTest`에 걸리지 않는다.
+- 회원: `AuthorityPolicy.memberIdsWithAuthority`(승인 요청 수신자) · `MemberRepository.findAllById`. 회원이 지워지면 두 표 모두 cascade(`MemberReferenceConstraints` 주석 · `FlywayMigrationValidateTest`의 cascade FK 수 11).
+- 다음 사건(기획안·회차 · lms)은 `NotificationType` 값 + 새 마이그레이션(CHECK 넓히기) + 그 도메인의 이벤트 record + 여기의 리스너 하나다. `app_cd`·`linkPath`를 그 앱 것으로.
+
+## 테스트 함정
+
+- **전이 → 알림은 `@Transactional` 테스트에서 돌지 않는다**(AFTER_COMMIT · 커밋 없음). `SubWorkNotificationListenerTest`가 전용 H2에서 실제로 커밋하고 `@Async`라 Awaitility로 기다린다. 발송기는 `@MockitoBean` — 구독마다 `send`가 불리고 GONE이면 행이 지워지는 것까지 본다.
+- test 프로필은 `ssccops.push.enabled=false`(Noop)·`ssccops.notification.deadline.enabled=false`(스케줄러 빈 없음)다. 마감 판정·중복 방지는 `DeadlineNotificationServiceTest`가 서비스를 직접 부르며 «내일·어제»를 주입된 `Clock`으로 계산한다.
+- `PushSubscriptionControllerTest`·`NotificationControllerTest`는 공용 컨텍스트 + `@Transactional`이다(전이 경로를 타지 않는다).
+- 자세한 판단은 각 클래스 주석 — `SubWorkTransitionedEvent`(왜 포트가 아니라 이벤트인가) · `DeadlineNotificationService`(행마다 트랜잭션) · `WebPushSenderConfig`(왜 라이브러리가 아닌가) · `P256`(곡선 검증).

@@ -117,6 +117,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V18__operation_attachments.sql` | `file_rfrnc.trgt_se_cd` CHECK에 `OPERATION`을 더하고(V13 규칙 그대로) 첨부 메타 열 넷(원본 파일명·크기·올린 사람·시각)을 전부 NULL 허용으로 더한다 — 기존 행(회차 사진·규정 문서·갤러리)은 채울 값이 없다 (#493 · ADR-0042) |
 | `V19__seed_track_program_type.sql` | 학술 활동 유형 `TRACK`(`트랙`)과 리더 역할 `트랙장`. **유형은 배포 없이 늘어나게 설계됐지만 리더 역할 매핑만 코드 상수라**(`AcademicProgramApprovalEffectsServiceImpl`) 셋이 같은 배포에 있어야 한다 — 유형만 넣으면 승인이 400에서 500으로 바뀔 뿐이다. `test`의 `data-locations`·`SeedScript.LOCATIONS`가 V3·V11·V16과 함께 이 파일도 가리킨다 (#510) |
 | `V20__add_track_option_to_proposal_form.sql` | 라이브 기획안 폼(`PROPOSAL`)의 `programType` 선택지에 «트랙»을 더한다. **시드가 아니라 «이미 선 DB 수리»라 `data-locations`·`SeedScript.LOCATIONS`에 넣지 않는다**(V4와 같은 성격 — 새 환경은 시더가 이미 셋으로 세운다). 시더 멱등(#510)과 문항 잠금(#498)에 양쪽으로 막혀 UI·API·배포 어느 길로도 넣을 수 없던 값이다. 선택지 문자열은 리터럴이 아니라 `acdm_actv_type`에서 읽고, `qitem_ver`를 올린 뒤 변경자 NULL로 이력 한 줄을 남긴다(`form_rspns_hstry.qitem_ver`가 «몇 번 구성에 답했나»를 기록하기 때문) (#512) |
+| `V21__notification.sql` | `push_sbscrp`(푸시_구독)·`noti`(알림) — 알림 도메인의 표 둘(ssccops#446 · ADR-0045). 코드 열 넷 전부 CHECK(V13 규칙), `mbr_id` FK는 둘 다 **ON DELETE CASCADE**(V9의 «본인 데이터» — `FlywayMigrationValidateTest`의 cascade FK 수가 9 → 11), `uk_push_sbscrp_endpt`(endpoint가 구독의 정체성) · `uk_noti_mbr_key(mbr_id, noti_key)`(마감 알림의 «한 번만»). 발송 이력 표는 없다 |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**
@@ -144,6 +145,8 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   `ssccops.db.keepalive.enabled`, test 프로필만 끈다). 2차는 메타 레포 워크플로가 치는 `public.heartbeat()`
   (V17 · anon에 EXECUTE만) — 멈추면 그 job이 빨개진다. `@EnableScheduling`은 이 작업으로 켰다
   (`global/config/SchedulingConfig`) — RagIndexingScheduler는 자기 이유로 여전히 자기 실행기를 쓴다.
+  둘째 손님은 알림 도메인의 `DeadlineNotificationScheduler`(09:00 마감 알림 · ssccops#446)이고, `@EnableAsync`는
+  그 옆 `global/config/AsyncConfig`가 같은 작업의 `SubWorkTransitionNotificationListener`를 위해 켰다.
 - **anon에 테이블 grant를 주지 않는다.** Flyway가 만든 테이블에는 Supabase 기본 grant가 없어 anon 키
   (웹 번들에 실린다)로는 `42501`이다(2026-09-19 실측) — 그 상태가 곧 보안이다. Supabase는 **`postgres`
   역할이 만든 객체**에 기본 권한(anon·authenticated·service_role)을 붙이므로 Flyway·앱의 DB 사용자는
@@ -199,6 +202,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `event` | 행사 게시물 · 참가자 · 본문 이미지(presigned PUT · 영구 리다이렉트) · 익명 공개 조회 · 소프트 삭제 | [domain/event/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/event/AGENTS.md) |
 | `content` | 공개 사이트 콘텐츠 — 페이지(slug 단건)·포스트(분류·활동일·표지·갤러리) · 전체 스냅샷 개정 이력 · 게시/게시 취소 · from-event 복사 · `file_rfrnc` 갤러리 · 익명 조회(`/public/v1/pages`·`/posts`, 공개 전용 record) · MCP 도구 6 | [domain/content/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/content/AGENTS.md) |
 | `share` | 토큰 공유 링크 — 미리보기까지만, 대상이 무엇인지 모른다 | [domain/share/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/share/AGENTS.md) |
+| `notification` | 알림(`noti`)·푸시 구독(`push_sbscrp`) — 하위 업무 전이(운영의 `SubWorkTransitionedEvent` · AFTER_COMMIT + `@Async`)와 09:00 마감 스케줄러가 알림 행을 만들고 표준 Web Push(VAPID · RFC 8291/8292 직접 구현)로 보낸다 · `/v1/notifications` · `/v1/push/*` · 인증만 | [domain/notification/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/notification/AGENTS.md) |
 | `auth` | `GET /v1/auth/session` 하나 — 미가입도 200 | [domain/auth/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/auth/AGENTS.md) |
 | `file` | 파일이 버킷의 어디에 있는가 — `file_rfrnc` · 서명 · 삭제 · 복사 | [domain/file/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/file/AGENTS.md) |
 | `assistant` | 규정 도우미(RAG) — 문서(`rag_doc` · 판본 없음 ADR-0034) · 두 축 상태 · 청크 저장소 포트 · 기능 플래그 · 회칙 파서와 조 단위 청커 · 평문 추출과 고정 길이 청커(**확장자가 유형을 단정하지 않는다** — 회칙이 아닌 `.md`는 거절이 아니라 평문으로 떨어진다, #445) · 업로드(멀티파트 · 동기 파싱 · R2 원본) · 색인 워커(잠금 · 부팅 복구 · 재색인 · 청크 상한) · 목록(요약 3값 동봉 · 서버 `q`)·상세·적용 전환(시행본 1건)·하드 삭제 · **질의**(임계값 거절 · 검색 필터 둘 · **조 지목 핀**과 **이어 묻기**(「그 다음 조」를 앞 턴이 인용한 조에서 옮긴다 — 검색어는 그대로다, #465) · **번호 참조 인용**과 그 해석 · 추천 질문과 **빈 상태 세 값**(`corpusState` — «문서가 없다»와 «시행 중인 것이 없다»를 가른다, #449)) · **SSE 스트리밍**(`POST /v1/assistant/queries/stream` · 조각 단위 인용 판정 · 첫 바이트 전에 끝나는 거절 계단 · **`ApiResponse` 봉투의 유일한 예외**, #447) · **질의 레이트 리밋**(회원 분·일 · 전역 분 · 인메모리) · **골든셋**(스텁 임베딩 · 지표 넷 · 회귀 표) · **대화**(힙 Caffeine · 대화 500개 · 24h 슬라이딩 · 서버가 발급하는 `{회원 식별자}:{탭 UUID}` · 질의 임베딩 캐시) | [domain/assistant/AGENTS.md](src/main/java/org/sscc/ssccopsserver/domain/assistant/AGENTS.md) |
@@ -556,6 +560,7 @@ jar들을 스캔하지 않고 우리가 Tika의 `ServiceLoader`(= `AutoDetectPar
 - **배포는 저장소가 하지 않는다** (#202). Coolify가 GitHub App으로 이 저장소를 직접 보고 있어, `develop` 푸시는 dev로 `main` 푸시는 prod로 **자동 배포**된다. 이미지도 Coolify가 레포의 멀티스테이지 `Dockerfile`로 직접 빌드하므로 GHCR을 거치지 않는다.
   - 따라서 `.github/workflows/`에는 **CI만 있다** — 예전의 `deploy-dev.yml`·`deploy-prod.yml`과 배포 전용 `Dockerfile.deploy`는 걷어냈다.
   - **환경변수의 정본은 Coolify다.** 예전에는 배포마다 Actions가 Coolify API(`envs/bulk`)로 값을 덮어썼는데, 그 구조에서는 대시보드에서 직접 넣은 값(R2 설정 등)이 다음 배포에 날아갔다. 지금은 덮어쓰는 주체가 없으므로 Coolify 대시보드에서 관리한다.
+  - **Web Push 키도 거기다**(ssccops#446 · ADR-0045). `SSCCOPS_PUSH_VAPID_PUBLIC_KEY`·`…_PRIVATE_KEY`·`…_SUBJECT`(`mailto:`) — `npx web-push generate-vapid-keys`로 만들어 dev·prod에 **다른 키**를 넣는다. 비어 있으면 알림 행만 만들고 푸시는 보내지 않는다(부팅 로그 한 줄 · `domain/notification/AGENTS.md`).
   - **기능 플래그도 거기서 켠다.** `SSCCOPS_MEMBER_HARD_DELETE_ENABLED=true`가 회원 하드 삭제(#361 · [ADR-0021](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0021-temporary-member-hard-delete.md))를 연다 — 기본값은 `false`이고 `application-dev.yaml`·`application-prod.yaml`에는 그 키가 **없다**(임시 기능이라 프로필 설정 파일에 굳히지 않는다). 규정 도우미 손잡이가 #439에서 베이스 `application.yaml`로 옮겨 갈 때 **이 키는 따라가지 않았다** — 곧 지울 기능이라 지금 선언해 두면 그때 다시 지워야 한다. 중복 계정 정리가 끝나면 변수를 지우거나 `false`로 돌린다. 웹은 `NEXT_PUBLIC_MEMBER_HARD_DELETE=true`로 버튼을 그린다.
 
 ## 릴리스 — 버전은 태그와 코드 양쪽에 남긴다 (ssccops#229)

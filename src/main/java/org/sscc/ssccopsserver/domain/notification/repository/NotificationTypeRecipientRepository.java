@@ -17,9 +17,13 @@ public interface NotificationTypeRecipientRepository
         extends JpaRepository<NotificationTypeRecipientEntity, Long> {
 
     /*
-     * 그 유형의 행을 전부 지운다 — 수정 API가 «지우고 다시 넣는다»로 도는 자리다.
+     * 그 유형의 행을 전부 지운다 — 수정 API가 «지우고 다시 넣는다»로 도는 자리이고,
+     * 되돌리기 API(#537)는 그 앞쪽 절반만 쓴다.
      * 차집합을 계산해 더하고 빼는 안은 기각: 행이 최대 셋이라 얻는 것이 없고, 부분 실패에서
      * «절반만 바뀐 정책»이 남을 수 있다. 한 트랜잭션 안의 delete + insert가 더 단순하다.
+     *
+     * **지운 행 수를 «있었나»의 판정으로 쓰지 않는다**(#537의 멱등) — 되돌리기는 0행이어도 성공이고,
+     * 감사 로그의 before는 이 값이 아니라 캐시가 든 정책에서 읽는다.
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("delete from NotificationTypeRecipientEntity r where r.typeCode = :typeCode")

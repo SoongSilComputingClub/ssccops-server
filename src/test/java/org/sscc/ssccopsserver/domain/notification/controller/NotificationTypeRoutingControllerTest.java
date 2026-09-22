@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.notification.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -18,6 +19,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -41,7 +43,7 @@ import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 /*
- * 알림 수신 앱 기준표의 조회·수정 API (#535 · ssccops#465 · ADR-0047).
+ * 알림 수신 앱 기준표의 조회·수정·되돌리기 API (#535 · #537 · ssccops#465 · ADR-0047).
  *
  * test 프로필은 Flyway가 꺼져 있어 V23의 시드가 없다 — 표가 비어 있으므로 모든 유형이 «보낸 앱을
  * 따른다»로 시작하고, 이 클래스가 확인하는 것이 정확히 그 기본값에서 정책을 세우는 경로다.
@@ -194,9 +196,89 @@ class NotificationTypeRoutingControllerTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"));
     }
 
-    /* SUPER가 없으면 조회도 수정도 403이다 — 시스템 전체의 정책이라 «내 알림»과 층이 다르다 */
+    /*
+     * 되돌리기 (#537). 정한 뒤 DELETE 하면 그 줄이 «보낸 앱을 따른다»로 돌아오고 표에서 행이
+     * 사라진다 — 응답이 목록·수정과 같은 모양이라 화면이 그 줄을 응답 하나로 다시 그린다.
+     */
     @Test
-    void withoutSuperBothEndpointsAre403() throws Exception {
+    void deletingPutsTheTypeBackToFollowingTheSendingApp() throws Exception {
+        route("APPROVAL_REQUESTED", "[\"LMS\"]").andExpect(status().isOk());
+
+        mockMvc.perform(
+                        delete("/v1/notifications/types/{type}", "APPROVAL_REQUESTED")
+                                .header("Authorization", "Bearer " + SUPER_USER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.type").value("APPROVAL_REQUESTED"))
+                .andExpect(jsonPath("$.data.label").value("승인 요청"))
+                .andExpect(jsonPath("$.data.apps.length()").value(0))
+                .andExpect(jsonPath("$.data.followsSendingApp").value(true));
+
+        assertThat(recipientRepository.count()).isZero();
+        mockMvc.perform(
+                        get("/v1/notifications/types")
+                                .header("Authorization", "Bearer " + SUPER_USER))
+                .andExpect(jsonPath("$.data[0].type").value("APPROVAL_REQUESTED"))
+                .andExpect(jsonPath("$.data[0].apps.length()").value(0))
+                .andExpect(jsonPath("$.data[0].followsSendingApp").value(true));
+    }
+
+    /*
+     * **되돌린 뒤에는 알림이 자기 행의 app을 다시 따른다** (#537 · ADR-0047의 기본값). 목록은
+     * 여기서 직접 보고, 푸시는 `PushDispatcher`가 쓰는 그 메서드(`appsFor`)의 답을 본다 —
+     * 발송기를 다시 세우지 않는 것은 필터 자체를 `PushDispatcherTest`가 이미 보고 있어서이고,
+     * 여기서 확인할 것은 «DELETE가 그 입력을 기본값으로 되돌렸는가» 하나다.
+     */
+    @Test
+    void deletingMakesNotificationsFollowTheirOwnAppAgain() throws Exception {
+        Long id = notify(NotificationType.APPROVAL_REQUESTED, NotificationApp.ADMIN);
+        route("APPROVAL_REQUESTED", "[\"LMS\"]").andExpect(status().isOk());
+        // 기준표가 이기는 동안에는 admin에서 보이지 않는다
+        listIn(NotificationApp.ADMIN).andExpect(jsonPath("$.data.items.length()").value(0));
+
+        mockMvc.perform(
+                        delete("/v1/notifications/types/{type}", "APPROVAL_REQUESTED")
+                                .header("Authorization", "Bearer " + SUPER_USER))
+                .andExpect(status().isOk());
+
+        listIn(NotificationApp.ADMIN)
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].notificationId").value(id));
+        listIn(NotificationApp.LMS).andExpect(jsonPath("$.data.items.length()").value(0));
+        assertThat(
+                        routingPolicy.appsFor(
+                                NotificationType.APPROVAL_REQUESTED, NotificationApp.ADMIN))
+                .containsExactly(NotificationApp.ADMIN);
+    }
+
+    /*
+     * 멱등 — 이미 미등록인 유형을 지워도 200이다. 요청자가 원한 상태가 이미 참이라 오류가 아니며,
+     * 404로 답하면 «없는 유형»과 «이미 되돌아간 유형»이 한 응답이 된다.
+     */
+    @Test
+    void deletingAnAlreadyUnregisteredTypeStillSucceeds() throws Exception {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(
+                            delete("/v1/notifications/types/{type}", "APPROVAL_REQUESTED")
+                                    .header("Authorization", "Bearer " + SUPER_USER))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.followsSendingApp").value(true));
+        }
+        assertThat(recipientRepository.count()).isZero();
+    }
+
+    /* 없는 유형은 되돌리기에서도 404다 — 판정하는 자리가 PUT과 같다 */
+    @Test
+    void deletingAnUnknownTypeIs404() throws Exception {
+        mockMvc.perform(
+                        delete("/v1/notifications/types/{type}", "NOT_A_TYPE")
+                                .header("Authorization", "Bearer " + SUPER_USER))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    /* SUPER가 없으면 조회도 수정도 되돌리기도 403이다 — 시스템 전체의 정책이라 «내 알림»과 층이 다르다 */
+    @Test
+    void withoutSuperEveryEndpointIs403() throws Exception {
         mockMvc.perform(
                         get("/v1/notifications/types")
                                 .header("Authorization", "Bearer " + PLAIN_USER))
@@ -208,9 +290,30 @@ class NotificationTypeRoutingControllerTest {
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("{\"apps\": [\"ADMIN\"]}"))
                 .andExpect(status().isForbidden());
+        mockMvc.perform(
+                        delete("/v1/notifications/types/{type}", "APPROVAL_REQUESTED")
+                                .header("Authorization", "Bearer " + PLAIN_USER))
+                .andExpect(status().isForbidden());
     }
 
     /* ── helpers ──────────────────────────────────────────────── */
+
+    /** 그 유형의 수신 앱을 정한다 — 되돌리기 테스트가 출발점을 세우는 자리 */
+    private ResultActions route(String type, String appsJson) throws Exception {
+        return mockMvc.perform(
+                put("/v1/notifications/types/{type}", type)
+                        .header("Authorization", "Bearer " + SUPER_USER)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apps\": " + appsJson + "}"));
+    }
+
+    /** 그 앱에서 본 내 알림 목록 — 조회 필터가 기준표를 지나는지 보는 자리 */
+    private ResultActions listIn(NotificationApp app) throws Exception {
+        return mockMvc.perform(
+                get("/v1/notifications")
+                        .param("app", app.name())
+                        .header("Authorization", "Bearer " + SUPER_USER));
+    }
 
     private Long notify(NotificationType type, NotificationApp app) {
         return notificationRepository

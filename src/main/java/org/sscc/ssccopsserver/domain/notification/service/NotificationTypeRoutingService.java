@@ -6,7 +6,7 @@ import org.sscc.ssccopsserver.domain.notification.code.NotificationApp;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationTypeRouteResponse;
 
 /*
- * 알림 수신 앱 기준표의 조회·수정 (#535 · ssccops#465 · ADR-0047).
+ * 알림 수신 앱 기준표의 조회·수정·되돌리기 (#535 · #537 · ssccops#465 · ADR-0047).
  *
  * 읽기 판정(발송·목록)은 `NotificationRoutingPolicy`가 하고 이쪽은 **편집 화면의 계약**이다.
  * 정책 클래스에 쓰기를 얹지 않은 것은 그쪽이 요청 스레드 밖(발송)에서도 불리는 캐시 앞단이라,
@@ -23,4 +23,12 @@ public interface NotificationTypeRoutingService {
      * <p>바꾼 뒤 캐시를 비우므로 **다음 조회·발송부터 곧바로 반영된다.**
      */
     NotificationTypeRouteResponse replaceApps(String typeCode, List<NotificationApp> apps);
+
+    /**
+     * 그 유형을 기준표에서 빼 **기본값(보낸 앱을 따른다)으로 되돌린다** (#537 · ADR-0047).
+     *
+     * <p>없는 유형은 404이고 **이미 미등록인 유형은 그대로 성공**이다 — 지우는 조작의 답은 «그 유형에 행이 없다»는 상태이지 «내가 무엇을 지웠다»가 아니다.
+     * 돌려주는 값은 언제나 {@code followsSendingApp = true}인 줄이고, 바꾼 뒤 캐시를 비우므로 다음 조회·발송부터 곧바로 반영된다.
+     */
+    NotificationTypeRouteResponse clearApps(String typeCode);
 }

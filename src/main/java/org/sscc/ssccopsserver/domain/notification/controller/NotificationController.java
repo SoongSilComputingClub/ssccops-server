@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -13,8 +14,11 @@ import org.sscc.ssccopsserver.domain.notification.dto.NotificationListCondition;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationListResponse;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationReadAllResponse;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationReadResponse;
+import org.sscc.ssccopsserver.domain.notification.dto.TestNotificationRequest;
+import org.sscc.ssccopsserver.domain.notification.dto.TestNotificationResponse;
 import org.sscc.ssccopsserver.domain.notification.dto.UnreadCountResponse;
 import org.sscc.ssccopsserver.domain.notification.service.NotificationService;
+import org.sscc.ssccopsserver.domain.notification.service.TestNotificationService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
@@ -38,6 +42,7 @@ import lombok.RequiredArgsConstructor;
 public class NotificationController {
 
     private final NotificationService notificationService;
+    private final TestNotificationService testNotificationService;
 
     @Operation(
             summary = "내 알림 목록",
@@ -78,5 +83,24 @@ public class NotificationController {
     public ApiResponse<NotificationReadAllResponse> markAllRead(
             @CurrentMember MemberEntity member) {
         return ApiResponse.success(notificationService.markAllRead(member.getId()));
+    }
+
+    /*
+     * 테스트 알림 (#528 · ssccops#454). 200이지 201이 아니다 — 만든 행보다 «몇 대에 갔나»가 답이고
+     * Location으로 가리킬 단건 조회도 없다.
+     */
+    @Operation(
+            summary = "테스트 알림 보내기",
+            description =
+                    "호출자 자신에게 TEST 알림 행 하나를 만들고 내 구독 전부로 푸시를 **동기로** 보낸다."
+                            + " app(ADMIN·LMS·WWW)은 어느 앱의 «내 정보»에서 눌렀는가 — 행의 app과 링크"
+                            + " 경로(ADMIN·LMS /my · WWW /me)가 그 값으로 정해진다. 응답의 pushed는 푸시"
+                            + " 서비스가 받아 준 구독 수이며 발송기가 꺼진 환경에서는 0이다(행은 남는다)."
+                            + " 회원당 1분 3회를 넘으면 429 RATE_LIMITED.")
+    @PostMapping("/test")
+    public ApiResponse<TestNotificationResponse> sendTest(
+            @Valid @RequestBody TestNotificationRequest request,
+            @CurrentMember MemberEntity member) {
+        return ApiResponse.success(testNotificationService.send(member, request.app()));
     }
 }

@@ -30,6 +30,7 @@
 - 폼: 모집 판정은 연결된 폼의 `FormReceiptPolicy`가 한다(참조만, D3). 신청 목록은 폼 응답 요약을 **감싼다**(위 #378 항목).
 - 학술: 학술 활동은 행사의 1:1 확장이며 삭제 가드·응답의 `academicProgram`·분류 잠금은 `AcademicEventLinkProvider`로 묻는다 — 학술 저장소를 직접 부르면 순환이다.
 - 파일: 이미지 업로드는 `domain/file`의 `FilePresigner`·`ImageFileType`만 쓰고 `file_rfrnc` 행을 남기지 않는다(위 항목). `R2Config`·`AppPublicBaseUrl`은 루트 AGENTS.md `global/config` 항목.
+- 알림: `EventParticipationServiceImpl`이 명단 행의 상태가 **실제로 바뀐** 자리마다 `EventParticipantStatusChangedEvent(eventParticipantId, previous, next, performerId)`(`event/event/`)를 발행한다(#528 · ssccops#453 · ADR-0045) — 전이(`changeParticipantStatus`, 그래서 이 메서드가 `@CurrentMember`를 받게 됐다) · 선발 재저장의 바뀐 줄(`registerOrUpdateParticipant`) · **처음 등록**(`register`, `previous = null` — 신청자가 확정·대기를 처음 아는 순간이 등록이다). 같은 값 재저장은 `changeStatus`를 부르지 않으므로 발행도 없다. **이 도메인은 누가 듣는지 모른다** — 알림 도메인이 AFTER_COMMIT + `@Async`로 듣고 참가자에게 `APPLICATION_*`를 만든다(본인이 바꾼 것이면 생략).
 
 ## 테스트 함정
 

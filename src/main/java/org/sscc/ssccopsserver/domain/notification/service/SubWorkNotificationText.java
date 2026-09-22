@@ -56,6 +56,8 @@ final class SubWorkNotificationText {
             case APPROVAL_REJECTED -> "[반려]";
             case DEADLINE_DUE -> "[마감 D-1]";
             case DEADLINE_OVERDUE -> "[지연]";
+                // 폼 응답·참가·테스트는 각자의 Text 클래스가 맡는다(#528) — 여기 오면 호출자의 결함이다
+            default -> throw new IllegalArgumentException("not a sub-work type: " + type);
         };
     }
 

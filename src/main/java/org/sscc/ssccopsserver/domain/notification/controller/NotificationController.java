@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.notification.controller;
 
 import jakarta.validation.Valid;
 
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -74,7 +75,7 @@ public class NotificationController {
                             + " 필터**로 센다(#535 · ADR-0047), 없으면 전부.")
     @GetMapping("/unread-count")
     public ApiResponse<UnreadCountResponse> getUnreadCount(
-            @Valid @ModelAttribute NotificationAppCondition condition,
+            @Valid @ParameterObject @ModelAttribute NotificationAppCondition condition,
             @CurrentMember MemberEntity member) {
         return ApiResponse.success(
                 notificationService.unreadCount(member.getId(), condition.app()));

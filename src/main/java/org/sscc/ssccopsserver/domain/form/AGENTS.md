@@ -124,6 +124,7 @@
   - **접수 건수 집계는 폼이 답한다** — `countSubmittedResponsesByFormIds`(#483)가 목록의 `responseCount`와 같은 기준(작성 중 제외)을 쓴다. 학술 모집 카드의 «지원 N건»이 이 값이며, 세는 자리가 둘이 되면 같은 폼이 두 화면에서 다른 숫자로 보인다.
 - 행사: 행사가 폼을 **참조만** 한다(`EventServiceImpl.resolveForm`, 지워진 폼은 404). 내 신청 목록의 축이 event라 `findEventApplicationsByMember`에는 폼 `del_dt` 필터를 걸지 않는다(위 소프트 삭제 항목).
 - 회원: 회원 생성 커밋 직후 `MemberCreatedEvent`로 기획안 폼 시드가 돈다(위 시드 항목). 변경자·처리자는 언제나 `@CurrentMember`다.
+- 알림: `FormResponseServiceImpl.reviewResponse`가 끝에서 `FormResponseReviewedEvent(formResponseId, action, reviewerId)`(`form/event/`)를 `ApplicationEventPublisher`로 발행한다(#528 · ssccops#453 · ADR-0045). **이 도메인은 누가 듣는지 모른다** — 알림 도메인이 AFTER_COMMIT + `@Async`로 듣고 응답자에게 `RESPONSE_*` 알림을 만든다. 같은 트랜잭션의 `SystemFormApprovalHook`(승인 → 이관 · 원자성)과 층이 다르다 — 알림은 커밋 뒤다. `SUBMIT`은 발행하지 않는다(응답자가 한 일). 테스트가 `new FormResponseServiceImpl(...)`을 직접 부르면 마지막 인자가 `ApplicationEventPublisher`다.
 
 ## 테스트 함정
 

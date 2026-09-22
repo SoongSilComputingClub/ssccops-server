@@ -175,7 +175,10 @@ class ApprovalServiceImplTest {
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         new AuditLog(),
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        event -> {
+                            // 전이 이벤트(알림 도메인이 듣는다)는 이 테스트의 관심이 아니다
+                        });
         approvalService =
                 new ApprovalServiceImpl(
                         subWorkRepository,

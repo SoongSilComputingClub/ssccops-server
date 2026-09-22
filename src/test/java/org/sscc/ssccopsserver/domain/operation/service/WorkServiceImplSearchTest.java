@@ -167,7 +167,10 @@ class WorkServiceImplSearchTest {
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK,
                         new AuditLog(),
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        event -> {
+                            // 전이 이벤트(알림 도메인이 듣는다)는 이 테스트의 관심이 아니다
+                        });
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");

@@ -19,17 +19,21 @@ import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
  * 파생을 서비스의 if로 흩지 않는 것은 ResponseStatus.submittedOrLater()가 코드 enum으로
  * 옮겨 간 것과 같은 이유다 — 화면·경로가 늘 때마다 같은 표가 복제되면 갈린다 (LY-02).
  *
- * ── 어휘를 여섯 개로 고정한다 ────────────────────────────
- * 웹과 합의된 계약이 이 여섯이며 여기에 값을 더하는 것은 계약 변경이다. 수정요청
- * (ResponseStatus.CHANGES_REQUESTED)이 SUBMITTED로 접히는 것도 그래서인데, 응답자에게
- * 수정요청 사유를 보여주고 다시 내게 하는 화면 자체가 아직 없다(#141이 별도 이슈로 미뤄
- * 두었다). 그 화면이 정해질 때 어휘를 함께 넓히는 것이 맞고, 그전에 여기서만 값을 늘리면
- * 웹이 모르는 상태가 내려간다. 두 상태가 "심사가 끝나지 않았다"는 점에서 같아 접을 수 있다.
+ * ── 어휘는 웹과의 계약이다 ──────────────────────────────
+ * 값을 더하는 것은 계약 변경이다(oasdiff는 응답 enum 추가를 WARN으로 통과시키지만 웹이 모르는
+ * 값은 배지 없는 카드가 된다 — 웹 #628과 함께 간다). 수정요청(ResponseStatus.CHANGES_REQUESTED)은
+ * 처음엔 SUBMITTED로 접었다 — 응답자가 사유를 보고 다시 내는 화면이 없어서(#141이 미뤘다). 그
+ * 화면이 ssccops#221에서 생겼고, 접힌 채로는 «내 활동 › 신청한 행사»에서 수정 요청이 «제출됨»으로만
+ * 보여 응답자가 다시 낼 것이 있는 줄 몰랐다(ssccops#458). 그래서 **그대로 통과**시킨다 — 명단 행이
+ * 있으면 여전히 참가 상태가 이긴다(위 절).
  */
 public enum ApplicationStatus {
 
-    /** 제출했고 심사가 끝나지 않았다 (수정요청도 여기 접힌다) */
+    /** 제출했고 심사가 끝나지 않았다 */
     SUBMITTED,
+
+    /** 운영진이 수정을 요청했다 — 응답자가 고쳐서 다시 내야 한다 (ssccops#458) */
+    CHANGES_REQUESTED,
 
     /** 심사 승인. 아직 명단에 오르지는 않았다 — 올랐다면 CONFIRMED·WAITLISTED가 된다 */
     ACCEPTED,
@@ -72,7 +76,8 @@ public enum ApplicationStatus {
      */
     private static ApplicationStatus fromResponseStatus(ResponseStatus status) {
         return switch (status) {
-            case SUBMITTED, CHANGES_REQUESTED -> SUBMITTED;
+            case SUBMITTED -> SUBMITTED;
+            case CHANGES_REQUESTED -> CHANGES_REQUESTED;
             case ACCEPTED -> ACCEPTED;
             case REJECTED -> REJECTED;
             case DRAFT ->

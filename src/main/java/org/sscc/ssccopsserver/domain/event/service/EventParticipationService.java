@@ -72,5 +72,8 @@ public interface EventParticipationService {
      * **행을 지우는 경로는 두지 않는다** — 명단은 활동 이력으로 영구 보존한다(D16).
      */
     EventParticipantMutationResponse changeParticipantStatus(
-            Long eventId, Long eventParticipantId, EventParticipantStatusChangeRequest request);
+            Long eventId,
+            Long eventParticipantId,
+            EventParticipantStatusChangeRequest request,
+            MemberEntity performer);
 }

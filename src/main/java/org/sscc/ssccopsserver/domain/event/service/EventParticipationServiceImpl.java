@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +22,7 @@ import org.sscc.ssccopsserver.domain.event.dto.EventParticipantStatusChangeReque
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantWarningResponse;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
+import org.sscc.ssccopsserver.domain.event.event.EventParticipantStatusChangedEvent;
 import org.sscc.ssccopsserver.domain.event.repository.EventApplicationParticipation;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
@@ -61,6 +63,13 @@ public class EventParticipationServiceImpl implements EventParticipationService 
      * 위임한다 — 복제하면 폼 화면과 행사 화면이 같은 응답을 다른 순서·다른 범위로 보여준다.
      */
     private final FormResponseService formResponseService;
+
+    /*
+     * 참가 상태 알림 (#528 · ssccops#453). 행사는 알림 도메인을 모른다 — 이벤트 record
+     * (`EventParticipantStatusChangedEvent`)가 행사 패키지의 것이고 듣는 쪽은 AFTER_COMMIT이라
+     * 롤백된 변경의 알림은 없다. 어느 자리에서 발행하는지는 그 record의 주석에 있다.
+     */
+    private final ApplicationEventPublisher eventPublisher;
 
     /*
      * 명단 등록 여부는 응답 목록을 받은 뒤 **한 번의 질의**로 얹는다 (#378). 응답마다 명단을
@@ -189,7 +198,9 @@ public class EventParticipationServiceImpl implements EventParticipationService 
         }
 
         if (participant.getStatus() != request.ptcpSttsCd()) {
+            EventParticipantStatus previous = participant.getStatus();
             participant.changeStatus(request.ptcpSttsCd());
+            publishStatusChanged(participant, previous, registrant);
         }
 
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (changeParticipantStatus와 같은 이유)
@@ -208,7 +219,10 @@ public class EventParticipationServiceImpl implements EventParticipationService 
     @Override
     @Transactional
     public EventParticipantMutationResponse changeParticipantStatus(
-            Long eventId, Long eventParticipantId, EventParticipantStatusChangeRequest request) {
+            Long eventId,
+            Long eventParticipantId,
+            EventParticipantStatusChangeRequest request,
+            MemberEntity performer) {
 
         EventEntity event = findEvent(eventId);
         EventParticipantEntity participant =
@@ -219,7 +233,9 @@ public class EventParticipationServiceImpl implements EventParticipationService 
                                         new GeneralException(
                                                 EventErrorCode.EVENT_PARTICIPANT_NOT_FOUND));
 
+        EventParticipantStatus previous = participant.getStatus();
         participant.changeStatus(request.ptcpSttsCd());
+        publishStatusChanged(participant, previous, performer);
 
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답이 실제 값이 된다
         eventParticipantRepository.flush();
@@ -275,7 +291,23 @@ public class EventParticipationServiceImpl implements EventParticipationService 
             // 선조회를 나란히 통과한 동시 등록은 uk_event_ptcp_event_member 위반으로만 드러난다
             throw new GeneralException(EventErrorCode.EVENT_PARTICIPANT_DUPLICATED);
         }
+        // 처음 명단에 오르는 것도 그 사람에게는 «확정·대기가 됐다»는 사건이다 (previous = null)
+        publishStatusChanged(participant, null, registrant);
         return participant;
+    }
+
+    /*
+     * 상태가 실제로 바뀐 자리에서만 부른다 (#528). 같은 값 재저장은 changeStatus를 부르지 않으므로
+     * 여기까지 오지 않는다. 트랜잭션 안에서 발행하지만 듣는 쪽은 AFTER_COMMIT이라 이 변경이
+     * 롤백되면 알림도 없다.
+     */
+    private void publishStatusChanged(
+            EventParticipantEntity participant,
+            EventParticipantStatus previous,
+            MemberEntity performer) {
+        eventPublisher.publishEvent(
+                new EventParticipantStatusChangedEvent(
+                        participant.getId(), previous, participant.getStatus(), performer.getId()));
     }
 
     /*

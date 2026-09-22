@@ -155,8 +155,8 @@ class MyApplicationControllerTest {
     }
 
     /*
-     * 명단 행이 없으면 응답 상태를 쓴다. 수정요청(CHANGES_REQUESTED)은 웹과 합의된 여섯 어휘에
-     * 없어 SUBMITTED로 접힌다 — 둘 다 "심사가 끝나지 않았다"이다.
+     * 명단 행이 없으면 응답 상태를 쓴다. 수정요청(CHANGES_REQUESTED)은 그대로 내려간다 —
+     * 응답자가 다시 낼 것이 있다는 사실이 SUBMITTED로 접히면 사라진다(ssccops#458).
      */
     @Test
     void responseStatusIsUsedWhenNotOnRoster() throws Exception {
@@ -187,7 +187,7 @@ class MyApplicationControllerTest {
                 .andExpect(jsonPath("$.data[0].eventPtcpId").isEmpty())
                 .andExpect(jsonPath("$.data[1].applicationStatus").value("ACCEPTED"))
                 .andExpect(jsonPath("$.data[2].applicationStatus").value("REJECTED"))
-                .andExpect(jsonPath("$.data[3].applicationStatus").value("SUBMITTED"));
+                .andExpect(jsonPath("$.data[3].applicationStatus").value("CHANGES_REQUESTED"));
     }
 
     /* ── 범위 ─────────────────────────────────────────────── */

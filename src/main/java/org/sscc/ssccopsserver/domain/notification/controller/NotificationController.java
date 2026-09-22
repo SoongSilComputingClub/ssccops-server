@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.notification.dto.NotificationAppCondition;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationListCondition;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationListResponse;
 import org.sscc.ssccopsserver.domain.notification.dto.NotificationReadAllResponse;
@@ -48,21 +49,35 @@ public class NotificationController {
             summary = "내 알림 목록",
             description =
                     "최신부터 커서 페이징(AP-13). size 기본 20·최대 100, cursor는 직전 응답의 nextCursor"
-                            + "(마지막 페이지면 null). unreadCount(안 읽은 전체 수)가 함께 온다 — 종 아이콘"
-                            + " 배지가 목록과 같은 응답에서 값을 받는다. 깨진 cursor는 400.")
+                            + "(마지막 페이지면 null). unreadCount(안 읽은 수)가 함께 온다 — 종 아이콘"
+                            + " 배지가 목록과 같은 응답에서 값을 받는다. 깨진 cursor는 400. "
+                            + "app(ADMIN·LMS·WWW)을 주면 **그 앱이 수신 앱인 알림만** 온다(ADR-0047 —"
+                            + " 기준표 noti_type_rcpn이 정하고, 등록된 행이 없는 유형은 그 알림 행 자신의"
+                            + " app을 따른다). 함께 오는 unreadCount도 같은 필터를 지난다. **파라미터가"
+                            + " 없으면 앱과 무관하게 전부**(«전체» 칩)이고, 기준 코드에 없는 값은 400.")
     @GetMapping
     public ApiResponse<NotificationListResponse> getNotifications(
             @Valid @ModelAttribute NotificationListCondition condition,
             @CurrentMember MemberEntity member) {
         return ApiResponse.success(
                 notificationService.list(
-                        member.getId(), condition.sizeOrDefault(), condition.cursor()));
+                        member.getId(),
+                        condition.sizeOrDefault(),
+                        condition.cursor(),
+                        condition.app()));
     }
 
-    @Operation(summary = "안 읽은 알림 수", description = "종 아이콘 배지 하나를 위한 값. 목록 없이 수만 필요할 때.")
+    @Operation(
+            summary = "안 읽은 알림 수",
+            description =
+                    "종 아이콘 배지 하나를 위한 값. 목록 없이 수만 필요할 때. app을 주면 목록과 **같은"
+                            + " 필터**로 센다(#535 · ADR-0047), 없으면 전부.")
     @GetMapping("/unread-count")
-    public ApiResponse<UnreadCountResponse> getUnreadCount(@CurrentMember MemberEntity member) {
-        return ApiResponse.success(notificationService.unreadCount(member.getId()));
+    public ApiResponse<UnreadCountResponse> getUnreadCount(
+            @Valid @ModelAttribute NotificationAppCondition condition,
+            @CurrentMember MemberEntity member) {
+        return ApiResponse.success(
+                notificationService.unreadCount(member.getId(), condition.app()));
     }
 
     @Operation(

@@ -23,7 +23,7 @@ import org.sscc.ssccopsserver.global.audit.AuditLog;
 import lombok.RequiredArgsConstructor;
 
 /*
- * 기준표 편집의 구현 (#535 · ADR-0047).
+ * 기준표 편집의 구현 (#535 · #537 · ADR-0047).
  *
  * **수정은 «그 유형의 행을 지우고 새로 넣는다»다.** 차집합을 계산해 더하고 빼는 안은 기각 —
  * 한 유형의 행이 최대 셋이라 얻는 것이 없고, 부분 실패가 «절반만 바뀐 정책»을 남긴다. 한
@@ -86,6 +86,40 @@ public class NotificationTypeRoutingServiceImpl implements NotificationTypeRouti
                         .change(join(before), join(after))
                         .build());
         return NotificationTypeRouteResponse.routed(type, after);
+    }
+
+    /*
+     * 되돌리기 (#537). **PUT의 «최소 한 앱»을 완화하는 대신 조작을 하나 더 만든 것**이다 —
+     * 빈 배열 PUT은 «체크를 다 끄고 저장을 눌렀다»라는 실수와 구별되지 않지만, DELETE는 그 자체가
+     * 의도다. ADR-0047이 막으려는 것은 «행은 있는데 앱이 없는» 상태이지 기본값으로 돌아가는 길이
+     * 아니고, 그 길이 없어 한 번 정한 유형을 «아직 안 정함»으로 되돌릴 수 없던 것이 이 이슈다.
+     *
+     * **멱등이다** — 이미 미등록인 유형에도 성공으로 답한다. 없는 행을 지우라는 요청은 요청자가
+     * 원한 상태가 이미 참이라는 뜻이라 오류가 아니며(HTTP DELETE의 관례), 404를 내면 «이 유형은
+     * 없다»(유형 코드 오류)와 «이 유형에 행이 없다»(정상 상태)가 같은 응답이 되어 화면이 둘을
+     * 가르지 못한다. 유형 해석 실패만 404다.
+     *
+     * 감사 로그의 after는 `NONE`이다 — 빈 목록이 곧 «미등록 = 보낸 앱을 따른다»이고(join 주석),
+     * 같은 상태를 PUT의 before와 다른 문자열로 적으면 한 유형의 이력에 이름이 둘이 된다.
+     * 아무것도 바뀌지 않은 호출도 남긴다: 정책을 건드린 사람이 있었다는 사실이 감사의 내용이고,
+     * «바뀐 것이 없으면 조용히»는 PUT(같은 값을 다시 저장해도 남는다)과도 어긋난다.
+     */
+    @Override
+    @Transactional
+    public NotificationTypeRouteResponse clearApps(String typeCode) {
+        NotificationType type = resolve(typeCode);
+        Set<NotificationApp> current = routingPolicy.registeredApps().get(type);
+        List<NotificationApp> before = current == null ? List.of() : sorted(current);
+
+        recipientRepository.deleteByTypeCode(type.name());
+        routingPolicy.invalidate();
+
+        auditLog.record(
+                AuditEvent.success(AuditAction.NOTIFICATION_TYPE_ROUTE)
+                        .target(type.name())
+                        .change(join(before), join(List.of()))
+                        .build());
+        return NotificationTypeRouteResponse.followingSendingApp(type);
     }
 
     /*

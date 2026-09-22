@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.global.audit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -279,6 +280,37 @@ class AuditPointsTest {
         assertThat(section(audit, "change"))
                 .containsEntry("before", "NONE")
                 .containsEntry("after", "ADMIN,LMS");
+    }
+
+    /*
+     * 되돌리기도 같은 사건이다 (#537). after가 NONE인 것은 «앱이 하나도 없다»가 아니라 «기준표에서
+     * 빠져 보낸 앱을 따른다»이며, 같은 상태를 PUT의 before와 다른 문자열로 적으면 한 유형의 이력에
+     * 이름이 둘이 된다. 먼저 정해 두는 것은 before가 실제로 옮겨 담기는지 보기 위해서다.
+     */
+    @Test
+    void notificationTypeRouteResetIsAudited() throws Exception {
+        mockMvc.perform(
+                        put("/v1/notifications/types/RESPONSE_ACCEPTED")
+                                .header("Authorization", "Bearer " + ROUTER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"apps\": [\"WWW\"]}"))
+                .andExpect(status().isOk());
+        captured.list.clear();
+
+        mockMvc.perform(
+                        delete("/v1/notifications/types/RESPONSE_ACCEPTED")
+                                .header("Authorization", "Bearer " + ROUTER))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("notification.type.route");
+        assertThat(section(line, "event")).containsEntry("outcome", "success");
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target"))
+                .containsEntry("type", "noti_type_rcpn")
+                .containsEntry("id", "RESPONSE_ACCEPTED");
+        assertThat(section(audit, "change"))
+                .containsEntry("before", "WWW")
+                .containsEntry("after", "NONE");
     }
 
     private void designate(Long formId) throws Exception {

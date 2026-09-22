@@ -38,9 +38,10 @@ public class PushDispatcher {
     private final WebPushSender webPushSender;
     private final ObjectMapper objectMapper;
 
-    public void dispatch(List<CreatedNotification> notifications) {
+    /** 보낸다. 돌려주는 값은 푸시 서비스가 받아 준(DELIVERED) 구독 수 — 테스트 알림의 «n대»다(#528) */
+    public int dispatch(List<CreatedNotification> notifications) {
         if (notifications.isEmpty()) {
-            return;
+            return 0;
         }
         Set<Long> recipientIds =
                 notifications.stream()
@@ -50,9 +51,10 @@ public class PushDispatcher {
                 pushSubscriptionRepository.findAllByMemberIds(recipientIds).stream()
                         .collect(Collectors.groupingBy(s -> s.getMember().getId()));
         if (subscriptionsByMember.isEmpty()) {
-            return;
+            return 0;
         }
 
+        int delivered = 0;
         for (CreatedNotification notification : notifications) {
             List<PushSubscriptionEntity> subscriptions =
                     subscriptionsByMember.getOrDefault(notification.recipientId(), List.of());
@@ -65,11 +67,14 @@ public class PushDispatcher {
             }
             for (PushSubscriptionEntity subscription : subscriptions) {
                 WebPushOutcome outcome = webPushSender.send(subscription, payload);
-                if (outcome == WebPushOutcome.GONE) {
+                if (outcome == WebPushOutcome.DELIVERED) {
+                    delivered++;
+                } else if (outcome == WebPushOutcome.GONE) {
                     pushSubscriptionRepository.deleteById(subscription.getId());
                 }
             }
         }
+        return delivered;
     }
 
     private String toJson(CreatedNotification notification) {

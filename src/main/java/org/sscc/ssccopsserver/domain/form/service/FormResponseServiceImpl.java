@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +34,7 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseReviewHistoryEntity;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
+import org.sscc.ssccopsserver.domain.form.event.FormResponseReviewedEvent;
 import org.sscc.ssccopsserver.domain.form.repository.FormLabelRelationRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
@@ -98,6 +100,13 @@ public class FormResponseServiceImpl implements FormResponseService {
     private final Clock clock;
 
     private final AuditLog auditLog;
+
+    /*
+     * 검토 결과 알림 (#528 · ssccops#453). 폼은 알림 도메인을 모른다 — 이벤트 record
+     * (`FormResponseReviewedEvent`)가 폼 패키지의 것이고 듣는 쪽은 AFTER_COMMIT이라 롤백된 검토의
+     * 알림은 없다. 왜 포트가 아니라 이벤트인지는 그 record의 주석에 있다.
+     */
+    private final ApplicationEventPublisher eventPublisher;
 
     /*
      * 응답자용 폼 조회.
@@ -667,6 +676,11 @@ public class FormResponseServiceImpl implements FormResponseService {
                         .target(formResponseId)
                         .decision(request.rspnsSttsCd())
                         .build());
+
+        // 알림 (#528). 트랜잭션 안에서 발행하지만 듣는 쪽은 AFTER_COMMIT이라 롤백된 검토의 알림은 없다
+        eventPublisher.publishEvent(
+                new FormResponseReviewedEvent(formResponseId, action, reviewer.getId()));
+
         return FormResponseSummaryResponse.of(response, responseTitleOf(response));
     }
 

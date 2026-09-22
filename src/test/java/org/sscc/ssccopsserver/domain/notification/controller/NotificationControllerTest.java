@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
@@ -202,6 +203,95 @@ class NotificationControllerTest {
 
         assertThat(notificationRepository.countByMemberIdAndReadAtIsNull(me.getId())).isZero();
         assertThat(notificationRepository.findById(theirs).orElseThrow().isRead()).isFalse();
+    }
+
+    /*
+     * 테스트 알림 (#528 · ssccops#454) — 호출자에게 TEST 행 하나, 대상은 (MEMBER, 본인), 링크는 그 앱의
+     * «내 정보». test 프로필은 발송기가 Noop이라 pushed가 0이다 — 구독으로 실제 send가 불리고 수가
+     * 세어지는 것은 FormResponseReviewNotificationListenerTest(@MockitoBean 발송기)가 본다.
+     */
+    @Test
+    void testNotificationCreatesARowForMeAndReportsZeroPushedWhenSenderIsOff() throws Exception {
+        String response =
+                mockMvc.perform(
+                                post("/v1/notifications/test")
+                                        .header("Authorization", "Bearer " + ME)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"app\": \"ADMIN\"}"))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.data.notificationId").isNumber())
+                        .andExpect(jsonPath("$.data.pushed").value(0))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long id = JsonPath.parse(response).read("$.data.notificationId", Long.class);
+
+        NotificationEntity saved = notificationRepository.findById(id).orElseThrow();
+        assertThat(saved.getMember().getId()).isEqualTo(me.getId());
+        assertThat(saved.getType()).isEqualTo(NotificationType.TEST);
+        assertThat(saved.getTitle()).isEqualTo("[테스트] 알림이 잘 옵니다");
+        assertThat(saved.getBody()).isEqualTo("이 기기로 푸시가 오면 설정이 끝난 것입니다");
+        assertThat(saved.getApp()).isEqualTo(NotificationApp.ADMIN);
+        assertThat(saved.getLinkPath()).isEqualTo("/my");
+        assertThat(saved.getTargetType()).isEqualTo(NotificationTargetType.MEMBER);
+        assertThat(saved.getTargetId()).isEqualTo(me.getId());
+
+        // 목록에도 바로 보인다 — 종 아이콘이 이 행으로 «알림이 온다»를 보여 준다
+        mockMvc.perform(get("/v1/notifications").header("Authorization", "Bearer " + ME))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].type").value("TEST"))
+                .andExpect(jsonPath("$.data.items[0].linkPath").value("/my"))
+                .andExpect(jsonPath("$.data.unreadCount").value(1));
+    }
+
+    /* www에서 누르면 링크가 /me다 */
+    @Test
+    void testNotificationForWwwLinksToMe() throws Exception {
+        mockMvc.perform(
+                        post("/v1/notifications/test")
+                                .header("Authorization", "Bearer " + ME)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"app\": \"WWW\"}"))
+                .andExpect(status().isOk());
+
+        assertThat(notificationRepository.findAll())
+                .filteredOn(n -> n.getMember().getId().equals(me.getId()))
+                .singleElement()
+                .satisfies(
+                        n -> {
+                            assertThat(n.getApp()).isEqualTo(NotificationApp.WWW);
+                            assertThat(n.getLinkPath()).isEqualTo("/me");
+                        });
+    }
+
+    /* 회원당 1분 3회 — 네 번째는 429 RATE_LIMITED이고 행도 만들지 않는다. 남(OTHER)의 한도는 따로다 */
+    @Test
+    void fourthTestNotificationWithinAMinuteIs429() throws Exception {
+        for (int i = 0; i < 3; i++) {
+            mockMvc.perform(
+                            post("/v1/notifications/test")
+                                    .header("Authorization", "Bearer " + ME)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content("{\"app\": \"LMS\"}"))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(
+                        post("/v1/notifications/test")
+                                .header("Authorization", "Bearer " + OTHER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"app\": \"LMS\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        post("/v1/notifications/test")
+                                .header("Authorization", "Bearer " + ME)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"app\": \"LMS\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
+
+        assertThat(notificationRepository.countByMemberIdAndReadAtIsNull(me.getId())).isEqualTo(3);
     }
 
     /* ── helpers ──────────────────────────────────────────────── */

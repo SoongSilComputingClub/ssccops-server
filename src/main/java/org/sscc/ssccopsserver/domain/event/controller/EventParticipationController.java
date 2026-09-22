@@ -144,8 +144,10 @@ public class EventParticipationController {
     public ApiResponse<EventParticipantMutationResponse> changeParticipantStatus(
             @PathVariable Long eventId,
             @PathVariable Long eventPtcpId,
-            @Valid @RequestBody EventParticipantStatusChangeRequest request) {
+            @Valid @RequestBody EventParticipantStatusChangeRequest request,
+            @CurrentMember MemberEntity performer) {
         return ApiResponse.success(
-                eventParticipationService.changeParticipantStatus(eventId, eventPtcpId, request));
+                eventParticipationService.changeParticipantStatus(
+                        eventId, eventPtcpId, request, performer));
     }
 }

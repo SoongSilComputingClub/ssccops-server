@@ -353,6 +353,56 @@ class FlywayMigrationValidateTest {
     }
 
     /*
+     * 알림 수신 앱 기준표의 시드 (#535 · V23 · ADR-0047).
+     *
+     * **이 클래스가 그 시드를 보는 유일한 자리다.** V23은 DDL과 시드가 한 파일이라 H2에서 돌지
+     * 않아 test 프로필의 `spring.sql.init.data-locations`에 얹지 못했고(그 파일 주석), 일반
+     * 테스트는 빈 표에서 출발한다. 시드가 틀리면 드러나는 곳이 dev 배포뿐이므로 여기서 본다.
+     *
+     * 세는 것은 «지금 동작 그대로»다 — 운영 5종 → ADMIN · 회원 6종 → WWW · **TEST는 없다**
+     * (미등록이 곧 «누른 앱»이고, 여기에 행을 넣으면 admin에서 누른 확인 알림이 www에도 뜬다).
+     */
+    @Test
+    void notificationRecipientTableIsSeededWithTodaysBehaviour() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        assertThat(
+                        jdbc.queryForList(
+                                "SELECT noti_type_cd FROM noti_type_rcpn WHERE app_cd = 'ADMIN'"
+                                        + " ORDER BY noti_type_cd",
+                                String.class))
+                .as("운영 5종은 어드민의 하위 업무 라우트로 간다")
+                .containsExactly(
+                        "APPROVAL_APPROVED",
+                        "APPROVAL_REJECTED",
+                        "APPROVAL_REQUESTED",
+                        "DEADLINE_DUE",
+                        "DEADLINE_OVERDUE");
+        assertThat(
+                        jdbc.queryForList(
+                                "SELECT noti_type_cd FROM noti_type_rcpn WHERE app_cd = 'WWW'"
+                                        + " ORDER BY noti_type_cd",
+                                String.class))
+                .as("회원이 낸 것의 처리 과정은 www가 허브다")
+                .containsExactly(
+                        "APPLICATION_CANCELLED",
+                        "APPLICATION_CONFIRMED",
+                        "APPLICATION_WAITLISTED",
+                        "RESPONSE_ACCEPTED",
+                        "RESPONSE_CHANGES_REQUESTED",
+                        "RESPONSE_REJECTED");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT count(*) FROM noti_type_rcpn WHERE noti_type_cd = 'TEST'",
+                                Integer.class))
+                .as("TEST는 시드하지 않는다 — 미등록이 곧 «누른 앱»이다")
+                .isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM noti_type_rcpn", Integer.class))
+                .as("시드는 11행이고 LMS는 아직 자기 사건이 없다")
+                .isEqualTo(11);
+    }
+
+    /*
      * V10의 벡터 저장소가 Spring AI가 기대하는 모양인지 본다 (#396 · ADR-0028).
      *
      * **스키마를 Flyway가 만들기로 한 대가가 이 테스트다.** 스타터의 자동 생성을 껐으므로

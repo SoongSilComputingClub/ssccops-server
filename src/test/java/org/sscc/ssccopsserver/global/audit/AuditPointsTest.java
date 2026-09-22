@@ -68,6 +68,8 @@ class AuditPointsTest {
 
     private static final UUID MANAGER = UUID.randomUUID();
     private static final UUID PLAIN = UUID.randomUUID();
+    /* 알림 기준표는 SUPER 전용이라 신원을 따로 둔다 — MANAGER에 SUPER를 얹으면 다른 지점의 «권한 하나» 전제가 흐려진다 (#535) */
+    private static final UUID ROUTER = UUID.randomUUID();
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
@@ -126,6 +128,21 @@ class AuditPointsTest {
                 "20200002",
                 "이서연",
                 "plain@sscc.org");
+        AuthorityFixture.grant(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                MemberFixture.save(
+                        memberRepository,
+                        memberGradeRepository,
+                        memberStatusRepository,
+                        ROUTER,
+                        "20200004",
+                        "최민서",
+                        "router@sscc.org"),
+                AuthorityCode.SUPER);
         targetId =
                 MemberFixture.save(
                                 memberRepository,
@@ -237,6 +254,31 @@ class AuditPointsTest {
         captured.list.clear();
         designate(second);
         assertThat(captured.list).isEmpty();
+    }
+
+    /*
+     * 알림 수신 앱 기준표 변경 (#535 · ADR-0047). 정책이 코드 리뷰를 거치지 않는 대가로 ADR이
+     * 지목한 자리다 — 대상은 유형 코드, change는 이전 앱 목록 → 새 앱 목록이며 둘 다 코드값이다.
+     * 미등록에서 출발하면 before가 NONE이다(«행이 없었다»와 «앱이 없다»를 같은 문자열로 적지 않게).
+     */
+    @Test
+    void notificationTypeRouteChangeIsAudited() throws Exception {
+        mockMvc.perform(
+                        put("/v1/notifications/types/APPROVAL_REQUESTED")
+                                .header("Authorization", "Bearer " + ROUTER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"apps\": [\"ADMIN\", \"LMS\"]}"))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("notification.type.route");
+        assertThat(section(line, "event")).containsEntry("outcome", "success");
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target"))
+                .containsEntry("type", "noti_type_rcpn")
+                .containsEntry("id", "APPROVAL_REQUESTED");
+        assertThat(section(audit, "change"))
+                .containsEntry("before", "NONE")
+                .containsEntry("after", "ADMIN,LMS");
     }
 
     private void designate(Long formId) throws Exception {

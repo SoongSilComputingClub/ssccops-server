@@ -29,6 +29,7 @@ import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import lombok.RequiredArgsConstructor;
 
@@ -145,7 +146,10 @@ public class EventParticipationController {
             @PathVariable Long eventId,
             @PathVariable Long eventPtcpId,
             @Valid @RequestBody EventParticipantStatusChangeRequest request,
-            @CurrentMember MemberEntity performer) {
+            // hidden — springdoc이 @CurrentMember를 query 파라미터로 그리는데(다른 자리 95곳이 그렇다 ·
+            // 낡은 결함) 기존 엔드포인트에 «필수 파라미터 추가»로 보이면 api-compat 게이트(ADR-0032)가
+            // 막는다. 전역으로 걷어내는 것은 스펙 95곳이 함께 바뀌는 별도 작업이다.
+            @Parameter(hidden = true) @CurrentMember MemberEntity performer) {
         return ApiResponse.success(
                 eventParticipationService.changeParticipantStatus(
                         eventId, eventPtcpId, request, performer));

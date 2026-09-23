@@ -23,6 +23,7 @@ import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.sscc.ssccopsserver.global.crawler.RobotsTxt;
 import org.sscc.ssccopsserver.global.mcp.McpProtectedResource;
 import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtAuthenticationConverter;
 import org.sscc.ssccopsserver.global.security.jwt.SupabaseJwtValidators;
@@ -184,6 +185,19 @@ public class SecurityConfig {
                     // 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없다. 지표·로그 레벨 조회
                     // (prometheus·metrics·loggers)는 계속 인증을 요구한다
                     auth.requestMatchers("/actuator/health/**", "/actuator/info").permitAll();
+                    /*
+                     * 크롤러 규칙 (#541 · ssccops#482). 크롤러는 호스트마다 이 자리 하나만
+                     * 보므로 경로를 옮길 수 없다.
+                     *
+                     * **여기를 열지 않으면 닫히는 것이 아니라 열린다.** 401을 받은 크롤러는
+                     * robots.txt가 없는 것으로 보고 «제한 없음»으로 판단한다(Google 문서 —
+                     * 429를 뺀 4xx). 그래서 이 한 줄이 곧 `/public/v1`을 닫는 줄이다.
+                     *
+                     * 아래 `/public/v1` 규칙과 갈리지 않는다 — 나가는 것은 서비스 데이터가
+                     * 아니라 코드 안의 상수이고, 헬스 프로브·Swagger·RFC 9728 메타데이터와
+                     * 같은 부류다.
+                     */
+                    auth.requestMatchers(RobotsTxt.PATH).permitAll();
                     /*
                      * 공개 행사 조회 (ssccops#143 · D1). **업무 API 중 익명 접근을 허용하는
                      * 유일한 층이다.**

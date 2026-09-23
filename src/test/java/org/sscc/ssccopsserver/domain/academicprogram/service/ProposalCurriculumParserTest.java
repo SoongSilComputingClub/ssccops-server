@@ -92,6 +92,28 @@ class ProposalCurriculumParserTest {
         assertThatFails(() -> parser.parse("1회차 | 오리엔테이션 | 2026/03/05"), "날짜를 읽을 수 없습니다");
     }
 
+    /*
+     * 형식이 맞는데 그런 날짜가 없는 것은 **다른 실패다** (#545 · ssccops#484).
+     *
+     * 한 문장으로 뭉뚱그리면 "(예: 2026-03-05)"가 붙어 형식 문제로 읽히는데, 제출자는 이미 그
+     * 형식대로 적었으므로 무엇을 고쳐야 하는지 알 수 없다 — 2026-09-23에 실제로 그 혼동이 났다.
+     */
+    @Test
+    void tellsTheDateDoesNotExistInsteadOfBlamingTheFormat() {
+        assertThatFails(
+                () -> parser.parse("1회차 | 오리엔테이션 | 2026-09-31"),
+                "없는 날짜입니다: \"2026-09-31\" — 9월은 30일까지입니다");
+        // 윤년이 아닌 해의 2월도 같은 길로 걸린다
+        assertThatFails(() -> parser.parse("1회차 | 오리엔테이션 | 2026-02-30"), "2월은 28일까지입니다");
+    }
+
+    // 달 자체가 없으면 길이를 말할 것이 없다 — "없는 날짜"까지만 한다
+    @Test
+    void doesNotGuessTheLengthOfAMonthThatDoesNotExist() {
+        assertThatFails(
+                () -> parser.parse("1회차 | 오리엔테이션 | 2026-13-05"), "없는 날짜입니다: \"2026-13-05\"");
+    }
+
     // 같은 회차가 둘이면 회차 기록(#135)이 어느 줄을 가리키는지 정할 수 없다
     @Test
     void rejectsDuplicatedSequence() {

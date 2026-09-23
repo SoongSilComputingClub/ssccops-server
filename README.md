@@ -1,6 +1,7 @@
 # ssccops-server
 
 [![Integrate](https://github.com/SoongSilComputingClub/ssccops-server/actions/workflows/integrate-dev.yml/badge.svg?branch=develop)](https://github.com/SoongSilComputingClub/ssccops-server/actions/workflows/integrate-dev.yml)
+[![Quality Gate](https://sonarqube.sscc-ssu.com/api/project_badges/measure?project=ssccops-server&metric=alert_status&token=sqb_e99dfad6d624c29d82ce51bb72f35e240f53391b)](https://sonarqube.sscc-ssu.com/dashboard?id=ssccops-server)
 
 SSCC(숭실대학교 컴퓨팅 동아리) **운영 시스템의 API**입니다. 동아리 운영에 필요한 일 — 업무·회의·결재,
 회원과 권한, 폼과 응답, 학술 프로그램, 행사와 신청, 홍보 콘텐츠, 알림 — 을 한 서버가 맡고,

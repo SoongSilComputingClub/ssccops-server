@@ -53,6 +53,14 @@ public enum AuditAction {
     CONTENT_PAGE_UNPUBLISH("content.page.unpublish", "content_page"),
     CONTENT_POST_PUBLISH("content.post.publish", "content_post"),
     CONTENT_POST_UNPUBLISH("content.post.unpublish", "content_post"),
+    /*
+     * 알림 수신 앱 기준표 변경 (#535 · ssccops#465 · ADR-0047). 어느 유형을 어느 앱으로 보낼지는
+     * 이제 배포가 아니라 화면 조작이라 «누가 언제 무엇을 어떻게 바꿨나»가 코드 리뷰를 대신한다 —
+     * ADR-0047이 «정책이 코드 리뷰를 거치지 않는다»의 대가로 이 자리를 지목했다. 대상은 유형
+     * 코드이고 change는 이전 앱 목록 → 새 앱 목록이다(둘 다 코드값이라 개인정보가 없다).
+     */
+    NOTIFICATION_TYPE_ROUTE("notification.type.route", "noti_type_rcpn"),
+
     /**
      * @RequireAuthority 거절. 누가 무엇을 시도했는가
      */

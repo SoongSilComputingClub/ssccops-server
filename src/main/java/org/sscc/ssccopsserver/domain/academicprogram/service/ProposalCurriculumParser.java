@@ -1,9 +1,11 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
@@ -50,6 +52,9 @@ public class ProposalCurriculumParser {
 
     /** crclm_artcl.ttl의 길이 상한. DB가 자르기 전에 사유를 붙여 거절한다 */
     private static final int MAX_TITLE_LENGTH = 256;
+
+    /** 형식만 본다 — 그 날짜가 실제로 있는지는 LocalDate.parse가 판정한다 (#545) */
+    private static final Pattern ISO_DATE_SHAPE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
 
     /*
      * 파싱. 실패는 전부 PROPOSAL_MIGRATION_FAILED이며 사유에 **몇 번째 줄인지**를 함께 담는다 —
@@ -139,6 +144,16 @@ public class ProposalCurriculumParser {
      * "03/05"가 3월 5일인지 5월 3일인지를 서버가 정하게 된다 — 확정되면 되돌릴 수 없는 값이다.
      *
      * 빈 문자열은 "날짜를 생략했다"로 읽는다("1회차 | 주제 |"처럼 구분자만 남긴 경우다).
+     *
+     * ── 실패를 둘로 가른다 (#545) ─────────────────────────────
+     * "2026-09-31"은 **형식이 맞는데 그런 날짜가 없는** 것이다. 한 문장으로 뭉뚱그려
+     * "날짜를 읽을 수 없습니다 (예: 2026-03-05)"라고 하면 형식 문제로 읽히고, 제출자는 이미
+     * 그 형식대로 적었으므로 무엇을 고쳐야 하는지 알 수 없다 — 2026-09-23에 실제로 그 혼동이
+     * 났다(ssccops#484). 그래서 없는 날짜 쪽 문장에는 **형식 예시를 붙이지 않고** 달의 길이를
+     * 짚어 준다.
+     *
+     * 가르는 기준은 예외 메시지가 아니라 형식 선검사다 — DateTimeParseException의 문장은 JDK
+     * 사정이라 버전에 따라 바뀐다.
      */
     private LocalDate parsePlanDate(String rawDate, int lineNumber) {
         if (rawDate.isEmpty()) {
@@ -147,9 +162,32 @@ public class ProposalCurriculumParser {
         try {
             return LocalDate.parse(rawDate);
         } catch (DateTimeParseException ex) {
+            if (ISO_DATE_SHAPE.matcher(rawDate).matches()) {
+                throw failure(
+                        lineNumber(lineNumber)
+                                + " 없는 날짜입니다: \""
+                                + rawDate
+                                + "\""
+                                + monthHint(rawDate));
+            }
             throw failure(
                     lineNumber(lineNumber) + " 날짜를 읽을 수 없습니다: \"" + rawDate + "\" (예: 2026-03-05)");
         }
+    }
+
+    /*
+     * "9월은 30일까지입니다" — 달의 길이를 넘긴 날짜에만 붙는다.
+     *
+     * 자리 수는 위 선검사가 보장하므로 substring이 안전하다. 달이 1~12가 아니면(2026-13-05)
+     * 길이를 말할 것이 없어 덧붙이지 않는다 — 그때는 "없는 날짜입니다"만으로 충분하다.
+     */
+    private static String monthHint(String rawDate) {
+        int month = Integer.parseInt(rawDate.substring(5, 7));
+        if (month < 1 || month > 12) {
+            return "";
+        }
+        int year = Integer.parseInt(rawDate.substring(0, 4));
+        return " — " + month + "월은 " + YearMonth.of(year, month).lengthOfMonth() + "일까지입니다";
     }
 
     private static String lineNumber(int lineNumber) {

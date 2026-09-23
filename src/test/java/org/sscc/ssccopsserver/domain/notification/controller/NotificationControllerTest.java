@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,7 +29,10 @@ import org.sscc.ssccopsserver.domain.notification.code.NotificationApp;
 import org.sscc.ssccopsserver.domain.notification.code.NotificationTargetType;
 import org.sscc.ssccopsserver.domain.notification.code.NotificationType;
 import org.sscc.ssccopsserver.domain.notification.entity.NotificationEntity;
+import org.sscc.ssccopsserver.domain.notification.entity.NotificationTypeRecipientEntity;
 import org.sscc.ssccopsserver.domain.notification.repository.NotificationRepository;
+import org.sscc.ssccopsserver.domain.notification.repository.NotificationTypeRecipientRepository;
+import org.sscc.ssccopsserver.domain.notification.service.NotificationRoutingPolicy;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
@@ -54,6 +58,8 @@ class NotificationControllerTest {
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private NotificationRepository notificationRepository;
+    @Autowired private NotificationTypeRecipientRepository recipientRepository;
+    @Autowired private NotificationRoutingPolicy routingPolicy;
 
     private MemberEntity me;
     private MemberEntity other;
@@ -62,6 +68,13 @@ class NotificationControllerTest {
     void setUp() {
         me = save(ME, "20200001", "김도현", "me@sscc.org");
         other = save(OTHER, "20200002", "이서연", "other@sscc.org");
+        // 기준표는 공용 컨텍스트의 캐시라 트랜잭션 롤백이 비워 주지 않는다 (#535)
+        routingPolicy.invalidate();
+    }
+
+    @AfterEach
+    void forgetRoutingTable() {
+        routingPolicy.invalidate();
     }
 
     @Test
@@ -294,7 +307,115 @@ class NotificationControllerTest {
         assertThat(notificationRepository.countByMemberIdAndReadAtIsNull(me.getId())).isEqualTo(3);
     }
 
+    /*
+     * ══ 앱 필터 (#535 · ssccops#465 · ADR-0047) ═══════════════════════════════
+     *
+     * test 프로필은 Flyway가 꺼져 있어 V23의 시드가 들어오지 않는다(그 파일 주석) — 그래서 이
+     * 클래스는 **빈 기준표**에서 출발하고, 필요한 행만 직접 넣는다. 그 덕에 «미등록 = 보낸 앱»이
+     * 기본 경로로 밟힌다.
+     */
+    @Test
+    void listAndBadgeFilterByTheRoutingTableAndFallBackToTheRowApp() throws Exception {
+        route(NotificationType.APPROVAL_REQUESTED, NotificationApp.ADMIN);
+        route(NotificationType.RESPONSE_ACCEPTED, NotificationApp.WWW);
+        // TEST는 기준표에 없다 — 그 알림 행의 app(LMS)이 곧 수신 앱이다
+        Long approval = notify(me, "승인 요청").getId();
+        Long response =
+                notify(me, "응답 승인", NotificationType.RESPONSE_ACCEPTED, NotificationApp.WWW)
+                        .getId();
+        Long test = notify(me, "테스트", NotificationType.TEST, NotificationApp.LMS).getId();
+
+        expectOnly(NotificationApp.ADMIN, approval);
+        expectOnly(NotificationApp.WWW, response);
+        expectOnly(NotificationApp.LMS, test);
+
+        // 파라미터가 없으면 앱과 무관하게 전부다 — «전체» 칩
+        mockMvc.perform(get("/v1/notifications").header("Authorization", "Bearer " + ME))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(3))
+                .andExpect(jsonPath("$.data.unreadCount").value(3));
+        mockMvc.perform(
+                        get("/v1/notifications/unread-count")
+                                .header("Authorization", "Bearer " + ME))
+                .andExpect(jsonPath("$.data.unreadCount").value(3));
+    }
+
+    /* 유형 하나가 여러 앱을 가리키면 그 알림은 두 앱 모두에서 보인다 */
+    @Test
+    void oneTypeRoutedToTwoAppsShowsInBoth() throws Exception {
+        route(NotificationType.APPROVAL_REQUESTED, NotificationApp.ADMIN);
+        route(NotificationType.APPROVAL_REQUESTED, NotificationApp.LMS);
+        Long approval = notify(me, "승인 요청").getId();
+
+        expectOnly(NotificationApp.ADMIN, approval);
+        expectOnly(NotificationApp.LMS, approval);
+
+        // 가리키지 않은 앱에서는 보이지 않는다 — 행의 app이 ADMIN이어도 미등록이 아니다
+        mockMvc.perform(
+                        get("/v1/notifications")
+                                .param("app", "WWW")
+                                .header("Authorization", "Bearer " + ME))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(0))
+                .andExpect(jsonPath("$.data.unreadCount").value(0));
+    }
+
+    /* 기준 코드에 없는 app은 두 엔드포인트 모두 400이고 모양도 같다 */
+    @Test
+    void anUnknownAppIs400OnBothEndpoints() throws Exception {
+        mockMvc.perform(
+                        get("/v1/notifications")
+                                .param("app", "MOBILE")
+                                .header("Authorization", "Bearer " + ME))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        mockMvc.perform(
+                        get("/v1/notifications/unread-count")
+                                .param("app", "MOBILE")
+                                .header("Authorization", "Bearer " + ME))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
     /* ── helpers ──────────────────────────────────────────────── */
+
+    /* 그 앱으로 좁히면 이 알림 하나만 보이고 배지도 1이다 */
+    private void expectOnly(NotificationApp app, Long notificationId) throws Exception {
+        mockMvc.perform(
+                        get("/v1/notifications")
+                                .param("app", app.name())
+                                .header("Authorization", "Bearer " + ME))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].notificationId").value(notificationId))
+                .andExpect(jsonPath("$.data.unreadCount").value(1));
+        mockMvc.perform(
+                        get("/v1/notifications/unread-count")
+                                .param("app", app.name())
+                                .header("Authorization", "Bearer " + ME))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.unreadCount").value(1));
+    }
+
+    private void route(NotificationType type, NotificationApp app) {
+        recipientRepository.saveAndFlush(NotificationTypeRecipientEntity.route(type, app));
+        routingPolicy.invalidate();
+    }
+
+    private NotificationEntity notify(
+            MemberEntity recipient, String title, NotificationType type, NotificationApp app) {
+        return notificationRepository.save(
+                NotificationEntity.create(
+                        recipient,
+                        type,
+                        title,
+                        "박람회 · 담당 김도현 · 마감 2026-10-01",
+                        app,
+                        "/operations/sub-works/1",
+                        NotificationTargetType.SUB_WORK,
+                        1L,
+                        null));
+    }
 
     private NotificationEntity notify(MemberEntity recipient, String title) {
         return notificationRepository.save(

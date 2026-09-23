@@ -42,6 +42,36 @@ public enum NotificationErrorCode implements ErrorCode {
      * 문구를 고르고, 회원 계정 연결의 TOO_MANY_LINK_ATTEMPTS도 뜻이 다르다. 웹은 이 문자열로
      * «잠시 뒤 다시»를 고른다.
      */
+    /*
+     * 404 — 그런 알림 유형이 없다 (#535 · ADR-0047).
+     *
+     * `PUT`·`DELETE /v1/notifications/types/{type}`의 경로 값이 NotificationType에 없을 때다. 경로를
+     * enum으로 받지 않고 문자열로 받아 여기서 판정하는 것은, enum 변환 실패가 스프링 기본
+     * ProblemDetail(봉투 없는 본문)로 나가기 때문이다 — 유형 목록은 닫힌 집합이라 «없는 유형»은
+     * 형식 오류가 아니라 없는 자원이다.
+     *
+     * **«기준표에 행이 없다»는 여기 오지 않는다**(#537). 그것은 정상 상태(= 보낸 앱을 따른다)라
+     * DELETE가 200으로 답한다 — 둘을 같은 404로 묶으면 화면이 «유형 코드가 틀렸다»와 «이미
+     * 되돌아가 있다»를 가르지 못한다.
+     */
+    NOTIFICATION_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "알림 유형을 찾을 수 없습니다."),
+
+    /*
+     * 400 — 수신 앱을 하나도 주지 않았다 (#535 · ADR-0047 «최소 한 앱»).
+     *
+     * 빈 배열은 «이 유형의 알림을 아무 앱에도 보이지 않게 한다»인데, 기준표에서 그 상태는
+     * «행이 없음»(= 보낸 앱을 따른다)과 구별되지 않으면서 알림을 조용히 끈다. 화면도 같은 것을
+     * 막지만(ADR-0047) 서버가 마지막 자리다.
+     *
+     * `@NotEmpty`를 DTO에 달지 않은 것은 판정을 두 벌로 두지 않기 위해서다 — 달면 인가 애스펙트가
+     * 돌기 전에 400이 나가 «권한 없는 사람이 빈 배열을 보내면 403이 아니라 400»이 되고, 무엇보다
+     * 이 규칙이 ADR의 결정이라 서비스 계약에 있어야 한다.
+     *
+     * **DELETE가 생긴 뒤에도 이 400은 그대로다**(#537). 되돌리기에 전용 조작이 있으므로 빈 배열은
+     * «되돌리고 싶다»가 아니라 «체크를 다 끄고 저장을 눌렀다»는 실수로 읽는 것이 맞다.
+     */
+    EMPTY_NOTIFICATION_ROUTE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "수신 앱을 최소 한 개 지정해야 합니다."),
+
     TEST_NOTIFICATION_RATE_LIMITED(
             HttpStatus.TOO_MANY_REQUESTS,
             "RATE_LIMITED",

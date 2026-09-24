@@ -203,7 +203,18 @@ public class AcademicProgramController {
                             + " 결과가 같은데 두 번째 요청만 오류로 만들 이유가 없다.")
     @DeleteMapping("/{academicProgramId}/share")
     public ApiResponse<Void> revokeShareLink(
-            @PathVariable Long academicProgramId, @CurrentMember MemberEntity revoker) {
+            /*
+             * ⚠️ **인자 이름을 바꾸지 말 것** (#556 에서 한 번 깨뜨렸다).
+             *
+             * `@CurrentMember`는 JWT 에서 오는 값인데 springdoc 이 그것을 모르고 **필수 쿼리
+             * 파라미터로 스펙에 싣는다.** 그래서 `viewer` → `revoker` 로 바꾸자 api-compat
+             * 게이트가 `new-required-request-parameter`(error) + `request-parameter-removed`
+             * (warning)로 잡았다 — 실제 호출 계약은 그대로인데 **스펙상으로는 깨는 변경**이다.
+             *
+             * 스펙에서 이 가짜 파라미터를 걷어내는 것은 `@CurrentMember`를 쓰는 모든 핸들러에
+             * 걸린 별개의 일이다.
+             */
+            @PathVariable Long academicProgramId, @CurrentMember MemberEntity viewer) {
         /*
          * **폐기는 발급과 자격이 다르다** (#556 · ssccops#501).
          *
@@ -214,7 +225,7 @@ public class AcademicProgramController {
          * 결과로 보면 둘은 반대다 — 발급은 멱등이라 되돌릴 수 있지만 폐기는 **이미 퍼진
          * 주소를 죽이고**, 다시 발급하면 새 토큰이라 단톡방에 뿌린 링크는 살아나지 않는다.
          */
-        academicProgramService.requireShareRevocable(academicProgramId, revoker);
+        academicProgramService.requireShareRevocable(academicProgramId, viewer);
         shareLinkService.revoke(ShareTargetType.ACADEMIC_PROGRAM, academicProgramId);
         return ApiResponse.successWithNoData();
     }

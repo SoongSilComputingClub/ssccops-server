@@ -331,7 +331,21 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,loggers
+        # `loggers` 를 빼 두었다 (#555 · ssccops#500). 그것은 조회가 아니라 **쓰기**다 —
+        # `POST /actuator/loggers/{name}` 이 런타임 로그 레벨을 바꾸고, 그 엔드포인트는
+        # `@RequireAuthority`(애노테이션 AOP)가 닿지 않아 `anyRequest().authenticated()` 하나가
+        # 전부였다. 2026-09-24 dev 실측: 유효한 토큰으로 GET 200(로거 1,572개) · POST 204 →
+        # configuredLevel 이 실제로 바뀌었다. 이 저장소는 «로그인했지만 아직 가입하지 않은
+        # 사용자»를 정식 상태로 두므로(`AuthenticatedUser.member` 가 nullable) 그 사람도 닿았다.
+        #
+        # 무엇을 잃었나: `org.hibernate.orm.jdbc.bind` 를 TRACE 로 올리면 JDBC 바인드
+        # 파라미터(전화·이메일·학번)가 STDOUT_JSON·LOGSTASH 두 appender 로 흘러 Elasticsearch 에
+        # 남는다 — 이 저장소가 로그에 **싣지 않기로 못 박은** 값이고(ADR-0024), 레벨 변경은
+        # `AuditAction` 에 없어 누가 켰는지도 남지 않았다.
+        #
+        # 운영에서 로그 레벨을 바꿔야 할 일이 생기면 그것은 **배포 절차**로 온다(설정 + 재배포).
+        # 다시 열려면 `@RequireAuthority` 가 닿는 자체 엔드포인트를 만들어 감사까지 남긴다.
+        include: health,info,prometheus,metrics
   # /actuator/info 의 git 정보를 전부 낸다 (#410). 기본 simple 은 commit.id 를 abbrev 하나로
   # 뭉개는데, deploy-history.yml 은 full 로 푸시된 sha 와 정확히 비교하고 abbrev 는 표시에 쓴다.
   # 무엇이 나가는지는 build.gradle 의 gitProperties.keys 가 정한다(네 키뿐).
@@ -340,9 +354,23 @@ management:
       mode: full
   endpoint:
     health:
-      show-details: always
+      # `always` 였다 (#555 · ssccops#500). `/actuator/health/**` 가 permitAll 이라 둘을 곱하면
+      # **인증 없이** DB 컴포넌트 상태·검증 쿼리 결과·diskSpace 의 free/total 바이트가 나갔다
+      # (2026-09-24 dev 실측: components=[db, diskSpace, livenessState, ping, readinessState, ssl]).
+      # 앱 DB 가 Supabase Free 라 «지금 DB 가 멈췄는가» = «지금 서비스를 밀면 재시작 루프에
+      # 들어가는가»(ADR-0041)를 밖에서 관찰할 수 있었다.
+      show-details: when-authorized
       probes:
         enabled: true
+      group:
+        # **`readiness` 에 `db` 를 명시한다 (#555).** 스프링 기본 readiness 그룹은
+        # `readinessState` 하나뿐이라(2026-09-24 실측: components=[]) 이 줄이 없으면
+        # `/actuator/health/readiness` 가 DB 를 보지 않는다. 아래 SecurityConfig 가 익명 표면을
+        # 이 경로로 좁히는데, 그러면서 이 줄을 빠뜨리면 **ADR-0022 의 실질(«헬스체크는 DB 를
+        # 포함한다»)이 조용히 뒤집혀** autoheal 이 DB 장애에 반응하지 않게 된다 — 컨테이너는
+        # healthy 인데 서비스는 못 하는 상태로 남는다.
+        readiness:
+          include: readinessState,db
     prometheus:
       enabled: true
   prometheus:

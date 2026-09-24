@@ -73,6 +73,13 @@ public class AcademicTools {
     private static final Logger log = LoggerFactory.getLogger(AcademicTools.class);
 
     private static final String PROGRAMS = "/v1/academic-programs";
+    private static final String SESSIONS = "/sessions/";
+    private static final String ATTENDANCES = "/attendances";
+
+    /** 열 곳이 같은 인자를 받는다 — 문장이 갈리면 모델이 같은 값을 다르게 이해한다 */
+    private static final String PROGRAM_ID = "활동 식별자";
+
+    private static final String SESSION_ID = "회차 식별자";
 
     private final McpRestClient client;
 
@@ -109,7 +116,7 @@ public class AcademicTools {
             description = "학술 활동 하나 — 기획 내용·기간·정원·리더·연결된 폼과 진행률. 없거나 볼 권한이 없으면 404·403.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public AcademicProgramDetailResponse getAcademicProgram(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             McpTransportContext context) {
         log.info("mcp tool get_academic_program academicProgramId={}", academicProgramId);
         return client.get(
@@ -124,7 +131,7 @@ public class AcademicTools {
                             + " 연락처·학번은 도구 출력에서 지워진다(ADR-0037).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramMemberResponse> listAcademicProgramMembers(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(description = "참가 상태로 거르기 — 선택", required = false)
                     MemberListCondition condition,
             McpTransportContext context) {
@@ -145,7 +152,7 @@ public class AcademicTools {
                             + " 여러 활동에 걸쳐 검토할 것을 찾을 때는 list_academic_sessions_to_review를 쓴다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<SessionSummaryResponse> listAcademicSessions(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(description = "검색 조건 — sttsCd·size·cursor·sort. 전부 선택", required = false)
                     SessionCondition condition,
             McpTransportContext context) {
@@ -163,13 +170,13 @@ public class AcademicTools {
             description = "회차 하나 — 일시·장소·내용·출석 요약과 승인 이력. 회차 번호가 아니라 회차 식별자(sessionId)다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public SessionDetailResponse getAcademicSession(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
-            @McpToolParam(description = "회차 식별자") Long sessionId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = SESSION_ID) Long sessionId,
             McpTransportContext context) {
         log.info("mcp tool get_academic_session sessionId={}", sessionId);
         return client.get(
                 context,
-                PROGRAMS + "/" + academicProgramId + "/sessions/" + sessionId,
+                PROGRAMS + "/" + academicProgramId + SESSIONS + sessionId,
                 SessionDetailResponse.class);
     }
 
@@ -207,7 +214,7 @@ public class AcademicTools {
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public AcademicProgramTransitionResponse transitionAcademicProgram(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(
                             description =
                                     "transition(필수 · START_RECRUITMENT·APPROVE_COMPLETION)과"
@@ -236,8 +243,8 @@ public class AcademicTools {
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SessionTransitionResponse transitionAcademicSession(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
-            @McpToolParam(description = "회차 식별자") Long sessionId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = SESSION_ID) Long sessionId,
             @McpToolParam(
                             description =
                                     "transition(필수 · APPROVE·REQUEST_REVISION)과"
@@ -250,7 +257,7 @@ public class AcademicTools {
                 request == null ? null : request.transition());
         return client.post(
                 context,
-                PROGRAMS + "/" + academicProgramId + "/sessions/" + sessionId + "/transitions",
+                PROGRAMS + "/" + academicProgramId + SESSIONS + sessionId + "/transitions",
                 request,
                 SessionTransitionResponse.class);
     }
@@ -266,7 +273,7 @@ public class AcademicTools {
                             + " 지원자의 연락처·학번은 도구 출력에서 지워진다(ADR-0037).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<RecruitmentApplicationResponse> listAcademicRecruitmentApplications(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(description = "응답 상태로 거르기 — 선택", required = false)
                     ApplicationListCondition condition,
             McpTransportContext context) {
@@ -291,7 +298,7 @@ public class AcademicTools {
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public List<AcademicProgramMemberResponse> selectAcademicRecruitment(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(description = "selections — {formRspnsId, ptcpSttsCd} 목록. 비울 수 없다")
                     RecruitmentSelectRequest request,
             McpTransportContext context) {
@@ -314,18 +321,13 @@ public class AcademicTools {
                             + " 회원 식별자가 아니라 그 활동의 참가자 식별자다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AttendanceResponse> listAcademicAttendances(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
-            @McpToolParam(description = "회차 식별자") Long sessionId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = SESSION_ID) Long sessionId,
             McpTransportContext context) {
         log.info("mcp tool list_academic_attendances sessionId={}", sessionId);
         return client.getList(
                         context,
-                        PROGRAMS
-                                + "/"
-                                + academicProgramId
-                                + "/sessions/"
-                                + sessionId
-                                + "/attendances",
+                        PROGRAMS + "/" + academicProgramId + SESSIONS + sessionId + ATTENDANCES,
                         null,
                         AttendanceResponse.class)
                 .items();
@@ -340,15 +342,15 @@ public class AcademicTools {
                             + " 승인된 회차의 출석도 정정할 수 있다(그것이 이 엔드포인트가 있는 이유다).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public AttendancePatchResponse correctAcademicAttendances(
-            @McpToolParam(description = "활동 식별자") Long academicProgramId,
-            @McpToolParam(description = "회차 식별자") Long sessionId,
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = SESSION_ID) Long sessionId,
             @McpToolParam(description = "attendances — {eventPtcpId, atndYn} 목록. 비울 수 없다")
                     AttendancePatchRequest request,
             McpTransportContext context) {
         log.info("mcp tool correct_academic_attendances sessionId={}", sessionId);
         return client.patch(
                 context,
-                PROGRAMS + "/" + academicProgramId + "/sessions/" + sessionId + "/attendances",
+                PROGRAMS + "/" + academicProgramId + SESSIONS + sessionId + ATTENDANCES,
                 request,
                 AttendancePatchResponse.class);
     }

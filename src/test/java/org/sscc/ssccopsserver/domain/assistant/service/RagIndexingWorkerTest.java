@@ -402,10 +402,6 @@ class RagIndexingWorkerTest {
         ragDocumentRepository.save(document);
     }
 
-    private void startIndexing(RagDocumentEntity document) {
-        startIndexingAt(document, Instant.now());
-    }
-
     /**
      * 집힌 시각을 지정해 색인 중으로 만든다 (#556).
      *

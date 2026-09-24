@@ -20,7 +20,7 @@
   - **인가는 여기서 하지 않는다.** "공유할 수 있는가"는 "그 자원을 볼 수 있는가"와 같은 질문이라 발급·폐기 엔드포인트가 `SubWorkController`에 있고 `@RequireAuthority(WORK_READ)`가 붙는다(`WORK_MANAGE`가 아닌 것은 토큰이 주는 것이 미리보기까지라 이미 그 화면을 보는 사람이 아는 것을 넘지 않기 때문이다). `domain/file`이 접근 제어를 올려받지 않은 것과 같은 이유다.
   - **응답은 토큰이고 URL이 아니다.** 링크가 가리키는 곳은 API가 아니라 운영 웹이라, 서버가 주소를 조립하려면 웹의 호스트를 설정으로 들고 있어야 한다 — 이 저장소는 그 종류의 설정에서 두 번 데었다(`R2_PUBLIC_BASE_URL` #208 · `APP_PUBLIC_BASE_URL` #216). 웹이 `{자기 origin}/s/{token}`을 만든다.
   - **대상은 (`trgt_se_cd`, `trgt_id`) 두 값이고 FK가 없다** — `file_rfrnc`(#220)와 같은 판단이며 근거는 `ShareTargetType` 주석에 있다. 대상이 지워진 뒤 남는 행은 미리보기가 빈 Optional을 돌려줘 폐기된 링크와 같은 404가 된다.
-  - **`shr_lnk`는 새 테이블이라 `ddl-auto: update`가 자동으로 만든다** — `dev`·`prod` 수동 DDL이 필요 없다. 다만 **데이터사전 등재는 별도**이며 등재할 컬럼 표는 ssccops#200에 있다.
+  - **`shr_lnk`는 `V2__create_share_link.sql`이 만든다.** ⚠️ 여기에는 «새 테이블이라 `ddl-auto: update`가 자동으로 만든다 — 수동 DDL이 필요 없다»고 적혀 있었다(2026-09-24 정정 · #558). 그 문장은 Flyway 이전의 것이고, **지금 새 테이블을 더하는 사람이 그대로 읽으면 마이그레이션을 빠뜨려 dev 배포가 `validate`에서 죽는다** — `dev`·`prod`는 `ddl-auto: validate`이며 스키마는 `V{n}__*.sql`이 만든다(루트 `AGENTS.md` «스키마 변경 — Flyway가 한다»). 다만 **데이터사전 등재는 별도**이며 등재할 컬럼 표는 ssccops#200에 있다.
 
 ## 다른 도메인과 닿는 곳
 

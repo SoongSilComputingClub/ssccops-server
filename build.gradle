@@ -67,9 +67,9 @@ springBoot {
 // 같은지 확인하고, 같아야 레코드가 `deployed` 가 된다. 태그·버전은 사람이 올리는 값이라 «떠 있는
 // 것»의 증빙이 못 된다.
 //
-// 플러그인은 JGit 이라 git 바이너리가 없는 Docker 빌더에서도 `.git` 만 있으면 된다 — 그래서
-// Dockerfile 이 `.git` 을 복사한다. 그래도 `.git` 이 없는 빌드(Coolify 가 언젠가 컨텍스트에서 빼면)에
-// 대비해 실패시키지 않고(failOnNoGitDirectory=false) Coolify·Actions 가 주는 커밋 env
+// 플러그인은 JGit 이라 git 바이너리가 없는 Docker 빌더에서도 `.git` 만 있으면 된다 — 로컬 bootRun ·
+// 테스트가 그 길이다. **Dockerfile 은 `.git` 을 복사하지 않으므로**(#422) 이미지 빌드에서는 언제나
+// 실패시키지 않는 쪽(failOnNoGitDirectory=false)으로 떨어지고, Coolify·Actions 가 주는 커밋 env
 // (SOURCE_COMMIT · GITHUB_SHA)로 최소 파일을 쓴다. 둘 다 없으면 파일이 없고 /actuator/info 에
 // git 이 빠진다 — 그때 deploy-history 레코드는 `unverified` 로 남는다(고장이 아니라 «확인 못 함»).
 //

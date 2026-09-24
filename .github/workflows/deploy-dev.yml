@@ -1,0 +1,318 @@
+# ============================================================================
+# Backend Deploy Workflow - Dev (GHCR + Coolify)
+# ============================================================================
+# 역할:
+#   - Integrate Dev 가 develop 푸시에서 끝난 뒤 자동 실행
+#   - 레포의 멀티스테이지 Dockerfile 로 이미지를 빌드해 GHCR 에 푸시(태그 `dev` · `sha-<7>`)
+#   - Coolify 배포 웹훅을 불러 dev api 가 그 이미지를 받아 기동하게 한다
+#
+# Job 구조:
+#   prepare ──> build-image ──> deploy
+#
+#   prepare 는 «무엇을 빌드하나(커밋)»와 «빌드해도 되나(Lint·Test 결과)»만 판정한다.
+#   판정이 서지 않으면 아래 둘은 실패가 아니라 회색이다 — 아래 job 주석에 이유가 있다.
+#
+# 트리거:
+#   - Integrate Dev 가 develop 에서 완료됐을 때(conclusion 은 prepare 가 따로 본다)
+#   - 수동 실행(workflow_dispatch) — 지금 ref 의 커밋으로 빌드한다. `skip_deploy` 로 이미지만 올린다
+#
+# **빌드를 Coolify 호스트에서 여기로 옮긴 이유** (#569 · ssccops#513): 서버 dev 배포 한 번이
+# 13분 25초였고 동시 빌드 1(ADR-0048)을 웹과 나눠 써 큐 대기가 19분까지 갔으며, 빌드 중에는 같은
+# 호스트의 서비스가 2~5배 느려졌다(deploy-history.yml 의 VERIFY_TIMEOUT_SECONDS 주석 · #564).
+# 또 Coolify GitHub App 의 푸시 웹훅은 CI 를 기다리지 않아 **lint·test 가 깨진 커밋도 dev 에
+# 올라갔다.** 이 경로는 Lint·Test 를 통과한 커밋만 이미지가 된다.
+#
+# **prod(main)는 여기 없다.** Coolify 가 레포를 직접 보고 호스트에서 빌드하는 경로 그대로다 —
+# dev 가 안정된 뒤 별도로 판단한다(ssccops#513 ③).
+#
+# **환경변수는 Coolify 가 정본이다.** 이 워크플로는 애플리케이션 환경변수를 한 개도 넣지 않는다 —
+# #202 가 걷어낸 `envs/bulk` 덮어쓰기를 되살리지 않는다(Actions 가 배포마다 덮어써 대시보드에서
+# 넣은 값이 날아갔다). 여기 있는 시크릿은 «배포를 부르는 데» 필요한 둘뿐이다.
+#
+# GitHub Secrets:
+#   - GITHUB_TOKEN               : GHCR 푸시. 기본 제공이며 새 시크릿이 아니다(permissions.packages: write)
+#   - COOLIFY_API_TOKEN          : Coolify API 토큰(deploy 권한만)
+#   - COOLIFY_DEV_DEPLOY_WEBHOOK : dev api 의 배포 웹훅 URL.
+#       **변수(vars)가 아니라 시크릿이다** — 이 레포가 Public 이라 Actions 로그가 공개되고
+#       변수는 마스킹되지 않는다. **비어 있으면 배포 호출을 건너뛰고 경고만 남긴다** — 그래서 이
+#       워크플로는 Coolify 리소스 전환보다 먼저 머지해도 안전하다(옛 git 빌드 경로가 그대로 돈다).
+#
+# GHCR 패키지는 **Public** 으로 둔다(레포가 Public 이고 이미지에 비밀이 없다 — 환경변수는 런타임에
+# Coolify 가 넣는다). Private 이면 호스트에 사람 계정 토큰으로 docker login 이 필요해진다.
+# ============================================================================
+
+name: Deploy Dev
+
+on:
+  workflow_run:
+    workflows: ["Integrate Dev"]
+    types: [completed]
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: 이미지만 GHCR 에 올리고 Coolify 배포는 부르지 않는다
+        type: boolean
+        default: false
+
+# 취소하지 않는다 — 두 푸시가 겹치면 늦게 끝난 옛 빌드가 고정 태그 `dev` 를 덮어쓸 수 있다.
+# 직렬화하면 그 순서가 커밋 순서와 같아진다. 대기 중인 것은 더 새 푸시로 대체된다
+# (GitHub 은 pending 을 하나만 남긴다) — 버려지는 것은 이미 낡은 이미지다.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # GHCR 은 소문자 경로만 받는데 조직명은 SoongSilComputingClub 이다. `github.repository` 를 쓰면
+  # 워크플로 env 에서는 소문자로 바꿀 자리가 없어(`tr` 을 쓸 수 있는 곳은 step 안뿐이다) 여기서는
+  # 못 박는다 — 요약과 라벨이 실제로 푸시되는 이름과 갈리지 않는 쪽이 낫다.
+  IMAGE_NAME: ghcr.io/soongsilcomputingclub/ssccops-server
+
+jobs:
+  # ==========================================================================
+  # Prepare Job - 무엇을 빌드할지, 빌드해도 되는지
+  # ==========================================================================
+  #
+  # **workflow_run 의 `github.sha` 는 기본 브랜치의 머리이지 그 실행의 커밋이 아니다.**
+  # 그 값이 SOURCE_COMMIT → /actuator/info 의 git.commit.id 가 되고 deploy-history 가 그것으로
+  # «정말 이 커밋이 떴나»를 확인하므로(#422 · ssccops#340), 커밋은 이벤트 payload 의 head_sha 에서
+  # 읽어 아래 job 들에 넘긴다. 틀린 값을 넘기면 dev 레코드가 전부 unverified 가 된다.
+  #
+  # **판정은 워크플로 전체 conclusion 이 아니라 Lint·Test job 의 결과다.** integrate-dev 의
+  # conclusion 에는 analyze(SonarQube Quality Gate)가 섞여 있는데 그쪽은 «막는 머지가 없다»가
+  # 결정이고(ADR-0018 · #477) build 도 analyze 에 걸려 있지 않다. 전체 결과로 판정하면 게이트
+  # ERROR 하나가 조용히 dev 배포를 멈춰 세운다 — 이슈 #569 가 적은 `needs: [lint, test]` 와 같은
+  # 뜻이 되도록 그 두 job 만 본다.
+  #
+  # 통과하지 못하면 실패가 아니라 **건너뜀(회색)** 이다. Integrate Dev 가 이미 빨간색으로 그 사실을
+  # 말하고 있으므로 같은 사실을 두 번 빨갛게 만들지 않는다(sonar-preflight 와 같은 판단, #477).
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      actions: read # 트리거한 실행의 job 목록을 읽는다
+
+    outputs:
+      proceed: ${{ steps.resolve.outputs.proceed }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
+
+    steps:
+      - name: Resolve commit and CI verdict
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          set -uo pipefail
+
+          # 요구하는 job 이름은 integrate-dev.yml 의 `name:` 그대로다. 그쪽 이름을 바꾸면
+          # 여기서 «찾을 수 없다»가 되어 배포가 건너뛰어진다 — 조용히 통과하지는 않는다.
+          REQUIRED_JOBS='Lint Test'
+
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            HEAD_SHA="$GITHUB_SHA"
+            PROCEED=true
+            echo "수동 실행 — ref ${GITHUB_REF_NAME} 의 커밋 ${HEAD_SHA} 로 빌드한다."
+            echo "::warning title=CI 게이트 건너뜀::수동 실행이라 Lint·Test 결과를 보지 않는다."
+          else
+            HEAD_SHA="$RUN_SHA"
+            PROCEED=true
+
+            if [ "$RUN_EVENT" != 'push' ]; then
+              echo "::notice::Integrate Dev 가 push 가 아닌 '${RUN_EVENT}' 로 돌았다 — 배포 대상이 아니다."
+              PROCEED=false
+            elif [ "$RUN_CONCLUSION" = 'cancelled' ]; then
+              echo "::notice::Integrate Dev 가 취소됐다 — 배포하지 않는다. ${RUN_URL}"
+              PROCEED=false
+            else
+              JOBS=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
+                --paginate --jq '.jobs[] | "\(.name)=\(.conclusion)"')
+              for JOB in $REQUIRED_JOBS; do
+                CONCLUSION=$(printf '%s\n' "$JOBS" | awk -F= -v n="$JOB" '$1 == n { print $2 }')
+                if [ "$CONCLUSION" = 'success' ]; then
+                  echo "  $JOB = success"
+                else
+                  echo "::warning title=배포 건너뜀::Integrate Dev 의 '${JOB}' job 이 success 가 아니다(${CONCLUSION:-찾을 수 없음}). ${RUN_URL}"
+                  PROCEED=false
+                fi
+              done
+            fi
+          fi
+
+          SHORT_SHA=$(printf '%s' "$HEAD_SHA" | cut -c1-7)
+          {
+            echo "proceed=$PROCEED"
+            echo "head_sha=$HEAD_SHA"
+            echo "short_sha=$SHORT_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$PROCEED" != 'true' ]; then
+            echo "⏭️ **dev 배포 건너뜀** — 위 경고의 이유다. 이미지도 올리지 않는다." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ==========================================================================
+  # Build Image Job - 멀티스테이지 Dockerfile 로 빌드해 GHCR 에 푸시
+  # ==========================================================================
+  #
+  # **Dockerfile 은 레포의 그것 하나다.** CI 가 만든 JAR 을 얇은 Dockerfile(옛 Dockerfile.deploy)에
+  # 담는 길은 택하지 않았다 — Dockerfile 이 두 벌이 되어 로컬 `docker compose` 와 배포가 갈린다
+  # (#202 가 그것을 걷어낸 이유). 속도는 buildx 의 GHA 캐시로 얻는다.
+  build-image:
+    name: Build Image
+    runs-on: ubuntu-latest
+    needs: [prepare]
+    if: needs.prepare.outputs.proceed == 'true'
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.head_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # 고정 태그 `dev` 를 Coolify 가 다시 받고, `sha-<7>` 은 롤백용으로 함께 올려만 둔다.
+          # 배포마다 Coolify 앱의 이미지 태그를 새 sha 로 PATCH 하는 길은 택하지 않았다 —
+          # Actions 가 배포마다 앱 설정을 고치게 된다(#569 · ssccops#513).
+          #
+          # `type=sha` 를 쓰지 않는 것은 metadata-action 이 GITHUB_SHA 를 읽기 때문이다 —
+          # workflow_run 에서 그 값은 기본 브랜치의 머리다(위 prepare 주석). 태그도 라벨도
+          # prepare 가 준 커밋으로 못 박는다. `image.source` 라벨은 액션이 알아서 붙이며,
+          # GHCR 패키지가 이 레포에 연결되는 것이 그 라벨이다.
+          tags: |
+            type=raw,value=dev
+            type=raw,value=sha-${{ needs.prepare.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.head_sha }}
+            org.opencontainers.image.version=sha-${{ needs.prepare.outputs.short_sha }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          # 러너가 만드는 것은 amd64 이고 dev api 호스트(MiniPC SZBOX H58)도 x86_64 다.
+          # arm64 호스트로 옮기면 이 줄과 docker/setup-qemu-action 을 함께 본다.
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 이 값이 /actuator/info 의 git.commit.id 가 되고 deploy-history 가 그것으로 배포를
+          # 확인한다(#422 · ssccops#340). 빠뜨리면 dev 레코드가 전부 unverified 다.
+          # `.git` 을 이미지에 복사하지 않는 이유는 Dockerfile 주석에 있다.
+          build-args: |
+            SOURCE_COMMIT=${{ needs.prepare.outputs.head_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ==========================================================================
+  # Deploy Job - Coolify 배포 웹훅 호출
+  # ==========================================================================
+  #
+  # 레지스트리 푸시는 Coolify 배포를 트리거하지 않으므로(ADR-0048) 배포 호출은 이쪽이 한다.
+  # 호스트가 GHCR 을 폴링하는 길(Watchtower 부류)은 택하지 않았다 — Coolify 가 모르는 사이
+  # 컨테이너가 바뀌어 상태·헬스체크·롤백과 어긋난다.
+  #
+  # **환경변수는 넣지 않는다.** 정본은 Coolify 대시보드이고 이 job 은 «배포해라»만 말한다.
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: [prepare, build-image]
+
+    steps:
+      - name: Trigger Coolify deployment
+        id: trigger
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_DEV_DEPLOY_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+          SKIP_DEPLOY: ${{ github.event.inputs.skip_deploy }}
+        run: |
+          set -uo pipefail
+
+          if [ "${SKIP_DEPLOY:-}" = 'true' ]; then
+            echo "outcome=skipped-input" >> "$GITHUB_OUTPUT"
+            echo "::notice::skip_deploy 입력이라 배포 호출을 건너뛴다 — 이미지는 올라갔다."
+            exit 0
+          fi
+
+          if [ -z "$WEBHOOK" ]; then
+            echo "outcome=skipped-secret" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Coolify 배포 호출 건너뜀::COOLIFY_DEV_DEPLOY_WEBHOOK 이 비어 있다. 이미지는 GHCR 에 올라갔고 배포는 여전히 Coolify 의 git 빌드가 한다 — 전환 전이면 정상이다."
+            exit 0
+          fi
+
+          # URL 을 찍지 않는다 — 이 레포가 Public 이라 Actions 로그가 공개된다. curl 을 -s 로
+          # 두고 본문도 버린다(Coolify 는 배포 uuid 만 돌려주며 우리가 쓸 값이 아니다).
+          HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+            --max-time 30 \
+            --request GET "$WEBHOOK" \
+            --header "Authorization: Bearer $TOKEN")
+
+          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "::error::Coolify 배포 호출이 HTTP ${HTTP_STATUS} 로 실패했다. 이미지는 GHCR 에 있으니 Coolify 에서 손으로 Deploy 하면 된다."
+            exit 1
+          fi
+
+          echo "outcome=triggered" >> "$GITHUB_OUTPUT"
+          echo "Coolify 배포를 호출했다 (HTTP ${HTTP_STATUS})."
+
+      # 배포가 «떴다»를 여기서 확인하지 않는다 — deploy-history.yml 이 /actuator/info 의
+      # git.commit.id 를 폴링해 그 판정을 레코드로 남긴다(ADR-0033). 두 곳에서 같은 것을
+      # 기다리면 한쪽 값이 낡는다.
+      - name: Deploy Summary
+        if: always()
+        env:
+          OUTCOME: ${{ steps.trigger.outputs.outcome }}
+          HEAD_SHA: ${{ needs.prepare.outputs.head_sha }}
+          SHORT_SHA: ${{ needs.prepare.outputs.short_sha }}
+          DIGEST: ${{ needs.build-image.outputs.digest }}
+        run: |
+          case "${OUTCOME:-}" in
+            triggered)       STATUS='✅ Coolify 배포 호출됨' ;;
+            skipped-input)   STATUS='⏭️ 건너뜀 — skip_deploy 입력' ;;
+            skipped-secret)  STATUS='⚠️ 건너뜀 — COOLIFY_DEV_DEPLOY_WEBHOOK 이 비어 있다' ;;
+            *)               STATUS='❌ 배포 호출 실패' ;;
+          esac
+
+          {
+            echo "## Deploy Summary (Dev)"
+            echo "- **Commit** : \`${HEAD_SHA}\`"
+            echo "- **Image**  : \`${IMAGE_NAME}:dev\` · \`${IMAGE_NAME}:sha-${SHORT_SHA}\`"
+            echo "- **Digest** : \`${DIGEST}\`"
+            echo "- **Deploy** : ${STATUS}"
+            echo "- **환경변수**: Coolify 가 정본이다 — 이 워크플로는 넣지 않는다"
+          } >> "$GITHUB_STEP_SUMMARY"

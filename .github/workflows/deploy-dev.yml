@@ -116,6 +116,9 @@ jobs:
           RUN_URL: ${{ github.event.workflow_run.html_url }}
         run: |
           set -uo pipefail
+          # 기본 셸이 `bash -e {0}` 라 gh 호출 하나가 실패하면 판정도 출력도 없이 job 이 죽는다
+          # (#573 — deploy step 과 같은 함정). 종료 코드를 받아 «건너뜀»으로 떨어뜨린다.
+          set +e
 
           # 요구하는 job 이름은 integrate-dev.yml 의 `name:` 그대로다. 그쪽 이름을 바꾸면
           # 여기서 «찾을 수 없다»가 되어 배포가 건너뛰어진다 — 조용히 통과하지는 않는다.
@@ -139,6 +142,10 @@ jobs:
             else
               JOBS=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
                 --paginate --jq '.jobs[] | "\(.name)=\(.conclusion)"')
+              GH_RC=$?
+              if [ "$GH_RC" -ne 0 ]; then
+                echo "::warning title=배포 건너뜀::Integrate Dev 의 job 목록을 읽지 못했다(gh 종료 코드 ${GH_RC}). 판정할 수 없으므로 배포하지 않는다. ${RUN_URL}"
+              fi
               for JOB in $REQUIRED_JOBS; do
                 CONCLUSION=$(printf '%s\n' "$JOBS" | awk -F= -v n="$JOB" '$1 == n { print $2 }')
                 if [ "$CONCLUSION" = 'success' ]; then
@@ -261,11 +268,47 @@ jobs:
           SKIP_DEPLOY: ${{ github.event.inputs.skip_deploy }}
         run: |
           set -uo pipefail
+          # **Actions 의 기본 셸은 `bash -e {0}` 다** (#573). 끄지 않으면 curl 이 0 이 아닌 값으로
+          # 끝나는 순간 셸이 즉시 죽어 **아래 오류 처리가 한 줄도 실행되지 않는다** — 실제로
+          # «exit code 43» 네 글자만 남아 원인을 좁히는 데 세 번의 왕복이 들었다. 종료 코드를
+          # 받아 판단하려면 꺼야 한다(integrate-dev 의 api-compat step 이 같은 자리에서 배운 것).
+          set +e
+
+          # 값은 절대 찍지 않는다 — 길이와 «이상한 문자가 섞였나»만 센다. 붙여넣기 사고
+          # (줄바꿈이 딸려 들어감 · 코드 조각을 그대로 넣음)가 이 진단이 없으면 바깥에서 보이지 않는다.
+          shape() {
+            printf '길이=%s 개행=%s CR=%s 탭=%s 공백=%s' \
+              "${#1}" \
+              "$(printf '%s' "$1" | tr -cd '\n' | wc -c | tr -d ' ')" \
+              "$(printf '%s' "$1" | tr -cd '\r' | wc -c | tr -d ' ')" \
+              "$(printf '%s' "$1" | tr -cd '\t' | wc -c | tr -d ' ')" \
+              "$(printf '%s' "$1" | tr -cd ' '  | wc -c | tr -d ' ')"
+          }
+
+          report_shapes() {
+            echo "시크릿 값의 모양 (값 자체는 찍지 않는다):"
+            echo "  COOLIFY_DEV_DEPLOY_WEBHOOK  $(shape "$WEBHOOK_RAW")"
+            echo "  COOLIFY_API_TOKEN           $(shape "$TOKEN_RAW")"
+          }
 
           if [ "${SKIP_DEPLOY:-}" = 'true' ]; then
             echo "outcome=skipped-input" >> "$GITHUB_OUTPUT"
             echo "::notice::skip_deploy 입력이라 배포 호출을 건너뛴다 — 이미지는 올라갔다."
             exit 0
+          fi
+
+          WEBHOOK_RAW="$WEBHOOK"
+          TOKEN_RAW="$TOKEN"
+
+          # 붙여넣기에 딸려 온 줄바꿈·앞뒤 공백을 걷어낸다. **헤더 값 안의 개행은 curl 이
+          # 헤더 인젝션으로 보고 요청 자체를 거부한다**(종료 코드 43). 조용히 고치지 않고
+          # 달라졌으면 경고를 남긴다 — 시크릿을 제대로 다시 넣게 하기 위해서다.
+          WEBHOOK=$(printf '%s' "$WEBHOOK_RAW" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+          TOKEN=$(printf '%s' "$TOKEN_RAW" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+          if [ "$WEBHOOK" != "$WEBHOOK_RAW" ] || [ "$TOKEN" != "$TOKEN_RAW" ]; then
+            echo "::warning title=시크릿 값에 군더더기가 있다::줄바꿈이나 앞뒤 공백을 걷어내고 호출한다. 이번엔 넘어가지만 시크릿을 한 줄로 다시 넣을 것."
+            report_shapes
           fi
 
           if [ -z "$WEBHOOK" ]; then
@@ -274,16 +317,33 @@ jobs:
             exit 0
           fi
 
-          # URL 을 찍지 않는다 — 이 레포가 Public 이라 Actions 로그가 공개된다. curl 을 -s 로
-          # 두고 본문도 버린다(Coolify 는 배포 uuid 만 돌려주며 우리가 쓸 값이 아니다).
-          HTTP_STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+          # URL 을 찍지 않는다 — 이 레포가 Public 이라 Actions 로그가 공개된다. 그래도 **-sS 로
+          # 오류 메시지는 살린다**: -s 만 걸면 진행률과 함께 «왜 실패했는가»까지 사라진다.
+          # 그 메시지에 URL 이 섞여 나올 수 있어 URL 모양의 문자열을 출력 전에 가린다 — GitHub
+          # 마스킹은 시크릿 «전체»와 글자가 맞을 때만 듣기 때문에 조각으로 새는 길을 막는다.
+          # 호스트명만 남는 형태(«Could not resolve host: …»)는 그대로 나가는데, 가려야 할 것은
+          # 앱 uuid 이고 호스트는 이미 공개 DNS 다.
+          CURL_ERR="$RUNNER_TEMP/curl-err.txt"
+          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' \
             --max-time 30 \
             --request GET "$WEBHOOK" \
-            --header "Authorization: Bearer $TOKEN")
+            --header "Authorization: Bearer $TOKEN" 2>"$CURL_ERR")
+          CURL_RC=$?
 
-          if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+          # 종료 코드 != 0 은 «요청이 나가지도 않았다» 또는 «전송이 끊겼다»이고, HTTP 상태는
+          # «서버가 받고 거절했다»다. 둘을 가르지 않으면 Coolify 를 의심하며 시간을 버린다.
+          if [ "$CURL_RC" -ne 0 ]; then
             echo "outcome=failed" >> "$GITHUB_OUTPUT"
-            echo "::error::Coolify 배포 호출이 HTTP ${HTTP_STATUS} 로 실패했다. 이미지는 GHCR 에 있으니 Coolify 에서 손으로 Deploy 하면 된다."
+            echo "curl 종료 코드: ${CURL_RC} (요청이 서버에 닿지 못했다)"
+            sed -e 's#https\{0,1\}://[^[:space:]]*#<url>#g' "$CURL_ERR"
+            report_shapes
+            echo "::error::Coolify 배포 호출이 curl 종료 코드 ${CURL_RC} 로 실패했다 — 요청이 나가지도 않았다. 위의 «시크릿 값의 모양»부터 볼 것(43 이면 대개 헤더 값 안의 줄바꿈이다)."
+            exit 1
+          fi
+
+          if [ "${HTTP_STATUS:-0}" -lt 200 ] || [ "${HTTP_STATUS:-0}" -ge 300 ]; then
+            echo "outcome=failed" >> "$GITHUB_OUTPUT"
+            echo "::error::Coolify 배포 호출이 HTTP ${HTTP_STATUS} 로 실패했다(서버가 받고 거절했다 — 토큰 권한·앱 uuid 를 볼 것). 이미지는 GHCR 에 있으니 Coolify 에서 손으로 Deploy 하면 된다."
             exit 1
           fi
 

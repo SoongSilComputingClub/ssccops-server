@@ -38,13 +38,23 @@ class SupabaseJwtAuthenticationIntegrationTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
 
-    // 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없으므로 인증 없이 통과해야 한다
+    /*
+     * 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없으므로 인증 없이 통과해야 한다 —
+     * **다만 열려 있는 것은 프로브 두 경로뿐이다** (#555 · ADR-0049).
+     *
+     * 이 테스트는 `/actuator/health` 자체가 열려 있는지를 보고 있었고, 그 상태가
+     * `show-details: always` 와 곱해져 익명에게 DB 컴포넌트·디스크 바이트를 내주고 있었다.
+     * 지금은 상세가 `when-authorized` 이고 익명이 받는 것은 프로브의 상태 코드뿐이다.
+     */
     @Test
-    void healthEndpointIsOpenWithoutToken() throws Exception {
-        mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    void healthProbesAreOpenWithoutTokenButAggregateIsNot() throws Exception {
+        mockMvc.perform(get("/actuator/health/liveness")).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/health")).andExpect(status().isUnauthorized());
     }
 
-    // 지표는 계속 보호 대상이다 — 헬스만 열었지 actuator 전체를 연 것이 아니다
+    // 지표는 계속 보호 대상이다 — 프로브를 열었지 actuator 전체를 연 것이 아니다.
+    // `loggers` 는 노출 목록에서 아예 빠졌다(그쪽은 `ActuatorExposureTest` 가 본다)
     @Test
     void metricsEndpointStillRequiresAuthentication() throws Exception {
         mockMvc.perform(get("/actuator/metrics")).andExpect(status().isUnauthorized());

@@ -182,9 +182,26 @@ public class SecurityConfig {
                                         "/swagger-ui/**", "/v3/api-docs/**", "/swagger-ui.html")
                                 .permitAll(); // Swagger UI : 비 prod 환경에서만 허용
                     }
-                    // 배포 플랫폼의 헬스 프로브는 토큰을 붙일 수 없다. 지표·로그 레벨 조회
-                    // (prometheus·metrics·loggers)는 계속 인증을 요구한다
-                    auth.requestMatchers("/actuator/health/**", "/actuator/info").permitAll();
+                    /*
+                     * 배포 플랫폼의 헬스 프로브와 배포 이력 수집은 토큰을 붙일 수 없다.
+                     * 지표(prometheus·metrics)는 계속 인증을 요구하고 **`loggers`는 노출
+                     * 목록에서 빠졌다**(`application.yaml` — 그것은 조회가 아니라 쓰기였다).
+                     *
+                     * **`/actuator/health/**`가 아니라 프로브 두 경로다** (#555 · ssccops#500).
+                     * 그전에는 `/actuator/health` 자체가 익명에게 열려 `show-details: always`와
+                     * 곱해지며 DB 컴포넌트·디스크 바이트를 그대로 냈다. 지금은 상세가
+                     * `when-authorized`이고 익명이 받는 것은 프로브 두 개의 상태 코드뿐이다.
+                     *
+                     * ⚠️ **`readiness`가 DB를 보는 것은 `application.yaml`의 group 설정이
+                     * 하는 일이다.** ADR-0022가 헬스체크 경로로 `/actuator/health`를 고른 이유가
+                     * «DB를 포함한다»였으므로, 그 줄이 사라지면 여기서 경로를 좁힌 것이 곧
+                     * 실질을 뒤집는 일이 된다.
+                     */
+                    auth.requestMatchers(
+                                    "/actuator/health/liveness",
+                                    "/actuator/health/readiness",
+                                    "/actuator/info")
+                            .permitAll();
                     /*
                      * 크롤러 규칙 (#541 · ssccops#482). 크롤러는 호스트마다 이 자리 하나만
                      * 보므로 경로를 옮길 수 없다.

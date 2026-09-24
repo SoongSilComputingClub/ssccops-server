@@ -135,8 +135,11 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 - **`baseline-on-migrate: true`**는 이미 테이블이 있는 DB(dev·prod)에 Flyway를 처음 붙이기
   위한 것이다. `baseline-version: 1`이 V1을 '적용됨'으로 표시해 V2부터 돌게 한다 — V1의 내용이
   곧 그 DB의 현재 모습이므로 맞다. 빈 DB에서는 개입하지 않고 V1부터 전부 돈다.
-- **머지는 곧 dev 배포다**(Coolify가 `develop` 푸시를 자동 배포한다, #202). 마이그레이션이
-  깨지면 dev가 즉시 죽으므로 `FlywayMigrationValidateTest`를 통과시키고 머지한다.
+- **머지는 곧 dev 배포다**(#202 · #569 — `develop` 푸시가 CI를 통과하면 `deploy-dev.yml`이
+  이미지를 올리고 Coolify가 받아 띄운다). 마이그레이션이 깨지면 dev가 즉시 죽으므로
+  `FlywayMigrationValidateTest`를 통과시키고 머지한다. **그 테스트는 CI에 있으니 실패하면
+  이미지가 만들어지지도 않는다** — 옛 경로(Coolify가 푸시 웹훅을 받아 바로 빌드)에서는
+  깨진 커밋이 그대로 dev에 올라갔다.
 
 ### 앱 DB는 Supabase Free다 — 일시정지와 anon 권한 (#487 · [ADR-0041](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0041-supabase-free-keepalive-two-layers.md))
 
@@ -554,15 +557,24 @@ jar들을 스캔하지 않고 우리가 Tika의 `ServiceLoader`(= `AutoDetectPar
 - **이슈 유형은 `feat`·`fix`·`refactor`·`chore` 네 가지뿐이다**(#238). 이슈 템플릿이 주는 것이 정본이며 라벨과 브랜치 접두어가 여기서 나온다. 문서·테스트·스타일·CI/CD 작업의 이슈는 전부 `[CHORE]`다 — `[CICD]`·`[DOCS]` 같은 옛 태그로 열어도 `issue-labeler`·`issue-branch-creator`가 `chore`로 받는다. 예전에 쓰던 `docs`·`test`·`style`·`cicd`·`rename`·`remove` 라벨은 **저장소에서 지웠다** — 남겨 두면 화면의 라벨 목록에서 고를 수 있어 다시 붙는다. 그 라벨이 붙어 있던 과거 PR에서도 함께 사라지지만, 그 작업의 유형은 커밋 메시지와 연결된 이슈에 그대로 남는다. 넷으로 못 박는 이유는 이 표가 `issue-labeler`·`issue-branch-creator`·`pr-labeler`·`pr-guard` 네 워크플로에 흩어져 있어 한 곳만 고치면 갈라지기 때문이다 — 갈라져 있던 동안 그 라벨들이 이슈에는 하나도 없고 PR에만 붙어 있었다(docs 33건·test 53건).
 - PR 제목은 `[#이슈번호] 총 작업 내용` — Squash merge 시 그대로 커밋 제목이 되므로 형식을 반드시 지킨다. **저장소 설정이 `squash_merge_commit_title = PR_TITLE`이라 커밋이 하나뿐인 PR에서도 PR 제목이 이긴다**(#238) — 기본값(`COMMIT_OR_PR_TITLE`)이던 동안에는 단일 커밋 PR에서 커밋 메시지가 제목이 되어, PR 제목을 통제해도 `git log`에는 다른 것이 박혔다. **`pr-guard.yml`이 제목·브랜치명·이슈 실재 여부를 검사해 어기면 실패시킨다**(#238) — `develop → main` 릴리스 PR과 dependabot만 면제다. **본문의 «근거» 줄도 본다**(#410 · ssccops#340): 템플릿의 `📎 근거` 칸에 `ssccops#<메타 이슈>` 또는 `ADR-NNNN`이 있어야 한다 — 배포 이력이 PR → Sub-task → Parent → ADR로 취합되는데 그 사슬이 끊긴 PR도 «어느 결정에서 왔나»를 스스로 말하게 하기 위해서다.
 - **머지 전략은 둘이다.** 기능·수정 PR은 **Squash and merge**로 develop에 한 커밋으로 들어가고, **`develop → main` 릴리스 PR은 일반 merge commit**이다 — 그쪽을 squash 하면 develop 전체가 main에서 커밋 하나로 뭉개져 릴리스에 무엇이 들어갔는지 사라진다. 그래서 `allow_merge_commit`은 켜 둔 것이며 끄지 말 것. 릴리스 PR에 `[#이슈번호]`가 없는 것도 정상이라 `pr-guard`가 면제한다(`head.ref != develop`). 이 가드가 생긴 이유는 어긴 제목이 문서상의 실수로 끝나지 않고 `git log`에 영구히 박히기 때문이다(#235를 되돌리는 데 배포 브랜치 강제 푸시가 필요했다).
-- **CI는 두 워크플로다.** `develop`으로 향하는 PR·푸시는 `integrate-dev.yml`, `main` 쪽은 `integrate-prod.yml`이며 둘 다 Spotless → Checkstyle → Test/JaCoCo → `bootJar`를 같은 명령으로 돈다(다르게 두면 develop에서 통과한 코드가 main에서 떨어진다). `integrate-dev.yml`에는 PR 전용 `api-compat`(OpenAPI 하위 호환 게이트, #412 · 위 «빌드·테스트·린트» 절)이 하나 더 있다.
+- **CI는 두 워크플로다.** `develop`으로 향하는 PR·푸시는 `integrate-dev.yml`, `main` 쪽은 `integrate-prod.yml`이며 둘 다 Spotless → Checkstyle → Test/JaCoCo → `bootJar`를 같은 명령으로 돈다(다르게 두면 develop에서 통과한 코드가 main에서 떨어진다). `integrate-dev.yml`에는 PR 전용 `api-compat`(OpenAPI 하위 호환 게이트, #412 · 위 «빌드·테스트·린트» 절)이 하나 더 있다. **`develop` 푸시에서는 그 뒤에 `deploy-dev.yml`이 이어붙는다**(#569 · 아래 «배포» 절) — CI 자체는 여전히 둘이다.
 - **SonarQube 분석은 `develop` 푸시에서만 돌고, Analyze job의 상태가 곧 Quality Gate 결과다**(#477 · ssccops#377 · 분석 자리는 ssccops#231 · #238). 게이트 ERROR면 `sonar-report.sh`가 1로 끝나 job이 빨갛고, 깨뜨린 조건마다 `::error` 주석이 실행 화면 Annotations에 뜬다. 그전(ssccops#231)에는 게이트가 무엇이든 초록이었고 — develop이 세 번 연속 ERROR인 동안 job은 세 번 다 초록이었다 — 결과가 요약·로그에만 있어 열어 보기 전에는 아무도 몰랐다. **분석이 PR에서 돌지 않으므로 이 실패가 막는 머지는 없다**(ADR-0018은 그대로다) — develop 커밋의 상태가 사실을 말할 뿐이며, 게이트 조건·임계값은 여전히 ssccops#235의 문제다. `SONAR_TOKEN`이 없으면 `sonar-preflight` job이 판정해 Analyze를 **통째로 건너뛴다(회색)** — `secrets`는 job `if`에서 못 읽어 앞 job의 output으로 넘긴다. 예전엔 step마다 `if: env.SONAR_TOKEN != ''`가 붙어 step은 건너뛰고 job은 초록이었다. 세 상태(통과·실패·건너뜀)가 세 색이어야 한다. 리포트는 **job 요약과 job 로그(stdout) 양쪽에** 남고 스크립트는 `.github/scripts/sonar-report.sh`다 — job 요약은 UI 에서만 보이고 Actions API 로는 읽히지 않아, 로그에 없으면 기준선 숫자를 사람이 브라우저를 열어 옮겨 적기 전에는 아무도 볼 수 없다.
   - **`main`(`integrate-prod.yml`)에는 analyze job이 없다.** 이 서버는 SonarQube **Community Build**이고 브랜치 플러그인이 없어(ssccops#234) 스캐너가 `sonar.branch.name`을 선언하지 못한다 — 선언하면 업그레이드하라는 오류로 분석이 죽는다. 그래서 **모든 분석이 프로젝트 기본 브랜치 한 자리를 덮어쓴다.** develop과 main이 둘 다 돌면 그 자리가 두 브랜치 사이를 오가 어느 쪽 수치인지 알 수 없어지므로 하나만 남겼고, develop이 항상 앞서므로 그쪽을 택했다.
   - **PR에서도 돌지 않는다.** ssccops#231은 PR에서 돌렸는데("병합 전에 보는 편이 리뷰에 붙어 쓸모 있다") 같은 이유로 성립하지 않는다 — PR마다 그 자리가 PR 내용으로 바뀌어 "지금 develop이 어떤 상태인가"를 아무도 알 수 없다. 머지된 상태만 분석하면 수치가 언제 봐도 develop을 가리키고, 그것이 있어야 게이트를 잠글 기준이 생긴다. 잃는 것은 머지 전 피드백이며, PR에는 이미 Spotless·Checkstyle·테스트가 걸려 있다.
   - **같은 이유로 리포트 질의에 `branch` 파라미터를 넣지 않는다.** 제출할 때 브랜치를 밝히지 않았으므로 조회에서 무엇을 하든 같은 데이터를 되읽으며, `&branch=<브랜치명>`은 **없는 브랜치를 묻는 것**이라 빈 응답이 오고 `jq`의 `// "0"` 폴백이 그것을 커버리지 0%로 보고했다. 그 폴백이 진짜 오류를 두 번 가렸다(#284 브랜치명 인코딩 · #238 파라미터 자체) — **0%가 나오면 "커버리지가 없다"가 아니라 "질의가 빗나갔다"부터 의심할 것.**
   - 예전에는 `build`가 `analyze`에 걸려 있었고 analyze는 Quality Gate 실패에 `exit 1` 했다. 그런데 **다섯 번의 릴리스에서 그 job을 실패시킨 것은 품질이 아니라 빈 `SONAR_TOKEN`**이었고(시크릿이 v0.2.1 릴리스보다 2시간 뒤에 등록됐다), 그 동안 JAR 빌드 검증은 `Build: skipped`로 한 번도 돌지 않았다. 막으려던 것은 안 막고 엉뚱한 것을 막은 셈이라 의존을 끊었다. **`exit 1`은 #477에서 돌아왔지만 `build`의 의존은 끊긴 채다** — 빈 토큰은 이제 실패가 아니라 건너뜀이라 그때의 혼동이 재현되지 않는다.
-- **배포는 저장소가 하지 않는다** (#202). Coolify가 GitHub App으로 이 저장소를 직접 보고 있어, `develop` 푸시는 dev로 `main` 푸시는 prod로 **자동 배포**된다. 이미지도 Coolify가 레포의 멀티스테이지 `Dockerfile`로 직접 빌드하므로 GHCR을 거치지 않는다.
-  - 따라서 `.github/workflows/`에는 **CI만 있다** — 예전의 `deploy-dev.yml`·`deploy-prod.yml`과 배포 전용 `Dockerfile.deploy`는 걷어냈다.
-  - **환경변수의 정본은 Coolify다.** 예전에는 배포마다 Actions가 Coolify API(`envs/bulk`)로 값을 덮어썼는데, 그 구조에서는 대시보드에서 직접 넣은 값(R2 설정 등)이 다음 배포에 날아갔다. 지금은 덮어쓰는 주체가 없으므로 Coolify 대시보드에서 관리한다.
+- **배포는 저장소가 하지 않는다 — 다만 `dev`의 «이미지를 만드는 일»만은 되가져왔다** (#202 · #569 · ssccops#513). Coolify가 GitHub App으로 이 저장소를 직접 보고 있고 `main` 푸시는 prod로 **자동 배포**된다. **`develop`(dev)은 경로가 다르다** — 아래 표의 dev 줄은 `COOLIFY_DEV_DEPLOY_WEBHOOK`이 등록된 뒤부터 온전히 성립한다. 비어 있는 동안은 Actions가 이미지만 GHCR에 올리고 배포는 여전히 Coolify의 git 빌드가 한다(그래서 이 워크플로는 대시보드 전환보다 먼저 머지해도 안전하다).
+
+  | | 누가 이미지를 만드나 | 무엇이 배포를 시작하나 |
+  |---|---|---|
+  | `dev` (`develop`) | **GitHub Actions** — `deploy-dev.yml`이 레포의 같은 `Dockerfile`로 빌드해 `ghcr.io/soongsilcomputingclub/ssccops-server`에 `dev`·`sha-<7>`로 푸시 | Actions가 Coolify 배포 웹훅을 부른다. Coolify는 `dev` 태그를 **받아 띄우기만** 한다 |
+  | `prod` (`main`) | **Coolify**가 호스트에서 같은 `Dockerfile`로 빌드 (#202 그대로) | Coolify GitHub App의 푸시 웹훅 |
+
+  dev만 옮긴 이유는 호스트 빌드가 비쌌기 때문이다 — 배포 한 번이 13분 25초이고 동시 빌드 1(ADR-0048)을 웹과 나눠 써 큐 대기가 19분까지 갔으며, 빌드 중에는 같은 호스트의 서비스가 2~5배 느려졌다(#564). 덤으로 **dev는 이제 CI를 통과한 커밋만 올라간다** — 푸시 웹훅은 CI를 기다리지 않아 lint·test가 깨진 커밋도 dev에 떴다. prod는 dev가 안정된 뒤 별도로 판단한다(ssccops#513 ③).
+  - `Dockerfile`은 **여전히 한 벌이다.** CI가 만든 JAR을 얇은 Dockerfile(옛 `Dockerfile.deploy`)에 담는 길은 택하지 않았다 — 두 벌이 되면 로컬 `docker compose`와 배포가 갈린다(#202가 그것을 걷어낸 이유). 속도는 buildx의 GHA 캐시로 얻는다.
+  - 따라서 `.github/workflows/`에는 **CI와 dev 배포 호출이 있다** — 예전의 `deploy-prod.yml`과 배포 전용 `Dockerfile.deploy`는 걷어낸 채다. 새 `deploy-dev.yml`은 `workflow_run`으로 `Integrate Dev`를 이어받고, **그 워크플로의 conclusion이 아니라 `Lint`·`Test` job의 결과를 본다**(Sonar Quality Gate가 dev 배포를 멈춰 세우지 않게 — 그쪽은 «막는 머지가 없다»가 결정이다).
+  - **환경변수의 정본은 Coolify다 — 이것은 dev에서도 그대로다.** 예전에는 배포마다 Actions가 Coolify API(`envs/bulk`)로 값을 덮어썼는데, 그 구조에서는 대시보드에서 직접 넣은 값(R2 설정 등)이 다음 배포에 날아갔다. #569는 그 덮어쓰기를 **되살리지 않았다** — `deploy-dev.yml`이 아는 시크릿은 배포를 부르는 둘뿐이다(`COOLIFY_API_TOKEN` · `COOLIFY_DEV_DEPLOY_WEBHOOK`). **애플리케이션 환경변수를 Actions 시크릿으로 옮기지 말 것.**
+  - **`COOLIFY_DEV_DEPLOY_WEBHOOK`은 변수(vars)가 아니라 시크릿이다** — 이 레포가 Public이라 Actions 로그가 공개되고 변수는 마스킹되지 않는다. **비어 있으면 배포 호출을 건너뛰고 경고만 남긴다**(이미지는 올라간다). 되돌리려면 그 값을 비우고 Coolify 옛 리소스의 자동 배포를 켜면 된다.
   - **Web Push 키도 거기다**(ssccops#446 · ADR-0045). `SSCCOPS_PUSH_VAPID_PUBLIC_KEY`·`…_PRIVATE_KEY`·`…_SUBJECT`(`mailto:`) — `npx web-push generate-vapid-keys`로 만들어 dev·prod에 **다른 키**를 넣는다. 비어 있으면 알림 행만 만들고 푸시는 보내지 않는다(부팅 로그 한 줄 · `domain/notification/AGENTS.md`).
   - **기능 플래그도 거기서 켠다.** `SSCCOPS_MEMBER_HARD_DELETE_ENABLED=true`가 회원 하드 삭제(#361 · [ADR-0021](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0021-temporary-member-hard-delete.md))를 연다 — 기본값은 `false`이고 `application-dev.yaml`·`application-prod.yaml`에는 그 키가 **없다**(임시 기능이라 프로필 설정 파일에 굳히지 않는다). 규정 도우미 손잡이가 #439에서 베이스 `application.yaml`로 옮겨 갈 때 **이 키는 따라가지 않았다** — 곧 지울 기능이라 지금 선언해 두면 그때 다시 지워야 한다. 중복 계정 정리가 끝나면 변수를 지우거나 `false`로 돌린다. 웹은 `NEXT_PUBLIC_MEMBER_HARD_DELETE=true`로 버튼을 그린다.
 

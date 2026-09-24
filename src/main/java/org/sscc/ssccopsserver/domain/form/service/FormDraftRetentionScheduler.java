@@ -1,21 +1,13 @@
 package org.sscc.ssccopsserver.domain.form.service;
 
-import java.time.Clock;
-import java.time.Duration;
-import java.time.Instant;
-
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-import org.sscc.ssccopsserver.domain.form.code.FormStatus;
-import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
-import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 접수가 끝난 폼에 남은 미제출 초안의 보존 기간 정리 (#557 · ssccops#502 · #36 결정).
+ * 접수가 끝난 폼에 남은 미제출 초안의 보존 기간 정리 — <b>시각만 정한다</b> (#557 · ssccops#502 · #36 결정).
  *
  * <p>{@code domain/form/AGENTS.md}가 «폼이 CLOSED된 뒤 남은 DRAFT는 접수 종료 후 90일까지 보존하고 그 뒤 삭제한다»고 적고, 영구
  * 보존하지 않는 근거를 «미제출 초안은 지원 의사를 남기지 않은 개인정보라 보관 근거가 없다»로 들었다. <b>그런데 그 배치가 없어 정책이 한 번도 실행되지 않았다</b> —
@@ -25,24 +17,19 @@ import lombok.extern.slf4j.Slf4j;
  * {@code DeadlineNotificationScheduler.purgeReadNotifications}가 같은 모양의 멱등한 DELETE로 매주 돈다. 인스턴스가 둘
  * 떠도(배포 겹침) 결과가 같다.
  *
- * <p><b>왜 별도 클래스인가.</b> {@code FormServiceImpl}은 요청이 부르는 서비스이고 이것은 시간이 부르는 작업이라 실패의 뜻이 다르다 — 여기서 던진
- * 예외는 사용자에게 갈 곳이 없어 삼키고 로그로 남긴다({@code DeadlineNotificationScheduler}가 같은 판단을 한 자리다).
+ * <p><b>삭제 자체는 {@link FormDraftRetentionService}에 있다 — 같은 클래스에 두면 트랜잭션이 걸리지 않는다</b> (#570). {@code
+ * this.purge()}는 Spring 프록시를 지나지 않아 {@code @Transactional}이 무시되고, 벌크 삭제는 트랜잭션 없이는 죽는다. 그 예외를 아래
+ * {@code catch}가 받아 주 1회 로그 한 줄로만 남을 자리였다. 그 이유는 서비스 쪽 주석에 적어 두었다.
+ *
+ * <p>여기서 던진 예외는 사용자에게 갈 곳이 없어 삼키고 로그로 남긴다({@code DeadlineNotificationScheduler}가 같은 판단을 한 자리다) — 다만
+ * <b>삼키는 자리가 있다는 것 자체가 위험</b>이라, 실패가 로그에만 남는다는 사실을 메시지에 적는다.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class FormDraftRetentionScheduler {
 
-    /**
-     * 접수 종료 뒤 이만큼 지난 폼의 초안을 지운다.
-     *
-     * <p>90일은 #36의 결정값이고 알림 정리(읽은 지 90일)와 같은 길이다. 설정 손잡이로 빼지 않은 것은 이 값이 «운영 편의»가 아니라 <b>보관 근거의
-     * 기한</b>이라 환경마다 달라지면 안 되기 때문이다 — dev에서 30일로 줄여 두면 그것이 곧 다른 정책이 된다.
-     */
-    private static final Duration DRAFT_RETENTION = Duration.ofDays(90);
-
-    private final FormResponseHistoryRepository formResponseHistoryRepository;
-    private final Clock clock;
+    private final FormDraftRetentionService formDraftRetentionService;
 
     /**
      * 매주 월요일 05:00 KST.
@@ -52,28 +39,9 @@ public class FormDraftRetentionScheduler {
     @Scheduled(cron = "0 0 5 * * MON", zone = "Asia/Seoul")
     public void purgeClosedFormDrafts() {
         try {
-            purge();
+            formDraftRetentionService.purge();
         } catch (RuntimeException e) {
             log.error("closed form draft purge failed — 다음 주에 다시 돈다", e);
         }
-    }
-
-    /**
-     * 실제 삭제. 테스트가 스케줄을 기다리지 않고 이것을 직접 부른다.
-     *
-     * @return 지운 초안 수
-     */
-    @Transactional
-    public int purge() {
-        Instant before = clock.instant().minus(DRAFT_RETENTION);
-        int deleted =
-                formResponseHistoryRepository.deleteDraftsOfFormsClosedBefore(
-                        ResponseStatus.DRAFT, FormStatus.CLOSED, before);
-        if (deleted > 0) {
-            // 건수를 남기는 것은 처음 도는 날 «몇 건이 지워졌나»가 어디에도 없으면 되짚을 수
-            // 없기 때문이다. 초안 내용·회원은 싣지 않는다(ADR-0024).
-            log.info("closed form drafts purged: {} (기준 {})", deleted, before);
-        }
-        return deleted;
     }
 }

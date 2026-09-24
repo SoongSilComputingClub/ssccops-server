@@ -248,11 +248,14 @@ class RagIndexingWorkerTest {
     /*
      * 기동 복구 — `INDEXING`에 멈춘 행을 `PENDING`으로 되돌린다(§12.4). **Supabase Free의
      * 일시정지와 배포 재시작이 실제 원인이고**, 되돌리지 않으면 그 행을 집을 사람이 없다.
+     *
+     * **한 시간 전에 집힌 것으로 만든다** (#556). 복구가 나이를 보게 되어(기본 10분) 방금 집힌
+     * 행은 되돌리지 않는다 — 이 테스트는 «진짜로 죽은 작업»을 말하므로 그만큼 오래된 값을 준다.
      */
     @Test
     void bootRecoveryRequeuesDocumentsStuckInIndexing() {
         RagDocumentEntity document = pendingMarkdown("REGULATION", VALID_MARKDOWN);
-        startIndexing(document);
+        startIndexingAt(document, Instant.now().minusSeconds(3600));
 
         assertThat(worker.recoverStuckIndexing()).isEqualTo(1);
 
@@ -263,6 +266,23 @@ class RagIndexingWorkerTest {
         // 되돌린 행을 그다음 바퀴가 집는다 — 복구와 재색인이 같은 상태로 수렴하는 것이 요점이다
         assertThat(worker.drainQueue()).isEqualTo(1);
         assertThat(reload(document).getIndexStatus()).isEqualTo(RagIndexStatus.INDEXED);
+    }
+
+    /*
+     * ⚠️ **방금 집힌 행은 되돌리지 않는다** (#556 · ssccops#501).
+     *
+     * 배포 중에는 컨테이너가 둘이다 — Coolify 가 새 것을 healthy 로 만든 뒤 옛 것을 내리므로
+     * 겹침은 사고가 아니라 배포 절차 그 자체이고, 배포는 develop 푸시마다 일어난다. 조건 없는
+     * 옛 복구는 **새로 뜬 쪽이 옛 쪽의 진행 중 색인을 되돌렸고**, 그 결과가 고아 청크와 같은
+     * 문서의 재임베딩이었다(무료 티어 하루치가 두 번 나간다).
+     */
+    @Test
+    void bootRecoveryLeavesDocumentsPickedUpJustNow() {
+        RagDocumentEntity document = pendingMarkdown("REGULATION", VALID_MARKDOWN);
+        startIndexingAt(document, Instant.now().minusSeconds(30));
+
+        assertThat(worker.recoverStuckIndexing()).isZero();
+        assertThat(reload(document).getIndexStatus()).isEqualTo(RagIndexStatus.INDEXING);
     }
 
     /*
@@ -383,8 +403,17 @@ class RagIndexingWorkerTest {
     }
 
     private void startIndexing(RagDocumentEntity document) {
+        startIndexingAt(document, Instant.now());
+    }
+
+    /**
+     * 집힌 시각을 지정해 색인 중으로 만든다 (#556).
+     *
+     * <p>기동 복구가 나이를 보게 되면서 «언제 집혔나»가 판정의 일부가 됐다 — 방금 집힌 행은 다른 인스턴스가 지금 돌리는 중이라는 뜻이라 되돌리지 않는다.
+     */
+    private void startIndexingAt(RagDocumentEntity document, Instant startedAt) {
         RagDocumentEntity loaded = reload(document);
-        loaded.startIndexing(Instant.now());
+        loaded.startIndexing(startedAt);
         ragDocumentRepository.save(loaded);
     }
 

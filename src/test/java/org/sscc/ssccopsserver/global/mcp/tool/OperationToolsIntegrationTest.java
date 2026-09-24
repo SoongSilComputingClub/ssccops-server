@@ -133,7 +133,20 @@ class OperationToolsIntegrationTest {
                             "create_post",
                             "update_post",
                             "publish_content",
-                            "request_content_image_upload");
+                            "request_content_image_upload",
+                            // W3 — 학술 (#567)
+                            "list_academic_programs",
+                            "get_academic_program",
+                            "list_academic_program_members",
+                            "list_academic_sessions",
+                            "get_academic_session",
+                            "list_academic_sessions_to_review",
+                            "transition_academic_program",
+                            "transition_academic_session",
+                            "list_academic_recruitment_applications",
+                            "select_academic_recruitment",
+                            "list_academic_attendances",
+                            "correct_academic_attendances");
             /*
              * 삭제 도구는 소프트 삭제만 열기로 했고(ADR-0037) 그것은 W5에서 낸다 — 지금은
              * 하나도 없어야 한다. 하드 삭제는 어느 파도에서도 열지 않는다.

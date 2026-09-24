@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.assistant.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -53,9 +54,17 @@ class RagIndexingSchedulerTest {
 
         assertThat(polled.await(5, TimeUnit.SECONDS)).isTrue();
 
+        /*
+         * **세기 전에 세운다.** 폴링은 20ms 간격으로 계속 돌기 때문에, 빗장이 풀린 뒤 아래 검증이
+         * 도는 사이에 다음 회차가 또 `drainQueue()`를 부른다 — 실제로 «Wanted 1 time but was 2
+         * times»로 깨졌다(#563 작업 중). 여기서 보려는 것은 **순서**이지 횟수가 아니므로
+         * `atLeastOnce()`로 적고, 그래도 실행기를 먼저 내려 검증이 움직이는 대상을 보지 않게 한다.
+         */
+        scheduler.destroy();
+
         InOrder order = inOrder(worker);
         order.verify(worker).recoverStuckIndexing();
-        order.verify(worker).drainQueue();
+        order.verify(worker, atLeastOnce()).drainQueue();
     }
 
     @Test

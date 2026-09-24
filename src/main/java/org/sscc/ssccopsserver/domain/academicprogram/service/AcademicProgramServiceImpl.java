@@ -130,6 +130,15 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 .toList();
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public void requireShareRevocable(Long academicProgramId, MemberEntity requester) {
+        // 없는 활동을 먼저 404로 끊는다 — 발급 경로가 같은 이유로 조회를 먼저 태운다
+        // (shr_lnk에 FK가 없어 DB가 막아 주지 않는다).
+        academicProgramOwnershipPolicy.requireLeaderOrManager(
+                findAcademicProgram(academicProgramId), requester);
+    }
+
     private AcademicProgramEntity findAcademicProgram(Long academicProgramId) {
         return academicProgramRepository
                 .findById(academicProgramId)

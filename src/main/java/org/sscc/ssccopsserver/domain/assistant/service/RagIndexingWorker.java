@@ -9,6 +9,7 @@ import java.util.function.Consumer;
 
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -105,6 +106,12 @@ public class RagIndexingWorker {
     private final Clock clock;
     private final TransactionTemplate transaction;
 
+    /**
+     * 기동 복구가 «멈춘 것»으로 보는 나이 (#556). 선언과 «왜 그 값인가»는 {@code application.yaml} 한 곳이고 여기에는 기본값을 두지 않는다
+     * — 두 벌로 두면 한쪽만 바뀐다(이 레포의 규정 도우미 손잡이 규칙).
+     */
+    private final Duration stuckAfter;
+
     public RagIndexingWorker(
             RagDocumentRepository ragDocumentRepository,
             FileReferenceService fileReferenceService,
@@ -115,7 +122,8 @@ public class RagIndexingWorker {
             AssistantFeature assistantFeature,
             ObjectProvider<RagChunkStore> ragChunkStore,
             Clock clock,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            @Value("${ssccops.assistant.indexing.stuck-after}") Duration stuckAfter) {
 
         this.ragDocumentRepository = ragDocumentRepository;
         this.fileReferenceService = fileReferenceService;
@@ -126,6 +134,7 @@ public class RagIndexingWorker {
         this.assistantFeature = assistantFeature;
         this.ragChunkStore = ragChunkStore;
         this.clock = clock;
+        this.stuckAfter = stuckAfter;
 
         /*
          * **트랜잭션 경계를 코드로 든다.** 이 클래스의 메서드는 요청 밖에서 자기 스레드로
@@ -146,7 +155,12 @@ public class RagIndexingWorker {
      * <p>되돌리는 것이 <b>재색인과 같은 메서드</b>({@link RagDocumentEntity#requeueIndexing()})인 것은 결과가 같기 때문이다 —
      * 나누면 복구 경로만 다른 규칙을 갖게 된다.
      *
-     * <p>⚠️ 인스턴스가 둘이면 <b>남의 진행 중 작업을 되돌린다</b>(클래스 주석).
+     * <p><b>나이 조건이 걸려 있다</b> (#556 · ssccops#501). 그전에는 조건이 없어 {@code INDEXING}에 있는 행을 전부 되돌렸고, 그것이
+     * «인스턴스는 하나»라는 전제 위에 서 있었다. 배포 중에는 컨테이너가 둘이므로(Coolify가 새 것을 healthy로 만든 뒤 옛 것을 내린다) 새로 뜬 쪽의 기동
+     * 복구가 <b>남의 진행 중 작업을 되돌렸다</b> — 결과는 고아 청크와 같은 문서의 재임베딩이고, «드물어 감수하는 값»이 실제로는 <b>배포마다</b>였다.
+     *
+     * <p>지금은 {@code indexStartedAt}이 {@code stuck-after}(기본 10분) 이전인 행만 되돌린다. 폴링이 10초이고 색인 한 건이 «수십
+     * 초»라 정상 진행 중인 작업은 그 창을 넘지 않는다.
      *
      * @return 되돌린 행 수
      */
@@ -155,7 +169,9 @@ public class RagIndexingWorker {
             return 0;
         }
 
-        List<Long> stuck = ragDocumentRepository.findIdsByIndexStatus(RagIndexStatus.INDEXING);
+        List<Long> stuck =
+                ragDocumentRepository.findIdsStuckInStatusSince(
+                        RagIndexStatus.INDEXING, clock.instant().minus(stuckAfter));
         int requeued = 0;
         for (Long id : stuck) {
             if (Boolean.TRUE.equals(transaction.execute(status -> requeue(id)))) {

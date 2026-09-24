@@ -64,7 +64,18 @@ public enum AuditAction {
     /**
      * @RequireAuthority 거절. 누가 무엇을 시도했는가
      */
-    AUTHZ_DENY("authz.deny", "handler");
+    AUTHZ_DENY("authz.deny", "handler"),
+
+    /**
+     * 공유 링크 폐기 (#556 · ssccops#501).
+     *
+     * <p><b>발급은 남기지 않고 폐기만 남긴다.</b> 발급은 멱등이고 되돌릴 수 있지만 폐기는 <b>이미 퍼진 주소를 죽이고</b>, 다시 발급하면 멱등이 아니라 새
+     * 토큰이라 단톡방에 뿌린 링크가 살아나지 않는다. 그리고 {@code revoke}는 살아 있는 링크가 없어도 200이라 응답만으로는 «정말 끊겼는가»를 알 수 없다 —
+     * 그래서 되짚을 자리가 여기뿐이다.
+     *
+     * <p>대상 종류는 {@code ShareTargetType}이 여섯이라 하나로 고정하지 않고 부르는 쪽이 대상을 적는다.
+     */
+    SHARE_LINK_REVOKE("share.link.revoke", "share_link");
 
     private final String code;
     private final String targetType;

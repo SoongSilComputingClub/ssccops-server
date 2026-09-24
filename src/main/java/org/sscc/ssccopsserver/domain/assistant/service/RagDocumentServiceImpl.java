@@ -10,6 +10,7 @@ import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.sscc.ssccopsserver.domain.assistant.code.RagApplyStatus;
 import org.sscc.ssccopsserver.domain.assistant.code.RagDocumentFormat;
@@ -98,8 +99,41 @@ public class RagDocumentServiceImpl implements RagDocumentService {
     private final FilePresigner filePresigner;
     private final Clock clock;
 
+    /*
+     * **트랜잭션 경계를 코드로 든다** — `upload`가 «검증·한도 → (파싱) → 적기»로 갈리기
+     * 때문이다. 같은 도메인의 `RagIndexingWorker`가 «집기 → (긴 임베딩) → 적기»에 같은
+     * 이유로 이것을 쓴다(`AGENTS.md` «트랜잭션이 셋이다» · ssccops#324).
+     *
+     * 워커는 `PlatformTransactionManager`로 직접 만드는데 여기서는 빈을 주입받는다 —
+     * 그쪽은 `@Value` 때문에 어차피 생성자를 손으로 쓰고 있고, 이 클래스는
+     * `@RequiredArgsConstructor`라 자동 구성된 `TransactionTemplate`을 받는 편이 짧다.
+     */
+    private final TransactionTemplate transaction;
+
+    /*
+     * ══ 파싱은 트랜잭션 **밖**이다 (#563 · ssccops#512) ═══════════════
+     *
+     * 이 메서드에는 `@Transactional`이 없다. 그전에는 있었고, 그래서 **Tika 파싱과 10MB R2
+     * PUT이 끝날 때까지 커넥션을 쥐었다** — 바로 아래 주석이 «Tika 파싱이 이 메서드에서 가장
+     * 비싼 일»이라고 적어 두고도 그 비싼 일이 트랜잭션 안에 있었다.
+     *
+     * 운영진 둘이 10MB 규정 PDF를 동시에 올리면 커넥션 둘이 그동안 잡힌다. 그 사이 keepalive·
+     * 마감 스케줄러·일반 요청이 같은 풀을 나눠 쓰고, 무중단 배포로 컨테이너가 둘 뜨는 동안에는
+     * 인스턴스마다 한 벌씩이다. 같은 도메인의 색인 워커가 정확히 이 이유로 `TransactionTemplate`을
+     * 쓰는데(`AGENTS.md` «트랜잭션이 셋이다» · ssccops#324) 업로드 경로만 그 처방을 못 받았다.
+     *
+     * **갈라도 «실패하면 아무것도 남지 않는다»는 그대로다.** 위 클래스 주석의 계약이 요구하는
+     * 것은 «행과 오브젝트가 함께 서거나 함께 없다»이고, 그 둘은 여전히 **한 트랜잭션 안**에 있다
+     * (아래 ③). 밖으로 나간 파싱은 DB를 건드리지 않으므로 실패해도 남길 것이 없다.
+     *
+     * | | 무엇을 | 왜 그 자리인가 |
+     * |---|---|---|
+     * | ① | 파일명·형식·바이트 | DB를 안 본다 |
+     * | ② | 일일 한도 **미리** 보기 | 비싼 파싱 앞에서 막는다 — 짧은 트랜잭션 하나 |
+     * | | **파싱(Tika)** | **커넥션 없이** — 이 갈라짐의 목적 |
+     * | ③ | 한도 재확인 · 행 · R2 PUT · `file_rfrnc` | 되돌림이 한 덩어리로 묶여야 하는 것들 |
+     */
     @Override
-    @Transactional
     public RagDocumentResponse upload(MultipartFile file, String name, MemberEntity registrant) {
 
         assistantFeature.requireEnabled();
@@ -111,49 +145,71 @@ public class RagDocumentServiceImpl implements RagDocumentService {
         /*
          * 한도를 파싱 앞에서 본다 — Tika 파싱이 이 메서드에서 가장 비싼 일이고, 막을 요청이라면
          * 그 비용을 치르기 전에 막는 편이 한도를 둔 목적(자원 보호)에 맞다.
+         *
+         * **이것은 미리 보기이고 진짜 판정은 ③ 안에 한 번 더 있다.** 둘로 나뉜 것은 파싱이 그
+         * 사이에 끼어 창이 벌어지기 때문이다 — 그 창 동안 같은 사람이 다른 요청으로 한도를
+         * 채우면 여기를 통과한 이 요청이 한도를 넘겨 저장될 수 있다. 판정을 쓰기와 같은
+         * 트랜잭션에 두면 그 창이 닫힌다. 미리 보기를 남겨 두는 것은 위에 적은 이유 그대로다.
          */
-        requireWithinDailyQuota(registrant);
+        transaction.executeWithoutResult(status -> requireWithinDailyQuota(registrant));
 
         RagDocumentType documentType = resolveType(format, content, originalFileName);
 
-        /*
-         * **식별자를 먼저 받는다** — 키가 `rag-documents/{ragDocId}/…`라서다. `saveAndFlush`인
-         * 것은 그 값을 지금 받아야 아래에서 키를 조립할 수 있기 때문이다.
-         *
-         * 판본 번호를 매기던 자리였다(ADR-0034 이전). 동시 업로드가 같은 번호를 집어 깨지던
-         * 문제도 그 자리와 함께 사라졌다 — 이제 행마다 식별자가 따로 나므로 겹칠 것이 없다.
-         */
-        RagDocumentEntity document =
-                ragDocumentRepository.saveAndFlush(
-                        RagDocumentEntity.register(
-                                resolveName(name, originalFileName, format),
-                                documentType,
-                                originalFileName,
-                                content.length,
-                                registrant));
+        return transaction.execute(
+                status -> {
+                    requireWithinDailyQuota(registrant);
 
-        /*
-         * 키를 조립하는 자리는 여기 한 곳이다. **원본 파일명을 키에 쓰지 않는다** — 같은 버킷에
-         * 얼굴이 찍힌 출석 인증사진이 있으므로(ssccops#156) `../`가 낀 파일명이 키가 되면 그것이
-         * 곧 남의 사진이다. 확장자도 파일명이 아니라 형식 표의 값을 붙인다.
-         */
-        String objectKey =
-                FileTargetType.RAG_DOCUMENT.getObjectKeyPrefix()
-                        + "%d/%s%s"
-                                .formatted(
-                                        document.getId(), UUID.randomUUID(), format.getExtension());
+                    /*
+                     * **식별자를 먼저 받는다** — 키가 `rag-documents/{ragDocId}/…`라서다.
+                     * `saveAndFlush`인 것은 그 값을 지금 받아야 아래에서 키를 조립할 수 있기
+                     * 때문이다.
+                     *
+                     * 판본 번호를 매기던 자리였다(ADR-0034 이전). 동시 업로드가 같은 번호를
+                     * 집어 깨지던 문제도 그 자리와 함께 사라졌다 — 이제 행마다 식별자가 따로
+                     * 나므로 겹칠 것이 없다.
+                     */
+                    RagDocumentEntity document =
+                            ragDocumentRepository.saveAndFlush(
+                                    RagDocumentEntity.register(
+                                            resolveName(name, originalFileName, format),
+                                            documentType,
+                                            originalFileName,
+                                            content.length,
+                                            registrant));
 
-        fileUploader.upload(objectKey, content, format.getContentType());
-        fileReferenceService.upsert(FileTargetType.RAG_DOCUMENT, document.getId(), objectKey);
+                    /*
+                     * 키를 조립하는 자리는 여기 한 곳이다. **원본 파일명을 키에 쓰지 않는다** —
+                     * 같은 버킷에 얼굴이 찍힌 출석 인증사진이 있으므로(ssccops#156) `../`가 낀
+                     * 파일명이 키가 되면 그것이 곧 남의 사진이다. 확장자도 파일명이 아니라 형식
+                     * 표의 값을 붙인다.
+                     */
+                    String objectKey =
+                            FileTargetType.RAG_DOCUMENT.getObjectKeyPrefix()
+                                    + "%d/%s%s"
+                                            .formatted(
+                                                    document.getId(),
+                                                    UUID.randomUUID(),
+                                                    format.getExtension());
 
-        log.info(
-                "규정 문서 업로드 — ragDocId={} 이름={} 형식={} 크기={}바이트",
-                document.getId(),
-                document.getName(),
-                format,
-                content.length);
+                    /*
+                     * PUT이 트랜잭션 **안**인 것은 그대로 둔다 — 실패하면 행도 함께 롤백되어
+                     * «아무것도 남지 않는다»가 성립한다(`FileUploader`가 커밋 뒤로 미루지 않는
+                     * 이유 · `domain/file/AGENTS.md` «잘못된 데이터보다 고아가 낫다»). 여기까지
+                     * 함께 빼면 행만 남고 원본이 없는 문서가 생긴다 — 고아 오브젝트보다 나쁘다.
+                     */
+                    fileUploader.upload(objectKey, content, format.getContentType());
+                    fileReferenceService.upsert(
+                            FileTargetType.RAG_DOCUMENT, document.getId(), objectKey);
 
-        return RagDocumentResponse.from(document);
+                    log.info(
+                            "규정 문서 업로드 — ragDocId={} 이름={} 형식={} 크기={}바이트",
+                            document.getId(),
+                            document.getName(),
+                            format,
+                            content.length);
+
+                    return RagDocumentResponse.from(document);
+                });
     }
 
     /*

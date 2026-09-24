@@ -324,11 +324,30 @@ jobs:
           # 호스트명만 남는 형태(«Could not resolve host: …»)는 그대로 나가는데, 가려야 할 것은
           # 앱 uuid 이고 호스트는 이미 공개 DNS 다.
           CURL_ERR="$RUNNER_TEMP/curl-err.txt"
-          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' \
+          CURL_BODY="$RUNNER_TEMP/curl-body.txt"
+          CURL_HDR="$RUNNER_TEMP/curl-hdr.txt"
+
+          # **POST 다 — GET 이 아니다** (#575). Coolify 의 /api/v1/deploy 는 GET 에서 POST 로
+          # 바뀌었고, 지금 GET 으로 부르면 «405 · allow: POST · This endpoint has changed to a
+          # POST request» 가 돌아온다(v4.3.23 실측). 이 워크플로가 구조를 따온
+          # SSCC-Web-BE/deploy-staging.yml 은 GET 이었는데 그쪽은 일곱 달 전 버전에 맞춘 것이다.
+          # **되돌리지 말 것** — 되돌리면 배포 호출이 전부 405 다.
+          HTTP_STATUS=$(curl -sS -o "$CURL_BODY" -D "$CURL_HDR" -w '%{http_code}' \
             --max-time 30 \
-            --request GET "$WEBHOOK" \
+            --request POST "$WEBHOOK" \
             --header "Authorization: Bearer $TOKEN" 2>"$CURL_ERR")
           CURL_RC=$?
+
+          # 실패했을 때만 서버가 보낸 설명을 낸다. **이것이 없어 네 번을 헤맸다** — 405 의 이유는
+          # 처음부터 본문 한 줄에 적혀 있었는데 -o /dev/null 이 그것을 버리고 있었다(#575).
+          # 성공 본문은 배포 uuid 뿐이라 찍지 않는다. URL 모양 문자열은 가린다(#573 과 같은 규칙).
+          dump_response() {
+            echo "응답 헤더:"
+            grep -iE '^(allow|content-type|www-authenticate|retry-after):' "$CURL_HDR" | tr -d '\r' | sed 's/^/  /'
+            echo "응답 본문:"
+            sed -e 's#https\{0,1\}://[^[:space:]"]*#<url>#g' "$CURL_BODY" | head -c 2000 | sed 's/^/  /'
+            echo
+          }
 
           # 종료 코드 != 0 은 «요청이 나가지도 않았다» 또는 «전송이 끊겼다»이고, HTTP 상태는
           # «서버가 받고 거절했다»다. 둘을 가르지 않으면 Coolify 를 의심하며 시간을 버린다.
@@ -343,7 +362,8 @@ jobs:
 
           if [ "${HTTP_STATUS:-0}" -lt 200 ] || [ "${HTTP_STATUS:-0}" -ge 300 ]; then
             echo "outcome=failed" >> "$GITHUB_OUTPUT"
-            echo "::error::Coolify 배포 호출이 HTTP ${HTTP_STATUS} 로 실패했다(서버가 받고 거절했다 — 토큰 권한·앱 uuid 를 볼 것). 이미지는 GHCR 에 있으니 Coolify 에서 손으로 Deploy 하면 된다."
+            dump_response
+            echo "::error::Coolify 배포 호출이 HTTP ${HTTP_STATUS} 로 실패했다 — 서버가 받고 거절했다. **위의 «응답 본문»이 이유를 말한다.** 이미지는 GHCR 에 있으니 Coolify 에서 손으로 Deploy 하면 된다."
             exit 1
           fi
 

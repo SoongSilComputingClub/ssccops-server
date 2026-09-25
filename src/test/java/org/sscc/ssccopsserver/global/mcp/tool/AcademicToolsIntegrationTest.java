@@ -318,6 +318,37 @@ class AcademicToolsIntegrationTest {
         }
     }
 
+    @Test
+    @DisplayName("모델이 인자를 빼먹어도 NPE 가 아니라 도구 오류다")
+    void missingRequestArgumentFailsCleanly() {
+        try (McpSyncClient client = connect()) {
+            /*
+             * **모델이 필수 인자를 빼먹는 것은 실제 상황이다** — 스키마에 필수로 적혀 있어도
+             * 그것은 힌트일 뿐이고, 도구 호출은 모델이 만든 JSON 이다. 그때 도구가 `NullPointerException`
+             * 으로 죽으면 모델이 읽는 것은 스택 프레임이 되고, 무엇을 고쳐야 하는지 알 수 없어
+             * 같은 호출을 되풀이한다.
+             *
+             * 그래서 전이 도구 둘은 로그를 찍을 때 `request == null` 을 본다. 이 테스트가 그 갈래를
+             * 지나가며, 결과가 **읽을 수 있는 한 문장**인지 확인한다(서버가 400 으로 거절한다).
+             */
+            McpSchema.CallToolResult program =
+                    call(
+                            client,
+                            "transition_academic_program",
+                            Map.of("academicProgramId", programId));
+            assertThat(program.isError()).isEqualTo(Boolean.TRUE);
+            assertThat(text(program)).isNotBlank().doesNotContain("NullPointerException");
+
+            McpSchema.CallToolResult session =
+                    call(
+                            client,
+                            "transition_academic_session",
+                            Map.of("academicProgramId", programId, "sessionId", sessionId));
+            assertThat(session.isError()).isEqualTo(Boolean.TRUE);
+            assertThat(text(session)).isNotBlank().doesNotContain("NullPointerException");
+        }
+    }
+
     // ══ 뼈대 ═══════════════════════════════════════════════════
 
     private Long submitSession(Long curriculumItemId) {

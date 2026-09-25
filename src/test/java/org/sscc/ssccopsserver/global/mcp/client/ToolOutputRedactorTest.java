@@ -62,8 +62,8 @@ class ToolOutputRedactorTest {
 
         assertThat(out)
                 .doesNotContain(
-                        "stdntNo", "telno", "eml", "20200001", "20200002", "010-", "@sscc.org");
-        assertThat(out).contains("김도현", "\"keep\":\"값\"", "\"mbrId\":3");
+                        "stdntNo", "telno", "eml", "20200001", "20200002", "010-", "@sscc.org")
+                .contains("김도현", "\"keep\":\"값\"", "\"mbrId\":3");
     }
 
     @Test

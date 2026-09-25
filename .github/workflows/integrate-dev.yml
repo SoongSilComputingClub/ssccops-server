@@ -43,11 +43,11 @@
 #   그 외 lint/test 실행 방식은 integrate-prod와 동일하게 맞춘다 —
 #   두 워크플로가 다른 명령을 쓰면 develop에서 통과한 코드가 main에서 떨어진다.
 #
-# **배포 경로는 dev 와 prod 가 갈렸다** (#569 · ssccops#513). dev 는 이 워크플로 → deploy-dev.yml
-#   (Actions 가 이미지 빌드 → GHCR → Coolify 가 pull)이고, prod 는 여전히 Coolify 가 main 푸시를
-#   받아 호스트에서 Dockerfile 로 빌드한다(#202). 그래서 **dev 는 CI 를 통과한 커밋만 올라가고**
-#   prod 는 종전대로다 — 옛 경로에서는 푸시 웹훅이 CI 를 기다리지 않아 lint·test 가 깨진 커밋도
-#   dev 에 올라갔다.
+# **배포 경로는 dev 와 prod 가 같은 모양이다** (#569 · ssccops#513 → #581 · ssccops#519). dev 는
+#   이 워크플로 → deploy-dev.yml, prod 는 integrate-prod.yml → deploy-prod.yml (Actions 가 이미지
+#   빌드 → GHCR → Coolify 가 pull). 그래서 **CI 를 통과한 커밋만 올라간다** — 옛 경로에서는 푸시
+#   웹훅이 CI 를 기다리지 않아 lint·test 가 깨진 커밋도 올라갔다. prod 는 `COOLIFY_PROD_DEPLOY_WEBHOOK`
+#   이 비어 있는 동안(전환 전) 여전히 Coolify 가 main 푸시를 받아 호스트에서 빌드한다(#202).
 #
 # GitHub Secrets (없으면 analyze 를 건너뛴다 — 회색이지 초록이 아니다):
 #   - SONAR_TOKEN        : SonarQube Token

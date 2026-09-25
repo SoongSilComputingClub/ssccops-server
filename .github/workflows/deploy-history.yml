@@ -7,13 +7,16 @@ name: Deploy History
 # «무슨 PR이 들었다»를 한 줄로 잇지 못했다. 이 워크플로는 **배포 주체를 바꾸지 않는다** — 그
 # 이벤트에 «기록만» 얹으며 손으로 쓰는 칸은 없다.
 #
-# **배포 주체는 dev 와 prod 가 갈렸다** (#569 · ssccops#513):
+# **배포 주체는 dev 와 prod 가 같은 모양이다** (#569 · ssccops#513 → #581 · ssccops#519):
 #   - dev  : develop 푸시 → Integrate Dev(검증) → deploy-dev.yml 이 이미지를 GHCR 에 올리고
 #            Coolify 배포 웹훅을 부른다. Coolify 는 그 이미지를 받아 띄우기만 한다
-#   - prod : main 푸시(릴리스)를 Coolify 가 GitHub App 으로 받아 호스트에서 빌드해 배포한다(#202)
+#   - prod : main 푸시(릴리스) → Integrate Production(검증) → deploy-prod.yml — 같은 사슬이다.
+#            `COOLIFY_PROD_DEPLOY_WEBHOOK` 이 비어 있는 동안(전환 전)은 Coolify 가 GitHub App 으로
+#            main 푸시를 받아 호스트에서 빌드해 배포한다(#202)
 #
 # 이 워크플로가 하는 일은 양쪽 모두 같다 — 푸시·릴리스 이벤트에서 시작해 /actuator/info 를
-# 폴링한다. **dev 는 그 폴링이 «푸시 시각»부터 시작하는데 이제 배포가 CI 뒤에 시작한다** —
+# 폴링한다. prod 는 릴리스 게시가 폴링의 시작이고 배포는 머지 뒤 CI 를 거쳐 시작하므로, 게시가
+# 머지 직후면(대개 그렇다) 여기서 CI + 이미지 빌드 + pull 만큼 기다린다 — 아래 창 안이다. **dev 는 그 폴링이 «푸시 시각»부터 시작하는데 이제 배포가 CI 뒤에 시작한다** —
 # 기다림의 구성이 «Coolify 큐 + 호스트 빌드»에서 «CI + Actions 이미지 빌드 + pull»로 바뀌었다.
 # 아래 VERIFY_TIMEOUT_SECONDS 는 옛 구성으로 잰 값이라 전환 뒤 다시 재서 판단한다(ssccops#513 ③).
 #

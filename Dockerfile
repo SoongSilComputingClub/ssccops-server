@@ -20,15 +20,15 @@ RUN ./gradlew dependencies --no-daemon || true
 # 없는 경로를 건너뛰지 못한다). 대신 SOURCE_COMMIT 을 ARG 로 받아 RUN 의 환경으로 넘기면
 # build.gradle(generateGitProperties)이 그 값으로 git.commit.id 를 쓴다.
 #
-# **그 인자를 누가 넣는지가 dev 와 prod 에서 갈린다** (#569 · ssccops#513):
-#   - dev  : GitHub Actions 가 넣는다 — `.github/workflows/deploy-dev.yml` 의 build-args
-#            (`SOURCE_COMMIT=<그 실행의 커밋>`). 이미지를 Actions 가 빌드해 GHCR 에 올리고
-#            Coolify 는 받아 띄우기만 한다.
-#   - prod : 여전히 Coolify 가 호스트에서 이 Dockerfile 로 빌드하며 빌드 인자를 넣는다. 그 인자는
-#            앱 설정 «Source commit availability = Available during build» 일 때만 온다
-#            (#424 · 기본값 `Runtime only` 는 커밋마다 값이 바뀌어 캐시를 깨므로 빌드에서 뺀 것).
-#            **새 Coolify 환경을 만들면 이 토글부터** — 꺼져 있으면 빌드는 성공하는데
-#            /actuator/info 에 git 이 없다.
+# **그 인자는 GitHub Actions 가 넣는다 — dev 와 prod 가 같다** (#569 · ssccops#513 → #581 · ssccops#519):
+#   `.github/workflows/deploy-dev.yml` · `deploy-prod.yml` 의 build-args(`SOURCE_COMMIT=<그 실행의 커밋>`).
+#   이미지를 Actions 가 빌드해 GHCR 에 올리고 Coolify 는 받아 띄우기만 한다.
+#
+#   예외는 **prod 전환 전의 옛 경로**다 — `COOLIFY_PROD_DEPLOY_WEBHOOK` 이 비어 있는 동안은 Coolify 가
+#   호스트에서 이 Dockerfile 로 빌드하며 빌드 인자를 넣는다. 그 인자는 앱 설정 «Source commit
+#   availability = Available during build» 일 때만 온다(#424 · 기본값 `Runtime only` 는 커밋마다 값이
+#   바뀌어 캐시를 깨므로 빌드에서 뺀 것). **Coolify git 빌드 리소스를 새로 만들면 이 토글부터** —
+#   꺼져 있으면 빌드는 성공하는데 /actuator/info 에 git 이 없다. 이미지 리소스에는 해당하지 않는다.
 #
 # 로컬 `docker compose` 처럼 그 인자가 아예 없으면 git 정보 없이 뜨고 레코드는 unverified 가 된다
 # (부팅은 막지 않는다). git.branch · git.commit.time 은 이 경로에서 나오지 않는다 — sha 하나면

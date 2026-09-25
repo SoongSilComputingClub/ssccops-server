@@ -1,67 +1,97 @@
 # ============================================================================
-# Backend Deploy Workflow - Dev (GHCR + Coolify)
+# Backend Deploy Workflow - Prod (GHCR + Coolify)
 # ============================================================================
 # 역할:
-#   - Integrate Dev 가 develop 푸시에서 끝난 뒤 자동 실행
-#   - 레포의 멀티스테이지 Dockerfile 로 이미지를 빌드해 GHCR 에 푸시(태그 `dev` · `sha-<7>`)
-#   - Coolify 배포 웹훅을 불러 dev api 가 그 이미지를 받아 기동하게 한다
+#   - Integrate Production 이 main 푸시(릴리스 머지)에서 끝난 뒤 자동 실행
+#   - 레포의 멀티스테이지 Dockerfile 로 이미지를 빌드해 GHCR 에 푸시(태그 `prod` · `sha-<7>`)
+#   - Coolify 배포 웹훅을 불러 prod api 가 그 이미지를 받아 기동하게 한다
 #
 # Job 구조:
 #   prepare ──> build-image ──> deploy
 #
 #   prepare 는 «무엇을 빌드하나(커밋)»와 «빌드해도 되나(Lint·Test 결과)»만 판정한다.
 #   판정이 서지 않으면 아래 둘은 실패가 아니라 회색이다 — 아래 job 주석에 이유가 있다.
+#   **예외는 수동 실행의 거절이다** — main 에 없는 커밋을 고르면 빨갛게 실패한다(prepare 주석).
 #
 # 트리거:
-#   - Integrate Dev 가 develop 에서 완료됐을 때(conclusion 은 prepare 가 따로 본다)
-#   - 수동 실행(workflow_dispatch) — 지금 ref 의 커밋으로 빌드한다. `skip_deploy` 로 이미지만 올린다
+#   - Integrate Production 이 main 에서 완료됐을 때(conclusion 은 prepare 가 따로 본다)
+#   - 수동 실행(workflow_dispatch) — 입력 `ref`(기본 `main`)의 커밋으로 빌드한다. **main 에 있는
+#     커밋만** 받는다. `skip_deploy` 로 이미지만 올린다
 #
-# **빌드를 Coolify 호스트에서 여기로 옮긴 이유** (#569 · ssccops#513): 서버 dev 배포 한 번이
-# 13분 25초였고 동시 빌드 1(ADR-0048)을 웹과 나눠 써 큐 대기가 19분까지 갔으며, 빌드 중에는 같은
-# 호스트의 서비스가 2~5배 느려졌다(deploy-history.yml 의 VERIFY_TIMEOUT_SECONDS 주석 · #564).
-# 또 Coolify GitHub App 의 푸시 웹훅은 CI 를 기다리지 않아 **lint·test 가 깨진 커밋도 dev 에
-# 올라갔다.** 이 경로는 Lint·Test 를 통과한 커밋만 이미지가 된다.
+# **deploy-dev.yml 과 같은 모양이다 — 그렇게 두는 것이 이 파일의 규칙이다** (#581 · ssccops#519).
+# 두 파일을 나란히 놓았을 때 달라야 할 자리는 아래 표뿐이고, 나머지(job 구조 · 셸 설정 · 시크릿
+# 모양 진단 · POST · 실패 응답 본문 · Summary)는 글자까지 같게 둔다. **한쪽을 고치면 다른 쪽도
+# 본다** — `diff .github/workflows/deploy-dev.yml .github/workflows/deploy-prod.yml` 이 이 표와
+# 머리 주석 밖을 보이면 갈라진 것이다.
 #
-# **prod(main)는 deploy-prod.yml 이다** (#581 · ssccops#519). 두 파일은 **같은 모양으로 둔다** —
-# 달라야 할 자리(트리거 · 태그 · 웹훅 시크릿 · concurrency · 수동 실행 커밋)의 표가 그 파일 머리에
-# 있고, 나머지는 글자까지 같다. **이 파일을 고치면 그쪽도 본다.**
+#   | 자리           | deploy-dev.yml               | deploy-prod.yml                     |
+#   |----------------|------------------------------|-------------------------------------|
+#   | 트리거         | Integrate Dev · develop      | Integrate Production · main         |
+#   | 이미지 태그    | dev · sha-<7>                | prod · sha-<7>                      |
+#   | 배포 웹훅      | COOLIFY_DEV_DEPLOY_WEBHOOK   | COOLIFY_PROD_DEPLOY_WEBHOOK         |
+#   | concurrency    | deploy-dev                   | deploy-prod                         |
+#   | 수동 실행 커밋 | 지금 ref 의 커밋             | 입력 ref — main 의 조상만           |
+#
+# reusable workflow(workflow_call) 하나로 합치지 않은 이유는 ssccops#519 — 차이가 입력값으로 빠져
+# 한 화면에서 읽히지 않는다.
+#
+# **⚠️ 이 레포의 기본 브랜치는 develop 이다.** workflow_run 은 기본 브랜치의 워크플로 파일을 쓰므로
+# 이 파일은 릴리스가 아니라 **develop 에 머지되는 순간** 살아나고, develop 에서 고친 내용이 다음
+# 릴리스의 prod 배포에 곧바로 쓰인다. 그리고 그 실행의 `github.sha` 는 develop 머리다 — 커밋을
+# payload 에서 읽지 않으면 **출시하지 않은 코드가 prod 이미지가 된다**(prepare 주석).
+#
+# **릴리스 절차는 바뀌지 않는다.** 버전 커밋(develop 먼저) → develop → main regular merge →
+# `gh release create` → deploy-history.yml(release: published)이 /actuator/info 를 폴링해 남긴다.
+# 이 워크플로가 바꾼 것은 «main 푸시 뒤 누가 이미지를 만들고 배포를 부르나» 하나다.
+#
+# **빌드를 Coolify 호스트에서 여기로 옮긴 이유** (#581 · ssccops#519 — dev 는 #569 · ADR-0050):
+# 호스트 빌드는 CI 를 기다리지 않아 **Integrate Production 이 빨간 릴리스 커밋도 prod 에 올라갔고**,
+# dev(Actions 러너)와 prod(Coolify 호스트)가 같은 Dockerfile 을 다른 빌드 컨텍스트에서 돌려 그 차이에
+# 걸리는 변경이 릴리스에서 처음 드러났다(#422 `COPY .git`). 이 경로는 Lint·Test 를 통과한 커밋만,
+# dev 와 같은 러너에서 이미지가 된다.
 #
 # **환경변수는 Coolify 가 정본이다.** 이 워크플로는 애플리케이션 환경변수를 한 개도 넣지 않는다 —
 # #202 가 걷어낸 `envs/bulk` 덮어쓰기를 되살리지 않는다(Actions 가 배포마다 덮어써 대시보드에서
 # 넣은 값이 날아갔다). 여기 있는 시크릿은 «배포를 부르는 데» 필요한 둘뿐이다.
 #
 # GitHub Secrets:
-#   - GITHUB_TOKEN               : GHCR 푸시. 기본 제공이며 새 시크릿이 아니다(permissions.packages: write)
-#   - COOLIFY_API_TOKEN          : Coolify API 토큰(deploy 권한만)
-#   - COOLIFY_DEV_DEPLOY_WEBHOOK : dev api 의 배포 웹훅 URL.
+#   - GITHUB_TOKEN                : GHCR 푸시. 기본 제공이며 새 시크릿이 아니다(permissions.packages: write)
+#   - COOLIFY_API_TOKEN           : Coolify API 토큰(deploy 권한만) — deploy-dev.yml 과 같은 시크릿이다
+#   - COOLIFY_PROD_DEPLOY_WEBHOOK : prod api 의 배포 웹훅 URL.
 #       **변수(vars)가 아니라 시크릿이다** — 이 레포가 Public 이라 Actions 로그가 공개되고
 #       변수는 마스킹되지 않는다. **비어 있으면 배포 호출을 건너뛰고 경고만 남긴다** — 그래서 이
 #       워크플로는 Coolify 리소스 전환보다 먼저 머지해도 안전하다(옛 git 빌드 경로가 그대로 돈다).
+#       전환은 두 단계다(ssccops#519): 먼저 검증 자리 `ghcr.api.sscc-ssu.com` 리소스의 웹훅을 넣고,
+#       정상 배포를 본 뒤 그 리소스로 도메인 `api.sscc-ssu.com` 을 옮긴다 — 웹훅은 리소스에 붙어
+#       있어 도메인을 옮겨도 이 값은 그대로다.
 #
 # GHCR 패키지는 **Private** 이다(ADR-0050) — Coolify 호스트가 GHCR 에 로그인해 받는다. 그 로그인이
 # 만료되면 Actions 는 초록인데 Coolify pull 만 실패한다(토큰 주인·만료: 메타 docs/project/dev-deploy.md).
-# (#569 는 Public 으로 계획했고 전환 때 Private 으로 바꿨다.)
 # ============================================================================
 
-name: Deploy Dev
+name: Deploy Prod
 
 on:
   workflow_run:
-    workflows: ["Integrate Dev"]
+    workflows: ["Integrate Production"]
     types: [completed]
-    branches: [develop]
+    branches: [main]
   workflow_dispatch:
     inputs:
+      ref:
+        description: 빌드할 커밋 sha · 태그(vX.Y.Z) · 브랜치. main 에 있는 커밋만 받는다
+        type: string
+        default: main
       skip_deploy:
         description: 이미지만 GHCR 에 올리고 Coolify 배포는 부르지 않는다
         type: boolean
         default: false
 
-# 취소하지 않는다 — 두 푸시가 겹치면 늦게 끝난 옛 빌드가 고정 태그 `dev` 를 덮어쓸 수 있다.
+# 취소하지 않는다 — 두 푸시가 겹치면 늦게 끝난 옛 빌드가 고정 태그 `prod` 를 덮어쓸 수 있다.
 # 직렬화하면 그 순서가 커밋 순서와 같아진다. 대기 중인 것은 더 새 푸시로 대체된다
 # (GitHub 은 pending 을 하나만 남긴다) — 버려지는 것은 이미 낡은 이미지다.
 concurrency:
-  group: deploy-dev
+  group: deploy-prod
   cancel-in-progress: false
 
 permissions:
@@ -78,19 +108,30 @@ jobs:
   # Prepare Job - 무엇을 빌드할지, 빌드해도 되는지
   # ==========================================================================
   #
-  # **workflow_run 의 `github.sha` 는 기본 브랜치의 머리이지 그 실행의 커밋이 아니다.**
-  # 그 값이 SOURCE_COMMIT → /actuator/info 의 git.commit.id 가 되고 deploy-history 가 그것으로
-  # «정말 이 커밋이 떴나»를 확인하므로(#422 · ssccops#340), 커밋은 이벤트 payload 의 head_sha 에서
-  # 읽어 아래 job 들에 넘긴다. 틀린 값을 넘기면 dev 레코드가 전부 unverified 가 된다.
+  # **workflow_run 의 `github.sha` 는 기본 브랜치(develop)의 머리이지 그 실행의 커밋이 아니다.**
+  # dev 에서는 «레코드가 unverified» 로 끝나는 실수가 여기서는 **develop 머리 — 출시하지 않은
+  # 코드 — 가 prod 이미지가 되는 것**이다. 커밋은 이벤트 payload 의 head_sha 에서 읽어 아래 job
+  # 들에 넘기고, checkout · 태그 · SOURCE_COMMIT 셋 다 그 값만 쓴다. SOURCE_COMMIT 은
+  # /actuator/info 의 git.commit.id 가 되고 deploy-history 가 그것으로 «정말 이 커밋이 떴나»를
+  # 확인한다(#422 · ssccops#340).
   #
-  # **판정은 워크플로 전체 conclusion 이 아니라 Lint·Test job 의 결과다.** integrate-dev 의
-  # conclusion 에는 analyze(SonarQube Quality Gate)가 섞여 있는데 그쪽은 «막는 머지가 없다»가
-  # 결정이고(ADR-0018 · #477) build 도 analyze 에 걸려 있지 않다. 전체 결과로 판정하면 게이트
-  # ERROR 하나가 조용히 dev 배포를 멈춰 세운다 — 이슈 #569 가 적은 `needs: [lint, test]` 와 같은
-  # 뜻이 되도록 그 두 job 만 본다.
+  # **판정은 워크플로 전체 conclusion 이 아니라 Lint·Test job 의 결과다.** deploy-dev 와 같은
+  # 판정이다. integrate-prod 에는 analyze 가 없어 지금은 conclusion 으로 봐도 결과가 같지만,
+  # 두 파일이 같은 규칙이어야 한쪽에 Sonar 가 붙는 날 조용히 갈리지 않는다(ADR-0018 · #477).
   #
-  # 통과하지 못하면 실패가 아니라 **건너뜀(회색)** 이다. Integrate Dev 가 이미 빨간색으로 그 사실을
-  # 말하고 있으므로 같은 사실을 두 번 빨갛게 만들지 않는다(sonar-preflight 와 같은 판단, #477).
+  # 통과하지 못하면 실패가 아니라 **건너뜀(회색)** 이다. Integrate Production 이 이미 빨간색으로
+  # 그 사실을 말하고 있으므로 같은 사실을 두 번 빨갛게 만들지 않는다(sonar-preflight 와 같은 판단, #477).
+  #
+  # `branches: [main]` 은 트리거한 실행의 **head 브랜치 이름**만 본다 — 릴리스 PR(head develop)의
+  # pull_request 실행은 여기서 빠지지만, 포크의 `main` 에서 온 PR 은 이름이 같아 통과한다.
+  # 그것을 거르는 것이 아래 `RUN_EVENT != push` 판정이다.
+  #
+  # **수동 실행은 main 에 있는 커밋만 받는다.** 실행 화면은 아무 브랜치나 고르게 해 주고 이 파일은
+  # develop 에 먼저 있으므로, 지금 ref 로 빌드하면(deploy-dev 의 모양) develop 머리가 prod 로 간다.
+  # 그래서 입력 `ref` 를 sha 로 풀어 main 의 조상인지(compare 가 ahead·identical) 본다. 이 모양이어야
+  # 이 파일이 아직 main 에 없을 때(다음 릴리스 전)도 develop 에서 실행해 **main HEAD 를** 빌드할 수
+  # 있다 — 검증 자리를 세우는 첫 배포가 그것이다(ssccops#519 ②). 옛 릴리스 커밋을 고르면 롤백 빌드다.
+  # 거절은 회색이 아니라 **빨강**이다 — 사람이 누른 것이 거절됐다는 사실은 보여야 한다.
   prepare:
     name: Prepare
     runs-on: ubuntu-latest
@@ -111,6 +152,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           RUN_EVENT: ${{ github.event.workflow_run.event }}
           RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
@@ -122,38 +164,64 @@ jobs:
           # (#573 — deploy step 과 같은 함정). 종료 코드를 받아 «건너뜀»으로 떨어뜨린다.
           set +e
 
-          # 요구하는 job 이름은 integrate-dev.yml 의 `name:` 그대로다. 그쪽 이름을 바꾸면
+          # 요구하는 job 이름은 integrate-prod.yml 의 `name:` 그대로다. 그쪽 이름을 바꾸면
           # 여기서 «찾을 수 없다»가 되어 배포가 건너뛰어진다 — 조용히 통과하지는 않는다.
           REQUIRED_JOBS='Lint Test'
+          # prod 에 나가도 되는 커밋은 이 브랜치에 있는 것뿐이다
+          RELEASE_BRANCH='main'
 
           if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
-            HEAD_SHA="$GITHUB_SHA"
+            REF="${INPUT_REF:-$RELEASE_BRANCH}"
+
+            # 입력은 사람이 친 문자열이다 — API 경로에 넣기 전에 모양을 가둔다
+            if ! printf '%s' "$REF" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+              echo "::error title=수동 실행 거절::ref '${REF}' 는 커밋 · 태그 · 브랜치 이름의 모양이 아니다."
+              exit 1
+            fi
+
+            HEAD_SHA=$(gh api "repos/${REPO}/commits/${REF}" --jq '.sha')
+            GH_RC=$?
+            if [ "$GH_RC" -ne 0 ] || [ -z "$HEAD_SHA" ]; then
+              echo "::error title=수동 실행 거절::ref '${REF}' 를 커밋으로 풀지 못했다(gh 종료 코드 ${GH_RC})."
+              exit 1
+            fi
+
+            # compare/{base}...{head} 의 status 가 ahead·identical 이면 head(main)가 base 를 품는다
+            COMPARE=$(gh api "repos/${REPO}/compare/${HEAD_SHA}...${RELEASE_BRANCH}" --jq '.status')
+            case "$COMPARE" in
+              ahead|identical) ;;
+              *)
+                echo "::error title=수동 실행 거절::${HEAD_SHA} 는 ${RELEASE_BRANCH} 에 없는 커밋이다(compare: ${COMPARE:-실패}). prod 에는 릴리스된 커밋만 나간다."
+                exit 1
+                ;;
+            esac
+
             PROCEED=true
-            echo "수동 실행 — ref ${GITHUB_REF_NAME} 의 커밋 ${HEAD_SHA} 로 빌드한다."
+            echo "수동 실행 — ref ${REF} 의 커밋 ${HEAD_SHA} 로 빌드한다(${RELEASE_BRANCH} 에 있다 · ${COMPARE})."
             echo "::warning title=CI 게이트 건너뜀::수동 실행이라 Lint·Test 결과를 보지 않는다."
           else
             HEAD_SHA="$RUN_SHA"
             PROCEED=true
 
             if [ "$RUN_EVENT" != 'push' ]; then
-              echo "::notice::Integrate Dev 가 push 가 아닌 '${RUN_EVENT}' 로 돌았다 — 배포 대상이 아니다."
+              echo "::notice::Integrate Production 이 push 가 아닌 '${RUN_EVENT}' 로 돌았다 — 배포 대상이 아니다."
               PROCEED=false
             elif [ "$RUN_CONCLUSION" = 'cancelled' ]; then
-              echo "::notice::Integrate Dev 가 취소됐다 — 배포하지 않는다. ${RUN_URL}"
+              echo "::notice::Integrate Production 이 취소됐다 — 배포하지 않는다. ${RUN_URL}"
               PROCEED=false
             else
               JOBS=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
                 --paginate --jq '.jobs[] | "\(.name)=\(.conclusion)"')
               GH_RC=$?
               if [ "$GH_RC" -ne 0 ]; then
-                echo "::warning title=배포 건너뜀::Integrate Dev 의 job 목록을 읽지 못했다(gh 종료 코드 ${GH_RC}). 판정할 수 없으므로 배포하지 않는다. ${RUN_URL}"
+                echo "::warning title=배포 건너뜀::Integrate Production 의 job 목록을 읽지 못했다(gh 종료 코드 ${GH_RC}). 판정할 수 없으므로 배포하지 않는다. ${RUN_URL}"
               fi
               for JOB in $REQUIRED_JOBS; do
                 CONCLUSION=$(printf '%s\n' "$JOBS" | awk -F= -v n="$JOB" '$1 == n { print $2 }')
                 if [ "$CONCLUSION" = 'success' ]; then
                   echo "  $JOB = success"
                 else
-                  echo "::warning title=배포 건너뜀::Integrate Dev 의 '${JOB}' job 이 success 가 아니다(${CONCLUSION:-찾을 수 없음}). ${RUN_URL}"
+                  echo "::warning title=배포 건너뜀::Integrate Production 의 '${JOB}' job 이 success 가 아니다(${CONCLUSION:-찾을 수 없음}). ${RUN_URL}"
                   PROCEED=false
                 fi
               done
@@ -168,7 +236,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           if [ "$PROCEED" != 'true' ]; then
-            echo "⏭️ **dev 배포 건너뜀** — 위 경고의 이유다. 이미지도 올리지 않는다." >> "$GITHUB_STEP_SUMMARY"
+            echo "⏭️ **prod 배포 건너뜀** — 위 경고의 이유다. 이미지도 올리지 않는다." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # ==========================================================================
@@ -212,7 +280,7 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_NAME }}
-          # 고정 태그 `dev` 를 Coolify 가 다시 받고, `sha-<7>` 은 롤백용으로 함께 올려만 둔다.
+          # 고정 태그 `prod` 를 Coolify 가 다시 받고, `sha-<7>` 은 롤백용으로 함께 올려만 둔다.
           # 배포마다 Coolify 앱의 이미지 태그를 새 sha 로 PATCH 하는 길은 택하지 않았다 —
           # Actions 가 배포마다 앱 설정을 고치게 된다(#569 · ssccops#513).
           #
@@ -221,7 +289,7 @@ jobs:
           # prepare 가 준 커밋으로 못 박는다. `image.source` 라벨은 액션이 알아서 붙이며,
           # GHCR 패키지가 이 레포에 연결되는 것이 그 라벨이다.
           tags: |
-            type=raw,value=dev
+            type=raw,value=prod
             type=raw,value=sha-${{ needs.prepare.outputs.short_sha }}
           labels: |
             org.opencontainers.image.revision=${{ needs.prepare.outputs.head_sha }}
@@ -234,13 +302,13 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          # 러너가 만드는 것은 amd64 이고 dev api 호스트(MiniPC SZBOX H58)도 x86_64 다.
-          # arm64 호스트로 옮기면 이 줄과 docker/setup-qemu-action 을 함께 본다.
+          # 러너가 만드는 것은 amd64 다. prod api 호스트가 x86_64 인지는 전환 전에 확인한다
+          # (#581 «먼저 확인할 것»). arm64 호스트로 옮기면 이 줄과 docker/setup-qemu-action 을 함께 본다.
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # 이 값이 /actuator/info 의 git.commit.id 가 되고 deploy-history 가 그것으로 배포를
-          # 확인한다(#422 · ssccops#340). 빠뜨리면 dev 레코드가 전부 unverified 다.
+          # 확인한다(#422 · ssccops#340). 빠뜨리면 prod 레코드가 전부 unverified 다.
           # `.git` 을 이미지에 복사하지 않는 이유는 Dockerfile 주석에 있다.
           build-args: |
             SOURCE_COMMIT=${{ needs.prepare.outputs.head_sha }}
@@ -265,7 +333,7 @@ jobs:
       - name: Trigger Coolify deployment
         id: trigger
         env:
-          WEBHOOK: ${{ secrets.COOLIFY_DEV_DEPLOY_WEBHOOK }}
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_DEPLOY_WEBHOOK }}
           TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
           SKIP_DEPLOY: ${{ github.event.inputs.skip_deploy }}
         run: |
@@ -289,7 +357,7 @@ jobs:
 
           report_shapes() {
             echo "시크릿 값의 모양 (값 자체는 찍지 않는다):"
-            echo "  COOLIFY_DEV_DEPLOY_WEBHOOK  $(shape "$WEBHOOK_RAW")"
+            echo "  COOLIFY_PROD_DEPLOY_WEBHOOK $(shape "$WEBHOOK_RAW")"
             echo "  COOLIFY_API_TOKEN           $(shape "$TOKEN_RAW")"
           }
 
@@ -315,7 +383,7 @@ jobs:
 
           if [ -z "$WEBHOOK" ]; then
             echo "outcome=skipped-secret" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Coolify 배포 호출 건너뜀::COOLIFY_DEV_DEPLOY_WEBHOOK 이 비어 있다. 이미지는 GHCR 에 올라갔고 배포는 여전히 Coolify 의 git 빌드가 한다 — 전환 전이면 정상이다."
+            echo "::warning title=Coolify 배포 호출 건너뜀::COOLIFY_PROD_DEPLOY_WEBHOOK 이 비어 있다. 이미지는 GHCR 에 올라갔고 prod 는 여전히 Coolify 의 git 빌드가 낸다 — 전환 전이면 정상이다."
             exit 0
           fi
 
@@ -386,14 +454,14 @@ jobs:
           case "${OUTCOME:-}" in
             triggered)       STATUS='✅ Coolify 배포 호출됨' ;;
             skipped-input)   STATUS='⏭️ 건너뜀 — skip_deploy 입력' ;;
-            skipped-secret)  STATUS='⚠️ 건너뜀 — COOLIFY_DEV_DEPLOY_WEBHOOK 이 비어 있다' ;;
+            skipped-secret)  STATUS='⚠️ 건너뜀 — COOLIFY_PROD_DEPLOY_WEBHOOK 이 비어 있다' ;;
             *)               STATUS='❌ 배포 호출 실패' ;;
           esac
 
           {
-            echo "## Deploy Summary (Dev)"
+            echo "## Deploy Summary (Prod)"
             echo "- **Commit** : \`${HEAD_SHA}\`"
-            echo "- **Image**  : \`${IMAGE_NAME}:dev\` · \`${IMAGE_NAME}:sha-${SHORT_SHA}\`"
+            echo "- **Image**  : \`${IMAGE_NAME}:prod\` · \`${IMAGE_NAME}:sha-${SHORT_SHA}\`"
             echo "- **Digest** : \`${DIGEST}\`"
             echo "- **Deploy** : ${STATUS}"
             echo "- **환경변수**: Coolify 가 정본이다 — 이 워크플로는 넣지 않는다"

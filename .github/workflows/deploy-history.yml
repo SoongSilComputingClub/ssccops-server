@@ -96,13 +96,20 @@ env:
   # 아니다. 웹 워크플로는 Cloudflare·Vercel 이라 10분으로 충분하고 전부 `verified` 다.
   #
   # **빌드가 느려지면 이 값도 낡는다** — `unverified` 가 늘면 실제 배포 소요부터 다시 잰다.
+  #
+  # **이 값을 고치면 아래 `timeout-minutes` 도 함께 본다**(#583). 그쪽이 더 작으면 스크립트가
+  # 자기 deadline 에 닿기 전에 job 이 죽어 `unverified` 레코드가 아예 남지 않는다.
   VERIFY_TIMEOUT_SECONDS: '2400'
 
 jobs:
   record:
     name: Record
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 위 `VERIFY_TIMEOUT_SECONDS`(2400초 = 40분)보다 커야 한다 (#583). 작으면 확인 스크립트가
+    # `unverified` 로 성공 종료하는 자리(`deploy-history-verify.sh` 끝)에 닿지 못하고 job 이
+    # 취소돼 「Append record and push」가 `skipped` 가 된다 — 20분이던 동안 되메우기 실행 두 건이
+    # 그렇게 한 줄도 남기지 못했다. 40분 + checkout·수집·push 여유로 50분.
+    timeout-minutes: 50
 
     steps:
       - name: Checkout source

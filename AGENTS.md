@@ -619,13 +619,27 @@ curl -s https://<배포 주소>/actuator/info
 `server-prod.jsonl`·`server-dev.jsonl`에 JSON 한 줄을 append 한다(웹 레포는 같은 브랜치의 `web-*.jsonl` — 이력은 한 곳이다,
 [ADR-0033](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0033-deploy-history-in-meta-repo-via-app-token.md)) —
 직전 배포 지점과 `compare`한 PR 목록(→ 제목의 `[#N]` Sub-task → cross-repo Parent → 본문의 `ADR-NNNN`), 그리고
-**`/actuator/info`의 `git.commit.id`가 푸시된 sha와 같아진 시각**(`deployed_at`, 최대 10분 폴링). 같아지지 않으면
+**`/actuator/info`의 `git.commit.id`가 푸시된 sha와 같아진 시각**(`deployed_at`). 같아지지 않으면
 `status: unverified`로 남는다 — 태그는 사람이 올린 값이라 «떠 있다»의 증빙이 못 되고, 실제 응답만 증빙이다.
 
 ```bash
 scripts/deploy-history.sh current server prod     # 지금 prod 에 무엇이·언제·어떤 PR 로
 scripts/deploy-history.sh list web dev 20         # 웹 레코드도 같은 브랜치
 ```
+
+- **폴링 상한은 `VERIFY_TIMEOUT_SECONDS`(40분)이고 job 의 `timeout-minutes`(50)가 그보다 커야 한다**(#583).
+  실측(서버 dev 배포 13분25초 + 동시 빌드 1로 큐에서 19분 · ADR-0048)에 맞춘 값이다. **두 숫자가 갈리면
+  `unverified`가 남을 길이 막힌다** — 스크립트는 자기 deadline 에 닿아야 `unverified`로 **성공 종료**해 다음
+  step 이 레코드를 붙이는데, job 이 먼저 죽으면 「Append record and push」가 `skipped` 가 되어 그 배포가
+  **이력에서 통째로 빠진다.** 20분이던 동안 되메우기 실행 두 건이 그렇게 한 줄도 남기지 못했다. 한쪽을
+  고칠 때 다른 쪽을 함께 보라고 워크플로의 두 자리에 서로를 가리키는 주석이 있다.
+- **되메운 레코드는 `backfilled: true`이고 `current`가 건너뛴다**(#585 · ssccops#486). 되메우기는
+  `workflow_dispatch`에 `ref`를 주는 것이고(«지금 이 커밋이 떴다»가 아니라 «지난 것을 적는다»), append 라서
+  파일의 **마지막 줄**이 된다 — 표시가 없으면 `current`(`tail -n 1`)가 과거를 답한다. v0.2.16 을 되메운 직후
+  실제로 그랬다. **`unverified`로 가르지 않는다** — 확인 창 안에 안 떴을 뿐 실제로는 떠 있는 레코드가 있고
+  (web-prod 0.2.16) 그것은 여전히 «가장 최근 배포»다. 가르는 축은 확인 여부가 아니라 **배포 사건인가
+  되메우기인가**다. `list`는 되메운 줄도 보이고 맨 앞에 `*`를 붙인다 — 숨기면 그 배포가 담은 PR 사슬이
+  다시 끊긴다.
 
 - **쓰기 토큰은 조직 GitHub App `sscc-devops`다.** 워크플로가 `actions/create-github-app-token`으로 1시간짜리 설치 토큰을
   받되 `repositories: ssccops`로 좁힌다 — 그 토큰이 메타 브랜치 push와 cross-repo Parent 조회(메타 레포가 **private**이라

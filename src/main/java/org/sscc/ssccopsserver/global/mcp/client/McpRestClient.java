@@ -159,6 +159,14 @@ public class McpRestClient {
         return exchange(HttpMethod.PATCH, path, Map.of(), body, context, type).data();
     }
 
+    /**
+     * DELETE — 소프트 삭제 경로다 (#589 · ADR-0053). 서버가 `ApiResponse<Void>`를 주므로 돌려줄 값이 없고, 실패는 다른 메서드와 같은
+     * 길로 `McpToolException`이 된다.
+     */
+    public void delete(McpTransportContext context, String path) {
+        exchange(HttpMethod.DELETE, path, Map.of(), null, context, Object.class);
+    }
+
     /** 행사 수정처럼 PUT(전체 교체)인 경로 — 읽고-합치기는 도구가 한다 (W2 · #494) */
     public <T> T put(McpTransportContext context, String path, Object body, Class<T> type) {
         return exchange(HttpMethod.PUT, path, Map.of(), body, context, type).data();

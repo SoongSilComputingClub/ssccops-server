@@ -83,7 +83,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 38종이 전부 광고되고 삭제 도구는 없다")
+    @DisplayName("운영 도구 54종이 전부 광고되고 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -100,6 +100,11 @@ class OperationToolsIntegrationTest {
                             "list_forms",
                             "get_form",
                             "change_form_status",
+                            // W4 — 라벨·응답 (#587 · 응답 상세 도구는 결정으로 없다)
+                            "list_form_labels",
+                            "assign_form_labels",
+                            "list_form_responses",
+                            "review_form_response",
                             // 1차 (#385)
                             "list_operations",
                             "get_work",

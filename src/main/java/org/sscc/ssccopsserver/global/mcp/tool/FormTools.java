@@ -34,6 +34,10 @@ import lombok.RequiredArgsConstructor;
  *
  * 접수 상태 판정은 화면과 같은 파생값(receiptStatus · ADR-0019)이다.
  *
+ * **삭제는 되살리기와 함께 있다** (#589 · ADR-0053) — `delete_form`만 열면 «되살릴 수 있어서 열었다»가
+ * 화면을 여는 일이 되어 대화로 끝나지 않는다. 업무·하위 업무·회의 삭제 도구가 없는 것은 그쪽에
+ * 되살리는 API가 없어서다(`OperationEntity`에 `restore`가 아예 없다).
+ *
  * ── 응답 **상세**를 열지 않는 이유 (#587 결정, 2026-09-26) ──────
  *
  * `get_form_response`에 해당하는 도구가 없다. W2에서 «응답 도구는 별도 결정»으로 미뤄 둔 자리이고,
@@ -217,5 +221,43 @@ public class FormTools {
                 "/v1/forms/" + formId + "/responses/" + formRspnsId + "/reviews",
                 request,
                 FormResponseSummaryResponse.class);
+    }
+
+    /* ── 삭제·되살리기 (ADR-0053) ─────────────────────────── */
+
+    @McpTool(
+            name = "delete_form",
+            description =
+                    "폼을 지운다(소프트 삭제 — restore_form으로 되살릴 수 있다). **응답이 있어도"
+                            + " 지워진다** — 그 대가로 응답한 사람의 «내 신청» 목록에서 항목이 사라지고 본인"
+                            + " 응답 상세가 404가 된다(되살리면 그대로 돌아온다). 응답·문항 이력·라벨 지정은"
+                            + " 아무것도 지우지 않는다."
+                            + " **시스템 폼은 409 SYSTEM_FORM_IMMUTABLE로 거절한다**(기획안·지정된 신입회원"
+                            + " 모집 폼 — 재시도해도 같다). 이미 지워진 폼은 409 ALREADY_DELETED, 없는 폼은"
+                            + " 404다. 폼 쓰기(FORM_WRITE) 권한.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true))
+    public void deleteForm(
+            @McpToolParam(description = "폼 id") Long formId, McpTransportContext context) {
+        log.info("mcp tool delete_form formId={}", formId);
+        client.delete(context, "/v1/forms/" + formId);
+    }
+
+    @McpTool(
+            name = "restore_form",
+            description =
+                    "지운 폼을 되살린다 — 상태·접수 기간·문항·응답이 지울 때 그대로 남아 있으므로 **지우기"
+                            + " 직전 모습으로** 돌아온다(접수 중이던 폼은 다시 접수 중이다). 응답자의 «내"
+                            + " 신청»과 본인 응답 상세도 함께 돌아온다."
+                            + " 지워지지 않은 폼은 409 NOT_DELETED, 없는 폼은 404다."
+                            + " 요구 권한은 삭제와 같은 폼 쓰기(FORM_WRITE)다."
+                            + " 서버가 본문 없는 200 을 주므로 되살린 뒤 상세를 한 번 더 읽어 돌려준다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public FormDetailResponse restoreForm(
+            @McpToolParam(description = "지운 폼의 id") Long formId, McpTransportContext context) {
+        log.info("mcp tool restore_form formId={}", formId);
+        client.post(context, "/v1/forms/" + formId + "/restore", null, Object.class);
+        // 서버가 data 없는 200 을 준다 — 되살린 모습을 돌려주려면 한 번 더 읽어야 한다.
+        // 되살리기가 성공한 뒤 이 조회가 실패하면 도구는 오류로 보이지만 폼은 이미 돌아와 있다.
+        return client.get(context, "/v1/forms/" + formId, FormDetailResponse.class);
     }
 }

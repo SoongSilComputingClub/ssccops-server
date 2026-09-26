@@ -83,7 +83,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 54종이 전부 광고되고 삭제 도구는 없다")
+    @DisplayName("운영 도구 67종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -105,6 +105,21 @@ class OperationToolsIntegrationTest {
                             "assign_form_labels",
                             "list_form_responses",
                             "review_form_response",
+                            // W5 — 회원 (#589)
+                            "list_members",
+                            "get_member",
+                            "change_member_grade",
+                            "change_member_status",
+                            "list_member_histories",
+                            "list_roles",
+                            "list_member_roles",
+                            "assign_member_role",
+                            "update_member_role_assignment",
+                            // W5 — 삭제·되살리기 (#589 · ADR-0053: 되살리는 API가 있는 둘만)
+                            "delete_form",
+                            "restore_form",
+                            "delete_event",
+                            "restore_event",
                             // 1차 (#385)
                             "list_operations",
                             "get_work",
@@ -156,7 +171,20 @@ class OperationToolsIntegrationTest {
              * 삭제 도구는 소프트 삭제만 열기로 했고(ADR-0037) 그것은 W5에서 낸다 — 지금은
              * 하나도 없어야 한다. 하드 삭제는 어느 파도에서도 열지 않는다.
              */
-            assertThat(names).noneMatch(name -> name.startsWith("delete_"));
+            /*
+             * **«delete_ 가 하나도 없다»를 «이 셋이 없다»로 좁혔다** (#589 · ADR-0053).
+             *
+             * ADR-0037 이 «소프트 삭제만 연다»의 근거로 든 «되살릴 수 있다»가 다섯 중 셋에는
+             * 사실이 아니었다 — `OperationEntity` 에는 `softDelete` 만 있고 `restore` 가 없어
+             * 업무·하위 업무·회의는 지우면 DB 를 직접 고치지 않는 한 돌아오지 않는다(업무 삭제는
+             * 하위 업무까지 연쇄다). 그래서 폼·행사만 열었고 되살리기를 함께 냈다.
+             *
+             * 접두사 단정을 그대로 두면 이제 참이 아니라 이 셋을 이름으로 못 박는다 — 되살리기
+             * API 가 생기면 그때 이 목록에서 빼는 것이 «다시 계산했다»는 표시가 된다.
+             */
+            assertThat(names)
+                    .doesNotContain("delete_work", "delete_sub_work", "delete_meeting")
+                    .doesNotContain("delete_member");
         }
     }
 

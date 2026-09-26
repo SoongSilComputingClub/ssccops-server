@@ -279,6 +279,84 @@ class EventFormToolsIntegrationTest {
         return JsonPath.parse(response).read("$.data.formId", Long.class);
     }
 
+    /*
+     * **ADR-0053 이 여는 것과 닫는 것이 한 시험에 있다.** 삭제 뒤 조회가 404 가 되고 되살리면
+     * 지우기 직전 모습으로 돌아오는 것이 그 ADR 의 근거(«되살릴 수 있다»)가 실제로 성립한다는
+     * 증거다 — 이것이 깨지면 폼 삭제 도구를 여는 이유가 사라진다.
+     */
+    @Test
+    @DisplayName("delete_form → get_form 404 → restore_form 이 지우기 직전 모습으로 되살린다")
+    void formDeleteAndRestoreThroughRest() throws Exception {
+        Long formId = createForm("지웠다 되살릴 폼");
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult deleted =
+                    call(client, "delete_form", Map.of("formId", formId));
+            assertThat(deleted.isError()).isNotEqualTo(Boolean.TRUE);
+
+            // 지운 폼은 없는 폼과 같은 404 다 — 공개 링크가 존재 여부를 알려주지 않기 위해서다
+            McpSchema.CallToolResult gone = call(client, "get_form", Map.of("formId", formId));
+            assertThat(gone.isError()).isTrue();
+            assertThat(text(gone)).contains("NOT_FOUND");
+
+            // 이미 지운 폼을 또 지우면 409 — 재시도해도 같다
+            McpSchema.CallToolResult twice = call(client, "delete_form", Map.of("formId", formId));
+            assertThat(twice.isError()).isTrue();
+            assertThat(text(twice)).contains("ALREADY_DELETED");
+
+            McpSchema.CallToolResult restored =
+                    call(client, "restore_form", Map.of("formId", formId));
+            assertThat(restored.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(restored)).contains("\"formTtlNm\":\"지웠다 되살릴 폼\"");
+
+            // 지워지지 않은 폼을 되살리면 409
+            McpSchema.CallToolResult notDeleted =
+                    call(client, "restore_form", Map.of("formId", formId));
+            assertThat(notDeleted.isError()).isTrue();
+            assertThat(text(notDeleted)).contains("NOT_DELETED");
+        }
+    }
+
+    @Test
+    @DisplayName("delete_event → restore_event — 게시 상태까지 그대로 돌아온다")
+    void eventDeleteAndRestoreThroughRest() {
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult created =
+                    call(
+                            client,
+                            "create_event",
+                            Map.of(
+                                    "request",
+                                    Map.of(
+                                            "eventClsfCd", "RECRUIT",
+                                            "eventTtl", "지웠다 되살릴 행사",
+                                            "mtxtCn", "# 본문",
+                                            "plcNm", "학생회관")));
+            assertThat(created.isError()).isNotEqualTo(Boolean.TRUE);
+            Long eventId = JsonPath.parse(text(created)).read("$.eventId", Long.class);
+
+            call(
+                    client,
+                    "change_event_status",
+                    Map.of("eventId", eventId, "request", Map.of("action", "PUBLISH")));
+
+            McpSchema.CallToolResult deleted =
+                    call(client, "delete_event", Map.of("eventId", eventId));
+            assertThat(deleted.isError()).isNotEqualTo(Boolean.TRUE);
+
+            McpSchema.CallToolResult gone = call(client, "get_event", Map.of("eventId", eventId));
+            assertThat(gone.isError()).isTrue();
+
+            McpSchema.CallToolResult restored =
+                    call(client, "restore_event", Map.of("eventId", eventId));
+            assertThat(restored.isError()).isNotEqualTo(Boolean.TRUE);
+            // 게시 상태는 지울 때 그대로 남으므로 게시 중이던 행사는 다시 게시 중이다
+            assertThat(text(restored))
+                    .contains("\"eventTtl\":\"지웠다 되살릴 행사\"")
+                    .contains("\"eventSttsCd\":\"PUBLISHED\"");
+        }
+    }
+
     private McpSyncClient connect(UUID authUserId) {
         HttpClientStreamableHttpTransport transport =
                 HttpClientStreamableHttpTransport.builder("http://localhost:" + port)

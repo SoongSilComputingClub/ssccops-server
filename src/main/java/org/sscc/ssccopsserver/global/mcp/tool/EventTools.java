@@ -113,4 +113,45 @@ public class EventTools {
         return client.post(
                 context, "/v1/events/" + eventId + "/status", request, EventDetailResponse.class);
     }
+
+    /* ── 삭제·되살리기 (#589 · ADR-0053) ──────────────────── */
+
+    @McpTool(
+            name = "delete_event",
+            description =
+                    "행사를 지운다(소프트 삭제 — restore_event로 되살릴 수 있다). 공개 목록·상세에서"
+                            + " 빠지지만 데이터는 남는다. **참가자가 있어도 지워진다** — 그 대가로 참가자의"
+                            + " «내 신청» 목록에서 항목이 사라진다(되살리면 돌아온다). 게시 상태가 그대로"
+                            + " 남으므로 게시 중이던 행사는 되살리면 다시 게시 중이고, R2 이미지는 지우지"
+                            + " 않는다. 지운 행사는 연결 폼을 붙잡지 않는다."
+                            + " **학술 프로그램이 딸린 행사는 409 EVENT_HAS_ACADEMIC_PROGRAM으로 거절한다** —"
+                            + " 학술 쪽에서 프로그램을 정리한 뒤에야 지울 수 있으므로 재시도해도 같다."
+                            + " 이미 지워진 행사는 409 ALREADY_DELETED, 없는 행사는 404다."
+                            + " 행사 관리(EVENT_MANAGE) 권한.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = true))
+    public void deleteEvent(
+            @McpToolParam(description = "행사 id") Long eventId, McpTransportContext context) {
+        log.info("mcp tool delete_event eventId={}", eventId);
+        client.delete(context, "/v1/events/" + eventId);
+    }
+
+    @McpTool(
+            name = "restore_event",
+            description =
+                    "지운 행사를 되살린다 — 게시 상태·폼 연결·일시·본문·참가자·이미지가 지울 때 그대로"
+                            + " 남아 있으므로 **지우기 직전 모습으로** 돌아온다(게시 중이던 행사는 다시"
+                            + " 공개된다). 참가자의 «내 신청» 항목도 함께 돌아온다."
+                            + " **지워진 동안 그 행사의 폼을 다른 행사가 연결했으면 409 FORM_ALREADY_LINKED로"
+                            + " 되살리지 않는다** — 그 행사에서 폼을 풀거나 그 행사를 지운 뒤 다시 시도한다."
+                            + " 지워지지 않은 행사는 409 NOT_DELETED, 없는 행사는 404다."
+                            + " 요구 권한은 삭제와 같은 행사 관리(EVENT_MANAGE)다."
+                            + " 서버가 본문 없는 200 을 주므로 되살린 뒤 상세를 한 번 더 읽어 돌려준다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public EventDetailResponse restoreEvent(
+            @McpToolParam(description = "지운 행사의 id") Long eventId, McpTransportContext context) {
+        log.info("mcp tool restore_event eventId={}", eventId);
+        client.post(context, "/v1/events/" + eventId + "/restore", null, Object.class);
+        // 폼 되살리기와 같다 — 서버가 data 없는 200 이라 되살린 모습은 한 번 더 읽어 온다
+        return client.get(context, "/v1/events/" + eventId, EventDetailResponse.class);
+    }
 }

@@ -97,14 +97,17 @@ public class MeetingTools {
     @McpTool(
             name = "add_meeting_agenda",
             description =
-                    "회의에 안건을 올린다. **연결할 운영 건(targetOperationId)과 안건명(agendaName)"
-                            + " 중 하나만** 준다 — 둘을 함께 주면 서버가 거절한다. 안건 추가는"
-                            + " 회의 안건 작성(MEETING_AGENDA_WRITE) 권한이며 회의 관리와 다르다"
-                            + "(국원도 가진다).",
+                    "회의에 안건을 올린다. **안건은 언제나 운영 건(업무·하위 업무·회의)을 가리킨다** —"
+                            + " targetOperationId 가 필수이고 안건의 제목은 그 운영 건의 제목이다"
+                            + "(안건이 따로 제목을 갖지 않는다 · ADR-0055). 다룰 운영 건이 아직 없으면"
+                            + " 업무나 하위 업무를 먼저 만든다(create_work · create_sub_work)."
+                            + " 없는 운영 건은 404. 종료·취소된 회의에는 올릴 수 없다."
+                            + " 안건 추가는 회의 안건 작성(MEETING_AGENDA_WRITE) 권한이며 회의 관리와"
+                            + " 다르다(국원도 가진다).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingAgendaResponse addMeetingAgenda(
             @McpToolParam(description = "회의 id") Long meetingId,
-            @McpToolParam(description = "안건 — targetOperationId 또는 agendaName 하나")
+            @McpToolParam(description = "안건 — targetOperationId(필수) · processStatus · content")
                     MeetingAgendaItemRequest request,
             McpTransportContext context) {
         log.info("mcp tool add_meeting_agenda meetingId={}", meetingId);

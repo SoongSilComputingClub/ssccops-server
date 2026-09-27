@@ -10,7 +10,6 @@ import org.sscc.ssccopsserver.domain.operation.entity.MeetingAgendaEntity;
 public record MeetingAgendaResponse(
         Long agendaId,
         Long meetingId,
-        String agendaName,
         AgendaProcessStatus processStatus,
         Integer agendaOrder,
         AgendaTargetOperationResponse targetOperation,
@@ -22,7 +21,6 @@ public record MeetingAgendaResponse(
         return new MeetingAgendaResponse(
                 agenda.getId(),
                 agenda.getMeeting().getId(),
-                agenda.getAgendaName(),
                 agenda.getProcessStatus(),
                 agenda.getAgendaOrder(),
                 AgendaTargetOperationResponse.from(agenda.getOperation()),

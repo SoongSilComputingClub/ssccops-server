@@ -46,15 +46,18 @@ class McpToolSchemaContractTest {
     @LocalServerPort private int port;
 
     /*
-     * 신고된 자리 (#591). 안건명과 연결 운영 건은 **둘 중 하나**인데 스키마가 둘 다 요구해서
-     * **부를 수 있는 방법이 없었다** — 하나만 보내면 클라이언트가 막고 둘 다 보내면 서버가 400 이다.
-     * 배타 조건 자체는 JSON Schema 로 표현하지 않는다(도구 설명이 말한다) — 여기서 막는 것은
-     * «둘 다 필수»로 되돌아가는 것이다.
+     * 신고된 자리 (#591). 그때는 안건명과 연결 운영 건이 «둘 중 하나»인데 스키마가 둘 다 요구해
+     * **부를 수 있는 방법이 없었다.** 그 뒤 ADR-0055 로 **안건은 언제나 운영 건을 가리키게** 바뀌어
+     * (#593) 이제 필수는 `targetOperationId` 하나다.
+     *
+     * 이 단정이 두 번 바뀐 것이 이 테스트의 값을 말한다 — 스키마가 **서버 계약에서 파생**되므로
+     * 계약이 바뀌면 여기가 먼저 깨진다. `@NotNull` 을 떼면 optional 로 따라 내려간다.
      */
     @Test
-    @DisplayName("add_meeting_agenda — 안건 입력에 필수 필드가 없다 (둘 중 하나라서)")
-    void agendaItemHasNoRequiredField() {
-        assertThat(nestedRequired("add_meeting_agenda", "request")).isEmpty();
+    @DisplayName("add_meeting_agenda — 필수는 targetOperationId 하나다 (ADR-0055)")
+    void agendaItemRequiresItsOperation() {
+        assertThat(nestedRequired("add_meeting_agenda", "request"))
+                .containsExactly("targetOperationId");
     }
 
     @Test

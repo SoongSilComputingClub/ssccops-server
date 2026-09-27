@@ -106,7 +106,6 @@ public class MeetingServiceImpl implements MeetingService {
                     meetingAgendaRepository.save(
                             MeetingAgendaEntity.create(
                                     meeting,
-                                    item.agendaName(),
                                     item.processStatus(),
                                     order++,
                                     targetOperation,
@@ -117,10 +116,12 @@ public class MeetingServiceImpl implements MeetingService {
         return agendas;
     }
 
+    /*
+     * 안건이 가리키는 운영 건. **널 분기를 두지 않는다**(#593 · ADR-0055) — 요청 DTO 가 @NotNull 로
+     * 막고 엔티티도 nullable = false 라, 여기서 널을 돌려주면 그 어긋남이 persist 시점의 제약 위반
+     * 으로 미뤄져 원인이 흐려진다.
+     */
     private OperationEntity resolveTargetOperation(Long targetOperationId) {
-        if (targetOperationId == null) {
-            return null;
-        }
         return operationRepository
                 .findByIdAndDeletedAtIsNull(targetOperationId)
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
@@ -226,7 +227,6 @@ public class MeetingServiceImpl implements MeetingService {
                 meetingAgendaRepository.save(
                         MeetingAgendaEntity.create(
                                 meeting,
-                                request.agendaName(),
                                 request.processStatus(),
                                 nextOrder,
                                 targetOperation,

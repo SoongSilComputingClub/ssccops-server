@@ -21,14 +21,19 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /*
- * mtg_dtl(회의_상세) — 회의 안건. 컬럼정의서의 Seq 3이 결번인데 agnd_nm 설명이 "운영건ID가
- * NULL일 때"를 전제하고 있어, 프론트(entities/meeting/model/types.ts의 @db-pending)와
- * 같은 결론으로 누락된 oper_id FK 컬럼을 여기 매핑한다 — 데이터사전 원본(xlsx)에는 아직
- * 반영되지 않았으니 사전 갱신 시 이 Seq 자리에 넣을 것 (ssccops-web#56 · ssccops#83).
+ * mtg_dtl(회의_상세) — 회의 안건.
  *
- * agndNm과 operation은 상호 배타적이다: 운영 건에 연결된 안건은 그 oper_ttl을 제목으로
- * 쓰므로 agnd_nm이 NULL이고, 독립 안건은 반대로 operation이 NULL이고 agnd_nm이 채워진다
- * (OPS-027 "둘 중 하나 필수").
+ * **안건은 언제나 운영 건을 가리킨다**(#593 · ADR-0055). 제목은 그 운영 건의 oper_ttl이고 안건이
+ * 따로 제목을 갖지 않는다.
+ *
+ * 그전에는 agnd_nm(안건_명)과 oper_id가 상호 배타였고 독립 안건(agnd_nm만 있는 안건)이 설계에
+ * 있었다(OPS-027 "둘 중 하나 필수"). **그런데 어드민 화면에 그것을 만들 길이 없었다** — 안건
+ * 상정이 언제나 agendaName: null을 보낸다. 실제 데이터도 전부 연결형이었고, MCP가 설계대로 그
+ * 길을 열면서 어긋남이 드러났다(#591). 쓰는 모양 하나만 남긴 것이 이 결정이다.
+ *
+ * 그래서 operation은 nullable = false이고 V24가 agnd_nm을 지우며 oper_id에 NOT NULL을 걸었다 —
+ * 운영 건이 없던 기존 안건은 그 마이그레이션이 지웠다(되돌릴 수 없는 부분은 스키마가 아니라
+ * 그 데이터다 · ADR-0055 "뒤집는다면").
  */
 @Entity
 @Table(name = "mtg_dtl", indexes = @Index(name = "idx_mtg_dtl_mtg_id", columnList = "mtg_id"))
@@ -47,9 +52,6 @@ public class MeetingAgendaEntity {
     private MeetingEntity meeting;
 
     // 운영건ID(operation)가 NULL일 때만 쓰는 독립 안건 제목
-    @Column(name = "agnd_nm", length = 100)
-    private String agendaName;
-
     @Enumerated(EnumType.STRING)
     @Column(name = "agnd_prcs_se_cd", length = 20)
     private AgendaProcessStatus processStatus;
@@ -57,7 +59,7 @@ public class MeetingAgendaEntity {
     @Column(name = "agnd_seq")
     private Integer agendaOrder;
 
-    // 안건이 다루는 운영 건. 독립 안건(agendaName만 있는 경우)은 NULL이다
+    // 안건이 다루는 운영 건. 안건의 제목이 여기서 온다 (ADR-0055)
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "oper_id")
     private OperationEntity operation;
@@ -79,7 +81,6 @@ public class MeetingAgendaEntity {
      */
     public static MeetingAgendaEntity create(
             MeetingEntity meeting,
-            String agendaName,
             AgendaProcessStatus processStatus,
             int agendaOrder,
             OperationEntity operation,
@@ -88,7 +89,6 @@ public class MeetingAgendaEntity {
         return new MeetingAgendaEntity(
                 null,
                 meeting,
-                agendaName,
                 processStatus == null ? AgendaProcessStatus.PENDING : processStatus,
                 agendaOrder,
                 operation,
@@ -99,7 +99,7 @@ public class MeetingAgendaEntity {
 
     /*
      * 안건 수정(OPS-028). 정의서 비고 "논의 내용·처리 구분"대로 바꿀 수 있는 것은 이 셋뿐이다
-     * — 어느 운영 건을 다루는지(operation)·제목(agendaName)·제출자(submitter)는 다시 상정하는
+     * — 어느 운영 건을 다루는지(operation · 그것이 곧 제목이다)·제출자(submitter)는 다시 상정하는
      * 것과 다름없어 이 API의 범위 밖이다. 등록(OPS-007) 계열의 선례처럼 **전체 교체**라
      * content·resultContent를 생략하면 지운 것으로 본다 — processStatus는 요청 DTO에서
      * @NotNull로 막아 여기서는 널을 받지 않는다.

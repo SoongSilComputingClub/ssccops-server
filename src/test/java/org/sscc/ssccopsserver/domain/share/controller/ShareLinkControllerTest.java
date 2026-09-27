@@ -62,7 +62,8 @@ class ShareLinkControllerTest {
     private static final String CONTENT = "박람회 부스 위치와 동선을 확정한다";
 
     /** 카드에 실리면 안 되는 값. 안건 제목은 익명에게 나가지 않는다(ssccops#252) */
-    private static final String AGENDA_TITLE = "징계 심의 건";
+    /** 안건이 가리키는 운영 건의 제목 — 안건은 제목을 따로 갖지 않는다 (#593 · ADR-0055) */
+    private static final String AGENDA_OPERATION_TITLE = "징계 심의 건";
 
     @Autowired private MockMvc mockMvc;
     @Autowired private MemberRepository memberRepository;
@@ -75,6 +76,7 @@ class ShareLinkControllerTest {
 
     private Long ownerId;
     private Long parentWorkId;
+    private Long agendaOperationId;
 
     @BeforeEach
     void setUp() {
@@ -100,6 +102,20 @@ class ShareLinkControllerTest {
                                         null),
                                 registrant)
                         .workId();
+        // 안건이 가리킬 운영 건. 미리보기에 그 제목이 새지 않는지 보려고 회의와 다른 제목을 쓴다
+        agendaOperationId =
+                workService
+                        .createWork(
+                                new WorkCreateRequest(
+                                        AGENDA_OPERATION_TITLE,
+                                        WorkType.EVENT,
+                                        ownerId,
+                                        null,
+                                        null,
+                                        null,
+                                        null),
+                                registrant)
+                        .operationId();
     }
 
     /* ── 발급 → 익명 미리보기 ──────────────────────────────── */
@@ -331,8 +347,8 @@ class ShareLinkControllerTest {
                 // 제목은 회의 자기 것이 없다 — 부모 운영 건의 oper_ttl이다
                 .andExpect(jsonPath("$.data.title").value("9월 정례회의"))
                 .andExpect(jsonPath("$.data.summary").value("정례 · 2026-09-15 19:00"))
-                // 안건 제목은 응답 어디에도 없다 — 카드가 굳으면 거둘 방법이 없다
-                .andExpect(content().string(not(containsString(AGENDA_TITLE))))
+                // 안건이 가리키는 운영 건의 제목도 응답에 없다 — 카드가 굳으면 거둘 방법이 없다
+                .andExpect(content().string(not(containsString(AGENDA_OPERATION_TITLE))))
                 .andExpect(jsonPath("$.data.mtgSttsCd").doesNotExist())
                 .andExpect(jsonPath("$.data.atndTrgtCd").doesNotExist())
                 .andExpect(jsonPath("$.data.otsdMtgDtlCn").doesNotExist());
@@ -475,10 +491,10 @@ class ShareLinkControllerTest {
                   "startAt": "2026-09-15T19:00:00+09:00",
                   "attendeeScope": "ALL",
                   "location": "정보과학관 5층",
-                  "agendas": [{ "agendaName": "%s" }]
+                  "agendas": [{ "targetOperationId": %d }]
                 }
                 """
-                        .formatted(ownerId, AGENDA_TITLE);
+                        .formatted(ownerId, agendaOperationId);
 
         String response =
                 mockMvc.perform(

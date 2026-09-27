@@ -21,6 +21,10 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationType;
  * '확장 속성 · mtg' 두 블록으로 나눠 보여주지만 응답은 한 단계 평면 구조다.
  *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
+ *
+ * 회의 단위 회의록 본문(내부 상세본·제출 요약본)은 싣지 않는다 (#595). 그 자리였던
+ * insd_mtg_dtl_cn·otsd_mtg_dtl_cn은 값을 쓰는 경로가 없어 늘 null로 나갔고 V25에서 지웠다.
+ * 회의 결과는 안건별 결과(agendas[].resultContent)가 담는다.
  */
 public record MeetingDetailResponse(
         Long meetingId,
@@ -36,8 +40,6 @@ public record MeetingDetailResponse(
         OffsetDateTime endAt,
         OperationPriority priority,
         String location,
-        String internalDetail,
-        String externalSummary,
         List<MeetingAgendaResponse> agendas,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
@@ -61,8 +63,6 @@ public record MeetingDetailResponse(
                 toOffsetDateTime(operation.getEndAt()),
                 operation.getPriority(),
                 meeting.getLocation(),
-                meeting.getInternalDetail(),
-                meeting.getExternalSummary(),
                 agendas,
                 toOffsetDateTime(operation.getCreatedAt()),
                 toOffsetDateTime(operation.getUpdatedAt()));

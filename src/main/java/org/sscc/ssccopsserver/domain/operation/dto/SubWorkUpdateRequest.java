@@ -15,7 +15,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
  * 하위 업무 수정 요청 (OPS-030 · PATCH /v1/sub-works/{subWorkId}). 등록(OPS-007)과 같은
  * 확장 속성 필드를 받되 두 가지를 뺀다:
  *
- * - **workId** — 다른 상위 업무로 옮기는 기능이 아니다. 진행률 집계(work_prgrs_rt)가
+ * - **workId** — 다른 상위 업무로 옮기는 기능이 아니다. 진행률 집계(AGG-01)가
  *   상위 업무별로 계산되는데, 옮기면 두 상위 업무의 진행률이 함께 재계산돼야 하고
  *   이력(sub_work_stts_hstry)이 어느 상위 업무 소속이었는지도 갈린다 — 등록 하나로 끝나던
  *   경계를 이 API 하나가 다시 흔든다.

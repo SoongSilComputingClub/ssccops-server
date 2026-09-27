@@ -106,8 +106,7 @@ public class WorkServiceImpl implements WorkService {
      * 상세 조회(OPS-003). 쿼리는 업무 1 + 하위 업무 목록 1 + 체크리스트 집계 1로 3회다 —
      * 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13).
      *
-     * 조회는 어떤 상태도 바꾸지 않는다 (AP-07). 진행률도 계산만 하고 work_prgrs_rt에
-     * 쓰지 않으므로 저장된 값과 어긋날 수 있다.
+     * 조회는 어떤 상태도 바꾸지 않는다 (AP-07). 진행률은 저장하지 않고 계산만 한다.
      */
     @Override
     public WorkDetailResponse getWork(Long workId) {

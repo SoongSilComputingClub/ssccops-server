@@ -102,8 +102,8 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
             parameters.put("approvalStatuses", query.approvalStatuses());
         }
         /*
-         * 지연: 마감일이 지났는데 아직 완료되지 않은 건. dly_yn 컬럼을 읽지 않는다 —
-         * 채우지 않기로 결정한 컬럼이라 항상 false다 (SubWorkEntity.delayed 주석).
+         * 지연: 마감일이 지났는데 아직 완료되지 않은 건. 저장하지 않고 조회 시점에 판정한다
+         * (SubWorkEntity.isDelayedBefore 주석).
          * 조건은 SubWorkEntity.isDelayedBefore와 같아야 한다 — 단건과 목록이 갈리면 안 된다.
          *
          * 경계는 '지금'이 아니라 오늘 0시다 (DeadlinePolicy, #121). 마감일이 오늘인 건은

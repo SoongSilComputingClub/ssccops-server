@@ -83,6 +83,11 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 테스트가 «`data.sql`이 넣어야 할 권한이 없다»(`AuthorityFixture`)로 죽는다 — dev·prod는 Flyway가
 넣으므로 멀쩡하다.
 
+**시드 파일이 적는 컬럼을 지우면 `src/test/resources/db/v3-seed-legacy-columns.sql`에 한 줄 더한다**
+(#595의 `V25` — `sub_work_type.expnd_yn`). 이미 적용된 시드는 고칠 수 없는데 `test`는 그것을 엔티티로
+만든 H2 스키마에 돌리므로, 빠뜨리면 없는 컬럼에 INSERT하다 스프링 테스트 컨텍스트가 하나도 뜨지
+못한다. dev·prod·local은 Flyway가 시드를 삭제보다 먼저 돌려 멀쩡하다.
+
 `WHERE NOT EXISTS` 멱등성은 그대로다. 버전 마이그레이션이라 한 번만 돌지만 **baseline이 이미
 시드된 prod 덤프라 이 파일이 처음 도는 DB에도 행이 이미 있다** — 가드가 없으면 중복 키로 깨진다.
 가드의 원래 뜻(운영진이 화면에서 고친 값을 배포가 되돌리지 않는다)도 함께 산다:
@@ -121,6 +126,7 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
 | `V22__widen_notification_checks.sql` | `noti.noti_type_cd` CHECK에 폼 응답 검토 3·행사 참가 3·`TEST`, `noti.trgt_type_cd`에 `FORM_RESPONSE`·`EVENT_PARTICIPANT`·`MEMBER`를 더한다(#528 · ssccops#453·#454). V13 규칙 그대로 제약을 컬럼으로 찾아 지우고 다시 만든다 — V21이 이름을 박아 만들었어도 local(`ddl-auto: update`)은 Hibernate가 먼저 다른 이름으로 만들었을 수 있다 |
 | `V23__notification_type_recipient.sql` | `noti_type_rcpn`(알림_유형_수신) — «이 유형은 이 앱에 보인다» 기준표와 지금 12종의 시드(운영 5 → ADMIN · 회원 6 → WWW · **TEST는 시드하지 않는다** = 누른 앱). #535 · ssccops#465 · [ADR-0047](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0047-notification-routing-is-data-not-code.md). **`noti_type_cd`에는 CHECK를 걸지 않는다** — 정책 데이터라 유형이 늘 때마다 제약을 넓히는 마이그레이션을 강요할 값어치가 없고 해석기가 모르는 코드를 무시한다(그래서 엔티티도 String이다). `app_cd`는 enum + CHECK. **DDL이 섞여 있어 `data-locations`에 얹지 않았고**, 그 덕에 test는 빈 표 = «보낸 앱»에서 출발한다 — 시드는 `FlywayMigrationValidateTest`가 본다 |
 | `V24__meeting_agenda_requires_operation.sql` | 회의 안건이 **언제나 운영 건을 가리키게** 한다 — `mtg_dtl.agnd_nm` DROP · `oper_id` SET NOT NULL (#593 · ssccops#528 · [ADR-0055](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0055-meeting-agenda-always-points-at-an-operation.md)). **운영 건이 없던 기존 안건을 지운다** — 지우기 전 건수를 `RAISE NOTICE` 로 남기는 것이 «무엇을 잃었나»의 유일한 기록이다. 실패시키지 않은 것은 그 행이 있는지 미리 볼 경로가 없어 배포를 걸어 두고 확인하는 모양이 되기 때문이다. 되돌릴 수 없는 것은 스키마가 아니라 그 데이터다 |
+| `V25__drop_unused_operation_columns.sql` | 값이 한 번도 들어가지 않던 운영 도메인 컬럼 10개를 지운다 — `sub_work.dly_yn` · `work.work_prgrs_rt`(#117에서 채우지 않기로 하고 삭제만 «Flyway 도입 시점»으로 미뤘던 둘) · `mtg.insd_mtg_dtl_cn`·`otsd_mtg_dtl_cn` · `sub_work_aprv`의 긴급 집행·승인 단계 넷 · `sub_work_type.crtr_amt`·`expnd_yn` (#595 · ssccops#537). 응답 필드 넷(`progressRate`·`parentWorkProgressRate`·`internalDetail`·`externalSummary`)이 함께 빠진다. 미래 기능 자리였던 것은 그 기능을 만들 때 새 마이그레이션으로 다시 더한다. 사라지는 값(옛 진행률·예산지출의 `expnd_yn = true`)은 V24처럼 `RAISE NOTICE`로 남긴다. ⚠️ **시드에 적힌 컬럼을 지운 첫 사례다** — V3가 `sub_work_type` INSERT에 `expnd_yn`을 적어서, Flyway 없이 V3를 엔티티 스키마에 돌리는 test 프로필만 그 컬럼을 `src/test/resources/db/v3-seed-legacy-columns.sql`(`spring.sql.init.schema-locations`)로 되살린다. 시드가 적는 컬럼을 또 지우면 그 파일에 한 줄 더한다 |
 
 **baseline을 엔티티에서 생성하지 않은 이유**는 prod가 `update`로 자라난 DB라 엔티티가 말하는
 스키마와 실제가 갈려 있었기 때문이다. 대조용 DDL이 필요하면 아래로 뽑는다 — **baseline이 아니다.**

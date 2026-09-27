@@ -107,8 +107,7 @@ public record SubWorkDetailResponse(
     private static final List<MemberSummaryResponse> NO_COLLABORATORS = List.of();
 
     /*
-     * delayed는 엔티티의 dly_yn 컬럼이 아니라 조회 시점에 판정한 값이다 (SubWorkEntity.isDelayedBefore).
-     * 조회가 컬럼을 갱신하지는 않으므로(AP-07) 저장된 값과 어긋날 수 있다.
+     * delayed는 저장하지 않고 조회 시점에 판정한 값이다 (SubWorkEntity.isDelayedBefore).
      *
      * reviewStale(검토요청 후 3일 경과)도 같은 종류의 조회 시점 판정이며 목록(OPS-008)과
      * 같은 규칙을 쓴다 (ssccops#196). isReadyForReview는 이 응답이 이미 들고 있는 체크리스트로

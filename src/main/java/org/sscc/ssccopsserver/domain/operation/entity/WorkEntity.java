@@ -1,7 +1,5 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
-import java.math.BigDecimal;
-
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -26,6 +24,12 @@ import lombok.NoArgsConstructor;
  *
  * work_id를 자체 PK로 가지며 oper_id는 일반 FK다. PK=FK 상속이 아니므로 @MapsId를 쓰지 않는다.
  * 등록자·등록시각은 부모 oper의 crt_dt·mdfcn_dt가 보유하므로 여기서 중복 기록하지 않는다.
+ *
+ * 진행률은 저장하지 않는다 (AGG-05 · #117 · V25). 정본은 AGG-01 — 하위 업무 진행률(체크리스트
+ * 완료율)의 단순 평균이며 조회 API가 그때그때 계산한다(ProgressRate.average). 한때 있던 저장
+ * 컬럼 work_prgrs_rt는 '완료 하위 업무 수 ÷ 전체'라는 다른 식으로 채워져 DB를 보는 사람과 화면이
+ * 다른 숫자를 봤고, 갱신을 걷어낸 뒤로는 등록 시의 0에 머물렀다. 저장 컬럼을 되살리지 말 것 —
+ * 같은 어긋남이 그대로 돌아온다.
  */
 /*
  * 인덱스는 목록 조회(OPS-020)의 필터 두 축이다 (DB-17). 정렬 키는 여기가 아니라 oper에
@@ -50,9 +54,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class WorkEntity {
 
-    // 업무 진행률 초기값. 등록 이후로는 갱신되지 않으므로 이 컬럼은 늘 0이다 (AGG-05)
-    private static final BigDecimal INITIAL_PROGRESS_RATE = BigDecimal.ZERO;
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "work_id")
@@ -75,33 +76,12 @@ public class WorkEntity {
     private String generalReview;
 
     /*
-     * 채우지 않기로 결정한 컬럼 (AGG-05, #117). 등록 시 0으로 굳고 그 뒤 갱신하는 주체가 없다.
-     *
-     * 진행률의 정본은 AGG-01 — 하위 업무 진행률(체크리스트 완료율)의 단순 평균이며, 조회
-     * API가 그때그때 계산해 내려준다(ProgressRate.average). 이 컬럼은 '완료 하위 업무 수 ÷
-     * 전체'라는 다른 식으로 채워지고 있어 DB를 직접 보는 사람과 화면이 다른 숫자를 봤고,
-     * 두 식 중 명세를 따르는 쪽은 응답이므로 저장 쪽 갱신을 걷어냈다.
-     *
-     * 갱신 코드를 다시 넣지 말 것 — 되살리면 같은 어긋남이 그대로 돌아온다. 컬럼 자체를
-     * 지우지 않은 것은 ddl-auto: update가 삭제를 반영하지 않고 데이터사전 동기화가 따라붙기
-     * 때문이며, 제거는 마이그레이션 도구(Flyway/Liquibase) 도입 시점의 일이다.
-     */
-    @Column(name = "work_prgrs_rt", nullable = false, precision = 5, scale = 2)
-    private BigDecimal progressRate;
-
-    /*
-     * 업무 등록(OPS-002)용 생성 팩토리. 상태는 항상 PLANNING(기획), 진행률은 0으로
-     * 서버가 고정하며 클라이언트가 지정할 수 없다.
+     * 업무 등록(OPS-002)용 생성 팩토리. 상태는 항상 PLANNING(기획)으로 서버가 고정하며
+     * 클라이언트가 지정할 수 없다.
      */
     public static WorkEntity create(
             OperationEntity operation, WorkType workType, String generalReview) {
-        return new WorkEntity(
-                null,
-                operation,
-                workType,
-                WorkStatus.PLANNING,
-                generalReview,
-                INITIAL_PROGRESS_RATE);
+        return new WorkEntity(null, operation, workType, WorkStatus.PLANNING, generalReview);
     }
 
     public void changeWorkType(WorkType workType) {

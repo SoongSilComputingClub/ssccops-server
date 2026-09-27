@@ -536,8 +536,8 @@ class SubWorkServiceImplSearchTest {
     }
 
     /*
-     * 화면 '지연' 칩. dly_yn 컬럼이 아니라 조회 시점 판정이다 — 그 컬럼은 채우지 않기로
-     * 결정했으므로(#117) 지연된 건도 저장값은 false이고, 그래도 필터에 잡혀야 한다.
+     * 화면 '지연' 칩. 저장값이 아니라 조회 시점 판정이다(#117) — 마감이 지났고 아직 끝나지
+     * 않은 건만 잡히고, 늦게라도 끝난 건은 빠진다.
      */
     @Test
     void overdueChipReturnsOnlyPastDueAndUnfinished() {
@@ -546,11 +546,6 @@ class SubWorkServiceImplSearchTest {
         createSubWork(springMtWorkId, "마감 없는 건", null);
         Long doneOverdue = createSubWork(springMtWorkId, "늦게 끝난 건", OVERDUE);
         complete(doneOverdue);
-
-        // 어떤 행도 dly_yn이 켜져 있지 않다. 필터가 컬럼을 읽는다면 아래에서 빈 목록이 나온다
-        assertThat(subWorkRepository.findAll())
-                .extracting(SubWorkEntity::isDelayed)
-                .containsOnly(false);
 
         SubWorkSearchResponse response = search(condition().isOverdue(true).build());
 

@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
-import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -65,7 +64,6 @@ import org.sscc.ssccopsserver.domain.operation.entity.SubWorkRejectionEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkStatusHistoryEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
-import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
@@ -353,17 +351,13 @@ class SubWorkServiceImplTest {
     }
 
     /*
-     * 등록 응답의 isDelayed도 조회 시점 판정값이다 (#121). 이 자리만 dly_yn 컬럼을 읽고 있어서,
-     * 마감이 이미 지난 건으로 등록하면 등록 응답은 false인데 곧바로 여는 목록·상세는 true인
-     * 상태가 됐다. 그 컬럼은 채우지 않기로 결정한 값이라 언제나 false다 (#117).
+     * 등록 응답의 isDelayed도 조회 시점 판정값이다 (#121). 예전에는 이 자리만 저장 컬럼
+     * dly_yn(늘 false — #117, V25에서 지웠다)을 읽어서, 마감이 이미 지난 건으로 등록하면 등록
+     * 응답은 false인데 곧바로 여는 목록·상세는 true인 상태가 됐다.
      */
     @Test
-    void createSubWorkResponseJudgesDelayInsteadOfReadingDeadColumn() {
-        SubWorkCreateResponse response = createWithDueAt(NOW.minusDays(1));
-
-        assertThat(response.isDelayed()).isTrue();
-        assertThat(subWorkRepository.findById(response.subWorkId()).orElseThrow().isDelayed())
-                .isFalse();
+    void createSubWorkResponseJudgesDelay() {
+        assertThat(createWithDueAt(NOW.minusDays(1)).isDelayed()).isTrue();
     }
 
     // 그리고 그 판정도 날짜 단위다 — 오늘 아침 마감으로 등록해도 등록 응답은 지연이 아니다
@@ -402,18 +396,6 @@ class SubWorkServiceImplTest {
                                 .createSubWork(request(approvalFreeTypeId), registrant)
                                 .approvalStatus())
                 .isEqualTo(ApprovalStatus.NOT_REQUIRED);
-    }
-
-    // 하위 업무를 등록해도 상위 업무의 저장 진행률은 건드리지 않는다 (AGG-05, #117)
-    @Test
-    void createSubWorkDoesNotTouchStoredParentProgressRate() {
-        subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
-        subWorkService.createSubWork(request(approvalFreeTypeId), registrant);
-
-        WorkEntity parentWork = workRepository.findById(parentWorkId).orElseThrow();
-        assertThat(parentWork.getProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
-
-        assertThat(subWorkRepository.count()).isEqualTo(2);
     }
 
     @Test
@@ -751,10 +733,6 @@ class SubWorkServiceImplTest {
     /*
      * TR-03 승인·완료. 승인과 완료가 한 단계라 승인 상태와 업무 상태가 함께 바뀌고
      * 완료 일시가 채워진다.
-     *
-     * parentWorkProgressRate는 저장 컬럼을 그대로 읽는 필드라 0이다 — 그 컬럼을 채우지 않기로
-     * 했기 때문이다 (AGG-05, #117). 진행률의 정본은 상세(OPS-003)·목록(OPS-020)이 계산해
-     * 내려주는 AGG-01이며, 웹도 이 필드를 받지 않는다.
      */
     @Test
     void approveCompleteMarksDoneAndRecordsCompletedAt() {
@@ -768,25 +746,6 @@ class SubWorkServiceImplTest {
         assertThat(response.workStatus()).isEqualTo(WorkStatus.DONE);
         assertThat(response.approvalStatus()).isEqualTo(ApprovalStatus.APPROVED);
         assertThat(response.completedAt()).isEqualTo(NOW);
-        assertThat(response.parentWorkProgressRate()).isEqualByComparingTo(BigDecimal.ZERO);
-    }
-
-    /*
-     * 완료 승인은 하위 업무만 바꾸고 상위 업무 행은 건드리지 않는다 (AGG-05, #117).
-     * 예전에는 이 전이가 완료 개수를 다시 세어 work_prgrs_rt를 UPDATE 했다 — 그 값이
-     * 응답의 진행률(AGG-01 평균)과 어긋나는 원인이었다.
-     */
-    @Test
-    void approveCompleteDoesNotTouchStoredParentProgressRate() {
-        Long subWorkId = subWorkInReview(approvalNeededTypeId);
-        completeChecklist(subWorkId);
-
-        transition(subWorkId, TransitionAction.APPROVE_COMPLETE, null);
-
-        entityManager.flush();
-        entityManager.clear();
-        assertThat(workRepository.findById(parentWorkId).orElseThrow().getProgressRate())
-                .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     // 승인이 필요 없는 유형은 승인 상태를 승인으로 바꾸지 않는다 — 승인 절차를 아예 타지 않는다
@@ -1043,11 +1002,11 @@ class SubWorkServiceImplTest {
     }
 
     /*
-     * 체크는 상태 전이가 아니다. 스테퍼(업무 상태)·승인 칩(승인 상태)이 그대로여야 하고,
-     * 상위 업무 진행률도 하위 업무 완료 건수에서 나오므로 움직이지 않는다.
+     * 체크는 상태 전이가 아니다. 스테퍼(업무 상태)·승인 칩(승인 상태)이 그대로여야 하고
+     * 상태 이력도 남지 않는다.
      */
     @Test
-    void updateChecklistItemDoesNotChangeStatusesOrParentProgress() {
+    void updateChecklistItemDoesNotChangeStatuses() {
         Long subWorkId = createSubWork(approvalNeededTypeId);
 
         completeChecklist(subWorkId);
@@ -1056,8 +1015,6 @@ class SubWorkServiceImplTest {
         assertThat(detail.workStatus()).isEqualTo(WorkStatus.PLANNING);
         assertThat(detail.approvalStatus()).isEqualTo(ApprovalStatus.PENDING);
         assertThat(detail.completedAt()).isNull();
-        assertThat(workRepository.findById(parentWorkId).orElseThrow().getProgressRate())
-                .isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(subWorkStatusHistoryRepository.count()).isZero();
     }
 

@@ -166,7 +166,7 @@ class WorkServiceImplTest {
     }
 
     @Test
-    void createWorkFixesStatusAndProgressRateOnServer() {
+    void createWorkFixesStatusOnServer() {
         WorkCreateResponse response =
                 workService.createWork(
                         new WorkCreateRequest(
@@ -176,7 +176,6 @@ class WorkServiceImplTest {
         assertThat(response.workStatus()).isEqualTo(WorkStatus.PLANNING);
         assertThat(workRepository.findById(response.workId()).orElseThrow().getWorkStatus())
                 .isEqualTo(WorkStatus.PLANNING);
-        assertThat(response.progressRate()).isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     @Test
@@ -420,24 +419,6 @@ class WorkServiceImplTest {
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.WORK_NOT_FOUND);
-    }
-
-    /*
-     * 응답의 진행률은 계산값이고 저장 컬럼(work_prgrs_rt)은 그대로여야 한다 (AP-07).
-     * 둘이 어긋나는 것은 알고 택한 것이며, 조회가 저장값을 덮어쓰기 시작하면 그때부터
-     * GET이 상태를 바꾸는 API가 된다.
-     */
-    @Test
-    void getWorkDoesNotUpdateStoredProgressRate() {
-        Long workId = createWork("저장값 확인용 업무", null);
-        addSubWork(workId, "진행 중 하위 업무", END.toInstant(), 5, 3);
-
-        assertThat(detailOf(workId).progressRate()).isEqualByComparingTo("60.00");
-
-        entityManager.flush();
-        entityManager.clear();
-        assertThat(workRepository.findById(workId).orElseThrow().getProgressRate())
-                .isEqualByComparingTo(BigDecimal.ZERO);
     }
 
     /*

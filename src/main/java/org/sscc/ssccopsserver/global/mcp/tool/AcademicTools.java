@@ -49,10 +49,12 @@ import lombok.RequiredArgsConstructor;
  * 해당하는 엔드포인트가 아예 없고, 회차 작성·재제출은 활동 구성원이 화면에서 하는 일이다. 그래서 이
  * 파도는 **읽기와 검토**로 이루어진다. 도구가 없는 것이 빠뜨린 것이 아니라 그 모양이다.
  *
- * ── ② 전이는 둘뿐이고, 무엇이 가능한지는 서버가 안다 ───────────
+ * ── ② 전이는 셋이고, 무엇이 가능한지는 서버가 안다 ─────────────
  *
- * 활동 전이는 `START_RECRUITMENT`·`APPROVE_COMPLETION` 둘이다 — 승인·반려·수정요청 3종은 **없다**
- * (승인은 기획안 이관이 대신하고 반려·수정요청은 폼 응답 상태로 옮겨 갔다, #133). 회차 전이는
+ * 활동 전이는 `START_RECRUITMENT`·`APPROVE_COMPLETION`·`REOPEN` 셋이다 — 승인·반려·수정요청 3종은
+ * **없다**(승인은 기획안 이관이 대신하고 반려·수정요청은 폼 응답 상태로 옮겨 갔다, #133).
+ * **종료는 그 활동의 쓰기를 전부 멈추고**(409 `ACADEMIC_PROGRAM_COMPLETED`) `REOPEN`이 되돌린다
+ * (#597 · ADR-0057) — 회차 검토·선발·출석 정정 도구가 전부 그 409를 받을 수 있다. 회차 전이는
  * `APPROVE`·`REQUEST_REVISION` 둘이고 **`REQUEST_REVISION`은 사유가 필수**이며 둘 다 `SUBMITTED`
  * 에서만 간다. **승인된 회차는 되돌리지 않는다** — 출석부·진행률의 기준선이라서다.
  *
@@ -96,7 +98,7 @@ public class AcademicTools {
             description =
                     "학술 활동(스터디·프로젝트·트랙) 목록. typeCd(유형 코드)·sttsCd(상태)·keyword(제목)로"
                             + " 거르고 mine에 리더/멤버를 주면 내 것만 본다, 전부 비우면 전체."
-                            + " 상태는 PENDING(승인 대기)·APPROVED(승인됨)·ONGOING(진행 중)·COMPLETED(종료)다."
+                            + " 상태는 APPROVED(승인됨 · 모집 전)·ONGOING(진행 중)·COMPLETED(종료) 셋이다."
                             + " 목록에는 커리큘럼·팀원이 없다 — get_academic_program으로.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramSummaryResponse> listAcademicPrograms(
@@ -126,7 +128,7 @@ public class AcademicTools {
     @McpTool(
             name = "list_academic_program_members",
             description =
-                    "학술 활동의 팀원. ptcpSttsCd로 거른다(CONFIRMED 확정·WAITING 대기·CANCELED 취소),"
+                    "학술 활동의 팀원. ptcpSttsCd로 거른다(CONFIRMED 확정·WAITLISTED 대기·CANCELLED 취소),"
                             + " 비우면 전체. 리더 여부와 합류 시각이 함께 온다."
                             + " 연락처·학번은 도구 출력에서 지워진다(ADR-0037).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
@@ -185,6 +187,8 @@ public class AcademicTools {
             description =
                     "검토를 기다리는 회차 — 활동에 관계없이 제출된(SUBMITTED) 것만 모은다."
                             + " «승인할 게 뭐 있어»의 답이며, 여기서 고른 뒤 transition_academic_session으로 처리한다."
+                            + " 종료(COMPLETED)된 활동의 회차는 빠진다 — 처리할 수 없는 줄이라서다."
+                            + " 재시작(REOPEN)하면 다시 나온다."
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<SessionCrossListResponse> listAcademicSessionsToReview(
@@ -205,10 +209,15 @@ public class AcademicTools {
     @McpTool(
             name = "transition_academic_program",
             description =
-                    "학술 활동 상태를 옮긴다. 할 수 있는 것은 둘뿐이다 —"
+                    "학술 활동 상태를 옮긴다. 할 수 있는 것은 셋이다 —"
                             + " START_RECRUITMENT(APPROVED → ONGOING · 연결된 폼의 접수를 함께 연다,"
                             + " recruitmentStartDt·recruitmentEndDt를 주면 모집 기간이 된다) ·"
-                            + " APPROVE_COMPLETION(ONGOING → COMPLETED · 진행률이 모자라도 막지 않는다)."
+                            + " APPROVE_COMPLETION(ONGOING → COMPLETED · 진행률이 모자라도 막지 않는다."
+                            + " **종료는 그 활동의 쓰기를 전부 멈춘다** — 회차 제출·검토, 출석 정정, 인증사진,"
+                            + " 모집 선발·일정·문항이 409 ACADEMIC_PROGRAM_COMPLETED가 되고,"
+                            + " 접수 중인 모집 폼은 함께 마감된다) ·"
+                            + " REOPEN(COMPLETED → ONGOING · 종료를 되돌려 쓰기를 다시 받는다."
+                            + " 모집 폼은 다시 열지 않는다)."
                             + " 승인·반려·수정요청은 여기 없다 — 활동의 승인은 기획안 폼 응답 검토가 대신한다."
                             + " 지금 상태에서 갈 수 없는 전이는 409이고 재시도해도 같다."
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
@@ -217,7 +226,7 @@ public class AcademicTools {
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(
                             description =
-                                    "transition(필수 · START_RECRUITMENT·APPROVE_COMPLETION)과"
+                                    "transition(필수 · START_RECRUITMENT·APPROVE_COMPLETION·REOPEN)과"
                                             + " 모집 기간(선택 · START_RECRUITMENT일 때만 뜻이 있다)")
                     AcademicProgramTransitionRequest request,
             McpTransportContext context) {
@@ -240,6 +249,8 @@ public class AcademicTools {
                             + " 둘 다 제출된 회차에서만 되고, **승인은 되돌릴 수 없다** —"
                             + " 승인된 회차 기록이 출석부·진행률의 기준선이라 '승인 취소'라는 것이 없다."
                             + " 사유는 통보의 전부이므로 무엇을 고쳐야 하는지 구체적으로 적는다."
+                            + " 종료(COMPLETED)된 활동의 회차는 409 ACADEMIC_PROGRAM_COMPLETED다 —"
+                            + " 처리하려면 먼저 transition_academic_program REOPEN으로 재시작한다."
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SessionTransitionResponse transitionAcademicSession(
@@ -292,9 +303,12 @@ public class AcademicTools {
             name = "select_academic_recruitment",
             description =
                     "모집 선발 결과를 저장한다. selections에 {formRspnsId, ptcpSttsCd} 쌍을 담는다 —"
-                            + " ptcpSttsCd는 CONFIRMED(합격)·WAITING(대기)·CANCELED(불합격)."
-                            + " **한 번에 보낸 것이 그 시점의 결과 전부**이며 정원을 넘기면 서버가 거절한다."
+                            + " ptcpSttsCd는 CONFIRMED(확정)·WAITLISTED(대기) 둘이다."
+                            + " 다시 저장할 수 있다 — 이미 고른 사람을 확정↔대기로 옮길 수 있고, 같은 값이면 그대로다."
+                            + " **정원은 참고치라 넘겨도 막지 않는다** — 확정 인원이 정원을 넘는지는 호출한 쪽이 본다."
                             + " 지원 목록을 먼저 읽어 formRspnsId를 확인할 것."
+                            + " 모집 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED,"
+                            + " 종료(COMPLETED)된 활동이면 409 ACADEMIC_PROGRAM_COMPLETED다."
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public List<AcademicProgramMemberResponse> selectAcademicRecruitment(
@@ -339,7 +353,11 @@ public class AcademicTools {
                     "출석을 정정한다. attendances에 {eventPtcpId, atndYn} 쌍을 담으며"
                             + " **보낸 사람만 바뀐다**(안 보낸 참가자는 그대로다)."
                             + " 출석부를 먼저 읽어 eventPtcpId를 확인할 것 — 회원 식별자와 다르다."
-                            + " 승인된 회차의 출석도 정정할 수 있다(그것이 이 엔드포인트가 있는 이유다).",
+                            + " **그 활동의 스터디장/팀장 본인만** 할 수 있다 — 학술 활동 관리 권한이 있어도"
+                            + " 리더가 아니면 403이다."
+                            + " 검토 대기(SUBMITTED)·수정요청된 회차의 출석은 고칠 수 있지만"
+                            + " **승인된(APPROVED) 회차는 409 SESSION_NOT_EDITABLE**이고,"
+                            + " 종료(COMPLETED)된 활동이면 409 ACADEMIC_PROGRAM_COMPLETED다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public AttendancePatchResponse correctAcademicAttendances(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,

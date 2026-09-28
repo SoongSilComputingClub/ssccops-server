@@ -59,8 +59,9 @@ public class AttendanceServiceImpl implements AttendanceService {
     }
 
     /*
-     * 출석 정정. 검사 순서는 넓은 것부터다 — 활동(404) → 소유권(403) → 회차(404) → 확정 여부
-     * (409) → 대상(400). 앞의 넷은 SessionCorrectionPolicy가 인증사진 업로드와 나눠 쓴다.
+     * 출석 정정. 검사 순서는 넓은 것부터다 — 활동(404) → 소유권(403) → 종료(409, #597) →
+     * 회차(404) → 확정 여부(409) → 대상(400). 앞의 다섯은 SessionCorrectionPolicy가 인증사진
+     * 업로드와 나눠 쓴다.
      *
      * 응답은 정정한 줄만이 아니라 출석부 전체와 집계다(AttendancePatchResponse 주석). 이미 읽어
      * 둔 목록을 그대로 접으므로 질의가 늘지 않는다.

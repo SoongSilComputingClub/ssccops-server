@@ -9,8 +9,8 @@ package org.sscc.ssccopsserver.domain.academicprogram.entity;
  * AcademicProgram 행 자체가 만들어지지 않으므로(폼 응답 단계에서 끝난다) 승인이 곧 생성이고,
  * 행은 항상 APPROVED로 태어난다(AcademicProgramEntity.create).
  *
- * 전이표(APPROVED → ONGOING → COMPLETED)와 그 검증은 AcademicProgramTransition·
- * AcademicProgramEntity.changeStatus가 갖는다(#133).
+ * 전이표(APPROVED → ONGOING ⇄ COMPLETED)와 그 검증은 AcademicProgramTransition·
+ * AcademicProgramEntity.changeStatus가 갖는다(#133 · 재시작 #597).
  */
 public enum AcademicProgramStatus {
     APPROVED,
@@ -27,5 +27,18 @@ public enum AcademicProgramStatus {
      */
     public boolean hasStartedRecruitment() {
         return this != APPROVED;
+    }
+
+    /*
+     * 이 활동에 지금 쓸 수 있는가 (#597 · ADR-0057 — 종료는 그 활동의 쓰기를 전부 멈춘다).
+     *
+     * 판단은 여기, 거절은 AcademicProgramWritePolicy 하나다. 화면이 폼을 여는 isEditable 두
+     * 곳(계획 표 · 모집 폼)도 이 값을 곱하므로 버튼과 실제 판정이 갈리지 않는다.
+     *
+     * 기간(행사 종료일)이 아니라 상태로 판정한다 — 기간으로 막으면 마지막 회차 기록과 종료일
+     * 뒤의 수정요청이 막힌다(ADR-0057 선택지 B). 조회는 이 값과 무관하다.
+     */
+    public boolean acceptsWrites() {
+        return this != COMPLETED;
     }
 }

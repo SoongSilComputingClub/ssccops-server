@@ -145,6 +145,14 @@ public class SessionRepositoryImpl implements SessionRepositoryCustom {
                             + "')");
             parameters.put("keyword", likePattern(query.keyword()));
         }
+        /*
+         * 승인 대기 목록에서 종료된 활동의 회차를 뺀다(#597). keyword와 같이 p 별칭이 있는 활동
+         * 횡단 질의에서만 붙는다 — 활동 하나짜리 목록은 이 값을 채우지 않는다(SessionCondition).
+         */
+        if (query.hasProgramStatusFilter()) {
+            conditions.add("p.status in :programStatuses");
+            parameters.put("programStatuses", query.programStatuses());
+        }
         if (withCursor && query.hasCursor()) {
             conditions.add(cursorCondition(query, parameters));
         }

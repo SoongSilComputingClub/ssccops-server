@@ -2,7 +2,6 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
-import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
@@ -15,8 +14,9 @@ import lombok.RequiredArgsConstructor;
  * "지금 이 회차의 부속 자료(출석·인증사진)를 고칠 수 있는가"의 유일한 구현 (#137).
  *
  * 출석 정정(PATCH .../attendances)과 인증사진 업로드(POST .../file-reference)는 바꾸는 것이
- * 다르지만 **통과해야 하는 문은 완전히 같다** — 활동 존재(404) → 스터디장 본인(403) → 그 활동의
- * 회차(404) → 확정되지 않은 회차(409). 이 순서 자체가 판단이라(소유권을 회차 조회보다 먼저 보는
+ * 다르지만 **통과해야 하는 문은 완전히 같다** — 활동 존재(404) → 스터디장 본인(403) → 종료되지
+ * 않은 활동(409, #597) → 그 활동의 회차(404) → 확정되지 않은 회차(409). 앞의 셋은 이 도메인의
+ * 모든 쓰기가 지나는 AcademicProgramWritePolicy의 것이다. 이 순서 자체가 판단이라(소유권을 회차 조회보다 먼저 보는
  * 것은 남의 활동에 회차 번호를 바꿔 가며 부르는 것만으로 몇 번 회차가 있는지 알아낼 수 없게
  * 하기 위해서다 — SessionServiceImpl.submitSession과 같은 근거) 서비스 두 곳에 옮겨 적으면
  * 한쪽만 고쳐진 순서가 다른 쪽에 남는다.
@@ -30,19 +30,11 @@ public class SessionCorrectionPolicy {
 
     private final AcademicProgramRepository academicProgramRepository;
     private final SessionRepository sessionRepository;
-    private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
+    private final AcademicProgramWritePolicy academicProgramWritePolicy;
 
     public SessionEntity requireCorrectable(
             Long academicProgramId, Long sessionId, MemberEntity requester) {
-        AcademicProgramEntity academicProgram =
-                academicProgramRepository
-                        .findById(academicProgramId)
-                        .orElseThrow(
-                                () ->
-                                        new GeneralException(
-                                                AcademicProgramErrorCode
-                                                        .ACADEMIC_PROGRAM_NOT_FOUND));
-        academicProgramOwnershipPolicy.requireLeader(academicProgram, requester);
+        academicProgramWritePolicy.requireLeader(academicProgramId, requester);
 
         SessionEntity session = findSession(academicProgramId, sessionId);
         session.requireCorrectable();

@@ -97,9 +97,12 @@ public class AcademicTools {
             name = "list_academic_programs",
             description =
                     "학술 활동(스터디·프로젝트·트랙) 목록. typeCd(유형 코드)·sttsCd(상태)·keyword(제목)로"
-                            + " 거르고 mine에 리더/멤버를 주면 내 것만 본다, 전부 비우면 전체."
+                            + " 거르고, mine으로 내 것만 본다 — leader(내가 스터디장/팀장) ·"
+                            + " proposer(내가 기획안 제출자) · true(둘 중 하나). 팀원으로 참여한 활동을 고르는"
+                            + " 값은 없다. 그 밖의 값은 400이다. 전부 비우면 전체."
                             + " 상태는 APPROVED(승인됨 · 모집 전)·ONGOING(진행 중)·COMPLETED(종료) 셋이다."
-                            + " 목록에는 커리큘럼·팀원이 없다 — get_academic_program으로.",
+                            + " 목록에는 기획 내용(목표·준비·일정)이 없다 — get_academic_program으로."
+                            + " 팀원은 list_academic_program_members, 회차는 list_academic_sessions로 본다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramSummaryResponse> listAcademicPrograms(
             @McpToolParam(
@@ -149,8 +152,11 @@ public class AcademicTools {
     @McpTool(
             name = "list_academic_sessions",
             description =
-                    "한 활동의 회차 목록. sttsCd로 거른다(DRAFT 작성 중·SUBMITTED 제출됨·APPROVED 승인됨·"
+                    "한 활동의 회차 목록. sttsCd로 거른다(SUBMITTED 제출됨·APPROVED 승인됨·"
                             + "REVISION_REQUESTED 수정요청됨), 비우면 전체."
+                            + " 아직 기록하지 않은 회차(NOT_SUBMITTED)는 이 목록에 행이 없다 —"
+                            + " 그 값으로 거르면 언제나 빈 목록이다. 계획된 회차 수는"
+                            + " get_academic_program의 curriculumItemCount다."
                             + " 여러 활동에 걸쳐 검토할 것을 찾을 때는 list_academic_sessions_to_review를 쓴다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<SessionSummaryResponse> listAcademicSessions(

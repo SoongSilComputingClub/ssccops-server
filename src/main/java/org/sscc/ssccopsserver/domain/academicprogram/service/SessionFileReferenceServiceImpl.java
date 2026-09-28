@@ -58,8 +58,9 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
     private final SessionFileReferenceViewer sessionFileReferenceViewer;
 
     /*
-     * 검사 순서는 출석 정정과 같다 — 활동(404) → 소유권(403) → 회차(404) → 확정 여부(409) →
-     * 형식(400). 그 넷을 SessionCorrectionPolicy 한 곳에 두는 이유는 그 클래스 주석에 있다.
+     * 검사 순서는 출석 정정과 같다 — 활동(404) → 소유권(403) → 종료(409, #597) → 회차(404) →
+     * 확정 여부(409) → 형식(400). 그 다섯을 SessionCorrectionPolicy 한 곳에 두는 이유는 그
+     * 클래스 주석에 있다.
      * 형식 검사를 맨 뒤에 두는 것은 남의 활동에 확장자를 바꿔 가며 부르는 것만으로 회차의
      * 존재를 알아낼 수 없게 하기 위해서다.
      */

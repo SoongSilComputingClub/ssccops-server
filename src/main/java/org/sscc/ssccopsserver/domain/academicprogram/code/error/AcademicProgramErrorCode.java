@@ -143,10 +143,29 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      * 빈 목록으로 대신하지 않는 것과 같은 판단).
      *
      * COMPLETED는 여기 걸리지 않는다. 이름 그대로 **ONGOING 이전**만 막는 것이고, 끝난 활동의
-     * 신청 명부는 지나간 사실이라 조회를 막을 이유가 없다 — 그 시점의 선발은 참가 상태 전이
-     * (PATCH /v1/events/{eventId}/participants/{eventPtcpId})가 이미 막는다.
+     * 신청 명부는 지나간 사실이라 조회를 막을 이유가 없다 — 그 시점의 선발·일정 변경은
+     * ACADEMIC_PROGRAM_COMPLETED가 이보다 먼저 막는다(AcademicProgramWritePolicy, #597).
+     * (⚠️ 이 줄은 원래 «참가 상태 전이가 이미 막는다»고 적었지만 그런 코드는 없었다 —
+     * EventParticipantEntity.changeStatus는 참가 상태 쌍만 본다.)
      */
     RECRUITMENT_NOT_STARTED(HttpStatus.CONFLICT, "RECRUITMENT_NOT_STARTED", "아직 모집이 시작되지 않았습니다."),
+
+    /*
+     * 409 — 종료(COMPLETED)된 활동에 쓰기를 시도했을 때 (#597 · ADR-0057).
+     *
+     * **종료는 그 활동의 쓰기를 전부 멈춘다** — 회차 제출·재제출·검토, 출석 정정, 인증사진,
+     * 모집 선발·일정·문항. 거절하는 자리는 AcademicProgramWritePolicy 하나이며 판정은
+     * AcademicProgramStatus.acceptsWrites다. 되돌리는 길은 학술국장의 재시작(REOPEN)이다.
+     *
+     * 판정 순서는 활동 404 → 자격 403 → **이것** → 그 밖의 409다. 자격보다 뒤인 것은 권한 없는
+     * 요청자에게 «종료됐다»는 사실을 먼저 알리지 않기 위해서다. 막지 않는 것: 조회 전부 ·
+     * 공유 링크 발급·회수(내용을 바꾸지 않는다) · 재시작 전이 자체.
+     *
+     * SESSION_NOT_EDITABLE과 코드를 나눈 것은 되돌리는 사람이 다르기 때문이다 — 그쪽은
+     * 스터디장이 회차의 상태를 기다리면 풀리고, 이쪽은 학술국장이 재시작해야 풀린다.
+     */
+    ACADEMIC_PROGRAM_COMPLETED(
+            HttpStatus.CONFLICT, "ACADEMIC_PROGRAM_COMPLETED", "종료된 학술 활동이라 수정할 수 없습니다."),
 
     /*
      * 409 — 모집 시작 일시가 지난 뒤 스터디장/팀장이 모집 폼 문항을 고치려 했을 때 (#483).

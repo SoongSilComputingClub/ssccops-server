@@ -1,8 +1,12 @@
 package org.sscc.ssccopsserver.domain.academicprogram.dto;
 
+import java.util.EnumSet;
+import java.util.Set;
+
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
 
 /*
@@ -18,6 +22,16 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
  * SessionSortOrder 주석에 있다(그 컬럼은 nullable이라 커서 비교가 성립하지 않는다).
  * size·cursor 규칙은 다른 목록과 같은 값을 쓴다(SessionCondition의 상수를 그대로 참조한다 —
  * 목록마다 상한이 다르면 클라이언트가 API마다 다른 한도를 외워야 한다).
+ *
+ * **종료된 활동의 회차는 빠진다**(#597 · 2026-09-28 결정). 종료가 그 활동의 쓰기를 멈추므로
+ * (AcademicProgramWritePolicy) 그 회차는 국장이 처리할 수 없는 줄이다 — 남겨 두면 대기열을
+ * 차지하고 어드민 학술 대시보드의 «승인 대기» 수(이 목록의 page.totalCount)와 MCP
+ * list_academic_sessions_to_review의 답이 부풀려진다. 처리하려면 어차피 재시작해야 하고,
+ * 재시작하면 다시 이 목록에 나온다. 회차 이력(GET .../{id}/sessions · .../sessions)에서는
+ * 그대로 보인다.
+ *
+ * 무엇이 «처리할 수 있는 활동»인지는 AcademicProgramStatus.acceptsWrites가 답한다 — 여기서
+ * COMPLETED를 다시 적으면 쓰기 판정과 목록이 다른 표를 보게 된다.
  */
 public record SessionReviewCondition(
         @Min(value = 1, message = "size는 1 이상이어야 합니다.")
@@ -30,6 +44,9 @@ public record SessionReviewCondition(
 
     public static final SessionSortOrder DEFAULT_SORT = SessionSortOrder.REAL_DT_ASC;
 
+    private static final Set<AcademicProgramStatus> REVIEWABLE_PROGRAM_STATUSES =
+            reviewableProgramStatuses();
+
     /** 이 목록의 상태는 요청이 정하지 않는다 — 검토를 기다리는 회차가 곧 SUBMITTED다 */
     public SessionSearchQuery toQuery() {
         SessionSortOrder sortOrder = SessionSortOrder.from(sort, DEFAULT_SORT);
@@ -37,8 +54,19 @@ public record SessionReviewCondition(
                 null,
                 SessionStatus.SUBMITTED,
                 null,
+                REVIEWABLE_PROGRAM_STATUSES,
                 size == null ? SessionCondition.DEFAULT_SIZE : size,
                 sortOrder,
                 SessionCursor.decode(cursor, sortOrder));
+    }
+
+    private static Set<AcademicProgramStatus> reviewableProgramStatuses() {
+        Set<AcademicProgramStatus> statuses = EnumSet.noneOf(AcademicProgramStatus.class);
+        for (AcademicProgramStatus status : AcademicProgramStatus.values()) {
+            if (status.acceptsWrites()) {
+                statuses.add(status);
+            }
+        }
+        return statuses;
     }
 }

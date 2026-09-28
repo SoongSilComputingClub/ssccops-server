@@ -22,7 +22,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /*
- * acdm_actv_aprv(승인 이력) — 회차·종료 승인 기록 (#133, 학술관리_데이터모델.md §2).
+ * acdm_actv_aprv(승인 이력) — 회차·종료 승인과 재시작(#597) 기록 (#133, 학술관리_데이터모델.md §2).
  * `sub_work_aprv`와 같은 패턴(승인자·승인일시·사유)을 따르되, FK가 sub_work_id로 고정된
  * sub_work_aprv를 재사용하지 않고 테이블을 분리했다(질의응답으로 확정) — 승인 대상 종류마다
  * 커지는 변경을 학술 도메인 안에 가둔다.
@@ -50,7 +50,7 @@ public class AcademicProgramApprovalEntity {
     private AcademicProgramEntity academicProgram;
 
     /*
-     * 회차 승인일 때만 값이 있다(#136). COMPLETION은 활동 단위 승인이라 항상 NULL이다.
+     * 회차 승인일 때만 값이 있다(#136). COMPLETION·REOPEN은 활동 단위라 항상 NULL이다.
      *
      * updatable = false인 것은 이 행이 "그때 그 처리"를 가리키는 이력이기 때문이다 — 대상이
      * 바뀌는 승인 이력은 이력이 아니다.
@@ -60,7 +60,7 @@ public class AcademicProgramApprovalEntity {
     private SessionEntity session;
 
     /*
-     * 승인 지점(SESSION/COMPLETION). 컬럼명이 acdm_actv_aprv_se_cd가 아닌 것은 데이터사전 등재(#178)
+     * 승인 지점(SESSION/COMPLETION/REOPEN). 컬럼명이 acdm_actv_aprv_se_cd가 아닌 것은 데이터사전 등재(#178)
      * 때문이다 — 표준코드 시트의 코드그룹 ID는 유일해야 하는데 aprv_stts_cd 그룹이 이미 하위
      * 업무용으로 있고 값 집합이 다르다(NOT_REQUIRED·REAPPROVAL_REQUIRED를 포함한다). 그래서
      * 학술 쪽 두 코드에는 acdm_actv_aprv 접두를 붙였고, '지점(pnt)'은 표준단어인 '구분(se)'으로
@@ -122,6 +122,24 @@ public class AcademicProgramApprovalEntity {
                 academicProgram,
                 null,
                 AcademicProgramApprovalPoint.COMPLETION,
+                AcademicProgramApprovalStatus.APPROVED,
+                approver,
+                null,
+                approvedAt);
+    }
+
+    /*
+     * 재시작 기록(#597 REOPEN · ADR-0057). 종료와 같은 모양이다 — 대기 없이 APPROVED로 확정되고
+     * 활동 단위라 session은 NULL이다. 종료 줄을 지우거나 고치지 않고 이 줄을 덧붙인다: 이력은
+     * 덧붙이기만 하며, 종료와 재시작을 반복한 사실도 기록이다.
+     */
+    public static AcademicProgramApprovalEntity forReopen(
+            AcademicProgramEntity academicProgram, MemberEntity approver, Instant approvedAt) {
+        return new AcademicProgramApprovalEntity(
+                null,
+                academicProgram,
+                null,
+                AcademicProgramApprovalPoint.REOPEN,
                 AcademicProgramApprovalStatus.APPROVED,
                 approver,
                 null,

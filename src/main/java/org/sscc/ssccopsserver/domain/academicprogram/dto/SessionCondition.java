@@ -35,6 +35,8 @@ public record SessionCondition(
                 toStatus(),
                 // 활동 하나짜리 목록에는 검색어가 없다 — 활동을 가로지르는 목록(#136)만 쓴다
                 null,
+                // 회차 이력은 활동이 끝나도 그대로 보인다 — 활동 상태로 거르는 것은 승인 대기 목록뿐이다
+                null,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 SessionCursor.decode(cursor, sortOrder));

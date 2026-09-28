@@ -268,6 +268,35 @@ class AcademicProgramApprovalControllerTest {
                 .andExpect(jsonPath("$.data[0].sessionId").value(sessionId));
     }
 
+    /*
+     * 재시작(#597 · ADR-0057)도 이 이력에 남는다 — «누가 언제 다시 열었나»를 화면이 읽는
+     * 자리가 여기뿐이다(감사 로그는 읽어 오는 API가 없다). 종료 줄은 지워지지 않고 재시작 줄이
+     * 덧붙으므로 COMPLETION 필터에는 여전히 한 건이 남는다.
+     */
+    @Test
+    void filtersByReopenPoint() throws Exception {
+        approveCompletion();
+        transitionProgram("REOPEN");
+
+        mockMvc.perform(
+                        authorized(get(approvalsPath(study)), managerToken)
+                                .param("aprvSeCd", "REOPEN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
+                .andExpect(jsonPath("$.data[0].aprvSeCd").value("REOPEN"))
+                .andExpect(jsonPath("$.data[0].aprvSttsCd").value("APPROVED"))
+                .andExpect(jsonPath("$.data[0].sessionId").value(Matchers.nullValue()))
+                .andExpect(jsonPath("$.data[0].aprvrMbrNm").value("학술국장"))
+                .andExpect(jsonPath("$.page.totalCount").value(1))
+                .andExpect(jsonPath("$.page.overallCount").value(2));
+
+        mockMvc.perform(
+                        authorized(get(approvalsPath(study)), managerToken)
+                                .param("aprvSeCd", "COMPLETION"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(1)));
+    }
+
     // 회차 하나의 처리 기록만 좁혀 본다 — 회차 상세 화면의 '검토 기록'이 쓰는 필터다
     @Test
     void filtersBySessionId() throws Exception {
@@ -287,7 +316,7 @@ class AcademicProgramApprovalControllerTest {
     }
 
     /*
-     * **aprvSeCd는 SESSION·COMPLETION만 받는다.** 2026-08-24 재설계로 기획안 승인 이력은 폼
+     * **aprvSeCd는 SESSION·COMPLETION·REOPEN만 받는다.** 2026-08-24 재설계로 기획안 승인 이력은 폼
      * 응답 검토(#141)로 옮겨 갔고, 그 어휘는 AcademicProgramApprovalPoint에 아예 없다 — 옛
      * 이름으로 부르면 조용히 전건이 나오지 않고 400이다.
      */

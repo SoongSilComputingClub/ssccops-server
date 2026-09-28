@@ -80,6 +80,9 @@ public interface AcademicProgramRecruitmentService {
      *
      * 응답은 갱신된 팀원 명단 전체다(고른 줄만이 아니다) — 선발 화면이 다음에 그리는 것이
      * 명단이고, 부분만 돌려주면 화면이 한 번 더 조회해야 한다.
+     *
+     * 종료된 활동은 409 ACADEMIC_PROGRAM_COMPLETED다(#597 · ADR-0057) — 선발을 다시 열려면
+     * 학술국장이 먼저 재시작한다.
      */
     List<AcademicProgramMemberResponse> selectMembers(
             Long academicProgramId, RecruitmentSelectRequest request, MemberEntity performer);
@@ -89,7 +92,8 @@ public interface AcademicProgramRecruitmentService {
      *
      * **창이 닫혀도 돌려준다.** 접수 중·접수 종료에도 리더는 자기 공고의 문항을 볼 수 있어야
      * 하고(화면의 "지원서 문항 보기"), 막는 것은 응답을 받는 도중에 물음이 바뀌는 것이지
-     * 열람이 아니다. 지금 고칠 수 있는지는 isEditable이 말한다.
+     * 열람이 아니다. 지금 고칠 수 있는지는 isEditable이 말한다 — 창이 열려 있고 활동이 종료되지
+     * 않았을 때만 참이다(#597).
      *
      * 모집 시작 여부(RECRUITMENT_NOT_STARTED)를 보지 않는다 — 이 경로가 있어야 하는 구간이
      * 바로 모집 전이다. 신청자 조회와 갈리는 유일한 지점이며, 그쪽은 "아직 물어볼 것이 없다"를
@@ -102,7 +106,8 @@ public interface AcademicProgramRecruitmentService {
      *
      * 창은 학술국장이 모집 관리에서 등록한 모집 시작 일시 전까지다(= form.rcpt_bgng_dt).
      * 닫힌 뒤의 요청은 409 RECRUITMENT_FORM_NOT_EDITABLE이며, 그 판정의 근거와 학술국장에게는
-     * 같은 제한이 없는 이유는 그 에러 코드의 주석에 있다.
+     * 같은 제한이 없는 이유는 그 에러 코드의 주석에 있다. 종료된 활동은 창보다 먼저 409
+     * ACADEMIC_PROGRAM_COMPLETED다(#597) — 이것은 학술국장에게도 걸린다.
      *
      * 저장 규칙 자체는 폼 도메인이 갖는다(FormService.changeQuestionComposition) — 문항 구성
      * 검사·응답이 쓰는 qitemId 보호·시스템 폼 계약·이력과 버전이 전부 그쪽이고, 이 서비스가
@@ -134,6 +139,9 @@ public interface AcademicProgramRecruitmentService {
      * **모집이 시작된 뒤에만 부를 수 있다**(409 RECRUITMENT_NOT_STARTED). 시작 전 활동의 일정은
      * START_RECRUITMENT가 정하므로 이 경로가 그 자리를 겸하면 "모집을 시작하지 않은 채 접수
      * 기간만 든 활동"이 생기고, 그 상태는 폼이 DRAFT라 화면이 읽을 수 없다.
+     *
+     * **종료되기 전까지만 부를 수 있다**(409 ACADEMIC_PROGRAM_COMPLETED · #597). 그전에는 끝난
+     * 활동의 접수 창을 이 경로로 다시 열 수 있었다.
      *
      * 저장 규칙은 폼 도메인이 갖는다(FormService.changeReceiptPeriod) — 기간 역전은 400
      * INVALID_RECEIPT_PERIOD로 그쪽에서 나온다. #190이 폼 편집(PUT /v1/forms/{id})에 걸어 둔

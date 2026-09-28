@@ -16,8 +16,10 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
  * 하지 않는다).
  *
  * isEditable도 서버가 판정해 내린다 — 스터디장/팀장 본인 여부(AcademicProgramOwnershipPolicy)와
+ * 활동이 쓰기를 받는가(AcademicProgramStatus.acceptsWrites, #597 — 종료된 활동은 꺼진다)와
  * 회차 상태(SessionStatus.allowsRecording)를 곱한 값이라, 웹이 leadrMbrId === 내 mbrId를 다시
- * 계산하면 버튼과 실제 판정이 갈린다.
+ * 계산하면 버튼과 실제 판정이 갈린다. 앞의 둘은 활동 단위라 호출부가 한 번 곱해 writable로
+ * 넘긴다.
  *
  * 팩토리가 둘인 것은 실적 유무가 이 줄의 모양을 가르기 때문이다 — 없으면 상태만 합성하고
  * (withoutSession), 있으면 저장된 상태와 실제 진행일·내용을 그대로 싣는다(withSession, #135).
@@ -38,7 +40,7 @@ public record CurriculumItemWithSessionResponse(
      * (데이터모델 §3 — NOT_SUBMITTED는 파생 상태다).
      */
     public static CurriculumItemWithSessionResponse withoutSession(
-            CurriculumItemEntity curriculumItem, boolean isLeader) {
+            CurriculumItemEntity curriculumItem, boolean writable) {
         return new CurriculumItemWithSessionResponse(
                 curriculumItem.getId(),
                 curriculumItem.getSeqno(),
@@ -48,7 +50,7 @@ public record CurriculumItemWithSessionResponse(
                 SessionStatus.NOT_SUBMITTED.name(),
                 null,
                 null,
-                isLeader && SessionStatus.NOT_SUBMITTED.allowsRecording());
+                writable && SessionStatus.NOT_SUBMITTED.allowsRecording());
     }
 
     /*
@@ -56,11 +58,11 @@ public record CurriculumItemWithSessionResponse(
      * NOT_SUBMITTED가 나올 수 없는 것은 sesn 행이 있다는 사실 자체가 그 상태를 부정하기
      * 때문이다.
      *
-     * isEditable은 여전히 두 조건의 곱이다. 상태 쪽 판정을 SessionStatus.allowsRecording에
-     * 맡기므로 SUBMITTED·APPROVED인 회차의 버튼은 스터디장 본인에게도 꺼진다.
+     * isEditable은 여전히 곱이다. 상태 쪽 판정을 SessionStatus.allowsRecording에 맡기므로
+     * SUBMITTED·APPROVED인 회차의 버튼은 스터디장 본인에게도 꺼진다.
      */
     public static CurriculumItemWithSessionResponse withSession(
-            CurriculumItemEntity curriculumItem, SessionEntity session, boolean isLeader) {
+            CurriculumItemEntity curriculumItem, SessionEntity session, boolean writable) {
         return new CurriculumItemWithSessionResponse(
                 curriculumItem.getId(),
                 curriculumItem.getSeqno(),
@@ -70,6 +72,6 @@ public record CurriculumItemWithSessionResponse(
                 session.getStatus().name(),
                 session.getRealDate(),
                 session.getContent(),
-                isLeader && session.getStatus().allowsRecording());
+                writable && session.getStatus().allowsRecording());
     }
 }

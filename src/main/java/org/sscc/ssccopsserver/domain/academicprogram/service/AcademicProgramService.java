@@ -23,10 +23,10 @@ public interface AcademicProgramService {
             AcademicProgramCondition condition, MemberEntity viewer);
 
     /*
-     * 국장 전용 2액션(#133 · POST /v1/academic-programs/{id}/transitions). 전이표·사전 검증은
-     * AcademicProgramTransition·AcademicProgramEntity.changeStatus가 갖고, 여기서는 START_
-     * RECRUITMENT의 폼 오케스트레이션(기간 반영 → OPEN 전이)과 APPROVE_COMPLETION의 승인
-     * 이력 기록만 더한다.
+     * 국장 전용 3액션(#133 · 재시작 #597 · POST /v1/academic-programs/{id}/transitions).
+     * 전이표·사전 검증은 AcademicProgramTransition·AcademicProgramEntity.changeStatus가 갖고,
+     * 여기서는 START_RECRUITMENT의 폼 오케스트레이션(기간 반영 → OPEN 전이)과 APPROVE_COMPLETION의
+     * 승인 이력 기록·접수 중인 폼 마감, REOPEN의 재시작 기록만 더한다.
      */
     AcademicProgramTransitionResponse transition(
             Long academicProgramId,

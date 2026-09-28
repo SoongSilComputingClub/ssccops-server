@@ -21,7 +21,6 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramAppro
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
-import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AttendanceRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionAttendanceCount;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
@@ -46,7 +45,7 @@ import lombok.RequiredArgsConstructor;
 @Transactional(readOnly = true)
 public class SessionReviewServiceImpl implements SessionReviewService {
 
-    private final AcademicProgramRepository academicProgramRepository;
+    private final AcademicProgramWritePolicy academicProgramWritePolicy;
     private final SessionRepository sessionRepository;
     private final AttendanceRepository attendanceRepository;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
@@ -54,9 +53,13 @@ public class SessionReviewServiceImpl implements SessionReviewService {
     private final AuditLog auditLog;
 
     /*
-     * 승인·수정요청. 검사 순서는 넓은 것부터다 — 활동(404) → 회차(404) → 전이 가능 여부(409) →
-     * 사유(400). 회차를 경로의 활동으로 좁혀 찾는 것은 #135의 조회·재제출과 같은 이유다
-     * (식별자만 보면 다른 활동의 회차를 승인할 수 있다).
+     * 승인·수정요청. 검사 순서는 넓은 것부터다 — 활동(404) → 종료(409) → 회차(404) → 전이 가능
+     * 여부(409) → 사유(400). 회차를 경로의 활동으로 좁혀 찾는 것은 #135의 조회·재제출과 같은
+     * 이유다(식별자만 보면 다른 활동의 회차를 승인할 수 있다).
+     *
+     * 종료된 활동의 회차는 처리하지 않는다(#597 · ADR-0057) — 그전까지 이 메서드는 활동의
+     * 존재(existsById)만 보고 읽지도 않았다. 권한(403)은 @RequireAuthority가 이미 끊었다.
+     * 승인 대기 목록에서도 그 회차는 빠진다(SessionReviewCondition).
      *
      * 상태를 바꾸는 것과 승인 이력을 남기는 것은 나눌 수 없는 한 건이라 한 트랜잭션이다 —
      * 이력이 실패하면 상태 변경도 되돌아간다(회원 등급·상태 변경 #78과 같은 원칙). 그래서
@@ -69,7 +72,7 @@ public class SessionReviewServiceImpl implements SessionReviewService {
             Long sessionId,
             SessionTransitionRequest request,
             MemberEntity approver) {
-        requireAcademicProgramExists(academicProgramId);
+        academicProgramWritePolicy.require(academicProgramId);
         SessionEntity session = findSession(sessionId, academicProgramId);
 
         SessionStatus before = session.getStatus();
@@ -151,16 +154,6 @@ public class SessionReviewServiceImpl implements SessionReviewService {
     private String nextCursorOf(
             SessionSearchQuery query, List<SessionEntity> rows, boolean hasNext) {
         return hasNext ? SessionCursor.of(query.sort(), rows.get(rows.size() - 1)).encode() : null;
-    }
-
-    /*
-     * 활동 존재 여부를 회차보다 먼저 확인한다 — 없는 활동에 회차 404를 돌려주면 화면이
-     * "활동이 사라진 것"과 "회차가 없는 것"을 구별하지 못한다(#135의 조회와 같은 태도).
-     */
-    private void requireAcademicProgramExists(Long academicProgramId) {
-        if (!academicProgramRepository.existsById(academicProgramId)) {
-            throw new GeneralException(AcademicProgramErrorCode.ACADEMIC_PROGRAM_NOT_FOUND);
-        }
     }
 
     private SessionEntity findSession(Long sessionId, Long academicProgramId) {

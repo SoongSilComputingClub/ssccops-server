@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,6 +40,8 @@ import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
+import org.sscc.ssccopsserver.domain.form.code.FormStatus;
+import org.sscc.ssccopsserver.domain.form.code.FormStatusAction;
 import org.sscc.ssccopsserver.domain.form.code.QuestionItemType;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
@@ -64,8 +67,10 @@ import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 /*
  * 학술 활동 국장 전용 전이 API (#133 · POST /v1/academic-programs/{id}/transitions).
  *
- * START_RECRUITMENT·APPROVE_COMPLETION 둘 다 ACADEMIC_PROGRAM_MANAGE라 AcademicProgramType
- * ControllerTest와 같은 방식(관리자·비관리자 토큰)으로 권한을 가른다.
+ * START_RECRUITMENT·APPROVE_COMPLETION·REOPEN(#597) 셋 다 ACADEMIC_PROGRAM_MANAGE라
+ * AcademicProgramTypeControllerTest와 같은 방식(관리자·비관리자 토큰)으로 권한을 가른다.
+ *
+ * 종료가 멈추는 쓰기 경로 여덟은 AcademicProgramCompletionControllerTest가 한 표로 본다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -211,9 +216,15 @@ class AcademicProgramTransitionControllerTest {
 
     // ------------------------------------------------------------------ APPROVE_COMPLETION
 
+    /*
+     * 종료는 접수 중인 모집 폼을 같은 트랜잭션에서 마감한다(#597) — 활동이 쓰기를 멈췄는데 폼만
+     * 응답을 받으면 아무도 선발할 수 없는 지원서가 쌓인다. 폼을 바꿨으므로 응답에
+     * formReceiptStatus가 실린다.
+     */
     @Test
     void approveCompletionRecordsApprovalAndAdvancesToCompleted() throws Exception {
         AcademicProgramEntity program = createOngoingProgram("종료 승인 스터디");
+        Long formId = program.getEvent().getForm().getId();
 
         mockMvc.perform(
                         authorized(
@@ -226,11 +237,13 @@ class AcademicProgramTransitionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.beforeSttsCd").value("ONGOING"))
                 .andExpect(jsonPath("$.data.afterSttsCd").value("COMPLETED"))
-                .andExpect(jsonPath("$.data.formReceiptStatus").value(Matchers.nullValue()));
+                .andExpect(jsonPath("$.data.formReceiptStatus").value("CLOSED"));
 
         flushAndClear();
         assertThat(academicProgramRepository.findById(program.getId()).orElseThrow().getStatus())
                 .isEqualTo(AcademicProgramStatus.COMPLETED);
+        assertThat(formRepository.findById(formId).orElseThrow().getStatus())
+                .isEqualTo(FormStatus.CLOSED);
 
         List<AcademicProgramApprovalEntity> approvals = academicProgramApprovalRepository.findAll();
         assertThat(approvals)
@@ -244,6 +257,126 @@ class AcademicProgramTransitionControllerTest {
                                     .isEqualTo(AcademicProgramApprovalStatus.APPROVED);
                             assertThat(approval.getApprovedAt()).isNotNull();
                         });
+    }
+
+    // 이미 마감된 폼은 건드리지 않는다 — 어느 상태에서 닫을 수 있는지는 폼의 전이표가 답한다
+    @Test
+    void approveCompletionLeavesAlreadyClosedFormAlone() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("이미 마감한 스터디");
+        FormEntity form =
+                formRepository.findById(program.getEvent().getForm().getId()).orElseThrow();
+        form.changeStatus(FormStatusAction.CLOSE);
+        flushAndClear();
+
+        mockMvc.perform(
+                        authorized(
+                                        post(PROGRAMS + "/{id}/transitions", program.getId()),
+                                        managerToken)
+                                .content(
+                                        """
+                                        {"transition": "APPROVE_COMPLETION"}
+                                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.afterSttsCd").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.formReceiptStatus").value(Matchers.nullValue()));
+    }
+
+    // ------------------------------------------------------------------ REOPEN (#597)
+
+    /*
+     * 재시작은 종료를 되돌리고 그 사실을 승인 이력에 한 줄 덧붙인다 — 종료 줄은 지우지 않는다.
+     * **모집 폼은 다시 열지 않는다**(ADR-0057) — 종료가 닫은 폼은 닫힌 채이고 formReceiptStatus는
+     * null이다.
+     */
+    @Test
+    void reopenReturnsCompletedProgramToOngoingWithoutReopeningForm() throws Exception {
+        AcademicProgramEntity program = createCompletedProgram("재시작 스터디");
+        Long formId = program.getEvent().getForm().getId();
+
+        mockMvc.perform(
+                        authorized(
+                                        post(PROGRAMS + "/{id}/transitions", program.getId()),
+                                        managerToken)
+                                .content(
+                                        """
+                                        {"transition": "REOPEN"}
+                                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.beforeSttsCd").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.afterSttsCd").value("ONGOING"))
+                .andExpect(jsonPath("$.data.formReceiptStatus").value(Matchers.nullValue()));
+
+        flushAndClear();
+        assertThat(academicProgramRepository.findById(program.getId()).orElseThrow().getStatus())
+                .isEqualTo(AcademicProgramStatus.ONGOING);
+        assertThat(formRepository.findById(formId).orElseThrow().getStatus())
+                .isEqualTo(FormStatus.CLOSED);
+        assertThat(pointsOf(program))
+                .containsExactly(
+                        AcademicProgramApprovalPoint.COMPLETION,
+                        AcademicProgramApprovalPoint.REOPEN);
+    }
+
+    // 종료 → 재시작 → 종료를 반복한 사실도 기록이다 — 이력은 덧붙이기만 한다
+    @Test
+    void completeReopenCompleteKeepsEveryStepInHistory() throws Exception {
+        AcademicProgramEntity program = createCompletedProgram("반복 스터디");
+
+        transition(program, "REOPEN");
+        transition(program, "APPROVE_COMPLETION");
+
+        flushAndClear();
+        assertThat(academicProgramRepository.findById(program.getId()).orElseThrow().getStatus())
+                .isEqualTo(AcademicProgramStatus.COMPLETED);
+        assertThat(pointsOf(program))
+                .containsExactly(
+                        AcademicProgramApprovalPoint.COMPLETION,
+                        AcademicProgramApprovalPoint.REOPEN,
+                        AcademicProgramApprovalPoint.COMPLETION);
+        assertThat(academicProgramApprovalRepository.findAll())
+                .filteredOn(
+                        approval -> approval.getAcademicProgram().getId().equals(program.getId()))
+                .allSatisfy(
+                        approval -> {
+                            assertThat(approval.getStatus())
+                                    .isEqualTo(AcademicProgramApprovalStatus.APPROVED);
+                            assertThat(approval.getSession()).isNull();
+                            assertThat(approval.getApprover().getId()).isEqualTo(manager.getId());
+                            assertThat(approval.getApprovedAt()).isNotNull();
+                        });
+    }
+
+    // 진행 중인 활동은 다시 열 것이 없다 — 전이표가 COMPLETED에서만 REOPEN을 허용한다
+    @Test
+    void reopenFromOngoingReturns409() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("진행 중 스터디");
+
+        mockMvc.perform(
+                        authorized(
+                                        post(PROGRAMS + "/{id}/transitions", program.getId()),
+                                        managerToken)
+                                .content(
+                                        """
+                                        {"transition": "REOPEN"}
+                                        """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_ACADEMIC_PROGRAM_TRANSITION"));
+    }
+
+    @Test
+    void reopenWithoutManageAuthorityIsForbidden() throws Exception {
+        AcademicProgramEntity program = createCompletedProgram("권한 없이 재시작");
+
+        mockMvc.perform(
+                        authorized(
+                                        post(PROGRAMS + "/{id}/transitions", program.getId()),
+                                        outsiderToken)
+                                .content(
+                                        """
+                                        {"transition": "REOPEN"}
+                                        """))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     // ------------------------------------------------------------------ 공통 거절
@@ -333,6 +466,31 @@ class AcademicProgramTransitionControllerTest {
                 manager);
         flushAndClear();
         return academicProgramRepository.findById(program.getId()).orElseThrow();
+    }
+
+    private AcademicProgramEntity createCompletedProgram(String title) {
+        AcademicProgramEntity program = createOngoingProgram(title);
+        transition(program, "APPROVE_COMPLETION");
+        flushAndClear();
+        return academicProgramRepository.findById(program.getId()).orElseThrow();
+    }
+
+    private void transition(AcademicProgramEntity program, String transition) {
+        academicProgramService.transition(
+                program.getId(),
+                new AcademicProgramTransitionRequest(
+                        AcademicProgramTransition.valueOf(transition), null, null),
+                manager);
+        entityManager.flush();
+    }
+
+    // 이 활동의 승인 이력 지점을 기록된 순서(식별자 오름차순)대로
+    private List<AcademicProgramApprovalPoint> pointsOf(AcademicProgramEntity program) {
+        return academicProgramApprovalRepository.findAll().stream()
+                .filter(approval -> approval.getAcademicProgram().getId().equals(program.getId()))
+                .sorted(Comparator.comparing(AcademicProgramApprovalEntity::getId))
+                .map(AcademicProgramApprovalEntity::getPoint)
+                .toList();
     }
 
     private AcademicProgramEntity createAcademicProgramFixture(

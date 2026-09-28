@@ -89,6 +89,9 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     private final AcademicProgramRepository academicProgramRepository;
     private final EventParticipantRepository eventParticipantRepository;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
+
+    /* 쓰기 경로(선발·일정·문항)가 활동을 얻는 자리 — 종료된 활동은 여기서 409다(#597) */
+    private final AcademicProgramWritePolicy academicProgramWritePolicy;
     private final FormResponseService formResponseService;
     private final FormService formService;
 
@@ -152,13 +155,17 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * 반영됐는지를 화면이 되짚어야 하는 상태를 만들지 않기 위해서다. 취소(CANCELLED)된
      * 참가자를 다시 고르는 요청은 400 INVALID_PARTICIPANT_STATUS_TRANSITION이다 — 취소를
      * 되돌리는 것은 이 이슈의 범위 밖이고, 그 판정도 전이표가 그대로 갖는다.
+     *
+     * 검사 순서는 활동 404 → (애스펙트의 403) → 종료 409 → 모집 시작 409 → 폼 연결 409다.
+     * 종료된 활동은 선발을 받지 않는다(#597 · AcademicProgramWritePolicy).
      */
     @Override
     @Transactional
     public List<AcademicProgramMemberResponse> selectMembers(
             Long academicProgramId, RecruitmentSelectRequest request, MemberEntity performer) {
 
-        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.require(academicProgramId);
         requireRecruitmentStarted(academicProgram);
 
         Long formId = recruitmentFormId(academicProgram);
@@ -184,7 +191,8 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * 검사 순서는 신청자 조회와 같다 — 활동 404 → 자격 403 → 폼 연결 409. 자격을 상태보다 먼저
      * 보는 것은 번호를 바꿔 가며 불러 남의 활동 사정을 알아낼 수 없게 하기 위해서다.
      *
-     * 창이 닫혀 있어도 200이며 isEditable이 false로 나간다 — 근거는 인터페이스 주석.
+     * 창이 닫혀 있어도 200이며 isEditable이 false로 나간다 — 근거는 인터페이스 주석. 종료된
+     * 활동도 같다(조회는 막지 않고 isEditable만 false다, #597).
      */
     @Override
     public RecruitmentFormResponse getRecruitmentForm(
@@ -194,14 +202,14 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
 
         FormEntity form = requireRecruitmentForm(academicProgram);
         return RecruitmentFormResponse.of(
-                formService.getForm(form.getId()), isQuestionEditable(form));
+                formService.getForm(form.getId()), isQuestionEditable(academicProgram, form));
     }
 
     /*
      * 모집 폼 문항 교체 (#483).
      *
-     * 조회와 같은 순서에 창 검사(409)가 폼 연결 뒤에 붙는다. 창을 자격보다 나중에 보는 것도
-     * 같은 이유이며, 저장 규칙 자체는 한 줄도 여기 적지 않는다 — 문항 구성 검사·qitemId 보호·
+     * 조회와 같은 순서에 종료 검사(409, #597)가 자격 뒤에, 창 검사(409)가 폼 연결 뒤에 붙는다.
+     * 창을 자격보다 나중에 보는 것도 같은 이유이며, 저장 규칙 자체는 한 줄도 여기 적지 않는다 — 문항 구성 검사·qitemId 보호·
      * 시스템 폼 계약·버전과 이력은 전부 FormService.changeQuestionComposition이 갖는다.
      *
      * 트랜잭션을 여는 것은 이 메서드뿐이다(클래스 기본이 readOnly다). 폼 도메인의 저장도 같은
@@ -213,8 +221,8 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
             Long academicProgramId,
             RecruitmentFormQuestionUpdateRequest request,
             MemberEntity actor) {
-        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, actor);
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.requireLeaderOrManager(academicProgramId, actor);
 
         FormEntity form = requireRecruitmentForm(academicProgram);
         requireQuestionEditable(academicProgram, form);
@@ -226,7 +234,7 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
          */
         FormDetailResponse saved =
                 formService.changeQuestionComposition(form.getId(), request.qitemCpstCn(), actor);
-        return RecruitmentFormResponse.of(saved, isQuestionEditable(form));
+        return RecruitmentFormResponse.of(saved, isQuestionEditable(academicProgram, form));
     }
 
     /*
@@ -247,8 +255,9 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     /*
      * 모집 일정 변경.
      *
-     * 자격은 컨트롤러가 끊는다(@RequireAuthority) — 여기서는 "모집이 시작됐는가"만 더한다.
-     * 검사 순서는 선발 저장과 같다(활동 404 → 모집 시작 409 → 폼 연결 409).
+     * 자격은 컨트롤러가 끊는다(@RequireAuthority) — 여기서는 "끝나지 않았는가"와 "모집이
+     * 시작됐는가"만 더한다. 검사 순서는 선발 저장과 같다(활동 404 → 종료 409 → 모집 시작 409 →
+     * 폼 연결 409). 종료를 보지 않으면 끝난 활동의 접수 창을 다시 열 수 있다(#597).
      *
      * 기간 정합성과 저장은 폼 도메인에 맡긴다. 이 메서드가 새로 만드는 규칙은 하나도 없으며,
      * 하는 일은 "학술국장이 이 활동의 접수 기간을 고칠 수 있다"는 경로를 여는 것뿐이다 —
@@ -259,7 +268,8 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     @Transactional
     public RecruitmentScheduleResponse updateRecruitmentSchedule(
             Long academicProgramId, RecruitmentScheduleUpdateRequest request, MemberEntity actor) {
-        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.require(academicProgramId);
         requireRecruitmentStarted(academicProgram);
 
         FormEntity form = requireRecruitmentForm(academicProgram);
@@ -380,16 +390,24 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     }
 
     /*
-     * 지금 문항을 고칠 수 있는가 (#483). 활동 상태(APPROVED/ONGOING)가 아니라 **폼의 파생 접수
-     * 상태**를 본다 — 학술국장이 미래 시작일로 모집을 시작하면 활동은 곧바로 ONGOING이 되지만
-     * 접수는 아직 열리지 않았고(SCHEDULED), 화면이 "남은 시간"을 세는 구간이 바로 그쪽이다.
+     * 지금 문항을 고칠 수 있는가 (#483). 창은 활동 상태(APPROVED/ONGOING)가 아니라 **폼의 파생
+     * 접수 상태**로 본다 — 학술국장이 미래 시작일로 모집을 시작하면 활동은 곧바로 ONGOING이
+     * 되지만 접수는 아직 열리지 않았고(SCHEDULED), 화면이 "남은 시간"을 세는 구간이 바로 그쪽이다.
+     *
+     * 응답의 isEditable은 여기에 **활동이 쓰기를 받는가**를 곱한다(#597). 저장 경로는 그 판정을
+     * AcademicProgramWritePolicy가 창보다 먼저 끊으므로, 둘을 곱하지 않으면 종료된 활동에서
+     * 버튼은 켜져 있는데 저장은 409가 된다.
      */
-    private boolean isQuestionEditable(FormEntity form) {
+    private boolean isQuestionEditable(AcademicProgramEntity academicProgram, FormEntity form) {
+        return academicProgram.getStatus().acceptsWrites() && isWithinQuestionWindow(form);
+    }
+
+    private boolean isWithinQuestionWindow(FormEntity form) {
         return EDITABLE_RECEIPT_STATUSES.contains(formReceiptPolicy.receiptStatusOf(form));
     }
 
     private void requireQuestionEditable(AcademicProgramEntity academicProgram, FormEntity form) {
-        if (isQuestionEditable(form)) {
+        if (isWithinQuestionWindow(form)) {
             return;
         }
         log.warn(

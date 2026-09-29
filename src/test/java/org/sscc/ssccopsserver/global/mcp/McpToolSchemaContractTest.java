@@ -60,6 +60,19 @@ class McpToolSchemaContractTest {
                 .containsExactly("targetOperationId");
     }
 
+    /*
+     * 안건 수정은 «전체 교체»라 읽고-합치기 도구와 다르다 (#599). 내용 둘은 생략하면 비우는 것이
+     * **뜻이 있는 값**이므로 optional 이 맞고, 처리 구분만 `@NotNull` 이다 — 화면이 칩 중 하나를
+     * 늘 골라 두기 때문이다(MeetingAgendaUpdateRequest 주석). 셋 다 필수로 굳으면 «결과만 적는다»가
+     * 안 되고, 셋 다 optional 이 되면 서버가 400 을 내는 호출이 스키마를 통과한다.
+     */
+    @Test
+    @DisplayName("update_meeting_agenda — 필수는 processStatus 하나다 (전체 교체)")
+    void agendaUpdateRequiresOnlyItsProcessStatus() {
+        assertThat(nestedRequired("update_meeting_agenda", "request"))
+                .containsExactly("processStatus");
+    }
+
     @Test
     @DisplayName("읽고-합치기 도구의 patch 에는 필수 필드가 없다 — «바꿀 것만 준다»")
     void patchToolsRequireNothing() {

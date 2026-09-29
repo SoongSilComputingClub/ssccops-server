@@ -83,7 +83,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 67종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 68종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -144,6 +144,8 @@ class OperationToolsIntegrationTest {
                             "transition_meeting",
                             "list_meeting_agendas",
                             "add_meeting_agenda",
+                            // 회의의 내용을 적는 유일한 자리 (#599 — V25가 회의 단위 본문을 걷었다)
+                            "update_meeting_agenda",
                             "list_approvals",
                             "get_dashboard",
                             "list_sub_work_types",

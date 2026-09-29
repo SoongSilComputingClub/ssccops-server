@@ -56,12 +56,11 @@ public record WorkDetailResponse(
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     /*
-     * 전체 진행률은 저장된 work_prgrs_rt가 아니라 하위 업무 진행률의 평균이다. 시안이
+     * 전체 진행률은 하위 업무 진행률의 평균이다. 시안이
      * 완료 개수 비율이 아니라 평균을 그리고 있어(검토 상태 두 건의 60·80이 상단 70으로
      * 합쳐진다) 이 식을 따른다.
      *
-     * 계산 결과를 엔티티에 쓰지 않는 것은 조회가 어떤 상태도 바꾸지 않기 때문이다 (AP-07).
-     * 그래서 저장 컬럼과 이 값은 어긋난 채로 남는다 — ProgressRate 주석 참고.
+     * 진행률은 저장하지 않고 조회 때마다 계산한다 — ProgressRate 주석 참고.
      */
     public static WorkDetailResponse of(
             WorkEntity work, List<WorkSubWorkSummaryResponse> subWorks) {

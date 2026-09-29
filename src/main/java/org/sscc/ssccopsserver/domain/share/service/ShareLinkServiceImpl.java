@@ -16,6 +16,9 @@ import org.sscc.ssccopsserver.domain.share.dto.ShareLinkResponse;
 import org.sscc.ssccopsserver.domain.share.entity.ShareLinkEntity;
 import org.sscc.ssccopsserver.domain.share.repository.ShareLinkRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -49,6 +52,7 @@ public class ShareLinkServiceImpl implements ShareLinkService {
     private final ShareLinkRepository shareLinkRepository;
     private final SharePreviewProviders sharePreviewProviders;
     private final Clock clock;
+    private final AuditLog auditLog;
 
     @Override
     @Transactional
@@ -78,9 +82,34 @@ public class ShareLinkServiceImpl implements ShareLinkService {
     @Transactional
     public void revoke(ShareTargetType targetType, Long targetId) {
         Instant now = Instant.now(clock);
-        shareLinkRepository
-                .findByTargetTypeAndTargetIdAndRevokedAtIsNull(targetType, targetId)
-                .ifPresent(link -> link.revoke(now));
+        boolean revoked =
+                shareLinkRepository
+                        .findByTargetTypeAndTargetIdAndRevokedAtIsNull(targetType, targetId)
+                        .map(
+                                link -> {
+                                    link.revoke(now);
+                                    return true;
+                                })
+                        .orElse(false);
+        /*
+         * **폐기만 감사에 남긴다** (#556 · ssccops#501).
+         *
+         * 발급은 멱등이고 되돌릴 수 있지만 폐기는 **이미 퍼진 주소를 죽이고**, 다시 발급하면
+         * 멱등이 아니라 새 토큰이라 단톡방에 뿌린 링크가 살아나지 않는다. 그리고 이 메서드는
+         * 살아 있는 링크가 없어도 200이라 **응답만으로는 «정말 끊겼는가»를 알 수 없다** —
+         * 되짚을 자리가 여기뿐이다.
+         *
+         * 살아 있는 링크가 없었던 호출(`revoked == false`)도 남긴다. 그것이 곧 «누가 이미 끊긴
+         * 링크를 또 끊으려 했나»이고, 두 경우를 가르지 않으면 폐기 시도 자체가 기록에서 사라진다.
+         *
+         * 토큰은 싣지 않는다 — 감사 로그 열람 권한이 링크 열람 권한이 되면 안 된다(ADR-0024와
+         * 같은 축이며 `AuditLogTest`가 값 미탑재를 본다).
+         */
+        auditLog.record(
+                AuditEvent.success(AuditAction.SHARE_LINK_REVOKE)
+                        .target(targetType.name(), targetId)
+                        .decision(revoked ? "REVOKED" : "NOTHING_ACTIVE")
+                        .build());
     }
 
     /*

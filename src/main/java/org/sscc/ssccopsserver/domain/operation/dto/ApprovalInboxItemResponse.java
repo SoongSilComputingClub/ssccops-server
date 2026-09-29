@@ -15,8 +15,8 @@ import org.sscc.ssccopsserver.domain.operation.entity.VoteChoice;
  * 시안에 보이는 값 중 두 가지는 싣지 않는다.
  *  - `긴급` 배지: 디자인에서 제외하기로 확정했다. 우선순위(oper.prrty_rnk_cd)는 하위 업무
  *    목록(OPS-008)에 이미 있으므로 컬럼은 그대로 두고 이 응답에만 넣지 않는다.
- *  - `n단계`: sub_work_aprv.aprv_stp(위험도 기반 승인 단계)를 채우는 경로가 없어 항상 NULL이다.
- *    없는 값을 계약에 넣지 않는다.
+ *  - `n단계`: 위험도 기반 승인 단계가 구현되지 않았다(그 자리였던 sub_work_aprv.aprv_stp는
+ *    늘 NULL이라 V25에서 지웠다). 없는 값을 계약에 넣지 않는다.
  *
  * 반대로 시안에 없는 checklistSummary는 싣는다. 체크리스트가 덜 찬 건은 `승인`이 409로
  * 떨어지는데, 카드에 근거가 없으면 화면이 이유를 설명할 수 없다.

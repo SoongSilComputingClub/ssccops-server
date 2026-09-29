@@ -39,7 +39,7 @@ public record WorkListItemResponse(
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     /*
-     * 진행률은 저장된 work_prgrs_rt가 아니라 하위 업무 진행률의 평균이다 (AGG-01) —
+     * 진행률은 저장하지 않고 하위 업무 진행률의 평균으로 계산한다 (AGG-01) —
      * 상세 조회(OPS-003)와 같은 산식이라야 같은 업무가 목록과 상세에서 다른 %로 보이지 않는다.
      * 계산 결과를 엔티티에 쓰지 않는 것은 조회가 어떤 상태도 바꾸지 않기 때문이다 (AP-07·AGG-05).
      *

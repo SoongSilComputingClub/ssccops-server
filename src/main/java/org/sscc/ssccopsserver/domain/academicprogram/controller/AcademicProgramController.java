@@ -109,9 +109,9 @@ public class AcademicProgramController {
     }
 
     /*
-     * 상태 전이 (#133). 상세 화면의 '모집 시작'·'종료 승인' 버튼이 이 하나의 액션 경로를 쓴다
-     * (work·form 도메인의 전이 엔드포인트 선례). START_RECRUITMENT/APPROVE_COMPLETION 둘 다
-     * 학술국장 전용이라 클래스가 아니라 메서드에 건다 — 조회 두 개는 인증만 요구한다.
+     * 상태 전이 (#133 · 재시작 #597). 상세 화면의 '모집 시작'·'종료 승인'·'재시작' 버튼이 이
+     * 하나의 액션 경로를 쓴다(work·form 도메인의 전이 엔드포인트 선례). 셋 다 학술국장 전용이라
+     * 클래스가 아니라 메서드에 건다 — 조회 두 개는 인증만 요구한다.
      *
      * 전이 가능 여부·폼 오케스트레이션·승인 이력 기록은 서비스와 도메인이 판단하므로 여기서
      * 분기하지 않는다. 상태 변경은 생성이 아니므로 200이다.
@@ -119,10 +119,12 @@ public class AcademicProgramController {
     @Operation(
             summary = "학술 활동 상태 전이",
             description =
-                    "transition은 START_RECRUITMENT 또는 APPROVE_COMPLETION이다."
-                        + " APPROVED→ONGOING·ONGOING→COMPLETED만 허용하며 그 밖의 전이는 409"
+                    "transition은 START_RECRUITMENT·APPROVE_COMPLETION·REOPEN 중 하나다."
+                        + " APPROVED→ONGOING·ONGOING→COMPLETED·COMPLETED→ONGOING만 허용하며 그 밖의 전이는 409"
                         + " INVALID_ACADEMIC_PROGRAM_TRANSITION으로 응답한다. START_RECRUITMENT는 연결된"
-                        + " Form을 OPEN 전이한다 — 문항이 없으면 폼 도메인의 400 FORM_HAS_NO_QUESTION이 그대로 전파된다.")
+                        + " Form을 OPEN 전이한다 — 문항이 없으면 폼 도메인의 400 FORM_HAS_NO_QUESTION이 그대로 전파된다."
+                        + " APPROVE_COMPLETION은 그 활동의 쓰기를 전부 멈추고(409 ACADEMIC_PROGRAM_COMPLETED) 접수"
+                        + " 중인 모집 폼을 마감한다. REOPEN은 종료를 되돌리되 모집 폼은 다시 열지 않는다.")
     @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
     @PostMapping("/{academicProgramId}/transitions")
     public ApiResponse<AcademicProgramTransitionResponse> transition(
@@ -203,8 +205,29 @@ public class AcademicProgramController {
                             + " 결과가 같은데 두 번째 요청만 오류로 만들 이유가 없다.")
     @DeleteMapping("/{academicProgramId}/share")
     public ApiResponse<Void> revokeShareLink(
+            /*
+             * ⚠️ **인자 이름을 바꾸지 말 것** (#556 에서 한 번 깨뜨렸다).
+             *
+             * `@CurrentMember`는 JWT 에서 오는 값인데 springdoc 이 그것을 모르고 **필수 쿼리
+             * 파라미터로 스펙에 싣는다.** 그래서 `viewer` → `revoker` 로 바꾸자 api-compat
+             * 게이트가 `new-required-request-parameter`(error) + `request-parameter-removed`
+             * (warning)로 잡았다 — 실제 호출 계약은 그대로인데 **스펙상으로는 깨는 변경**이다.
+             *
+             * 스펙에서 이 가짜 파라미터를 걷어내는 것은 `@CurrentMember`를 쓰는 모든 핸들러에
+             * 걸린 별개의 일이다.
+             */
             @PathVariable Long academicProgramId, @CurrentMember MemberEntity viewer) {
-        academicProgramService.getAcademicProgram(academicProgramId, viewer);
+        /*
+         * **폐기는 발급과 자격이 다르다** (#556 · ssccops#501).
+         *
+         * 그전에는 여기가 상세 조회(인증만)를 태우는 것이 전부라 **가입한 아무 회원이나 남의
+         * 모집 링크를 끊을 수 있었다.** 발급 쪽 논증(«볼 수 있는 사람이 공유할 수 있다»)은
+         * 한 줄도 폐기를 다루지 않는데 같은 게이트가 그대로 적용돼 있었다.
+         *
+         * 결과로 보면 둘은 반대다 — 발급은 멱등이라 되돌릴 수 있지만 폐기는 **이미 퍼진
+         * 주소를 죽이고**, 다시 발급하면 새 토큰이라 단톡방에 뿌린 링크는 살아나지 않는다.
+         */
+        academicProgramService.requireShareRevocable(academicProgramId, viewer);
         shareLinkService.revoke(ShareTargetType.ACADEMIC_PROGRAM, academicProgramId);
         return ApiResponse.successWithNoData();
     }

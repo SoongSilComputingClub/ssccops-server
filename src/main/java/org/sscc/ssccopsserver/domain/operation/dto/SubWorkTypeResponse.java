@@ -11,9 +11,6 @@ import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
  * 늘었을 때 두 응답이 조용히 어긋난다 (회원가입·세션 조회가 MemberProfileResponse를 함께
  * 쓰는 것과 같은 이유다).
  *
- * crtr_amt·expnd_yn은 싣지 않는다. 화면이 쓰지 않는 값이고, 이 API가 쓰지도 않는 값을
- * 응답에만 노출하면 프론트가 그 값을 근거로 무언가를 만들게 된다.
- *
  * 승인자는 결재 권한 코드와 **표시명을 함께** 내린다 (#123). 권한 이름(authrt_nm)은 화면에서
  * 바뀌는 데이터라 웹이 코드 → 이름 사전을 하드코딩하면 개명 즉시 어긋난다 — 직위 코드 시절
  * 웹 AUTZR_ROLE_NM이 그 사전이었다.

@@ -102,18 +102,6 @@ public class SubWorkEntity {
     @Column(name = "cmptn_crtr_cn", columnDefinition = "TEXT")
     private String completionCriteria;
 
-    /*
-     * 채우지 않기로 결정한 컬럼 (OPS-008, #117). 등록 시 false로 굳고 그 뒤 갱신하는 주체가
-     * 없으므로 마감이 한참 지난 건도 이 값은 false다.
-     *
-     * 지연 여부의 정본은 조회 시점 판정이다 — 단건은 isDelayedBefore, 목록 필터는
-     * SubWorkRepositoryImpl이 같은 조건을 SQL로 옮겨 쓴다. 컬럼을 채우는 배치를 새로 붙이지
-     * 말 것: 마감이 지나는 순간 값을 바꿔 줄 주체가 필요해지고, 그 배치가 늦으면 화면이
-     * 다시 컬럼과 어긋난다. 컬럼 자체를 지우지 않은 이유는 work_prgrs_rt와 같다.
-     */
-    @Column(name = "dly_yn", nullable = false)
-    private boolean delayed;
-
     @Column(name = "otsd_url_addr", length = 200)
     private String externalLink;
 
@@ -124,8 +112,8 @@ public class SubWorkEntity {
     private Instant completedAt;
 
     /*
-     * 하위 업무 등록(OPS-007)용 생성 팩토리. 상태는 항상 PLANNING(기획)이고 지연 여부는
-     * false, 완료 일시는 NULL로 서버가 고정하며 클라이언트가 지정할 수 없다.
+     * 하위 업무 등록(OPS-007)용 생성 팩토리. 상태는 항상 PLANNING(기획)이고 완료 일시는
+     * NULL로 서버가 고정하며 클라이언트가 지정할 수 없다.
      *
      * 승인 상태는 유형의 승인 필요 여부만으로 정한다. 승인이 필요 없는 유형(REQ-016
      * 저위험 업무)은 NOT_REQUIRED로 시작해 승인 절차를 아예 타지 않고, 필요한 유형은
@@ -153,7 +141,6 @@ public class SubWorkEntity {
                         : ApprovalStatus.NOT_REQUIRED,
                 content,
                 null,
-                false,
                 externalLink,
                 dueAt,
                 null);
@@ -161,7 +148,7 @@ public class SubWorkEntity {
 
     /*
      * 기본 정보 수정(OPS-030). 여기서 바꾸는 것은 하위 업무의 확장 속성뿐이다 —
-     * work_stts_cd·aprv_stts_cd·dly_yn·cmptn_dt는 전이(applyTransition)만의 몫이라 이 자리에
+     * work_stts_cd·aprv_stts_cd·cmptn_dt는 전이(applyTransition)만의 몫이라 이 자리에
      * 없고, sub_work_type_id도 없다: 유형이 바뀌면 승인 필요 여부·승인자·정족수·완료 점검
      * 항목이 통째로 달라지는데 그 값들은 등록 시점에 이미 복사돼 있어(#43 소급 금지) 유형
      * 재지정을 여기서 반영할 방법이 없다. 담당자·기간·우선순위는 sub_work가 아니라 자기 oper의
@@ -378,9 +365,12 @@ public class SubWorkEntity {
     }
 
     /*
-     * 마감이 지났는데 아직 완료되지 않았는지. dly_yn 컬럼을 읽지 않고 그때그때 판정한다 —
-     * 그 컬럼은 채우지 않기로 결정했으므로(위 필드 주석) 항상 false다. 목록 필터
+     * 마감이 지났는데 아직 완료되지 않았는지. 저장하지 않고 그때그때 판정한다 — 목록 필터
      * (SubWorkRepositoryImpl)가 같은 조건을 SQL로 옮겨 쓰므로 규칙을 바꾸면 두 곳을 함께 고친다.
+     *
+     * 지연 여부를 컬럼으로 되살리지 말 것 (#117 · V25). 한때 dly_yn이 있었지만 등록 시 false로
+     * 굳고 갱신하는 주체가 없어 늘 false였다. 채우려면 마감이 지나는 순간 값을 바꿔 줄 배치가
+     * 필요해지고, 그 배치가 늦으면 화면이 다시 컬럼과 어긋난다.
      *
      * 인자는 '지금'이 아니라 **지연 경계 시각**이다 (DeadlinePolicy.overdueBefore — 서비스
      * 표준 시간대의 오늘 0시). 판정을 날짜 단위로 옮긴 것이 #121이다. 여기에 clock.instant()를

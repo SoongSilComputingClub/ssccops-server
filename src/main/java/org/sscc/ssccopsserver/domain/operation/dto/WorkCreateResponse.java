@@ -1,6 +1,5 @@
 package org.sscc.ssccopsserver.domain.operation.dto;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -17,6 +16,10 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
  * workStatus는 서버가 PLANNING으로 고정한 값이며, registrantId는 인증 주체에서 온 등록자라
  * 둘 다 클라이언트가 지정할 수 없다. 담당자(ownerId)와 등록자는 다를 수 있다.
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
+ *
+ * 진행률은 싣지 않는다 (#595). 등록 직후라 하위 업무가 없고, 진행률은 저장하지 않고 상세
+ * (OPS-003)·목록(OPS-020)이 AGG-01로 계산해 준다. 예전에는 저장 컬럼 work_prgrs_rt를 그대로
+ * 실어 늘 0이 나갔다.
  */
 public record WorkCreateResponse(
         Long workId,
@@ -30,7 +33,6 @@ public record WorkCreateResponse(
         OffsetDateTime endAt,
         OperationPriority priority,
         String review,
-        BigDecimal progressRate,
         OffsetDateTime createdAt) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
@@ -49,7 +51,6 @@ public record WorkCreateResponse(
                 toOffsetDateTime(operation.getEndAt()),
                 operation.getPriority(),
                 work.getGeneralReview(),
-                work.getProgressRate(),
                 toOffsetDateTime(operation.getCreatedAt()));
     }
 

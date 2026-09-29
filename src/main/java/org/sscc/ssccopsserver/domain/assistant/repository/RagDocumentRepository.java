@@ -99,6 +99,25 @@ public interface RagDocumentRepository extends JpaRepository<RagDocumentEntity, 
     List<Long> findIdsByIndexStatus(@Param("indexStatus") RagIndexStatus indexStatus);
 
     /**
+     * 그 상태로 <b>N분 이상 머물러 있는</b> 판본 (#556 · ssccops#501).
+     *
+     * <p>부팅 복구가 쓰는 질의다. 위의 «상태로만» 찾는 질의를 그대로 쓰면 <b>지금 다른 인스턴스가 색인 중인 행까지 되돌린다</b> — Coolify 는 새
+     * 컨테이너를 띄워 헬스체크를 통과시킨 뒤 옛 것을 내리므로 겹침은 사고가 아니라 배포 절차 그 자체이고, 배포는 {@code develop} 푸시마다 일어난다.
+     *
+     * <p>{@code indexStartedAt} 이 비어 있는 행은 <b>고르지 않는다.</b> 언제 집혔는지 모르는 행을 «오래됐다»고 볼 수 없고, 그런 행이 생기는
+     * 경로는 전이와 시각 기록이 한 트랜잭션이라 사실상 없다 — 있다면 그것은 사람이 볼 일이다.
+     */
+    @Query(
+            "select d.id from RagDocumentEntity d"
+                    + " where d.indexStatus = :indexStatus"
+                    + " and d.indexStartedAt is not null"
+                    + " and d.indexStartedAt < :startedBefore"
+                    + " order by d.id")
+    List<Long> findIdsStuckInStatusSince(
+            @Param("indexStatus") RagIndexStatus indexStatus,
+            @Param("startedBefore") Instant startedBefore);
+
+    /**
      * 그 판본을 <b>잠그고</b> 읽는다 — 색인 워커가 상태를 전이하기 직전에 부른다 (#400).
      *
      * <p>잠금이 «한 판본을 두 번 색인하지 않는다»의 자리다. 후보 조회(위)는 잠그지 않으므로 그 사이에 다른 경로가 같은 행을 집었거나(다중 인스턴스) 사람이 상태를

@@ -1,5 +1,8 @@
 package org.sscc.ssccopsserver.domain.academicprogram.dto;
 
+import java.util.Set;
+
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
 
 /*
@@ -13,11 +16,16 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
  * academicProgramId는 그래서 #135에서는 생략할 수 없는 범위이고 #136에서는 생략 가능한
  * 필터다 — NULL이면 활동 경계 없이 전부 읽는다. 활동 하나짜리 목록이 이 값을 비운 채 호출되는
  * 일은 없다(경로 변수에서 온다).
+ *
+ * programStatuses는 승인 대기 목록(#597)만 쓴다 — 종료된 활동의 회차를 빼는 자리다
+ * (SessionReviewCondition). NULL이면 활동 상태를 보지 않는다. 활동 횡단 질의(p 별칭이 있는
+ * SELECT)에서만 붙는다는 점은 keyword와 같다.
  */
 public record SessionSearchQuery(
         Long academicProgramId,
         SessionStatus status,
         String keyword,
+        Set<AcademicProgramStatus> programStatuses,
         int size,
         SessionSortOrder sort,
         SessionCursor cursor) {
@@ -33,6 +41,11 @@ public record SessionSearchQuery(
     /** 활동명·회차 주제 부분일치(#136). 활동 하나짜리 목록(#135)은 이 필터를 받지 않는다 */
     public boolean hasKeywordFilter() {
         return keyword != null;
+    }
+
+    /** 활동 상태로 좁히는가(#597). 승인 대기 목록만 쓴다 */
+    public boolean hasProgramStatusFilter() {
+        return programStatuses != null;
     }
 
     public boolean hasCursor() {

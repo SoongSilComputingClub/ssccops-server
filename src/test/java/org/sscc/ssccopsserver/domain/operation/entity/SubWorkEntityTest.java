@@ -81,18 +81,6 @@ class SubWorkEntityTest {
     }
 
     /*
-     * 판정은 dly_yn 컬럼을 읽지 않는다 (#117). 그 컬럼은 등록 시 false로 굳고 갱신하는 주체가
-     * 없어, 컬럼을 읽는 순간 지연된 건이 하나도 잡히지 않는다.
-     */
-    @Test
-    void judgementDoesNotReadTheDelayedColumn() {
-        SubWorkEntity subWork = subWork(PAST_DUE);
-
-        assertThat(subWork.isDelayed()).isFalse();
-        assertThat(subWork.isDelayedBefore(OVERDUE_BEFORE)).isTrue();
-    }
-
-    /*
      * 승인이 필요 없는 유형이라 정족수·승인자 없이 완료까지 갈 수 있다 (REQ-016). 상위 업무·
      * 운영은 판정에 쓰이지 않으므로 넘기지 않는다 — 이 테스트는 DB 없이 규칙만 본다.
      */

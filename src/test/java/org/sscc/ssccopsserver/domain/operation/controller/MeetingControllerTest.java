@@ -123,11 +123,11 @@ class MeetingControllerTest {
                   "location": "동아리방",
                   "agendas": [
                     {"targetOperationId": %d, "processStatus": "PENDING", "content": "박람회 부스 배치"},
-                    {"agendaName": "신입 모집 일정", "processStatus": "PENDING"}
+                    {"targetOperationId": %d, "processStatus": "PENDING"}
                   ]
                 }
                 """
-                        .formatted(otherMemberId, linkedOperationId);
+                        .formatted(otherMemberId, linkedOperationId, linkedOperationId);
 
         mockMvc.perform(authenticated(post("/v1/meetings"), body))
                 .andExpect(status().isCreated())
@@ -145,8 +145,9 @@ class MeetingControllerTest {
                                 .value(linkedOperationId))
                 .andExpect(jsonPath("$.data.agendas[0].processStatus").value("PENDING"))
                 .andExpect(jsonPath("$.data.agendas[1].agendaOrder").value(2))
-                .andExpect(jsonPath("$.data.agendas[1].agendaName").value("신입 모집 일정"))
-                .andExpect(jsonPath("$.data.agendas[1].targetOperation").doesNotExist());
+                .andExpect(
+                        jsonPath("$.data.agendas[1].targetOperation.operationId")
+                                .value(linkedOperationId));
     }
 
     @Test
@@ -220,20 +221,23 @@ class MeetingControllerTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
-    // 안건은 연결 운영 건·독립 제목 중 하나만 받는다 (OPS-027 "둘 중 하나 필수")
+    /*
+     * 안건은 언제나 운영 건을 가리킨다 (#593 · ADR-0055). 그전에는 안건명과 운영 건 중 하나였고
+     * 「둘 다 주면 400」이 이 자리의 시험이었다 — 이제 「운영 건을 안 주면 400」이다.
+     */
     @Test
-    void agendaWithBothTargetAndNameReturnsValidationFailed() throws Exception {
+    void agendaWithoutTargetOperationReturnsValidationFailed() throws Exception {
         String body =
                 """
                 {
-                  "title": "안건 둘 다 지정",
+                  "title": "안건에 운영 건이 없다",
                   "meetingCategory": "TOPIC",
                   "personInChargeId": %d,
                   "startAt": "2026-09-03T19:00:00+09:00",
-                  "agendas": [{"targetOperationId": %d, "agendaName": "둘 다"}]
+                  "agendas": [{"processStatus": "PENDING", "content": "연결 없는 안건"}]
                 }
                 """
-                        .formatted(otherMemberId, linkedOperationId);
+                        .formatted(otherMemberId);
 
         mockMvc.perform(authenticated(post("/v1/meetings"), body))
                 .andExpect(status().isBadRequest())
@@ -422,18 +426,30 @@ class MeetingControllerTest {
     // ------------------------------------------------------------------ 안건
 
     @Test
-    void addStandaloneAgendaReturns201() throws Exception {
+    void addAgendaReturns201WithItsOperation() throws Exception {
         Long meetingId = createMeeting(otherMemberId);
         String body =
                 """
-                {"agendaName": "임시 안건", "content": "논의할 내용"}
-                """;
+                {"targetOperationId": %d, "content": "논의할 내용"}
+                """
+                        .formatted(linkedOperationId);
 
         mockMvc.perform(authenticated(post("/v1/meetings/{meetingId}/agendas", meetingId), body))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.agendaName").value("임시 안건"))
-                .andExpect(jsonPath("$.data.processStatus").value("PENDING"))
-                .andExpect(jsonPath("$.data.targetOperation").doesNotExist());
+                .andExpect(jsonPath("$.data.targetOperation.operationId").value(linkedOperationId))
+                .andExpect(jsonPath("$.data.processStatus").value("PENDING"));
+    }
+
+    /** 없는 운영 건은 404 — 안건이 그것을 가리키는 것이 전제라 여기서 끊긴다 (#593). */
+    @Test
+    void addAgendaWithUnknownOperationReturns404() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        String body = """
+                {"targetOperationId": 999999}
+                """;
+
+        mockMvc.perform(authenticated(post("/v1/meetings/{meetingId}/agendas", meetingId), body))
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -441,9 +457,11 @@ class MeetingControllerTest {
         Long meetingId = createMeeting(otherMemberId);
         mockMvc.perform(transition(meetingId, "CANCEL", "일정 취소")).andExpect(status().isOk());
 
-        String body = """
-                {"agendaName": "취소된 회의의 안건"}
-                """;
+        String body =
+                """
+                {"targetOperationId": %d}
+                """
+                        .formatted(linkedOperationId);
         mockMvc.perform(authenticated(post("/v1/meetings/{meetingId}/agendas", meetingId), body))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MEETING_CLOSED"));

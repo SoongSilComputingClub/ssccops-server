@@ -1,6 +1,5 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -31,8 +30,8 @@ import lombok.NoArgsConstructor;
 /*
  * sub_work_type(하위 업무 유형) — 승인 정책과 완료 조건을 담는 기준 데이터.
  *
- * 유형이 enum이 아니라 테이블인 것은 의도된 것이다. 승인 주체·정족수·기준 금액을 코드가
- * 아닌 데이터로 두어 재배포 없이 바꾸는 것이 REQ-010이자 API 정의서 POL-005다.
+ * 유형이 enum이 아니라 테이블인 것은 의도된 것이다. 승인 주체·정족수를 코드가 아닌
+ * 데이터로 두어 재배포 없이 바꾸는 것이 REQ-010이자 API 정의서 POL-005다.
  * 그래서 등록 요청도 유형 이름이 아니라 subWorkTypeId를 받는다.
  *
  * 등록·수정은 관리 화면(OPS-019 · #43)이 하고, 시드 4종은 data.sql이 넣는다.
@@ -42,6 +41,10 @@ import lombok.NoArgsConstructor;
  * use_yn과 감사 컬럼은 관리 화면(#43)이 요구해 먼저 붙인 자리다. 유형은 하위 업무가 FK로
  * 참조하므로 지우지 못하고 use_yn을 내리며, 승인 정책을 화면에서 고칠 수 있게 되는 이상
  * "언제 바뀌었는가"가 남아야 한다. 둘 다 form_lbl의 대응 컬럼과 같은 규칙이다.
+ *
+ * 금액 기반 위험도 판정(REQ-016)의 자리였던 기준 금액(crtr_amt)·지출 여부(expnd_yn)는 V25에서
+ * 지웠다 — 입력란이 빠진 뒤로(#43) 값을 받는 길도 읽는 곳도 없었다. 판정을 만들 때 새
+ * 마이그레이션으로 다시 더한다(ssccops#537).
  */
 @Entity
 @EntityListeners(AuditingEntityListener.class)
@@ -102,14 +105,6 @@ public class SubWorkTypeEntity {
     @Column(name = "min_need_agre_cnt")
     private Integer minAgreeCount;
 
-    // 위험도 판정 기준 금액. 지출 유형에서만 의미가 있다.
-    // 표준도메인 금액N15는 소수 자리가 없는 NUMERIC(15)라 scale을 두지 않는다
-    @Column(name = "crtr_amt", precision = 15)
-    private BigDecimal criterionAmount;
-
-    @Column(name = "expnd_yn", nullable = false)
-    private boolean expenditure;
-
     @Column(name = "cmptn_chck_artcl_cn", columnDefinition = "TEXT")
     private String completionCheckArticle;
 
@@ -135,9 +130,6 @@ public class SubWorkTypeEntity {
 
     /*
      * 유형 등록 (OPS-019). 새 유형은 항상 활성이다 — 만들자마자 못 쓰게 할 이유가 없다.
-     *
-     * 기준 금액·지출 여부는 받지 않는다. 관리 화면에서 입력란이 빠졌고(#43), expnd_yn이
-     * NOT NULL이라 값은 있어야 하므로 FALSE로 둔다. 위험도 판정(REQ-016)이 붙을 때 열린다.
      */
     public static SubWorkTypeEntity create(
             String typeName,
@@ -148,7 +140,6 @@ public class SubWorkTypeEntity {
             List<String> completionCheckArticles) {
         SubWorkTypeEntity type = new SubWorkTypeEntity();
         type.typeName = typeName;
-        type.expenditure = false;
         type.active = true;
         type.apply(
                 approvalNeeded,
@@ -162,9 +153,7 @@ public class SubWorkTypeEntity {
     /*
      * 유형 수정 (OPS-019). 폼 전체 저장이라 넘어온 값으로 통째로 덮는다.
      *
-     * crtr_amt·expnd_yn·use_yn은 건드리지 않는다. 앞의 둘은 이 API의 범위 밖이라 덮으면
-     * 시드된 예산지출이 저장 한 번에 지출 유형이 아니게 되고, use_yn은 목록의 토글이
-     * 따로 바꾸는 값이라 폼 저장이 되돌려서는 안 된다.
+     * use_yn은 건드리지 않는다. 목록의 토글이 따로 바꾸는 값이라 폼 저장이 되돌려서는 안 된다.
      *
      * 바뀐 승인 규칙은 이미 등록된 하위 업무에 소급되지 않는다 — 하위 업무가 등록 시점에
      * 값을 복사해 가기 때문이며, 화면 하단 안내 문구와 같은 규칙이다.

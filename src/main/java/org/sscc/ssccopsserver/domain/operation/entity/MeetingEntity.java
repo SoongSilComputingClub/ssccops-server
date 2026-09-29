@@ -71,14 +71,6 @@ public class MeetingEntity {
     @Column(name = "mtg_plc_nm", length = 100)
     private String location;
 
-    // 내부 상세본
-    @Column(name = "insd_mtg_dtl_cn", columnDefinition = "TEXT")
-    private String internalDetail;
-
-    // 제출 요약본
-    @Column(name = "otsd_mtg_dtl_cn", columnDefinition = "TEXT")
-    private String externalSummary;
-
     /*
      * 회의 등록(OPS-024)용 생성 팩토리. 상태는 항상 SCHEDULED(예정)로 서버가 고정하며
      * 클라이언트가 지정할 수 없다. 회의 책임자는 서비스가 oper.pic_id와 같은 회원을 넘긴다.
@@ -96,9 +88,7 @@ public class MeetingEntity {
                 attendeeScope,
                 MeetingStatus.SCHEDULED,
                 responsiblePerson,
-                location,
-                null,
-                null);
+                location);
     }
 
     /*

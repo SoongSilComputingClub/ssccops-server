@@ -79,11 +79,6 @@ class SubWorkTypeServiceImplTest {
         assertThat(response.authorizerAuthorityCode()).isEqualTo("SUB_WORK_APPROVE_PRESIDENT");
         assertThat(response.authorizerAuthorityName()).isEqualTo("회장 결재");
         assertThat(response.completionCheckArticles()).containsExactly("제출처 확인", "사본 보관");
-
-        // 기준 금액·지출 여부는 이 API의 범위 밖이라 화면에서 받지 않는다
-        SubWorkTypeEntity saved = entity(response.subWorkTypeId());
-        assertThat(saved.isExpenditure()).isFalse();
-        assertThat(saved.getCriterionAmount()).isNull();
     }
 
     /*
@@ -203,10 +198,10 @@ class SubWorkTypeServiceImplTest {
 
     /*
      * 수정은 폼 전체 저장이라 넘어온 값으로 통째로 덮지만, 화면이 들고 있지 않은 값까지
-     * 덮으면 안 된다. 시드된 예산지출이 저장 한 번에 지출 유형이 아니게 되는 것을 막는다.
+     * 덮으면 안 된다. 사용 여부는 목록의 토글이 따로 바꾸는 값이라 폼 저장이 되돌리지 않는다.
      */
     @Test
-    void updateSubWorkTypePreservesOutOfScopeColumnsAndActivation() {
+    void updateSubWorkTypePreservesActivation() {
         subWorkTypeService.changeActivation(
                 expenditureTypeId, new SubWorkTypeActivationRequest(false));
 
@@ -220,9 +215,7 @@ class SubWorkTypeServiceImplTest {
                         null,
                         List.of("영수증 첨부")));
 
-        SubWorkTypeEntity saved = entity(expenditureTypeId);
-        assertThat(saved.isExpenditure()).isTrue();
-        assertThat(saved.isActive()).isFalse();
+        assertThat(entity(expenditureTypeId).isActive()).isFalse();
     }
 
     @Test

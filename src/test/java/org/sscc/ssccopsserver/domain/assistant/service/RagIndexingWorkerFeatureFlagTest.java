@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Clock;
+import java.time.Duration;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -41,7 +42,9 @@ class RagIndexingWorkerFeatureFlagTest {
                     new AssistantFeature(false),
                     emptyProvider(),
                     Clock.systemUTC(),
-                    mock(PlatformTransactionManager.class));
+                    mock(PlatformTransactionManager.class),
+                    // 기능이 꺼져 있을 때를 보는 테스트라 이 값은 쓰이지 않는다 (#556)
+                    Duration.ofMinutes(10));
 
     @Test
     void doesNothingWhileTheAssistantIsDisabled() {

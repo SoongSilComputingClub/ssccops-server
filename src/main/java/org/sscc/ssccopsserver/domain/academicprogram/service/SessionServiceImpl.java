@@ -78,20 +78,20 @@ public class SessionServiceImpl implements SessionService {
     private final SessionFileReferenceViewer sessionFileReferenceViewer;
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final EventParticipantRepository eventParticipantRepository;
-    private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
+    private final AcademicProgramWritePolicy academicProgramWritePolicy;
 
     /*
-     * 신규 제출. 검사 순서는 넓은 것부터다 — 활동(404) → 소유권(403) → 계획 항목(404) →
-     * 중복(409) → 출석 대상(400). 소유권을 계획 항목보다 먼저 보는 것은 남의 활동에 대해
-     * 커리큘럼 번호를 바꿔 가며 부르는 것만으로 몇 번 회차가 있는지 알아낼 수 없게 하기
-     * 위해서다.
+     * 신규 제출. 검사 순서는 넓은 것부터다 — 활동(404) → 소유권(403) → 종료(409) → 계획
+     * 항목(404) → 중복(409) → 출석 대상(400). 소유권을 계획 항목보다 먼저 보는 것은 남의 활동에
+     * 대해 커리큘럼 번호를 바꿔 가며 부르는 것만으로 몇 번 회차가 있는지 알아낼 수 없게 하기
+     * 위해서다. 앞의 셋은 AcademicProgramWritePolicy가 갖는다(#597).
      */
     @Override
     @Transactional
     public SessionDetailResponse submitSession(
             Long academicProgramId, SessionSubmitRequest request, MemberEntity requester) {
-        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeader(academicProgram, requester);
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.requireLeader(academicProgramId, requester);
 
         CurriculumItemEntity curriculumItem =
                 findCurriculumItem(request.curriculumItemId(), academicProgramId);
@@ -121,6 +121,9 @@ public class SessionServiceImpl implements SessionService {
      * 재제출. 이전 내용을 덮어쓰고 이력을 남기지 않는다(데이터모델 §7) — 그래서 여기에는
      * "직전 제출"을 어디로 옮겨 두는 코드가 없고, 있어서도 안 된다.
      *
+     * 종료된 활동(409 ACADEMIC_PROGRAM_COMPLETED)은 회차 상태보다 먼저 끊긴다 — 수정요청을 받은
+     * 회차라도 활동이 끝났으면 재시작 전에는 다시 낼 수 없다(#597).
+     *
      * 쓸 수 있는 상태인지를 계획 항목·출석 대상 검증보다 먼저 본다(SessionEntity.
      * requireResubmittable 주석) — 애초에 성립하지 않는 재제출에 엉뚱한 400이 먼저 붙지 않게
      * 하기 위해서다.
@@ -132,8 +135,8 @@ public class SessionServiceImpl implements SessionService {
             Long sessionId,
             SessionSubmitRequest request,
             MemberEntity requester) {
-        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeader(academicProgram, requester);
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.requireLeader(academicProgramId, requester);
 
         SessionEntity session = findSession(sessionId, academicProgramId);
         session.requireResubmittable();
@@ -381,15 +384,6 @@ public class SessionServiceImpl implements SessionService {
                         session.getId(), AcademicProgramApprovalPoint.SESSION)
                 .map(approval -> approval.getOpinionContent())
                 .orElse(null);
-    }
-
-    private AcademicProgramEntity findAcademicProgram(Long academicProgramId) {
-        return academicProgramRepository
-                .findById(academicProgramId)
-                .orElseThrow(
-                        () ->
-                                new GeneralException(
-                                        AcademicProgramErrorCode.ACADEMIC_PROGRAM_NOT_FOUND));
     }
 
     /*

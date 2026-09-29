@@ -10,7 +10,7 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 /*
  * 승인 이력 조회(#139 · GET /v1/academic-programs/{id}/approvals)의 쿼리 파라미터.
  *
- * **aprvSeCd는 SESSION·COMPLETION 둘뿐이다.** 기획안 승인(구 PROPOSAL 지점)은 2026-08-24
+ * **aprvSeCd는 SESSION·COMPLETION·REOPEN(재시작, #597) 셋이다.** 기획안 승인(구 PROPOSAL 지점)은 2026-08-24
  * 재설계로 학술 도메인 밖으로 나갔고(폼 응답 검토 이력 form_rspns_rvw_hstry, #141), 그 사실은
  * AcademicProgramApprovalPoint에 이미 적혀 있다 — 그래서 여기서 목록을 다시 적지 않고 enum에
  * 없는 값이면 400 INVALID_CODE_VALUE로 끊는다. 어휘를 두 곳에 적으면 지점이 하나 늘 때 한쪽만

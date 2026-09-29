@@ -1,7 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.entity;
 
 import java.time.Instant;
-import java.time.LocalDate;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -30,9 +29,10 @@ import lombok.NoArgsConstructor;
  * O-04가 확정되기 전까지의 잠정 정책이 허용 + 이력 식별 표시이기 때문이다 (POL-006).
  * 차단으로 확정되면 SELF_APPROVAL_BLOCKED(409)를 던지는 검사를 전이 메서드에 붙인다.
  *
- * 긴급 예외 집행(emrg_*·epfc_aprv_term_ymd — OPS-016)과 위험도 기반 승인 단계(aprv_stp)는
- * 아직 채우는 경로가 없어 매핑만 해 둔다. 정족수 투표(sub_work_aprv_vote — OPS-015)는
- * POL-007상 P2 예약 명세라 엔티티를 만들지 않았다.
+ * 긴급 예외 집행(OPS-016)과 위험도 기반 승인 단계는 구현되지 않았다. 그 자리로 비워 두던
+ * 컬럼 넷(emrg_se_cd·emrg_rsn·epfc_aprv_term_ymd·aprv_stp)은 채우는 경로 없이 늘 NULL이라
+ * V25에서 지웠다 — 기능을 만들 때 새 마이그레이션으로 다시 더한다(ssccops#537).
+ * 정족수 투표(sub_work_aprv_vote — OPS-015)는 POL-007상 P2 예약 명세라 엔티티를 만들지 않았다.
  */
 @Entity
 @Table(name = "sub_work_aprv")
@@ -71,18 +71,6 @@ public class SubWorkApprovalEntity {
     @Column(name = "rgtr_aprv_yn", nullable = false, updatable = false)
     private boolean registrantApproval;
 
-    @Column(name = "emrg_se_cd", length = 20)
-    private String emergencyCode;
-
-    @Column(name = "emrg_rsn", columnDefinition = "TEXT")
-    private String emergencyReason;
-
-    @Column(name = "epfc_aprv_term_ymd")
-    private LocalDate postApprovalDueDate;
-
-    @Column(name = "aprv_stp", length = 20)
-    private String approvalStep;
-
     public static SubWorkApprovalEntity record(
             SubWorkEntity subWork,
             MemberEntity approver,
@@ -90,15 +78,6 @@ public class SubWorkApprovalEntity {
             Instant approvedAt,
             boolean registrantApproval) {
         return new SubWorkApprovalEntity(
-                null,
-                subWork,
-                approver,
-                statusHistory,
-                approvedAt,
-                registrantApproval,
-                null,
-                null,
-                null,
-                null);
+                null, subWork, approver, statusHistory, approvedAt, registrantApproval);
     }
 }

@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.academicprogram.controller;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -299,6 +300,35 @@ class AcademicProgramControllerTest {
         mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "true"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    /*
+     * 공유 링크 **폐기**는 리더(또는 학술국장)만 한다 (#556 · ssccops#501).
+     *
+     * 그전에는 이 핸들러가 상세 조회(인증만)를 태우는 것이 전부라 **가입한 아무 회원이나 남의
+     * 모집 링크를 끊을 수 있었다.** 발급 쪽 논증(«볼 수 있는 사람이 공유할 수 있다»)은 한 줄도
+     * 폐기를 다루지 않는데 같은 게이트가 그대로 적용돼 있었다.
+     *
+     * 결과로 보면 둘은 반대다 — 발급은 멱등이라 되돌릴 수 있지만 폐기는 **이미 퍼진 주소를
+     * 죽이고**, 다시 발급하면 새 토큰이라 단톡방에 뿌린 링크는 살아나지 않는다.
+     */
+    @Test
+    void revokeShareLinkRejectsAMemberWhoIsNeitherLeaderNorManager() throws Exception {
+        AcademicProgramEntity program = createAcademicProgram("STUDY", "모집 중인 스터디", "1주차");
+
+        mockMvc.perform(authorized(delete(PROGRAMS + "/" + program.getId() + "/share"), otherToken))
+                .andExpect(status().isForbidden());
+    }
+
+    /* 리더 본인은 자기가 뿌린 링크를 거둘 수 있어야 한다 — 막으면 이 기능이 성립하지 않는다. */
+    @Test
+    void revokeShareLinkAllowsTheLeader() throws Exception {
+        AcademicProgramEntity program = createAcademicProgram("STUDY", "내가 맡은 스터디", "1주차");
+
+        mockMvc.perform(
+                        authorized(
+                                delete(PROGRAMS + "/" + program.getId() + "/share"), proposerToken))
+                .andExpect(status().isOk());
     }
 
     /*

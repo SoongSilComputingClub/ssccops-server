@@ -23,7 +23,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
  * 추가·변경되어야 하므로(REQ-010·POL-005) enum으로 고정할 수 없다.
  *
  * dueAt(마감 일시)은 화면에 입력란이 없으나 sub_work.ddln_dt에 대응하는 선택 입력으로 받는다.
- * 지연 판정(dly_yn)과 마감 임박 조회(OPS-008)가 이 값에 걸려 있어서, 화면에 없다는 이유로
+ * 지연 판정과 마감 임박 조회(OPS-008)가 이 값에 걸려 있어서, 화면에 없다는 이유로
  * 빼면 그 기능들이 값을 채울 경로를 잃는다.
  */
 public record SubWorkCreateRequest(

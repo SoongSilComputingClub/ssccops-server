@@ -1,13 +1,16 @@
 package org.sscc.ssccopsserver.domain.form.repository;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormResponseHistoryEntity;
@@ -241,4 +244,38 @@ public interface FormResponseHistoryRepository
      */
     Optional<FormResponseHistoryEntity> findByIdAndFormAndMember(
             Long id, FormEntity form, MemberEntity member);
+
+    /*
+     * 접수가 끝난 폼에 남은 미제출 초안을 걷어낸다 (#557 · ssccops#502 · #36 결정).
+     *
+     * ── 왜 «폼의 접수 종료»를 보는가 ────────────────────────────────────────
+     * `domain/form/AGENTS.md` 가 적어 둔 문장은 «폼이 CLOSED된 뒤 남은 DRAFT는 **접수 종료 후
+     * 90일**까지 보존한다» 이고, 즉시 지우지 않는 근거는 **마감 철회(CLOSED→OPEN)가 허용된다**는
+     * 것이다(#33). 그러므로 기준은 초안이 아니라 **폼**에 있다.
+     *
+     * 같은 문서가 대안으로 적어 둔 수동 SQL 은 `mdfcn_dt < now() - interval '90 days'` 로 **폼
+     * 상태를 보지 않았다.** 그것을 그대로 옮기면 **접수가 열려 있는 폼의 초안도 지운다** — 장기
+     * 모집 폼에서 90일 넘게 손대지 않은 작성 중인 지원서가 사라진다. 문장에는 근거가 있고 SQL 에는
+     * 없으므로 문장을 정본으로 삼았다(그 SQL 줄은 이 PR 에서 문서에서 지웠다).
+     *
+     * ── DRAFT 만 지운다 ────────────────────────────────────────────────────
+     * 제출된 응답은 지원 의사를 남긴 것이라 보관 근거가 있다. 여기서 지우는 것은 «낸 적 없는
+     * 것»뿐이며, 그래서 조건이 `ResponseStatus.DRAFT` 하나다.
+     *
+     * ── 멱등한 DELETE 다 ──────────────────────────────────────────────────
+     * 인스턴스가 둘 떠도(배포 겹침) 결과가 같다. `AGENTS.md` 가 이 배치를 미룬 근거였던 «다중
+     * 인스턴스에서 중복 실행을 막을 장치가 없다» 는 이 종류의 작업에 애초에 필요 없었고,
+     * `NotificationRepository.deleteReadBefore` 가 그것을 이미 코드로 증명해 두었다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+            "delete from FormResponseHistoryEntity r"
+                    + " where r.status = :draft"
+                    + " and r.form.status = :closed"
+                    + " and r.form.receiptEndAt is not null"
+                    + " and r.form.receiptEndAt < :before")
+    int deleteDraftsOfFormsClosedBefore(
+            @Param("draft") ResponseStatus draft,
+            @Param("closed") FormStatus closed,
+            @Param("before") Instant before);
 }

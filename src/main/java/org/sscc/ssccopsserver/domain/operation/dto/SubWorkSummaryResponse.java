@@ -50,8 +50,7 @@ public record SubWorkSummaryResponse(
      * 진행률은 체크리스트 완료율에서 파생한다 (AGG-02). 목록 전체를 한 번에 집계해 개수만
      * 넘겨받으며, 항목이 하나도 없는 하위 업무는 집계 결과에 나오지 않아 0/0으로 들어온다.
      *
-     * delayed도 dly_yn 컬럼이 아니라 조회 시점 판정값이다 — 그 컬럼은 등록 시 false로 고정된
-     * 뒤 갱신하는 주체가 없다. 조회가 컬럼을 채우지는 않는다 (AP-07).
+     * delayed도 저장하지 않는 조회 시점 판정값이다 (SubWorkEntity.isDelayedBefore).
      */
     public static SubWorkSummaryResponse of(
             SubWorkEntity subWork,

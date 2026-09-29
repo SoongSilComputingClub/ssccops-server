@@ -18,13 +18,44 @@
 # 릴리스 PR 은 «무엇이 들었나»의 답이 아니라 그 묶음의 껍데기다.
 #
 # Windows Git Bash 의 gh·jq 는 CR 을 섞는다 — 모든 API 출력에 tr -d '\r' 을 건다.
+#
+# ══ 한 번의 API 실패가 레코드를 통째로 날리지 않게 (#564 · ssccops#486) ══
+#
+# v0.2.16 서버 이력이 그렇게 사라졌다 — `gh` 가 JSON 을 기대한 자리에서
+# `invalid character 'U' looking for beginning of value` 로 죽었고, `set -e` 가 스크립트를
+# 끝내자 워크플로의 **레코드를 쓰는 단계까지 가지 못했다.** 릴리스는 정상으로 보였고 이력에서만
+# 사라졌다. 늘 나는 고장이 아니라 그 한 번의 호출이 실패한 것이다.
+#
+# 그래서 `api()` 는 **실패하지 않는다** — 한 번 다시 부르고, 그래도 안 되면 경고를 남기고 빈
+# 값을 돌려준다. 부르는 쪽은 전부 «값이 없으면 건너뛴다»로 이미 쓰여 있다. 얻는 것은 «PR 목록이
+# 덜 찬 레코드»이고 잃는 것은 «레코드가 없는 배포»인데, 뒤엣것이 훨씬 나쁘다 — 목록이 비면
+# 보이지만 레코드가 없으면 그 배포를 아무도 찾지 않는다(`unverified` 를 둔 것과 같은 태도다).
 set -euo pipefail
 
 REPO="${1:?owner/repo}"
 BASE="${2:-}"
 HEAD="${3:?head sha}"
 
-api() { gh api "$@" | tr -d '\r'; }
+api() {
+  local out='' attempt errfile
+  # **stdout 과 stderr 를 섞지 않는다** — `2>&1` 로 합치면 gh 가 성공하면서 낸 경고(폐기 예정
+  # 알림 등)가 JSON 앞에 붙어 `jq` 가 그것을 먼저 만난다. 실패했을 때만 메시지가 필요하다.
+  errfile=$(mktemp)
+  for attempt in 1 2; do
+    if out=$(gh api "$@" 2>"$errfile"); then
+      rm -f "$errfile"
+      printf '%s' "$out" | tr -d '\r'
+      return 0
+    fi
+    # 일시 오류(5xx·레이트 리밋·JSON 아닌 응답)는 한 번 더 부르면 대부분 산다
+    sleep $((attempt * 3))
+  done
+  # 마지막 실패 메시지를 그대로 남긴다 — 다음에 같은 자리가 깨지면 이 줄이 유일한 단서다
+  printf '::warning::gh api 실패, 빈 값으로 지나간다 — args=[%s] 마지막 응답=%s\n' \
+    "$*" "$(tr -d '\r' < "$errfile" | tr '\n' ' ' | head -c 200)" >&2
+  rm -f "$errfile"
+  return 0
+}
 
 if [ -n "$BASE" ]; then
   SHAS=$(api --paginate "repos/$REPO/compare/$BASE...$HEAD" --jq '.commits[].sha' || true)
@@ -86,7 +117,11 @@ for n in "${PR_NUMBERS[@]+"${PR_NUMBERS[@]}"}"; do
     bn=$(printf '%s' "$body" | grep -oE '(SoongSilComputingClub/)?ssccops#[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)
     [ -n "$bn" ] && parent_issue="SoongSilComputingClub/ssccops#$bn"
   fi
-  adr_refs=$( ( (jq -r '.[]' <<< "$adr_refs"; printf '%s' "$body" | grep -oE 'ADR-[0-9]{4}' || true) | sort -u | jq -R . | jq -sc .) )
+  # `tr -d '\r'` 가 `sort -u` **앞**에 있어야 한다 (#564) — Windows Git Bash 의 jq 는 CRLF 로
+  # 쓰므로 위 `jq -r '.[]'` 의 `ADR-0038\r` 과 아래 grep 의 `ADR-0038` 이 다른 줄이 되어
+  # 중복이 그대로 남았다(실측: `["ADR-0038","ADR-0038"]`). 파일 머리말이 경고해 둔 그 함정인데
+  # 이 줄만 빠져 있었다. 리눅스 러너에서는 드러나지 않아 **로컬로 돌려 봐야 보인다.**
+  adr_refs=$( ( (jq -r '.[]' <<< "$adr_refs"; printf '%s' "$body" | grep -oE 'ADR-[0-9]{4}' || true) | tr -d '\r' | sort -u | jq -R . | jq -sc .) )
   RESULT=$(jq -c \
     --argjson number "$n" --arg title "$title" --arg issue "$issue" \
     --arg parent_issue "$parent_issue" --argjson adr_refs "$adr_refs" \

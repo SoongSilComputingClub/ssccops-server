@@ -44,6 +44,8 @@ public record SessionCrossCondition(
                 academicProgramId,
                 toStatus(),
                 blankToNull(keyword),
+                // 회차 이력은 활동이 끝나도 그대로 보인다 — 활동 상태로 거르는 것은 승인 대기 목록뿐이다
+                null,
                 size == null ? SessionCondition.DEFAULT_SIZE : size,
                 sortOrder,
                 SessionCursor.decode(cursor, sortOrder));

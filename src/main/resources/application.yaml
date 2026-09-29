@@ -331,7 +331,21 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,loggers
+        # `loggers` 를 빼 두었다 (#555 · ssccops#500). 그것은 조회가 아니라 **쓰기**다 —
+        # `POST /actuator/loggers/{name}` 이 런타임 로그 레벨을 바꾸고, 그 엔드포인트는
+        # `@RequireAuthority`(애노테이션 AOP)가 닿지 않아 `anyRequest().authenticated()` 하나가
+        # 전부였다. 2026-09-24 dev 실측: 유효한 토큰으로 GET 200(로거 1,572개) · POST 204 →
+        # configuredLevel 이 실제로 바뀌었다. 이 저장소는 «로그인했지만 아직 가입하지 않은
+        # 사용자»를 정식 상태로 두므로(`AuthenticatedUser.member` 가 nullable) 그 사람도 닿았다.
+        #
+        # 무엇을 잃었나: `org.hibernate.orm.jdbc.bind` 를 TRACE 로 올리면 JDBC 바인드
+        # 파라미터(전화·이메일·학번)가 STDOUT_JSON·LOGSTASH 두 appender 로 흘러 Elasticsearch 에
+        # 남는다 — 이 저장소가 로그에 **싣지 않기로 못 박은** 값이고(ADR-0024), 레벨 변경은
+        # `AuditAction` 에 없어 누가 켰는지도 남지 않았다.
+        #
+        # 운영에서 로그 레벨을 바꿔야 할 일이 생기면 그것은 **배포 절차**로 온다(설정 + 재배포).
+        # 다시 열려면 `@RequireAuthority` 가 닿는 자체 엔드포인트를 만들어 감사까지 남긴다.
+        include: health,info,prometheus,metrics
   # /actuator/info 의 git 정보를 전부 낸다 (#410). 기본 simple 은 commit.id 를 abbrev 하나로
   # 뭉개는데, deploy-history.yml 은 full 로 푸시된 sha 와 정확히 비교하고 abbrev 는 표시에 쓴다.
   # 무엇이 나가는지는 build.gradle 의 gitProperties.keys 가 정한다(네 키뿐).
@@ -340,9 +354,23 @@ management:
       mode: full
   endpoint:
     health:
-      show-details: always
+      # `always` 였다 (#555 · ssccops#500). `/actuator/health/**` 가 permitAll 이라 둘을 곱하면
+      # **인증 없이** DB 컴포넌트 상태·검증 쿼리 결과·diskSpace 의 free/total 바이트가 나갔다
+      # (2026-09-24 dev 실측: components=[db, diskSpace, livenessState, ping, readinessState, ssl]).
+      # 앱 DB 가 Supabase Free 라 «지금 DB 가 멈췄는가» = «지금 서비스를 밀면 재시작 루프에
+      # 들어가는가»(ADR-0041)를 밖에서 관찰할 수 있었다.
+      show-details: when-authorized
       probes:
         enabled: true
+      group:
+        # **`readiness` 에 `db` 를 명시한다 (#555).** 스프링 기본 readiness 그룹은
+        # `readinessState` 하나뿐이라(2026-09-24 실측: components=[]) 이 줄이 없으면
+        # `/actuator/health/readiness` 가 DB 를 보지 않는다. 아래 SecurityConfig 가 익명 표면을
+        # 이 경로로 좁히는데, 그러면서 이 줄을 빠뜨리면 **ADR-0022 의 실질(«헬스체크는 DB 를
+        # 포함한다»)이 조용히 뒤집혀** autoheal 이 DB 장애에 반응하지 않게 된다 — 컨테이너는
+        # healthy 인데 서비스는 못 하는 상태로 남는다.
+        readiness:
+          include: readinessState,db
     prometheus:
       enabled: true
   prometheus:
@@ -463,6 +491,23 @@ ssccops:
 
       # 대기열 폴링 주기. **화면의 폴링은 웹 책임이고 이 값과 무관하다.**
       poll-interval: ${SSCCOPS_ASSISTANT_INDEXING_POLL_INTERVAL:PT10S}
+
+      # 기동 복구가 «멈춘 것»으로 보는 나이 (#556 · ssccops#501).
+      #
+      # 그전에는 조건이 없어 `INDEXING`에 있는 행을 **전부** 되돌렸다. Coolify는 새 컨테이너를
+      # 띄워 헬스체크를 통과시킨 뒤 옛 것을 내리므로 **겹침은 사고가 아니라 배포 절차 그 자체**
+      # 이고 배포는 develop 푸시마다 일어난다 — 그래서 «새로 뜬 인스턴스의 부팅 복구가 남의
+      # 진행 중 작업을 되돌린다»(domain/assistant/AGENTS.md)가 드문 일이 아니라 **배포마다**였다.
+      # 대가는 고아 청크와 같은 문서의 재임베딩(1.2MB PDF가 184청크)이고, 무료 티어 하루치가
+      # 그렇게 두 번 나간다.
+      #
+      # **10분인 이유**: 폴링이 PT10S이고 색인 한 건이 «수십 초»라(같은 문서) 정상 진행 중인
+      # 작업은 이 창을 넘지 않는다. 배포 겹침은 몇 분이므로 10분이면 확실히 덮는다. 진짜로 죽은
+      # 작업은 10분 뒤 복구되며, 그 지연이 문제가 된 적은 없다(복구는 부팅마다 돈다).
+      #
+      # ssccops#324가 말한 «누가 집었는가» 컬럼은 **상시** 다중 인스턴스가 될 때의 것이다 —
+      # 배포 겹침에는 이 값으로 충분하고 컬럼도 테이블도 늘지 않는다.
+      stuck-after: ${SSCCOPS_ASSISTANT_INDEXING_STUCK_AFTER:PT10M}
 
     gemini:
       # Gemini 호출의 **전체 왕복** 상한 (#403 · #448). ⚠️ **SDK 기본값이 「무한」이고 스타터에는

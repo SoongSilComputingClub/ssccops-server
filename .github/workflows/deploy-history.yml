@@ -4,9 +4,21 @@ name: Deploy History
 #
 # «어느 환경에 어떤 커밋이 언제 올라갔고 무엇이 들었나»에 답하는 자리가 없었다 — 태그·릴리스
 # 노트(사람이 씀)·Coolify 배포 화면·/actuator/info 가 흩어져 있고 어느 것도 «실제로 떴다»와
-# «무슨 PR이 들었다»를 한 줄로 잇지 못했다. 이 워크플로는 **배포 주체를 바꾸지 않는다** —
-# Coolify 가 develop 푸시를 dev 로, main 푸시(릴리스)를 prod 로 자동 배포하는 것은 그대로이고
-# (#202), 그 이벤트에 «기록만» 얹는다. 손으로 쓰는 칸은 없다.
+# «무슨 PR이 들었다»를 한 줄로 잇지 못했다. 이 워크플로는 **배포 주체를 바꾸지 않는다** — 그
+# 이벤트에 «기록만» 얹으며 손으로 쓰는 칸은 없다.
+#
+# **배포 주체는 dev 와 prod 가 같은 모양이다** (#569 · ssccops#513 → #581 · ssccops#519):
+#   - dev  : develop 푸시 → Integrate Dev(검증) → deploy-dev.yml 이 이미지를 GHCR 에 올리고
+#            Coolify 배포 웹훅을 부른다. Coolify 는 그 이미지를 받아 띄우기만 한다
+#   - prod : main 푸시(릴리스) → Integrate Production(검증) → deploy-prod.yml — 같은 사슬이다.
+#            `COOLIFY_PROD_DEPLOY_WEBHOOK` 이 비어 있는 동안(전환 전)은 Coolify 가 GitHub App 으로
+#            main 푸시를 받아 호스트에서 빌드해 배포한다(#202)
+#
+# 이 워크플로가 하는 일은 양쪽 모두 같다 — 푸시·릴리스 이벤트에서 시작해 /actuator/info 를
+# 폴링한다. prod 는 릴리스 게시가 폴링의 시작이고 배포는 머지 뒤 CI 를 거쳐 시작하므로, 게시가
+# 머지 직후면(대개 그렇다) 여기서 CI + 이미지 빌드 + pull 만큼 기다린다 — 아래 창 안이다. **dev 는 그 폴링이 «푸시 시각»부터 시작하는데 이제 배포가 CI 뒤에 시작한다** —
+# 기다림의 구성이 «Coolify 큐 + 호스트 빌드»에서 «CI + Actions 이미지 빌드 + pull»로 바뀌었다.
+# 아래 VERIFY_TIMEOUT_SECONDS 는 옛 구성으로 잰 값이라 전환 뒤 다시 재서 판단한다(ssccops#513 ③).
 #
 # 무엇을 하나:
 #   1. 직전 배포 지점을 찾는다 — prod 는 직전 GitHub Release 의 태그, dev 는 server-dev.jsonl
@@ -69,13 +81,35 @@ env:
   SERVICE_KEY: server
   META_REPO: SoongSilComputingClub/ssccops
   HISTORY_BRANCH: deploy-history
-  VERIFY_TIMEOUT_SECONDS: '600'
+  # 2026-09-24 실측에 맞춘 값이다 (#564 · ssccops#486). **dev 가 Actions 이미지 빌드로 옮겨간
+  # 뒤(#569)의 값이 아니다** — 그쪽은 다시 재서 상위 이슈(ssccops#513 ③)에서 판단한다.
+  # 600 이던 시절 dev 레코드 10건 중
+  # 3건이 `unverified` 였는데 셋 다 실제로는 배포돼 있었다 — 확인이 배포보다 먼저 끝났을 뿐이다.
+  #
+  # | 잰 것 | 값 |
+  # |---|---|
+  # | 서버 dev 배포 소요(`1060f24`) | 13분 25초 |
+  # | 그다음 배포가 큐에서 기다린 시간 | 19분 — 동시 빌드 1(ADR-0048)이라 웹 빌드 뒤에 선다 |
+  #
+  # 빌드 13분 + 큐를 합쳐 **40분**으로 둔다. 폴링은 20초 간격이고 sha 가 맞는 순간 빠져나오므로
+  # 정상 배포에서는 이 값까지 쓰지 않는다 — 이 숫자는 «언제 포기하나»이지 «얼마나 기다리나»가
+  # 아니다. 웹 워크플로는 Cloudflare·Vercel 이라 10분으로 충분하고 전부 `verified` 다.
+  #
+  # **빌드가 느려지면 이 값도 낡는다** — `unverified` 가 늘면 실제 배포 소요부터 다시 잰다.
+  #
+  # **이 값을 고치면 아래 `timeout-minutes` 도 함께 본다**(#583). 그쪽이 더 작으면 스크립트가
+  # 자기 deadline 에 닿기 전에 job 이 죽어 `unverified` 레코드가 아예 남지 않는다.
+  VERIFY_TIMEOUT_SECONDS: '2400'
 
 jobs:
   record:
     name: Record
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 위 `VERIFY_TIMEOUT_SECONDS`(2400초 = 40분)보다 커야 한다 (#583). 작으면 확인 스크립트가
+    # `unverified` 로 성공 종료하는 자리(`deploy-history-verify.sh` 끝)에 닿지 못하고 job 이
+    # 취소돼 「Append record and push」가 `skipped` 가 된다 — 20분이던 동안 되메우기 실행 두 건이
+    # 그렇게 한 줄도 남기지 못했다. 40분 + checkout·수집·push 여유로 50분.
+    timeout-minutes: 50
 
     steps:
       - name: Checkout source
@@ -141,6 +175,7 @@ jobs:
           PROD_BASE_URL: ${{ steps.hosts.outputs.prod_url }}
         run: |
           set -euo pipefail
+          BACKFILL=false
           case "$EVENT_NAME" in
             release)
               ENVIRONMENT=prod
@@ -157,6 +192,10 @@ jobs:
             workflow_dispatch)
               ENVIRONMENT="$INPUT_ENV"
               ACTOR="$GITHUB_ACTOR"
+              # ref 를 준 수동 실행은 «지금 이 커밋이 떴다»가 아니라 «지난 것을 적는다»는 뜻이다
+              # (#585) — append 라서 그 줄이 파일의 마지막이 되는데, 표시가 없으면 `current` 가
+              # 과거를 답한다. ref 없는 수동 실행은 지금을 기록하므로 되메우기가 아니다.
+              [ -n "$INPUT_REF" ] && BACKFILL=true
               if [ "$ENVIRONMENT" = prod ]; then
                 TAG="${INPUT_REF:-$(gh api "repos/$REPO/releases/latest" --jq .tag_name)}"
                 SHA=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
@@ -184,8 +223,9 @@ jobs:
             echo "version=$VERSION"
             echo "actor=$ACTOR"
             echo "base_url=${BASE_URL%/}"
+            echo "backfill=$BACKFILL"
           } >> "$GITHUB_OUTPUT"
-          echo "환경 $ENVIRONMENT · sha $SHA · 버전 $VERSION · 태그 ${TAG:-없음}"
+          echo "환경 $ENVIRONMENT · sha $SHA · 버전 $VERSION · 태그 ${TAG:-없음} · 되메우기 $BACKFILL"
 
       # 메타 레포의 이력 브랜치를 App 토큰으로 받는다. 없으면 orphan 으로 만든다.
       # 토큰은 create-github-app-token 이 마스킹해 두어 로그에 찍히지 않는다.
@@ -259,8 +299,15 @@ jobs:
           BASE: ${{ steps.previous.outputs.base }}
           SHA: ${{ steps.target.outputs.sha }}
         run: |
-          set -euo pipefail
-          bash .github/scripts/deploy-history-collect.sh "$REPO" "$BASE" "$SHA" > prs.json
+          set -uo pipefail
+          # 수집이 죽어도 **레코드는 남긴다** (#564 · ssccops#486) — v0.2.16 이 여기서 통째로
+          # 사라졌다. `set -e` 를 빼고 결과가 JSON 배열인지 직접 본다. 스크립트 안에서도 API
+          # 실패는 경고로 지나가므로, 여기까지 오는 실패는 스크립트 자체가 깨진 경우다.
+          if ! bash .github/scripts/deploy-history-collect.sh "$REPO" "$BASE" "$SHA" > prs.json \
+            || ! jq -e 'type == "array"' prs.json >/dev/null 2>&1; then
+            echo "::warning::PR 수집에 실패했다 — 레코드는 남기고 PR 목록만 비운다"
+            echo '[]' > prs.json
+          fi
           echo "count=$(jq length prs.json)" >> "$GITHUB_OUTPUT"
           jq . prs.json
 
@@ -280,6 +327,7 @@ jobs:
           STATUS: ${{ steps.verify.outputs.status }}
           DEPLOYED_AT: ${{ steps.verify.outputs.deployed_at }}
           BUILD_TIME: ${{ steps.verify.outputs.build_time }}
+          BACKFILLED: ${{ steps.target.outputs.backfill }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -295,15 +343,18 @@ jobs:
             --arg actor "$ACTOR" \
             --arg workflow_run_url "$RUN_URL" \
             --arg status "$STATUS" \
+            --argjson backfilled "$BACKFILLED" \
             '{recorded_at: $recorded_at,
               deployed_at: (if $deployed_at == "" then null else $deployed_at end),
               environment: $environment, service: $service, version: $version, git_sha: $git_sha,
               build_time: (if $build_time == "" then null else $build_time end),
-              prs: $prs[0], actor: $actor, workflow_run_url: $workflow_run_url, status: $status}')
+              prs: $prs[0], actor: $actor, workflow_run_url: $workflow_run_url, status: $status,
+              backfilled: $backfilled}')
           printf '%s\n' "$RECORD" | jq .
 
           FILE="$SERVICE_KEY-$ENVIRONMENT.jsonl"
           MSG="record($SERVICE_KEY/$ENVIRONMENT): $VERSION $(echo "$SHA" | cut -c1-7) $STATUS"
+          [ "$BACKFILLED" = true ] && MSG="$MSG (backfill)"
           # 웹 레포의 같은 워크플로가 같은 브랜치에 쓴다 — 밀리면 다시 받아서 다시 붙인다(다른 파일이라 충돌은 없다)
           for attempt in 1 2 3 4 5; do
             printf '%s\n' "$RECORD" >> "history/$FILE"

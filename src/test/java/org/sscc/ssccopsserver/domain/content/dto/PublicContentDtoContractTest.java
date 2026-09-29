@@ -10,8 +10,13 @@ import java.util.Set;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.sscc.ssccopsserver.domain.event.dto.PublicEventDetailResponse;
+import org.sscc.ssccopsserver.domain.event.dto.PublicEventSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicFormMetaResponse;
+import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicOpenFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicSystemFormMetaResponse;
+import org.sscc.ssccopsserver.domain.share.dto.PublicSharePreviewResponse;
 
 /*
  * 익명 응답 record의 필드 대조 (ssccops#381 · ADR-0038 «응답 DTO는 어드민 DTO와 다른 record로
@@ -32,7 +37,24 @@ class PublicContentDtoContractTest {
                     PublicContentPostDetailResponse.class,
                     ContentImageResponse.class,
                     PublicOpenFormResponse.class,
-                    PublicSystemFormMetaResponse.class);
+                    PublicSystemFormMetaResponse.class,
+                    /*
+                     * 아래 다섯은 2026-09-24에 더했다 (#558 · ssccops#503).
+                     *
+                     * **같은 permitAll 접두사 아래인데 이 목록에 없었다.** 지금 새는 값은 없다 —
+                     * 다섯의 컴포넌트를 전부 읽었고 개인 필드는 하나도 없다. 문제는 다음이었다:
+                     * 누가 `PublicEventDetailResponse`에 `picNm`(담당자 이름)을 한 줄 더할 때
+                     * **아무것도 실패하지 않는다.** OpenAPI 하위 호환 게이트는 필드 **추가**를
+                     * 통과시키는 것이 그 계약이고(#412) 이 테스트는 그 타입을 보지 않았다.
+                     * 그러면 운영진 이름이 실린 응답이 익명 크롤러(카카오톡·에브리타임 OG)에게
+                     * 나간 채로 배포된다 — 그리고 `SecurityConfig`의 그 주석을 읽은 리뷰어는
+                     * «테스트가 본다»고 믿는다.
+                     */
+                    PublicEventDetailResponse.class,
+                    PublicEventSummaryResponse.class,
+                    PublicFormMetaResponse.class,
+                    PublicFormResponse.class,
+                    PublicSharePreviewResponse.class);
 
     /** 익명 응답에 절대 실리지 않는 것 — 소문자 부분 일치 */
     private static final Set<String> DENY_LIST =

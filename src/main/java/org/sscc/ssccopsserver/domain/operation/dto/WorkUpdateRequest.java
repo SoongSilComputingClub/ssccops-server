@@ -17,7 +17,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
  *
  * workStatus는 이 요청에 없다(POL-003) — PATCH로 상태를 바꾸는 경로를 열면 전이 액션
  * 엔드포인트(OPS-005)와 상태를 바꾸는 길이 둘이 되어 전이표 검사를 우회할 수 있다.
- * 진행률(work_prgrs_rt)도 하위 업무에서 파생하는 값이라 여기서 받지 않는다.
+ * 진행률도 하위 업무에서 파생하는 값이라 여기서 받지 않는다.
  *
  * 등록과 달리 본문 없음("필드 생략")과 "비운다"를 구별할 필요가 없는 필드들이라 PATCH이지만
  * **전체 교체**다(AuthorityUpdateRequest와 같은 판단) — review처럼 선택 입력인 필드도 생략하면

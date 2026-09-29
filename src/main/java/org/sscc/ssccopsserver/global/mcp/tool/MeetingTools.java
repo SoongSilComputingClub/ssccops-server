@@ -12,6 +12,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.DashboardResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
@@ -30,7 +31,8 @@ import lombok.RequiredArgsConstructor;
  * 규약은 `OperationTools`와 같다 — REST만 부르고, 타입은 컨트롤러 record 그대로, 로그는 이름과 id만.
  *
  * **회의 수정 도구는 없다.** 회의는 PATCH 자체가 없고(전이와 안건으로 움직인다) 제목·일시를 고치는
- * 경로가 REST에 열려 있지 않다 — 도구가 화면보다 많은 것을 할 수는 없다.
+ * 경로가 REST에 열려 있지 않다 — 도구가 화면보다 많은 것을 할 수는 없다. 회의의 **내용**은 안건이
+ * 들고(V25가 회의 단위 본문을 걷었다) 그 자리를 `update_meeting_agenda`가 연다(#599).
  *
  * 승인함·대시보드·하위 업무 유형 읽기는 쓰기 도구가 쓰는 재료라 같은 파도에 넣는다 — 유형 id를
  * 모르면 `create_sub_work`를 부를 수 없고, 정족수 상태를 모르면 투표할 자리를 찾을 수 없다.
@@ -102,6 +104,8 @@ public class MeetingTools {
                             + "(안건이 따로 제목을 갖지 않는다 · ADR-0055). 다룰 운영 건이 아직 없으면"
                             + " 업무나 하위 업무를 먼저 만든다(create_work · create_sub_work)."
                             + " 없는 운영 건은 404. 종료·취소된 회의에는 올릴 수 없다."
+                            + " 상정 시점에는 결과가 없다 — 논의 결과와 처리 구분은 그 뒤"
+                            + " update_meeting_agenda 로 적는다."
                             + " 안건 추가는 회의 안건 작성(MEETING_AGENDA_WRITE) 권한이며 회의 관리와"
                             + " 다르다(국원도 가진다).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
@@ -114,6 +118,47 @@ public class MeetingTools {
         return client.post(
                 context,
                 "/v1/meetings/" + meetingId + "/agendas",
+                request,
+                MeetingAgendaResponse.class);
+    }
+
+    /*
+     * 안건 수정 (#599 · ssccops#365). **회의의 내용을 적을 수 있는 유일한 도구다.**
+     *
+     * 회의 단위 회의록 본문(insd_mtg_dtl_cn·otsd_mtg_dtl_cn)은 쓰는 경로가 끝내 생기지 않아
+     * V25 가 걷었고, 그래서 논의·결과는 안건(mtg_dtl)이 든다. 그전에는 도구가 안건을 올릴 수만
+     * 있어서, transition_meeting 이 WRITE_MINUTES(회의록 작성)로 보내 놓고 정작 그 상태에서
+     * 모델이 쓸 것이 없었다.
+     *
+     * **철회(DELETE)는 열지 않는다** — 되살리는 API 가 없다(ADR-0053 의 판정 기준 그대로).
+     */
+    @McpTool(
+            name = "update_meeting_agenda",
+            description =
+                    "올라온 안건의 논의 내용·결과 내용·처리 구분을 고친다."
+                            + " **전체 교체다** — content·resultContent 를 생략하면 지운 것으로 본다."
+                            + " 한 칸만 바꾸려면 list_meeting_agendas 로 지금 값을 읽어 함께 보낸다"
+                            + "(update_work 같은 읽고-합치기 도구와 다르다)."
+                            + " processStatus 는 필수다."
+                            + " 바꿀 수 없는 것: 연결 운영 건·제목·제출자 — 다시 상정하는 것과 같아"
+                            + " 이 API 의 범위 밖이다(안건은 제목을 따로 갖지 않는다 · ADR-0055)."
+                            + " 종료·취소된 회의의 안건은 409 다. 없는 안건은 404."
+                            + " 회의 안건 작성(MEETING_AGENDA_WRITE) 권한이며 회의 관리와 다르다"
+                            + "(국원도 가진다).",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public MeetingAgendaResponse updateMeetingAgenda(
+            @McpToolParam(description = "회의 id") Long meetingId,
+            @McpToolParam(description = "안건 id") Long agendaId,
+            @McpToolParam(
+                            description =
+                                    "바꿀 값 전부 — processStatus(필수) · content · resultContent."
+                                            + " 생략한 내용 칸은 비워진다")
+                    MeetingAgendaUpdateRequest request,
+            McpTransportContext context) {
+        log.info("mcp tool update_meeting_agenda meetingId={} agendaId={}", meetingId, agendaId);
+        return client.patch(
+                context,
+                "/v1/meetings/" + meetingId + "/agendas/" + agendaId,
                 request,
                 MeetingAgendaResponse.class);
     }

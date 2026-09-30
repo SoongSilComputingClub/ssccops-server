@@ -2,17 +2,28 @@ package org.sscc.ssccopsserver.domain.academicprogram.controller;
 
 import java.util.List;
 
+import jakarta.validation.Valid;
+
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAddRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.service.AcademicProgramRecruitmentService;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
+import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
+import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import lombok.RequiredArgsConstructor;
 
@@ -28,6 +39,21 @@ import lombok.RequiredArgsConstructor;
  *
  * 인증만이라는 것이 아무 값이나 내려도 된다는 뜻은 아니다 — 응답에서 개인정보를 덜어내는
  * 자리는 AcademicProgramMemberResponse다(행사 명단 DTO를 재사용하지 않는 이유가 그 주석에 있다).
+ *
+ * ── 팀원 관리(#612)도 여기 있다 ─────────────────────────────────────
+ * 추가·상태 변경·이력은 «스터디장 본인 또는 학술국장»이다. 위에서 컨트롤러를 나눈 이유(한 곳에
+ * 두면 자격을 빠뜨린 핸들러가 조용히 열린다)가 여기서는 서지 않는다 — 그 OR은 @RequireAuthority로
+ * 표현되지 않아 **서비스가** 판정하고(AcademicProgramWritePolicy · OwnershipPolicy), 경로도 같은
+ * /members 자원이다. 자격 판정이 빠진 쓰기는 AcademicProgramCompletionControllerTest.WritePath의
+ * 403 테스트가 잡는다.
+ *
+ * ── @CurrentMember에 @Parameter(hidden = true)를 거는 이유 ──────────────
+ * springdoc은 커스텀 리졸버가 채우는 인자를 모르고 **필수 쿼리 파라미터**로 스펙에 싣는다(이 레포
+ * 전체에서 76곳이 그렇게 새어 있다). 새 엔드포인트라면 틀린 문서로 끝나지만, 기존 GET에 붙이면
+ * OpenAPI 하위 호환 게이트(oasdiff · #412)가 «필수 요청 파라미터 추가»로 읽어 막는다(#612 PR에서
+ * 실제로 막혔다) — 실제 클라이언트는 그 값을 보내지 않고 서버도 쿼리에서 읽지 않는다. 그래서 이
+ * 컨트롤러는 숨긴다. 나머지 76곳을 전역으로 걷는 것(springdoc에 CurrentMember를 무시할 애노테이션으로
+ * 등록)은 스펙이 한꺼번에 바뀌는 일이라 따로 한다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -48,8 +74,70 @@ public class AcademicProgramMemberController {
     @GetMapping
     public ApiResponse<List<AcademicProgramMemberResponse>> getMembers(
             @PathVariable Long academicProgramId,
-            @RequestParam(required = false) EventParticipantStatus ptcpSttsCd) {
+            @RequestParam(required = false) EventParticipantStatus ptcpSttsCd,
+            @Parameter(hidden = true) @CurrentMember MemberEntity viewer) {
         return ApiResponse.success(
-                academicProgramRecruitmentService.getMembers(academicProgramId, ptcpSttsCd));
+                academicProgramRecruitmentService.getMembers(
+                        academicProgramId, ptcpSttsCd, viewer));
+    }
+
+    /*
+     * 팀원 추가 (#612). 201이 아니라 200인 것은 같은 요청이 새 행을 만들 수도(등록) 옛 행을 되살릴
+     * 수도(재합류) 있어서다 — 결과는 어느 쪽이든 «이 회원이 지금 확정 팀원이다» 한 가지다.
+     */
+    @Operation(
+            summary = "학술 활동 팀원 추가",
+            description =
+                    "스터디장 본인 또는 학술국장만 부른다. **신청서 없이** 확정(CONFIRMED)으로 넣는다 — 동아리 회원이면 누구나 되지만 탈퇴·제명"
+                        + " 회원은 400 MEMBER_NOT_ADDABLE이다 (담당자 후보 GET /v1/members/assignable과 같은"
+                        + " 기준). 예전에 제외된(취소) 회원이면 재합류다. 이미 확정·대기면 409 EVENT_PARTICIPANT_DUPLICATED."
+                        + " 모집 시작 전이면 409 RECRUITMENT_NOT_STARTED, 종료·폐지된 활동이면 409"
+                        + " ACADEMIC_PROGRAM_COMPLETED·ACADEMIC_PROGRAM_DISCONTINUED. 학술국장 승인 없이 바로"
+                        + " 반영되고 변경 이력이 남는다.")
+    @PostMapping
+    public ApiResponse<AcademicProgramMemberResponse> addMember(
+            @PathVariable Long academicProgramId,
+            @Valid @RequestBody AcademicProgramMemberAddRequest request,
+            @Parameter(hidden = true) @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.addMember(academicProgramId, request, actor));
+    }
+
+    @Operation(
+            summary = "학술 활동 팀원 상태 변경",
+            description =
+                    "스터디장 본인 또는 학술국장만 부른다. 승격(WAITLISTED→CONFIRMED) · 강등(CONFIRMED→WAITLISTED) ·"
+                        + " 제외(CONFIRMED→CANCELLED) · 재합류(CANCELLED→CONFIRMED) 넷이며 그 밖은 400"
+                        + " INVALID_PARTICIPANT_STATUS_TRANSITION이다. 제외해도 행은 지우지 않는다 — 지난 회차 출석은"
+                        + " 그대로 남고 다음 회차 출석 대상(확정 팀원)에서만 빠진다. 이 활동의 명단 행이 아니면 404"
+                        + " EVENT_PARTICIPANT_NOT_FOUND. 그 밖의 409는 추가와 같다.")
+    @PatchMapping("/{eventPtcpId}")
+    public ApiResponse<AcademicProgramMemberResponse> changeMemberStatus(
+            @PathVariable Long academicProgramId,
+            @PathVariable Long eventPtcpId,
+            @Valid @RequestBody AcademicProgramMemberStatusChangeRequest request,
+            @Parameter(hidden = true) @CurrentMember MemberEntity actor) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.changeMemberStatus(
+                        academicProgramId, eventPtcpId, request, actor));
+    }
+
+    /*
+     * /{eventPtcpId}가 PATCH만 받으므로 'history'가 명단 행 경로로 새지 않는다 — 그래도 GET 단건
+     * 경로를 더할 날에는 리터럴 경로가 우선한다(Spring MVC의 패턴 우선순위).
+     */
+    @Operation(
+            summary = "학술 활동 팀원 명단 변경 이력",
+            description =
+                    "스터디장 본인 또는 학술국장만 본다. 최신순이며 모집 선발(RECRUITMENT_SELECTION)·"
+                            + "행사 참가자 API(EVENT_PARTICIPANTS)·팀원 관리(TEAM_MEMBERS) 세 경로가 남긴 줄이"
+                            + " 전부 나온다. bfrPtcpSttsCd가 null이면 처음 명단에 오른 줄이다. 종료·폐지된"
+                            + " 활동도 볼 수 있다.")
+    @GetMapping("/history")
+    public ApiResponse<List<AcademicProgramMemberHistoryResponse>> getMemberHistory(
+            @PathVariable Long academicProgramId,
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.getMemberHistory(academicProgramId, requester));
     }
 }

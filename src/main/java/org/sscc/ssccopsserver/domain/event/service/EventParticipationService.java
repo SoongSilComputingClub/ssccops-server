@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.event.service;
 
 import java.util.List;
 
+import org.sscc.ssccopsserver.domain.event.code.EventParticipantChangePath;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventApplicationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantMutationResponse;
@@ -60,9 +61,45 @@ public interface EventParticipationService {
      *
      * 행사 참가자 등록 API(POST .../participants)는 이 경로를 쓰지 않는다 — 그쪽에서 중복은
      * 여전히 409이며, 명단을 통째로 덮어쓰는 화면이 없으므로 멱등할 이유도 없다.
+     *
+     * path는 이력(event_ptcp_stts_hstry)에 남을 경로다(#612) — 행사 도메인은 누가 부르는지 모르므로
+     * 부르는 쪽이 넘긴다(지금은 학술 모집 선발 하나).
      */
     EventParticipantMutationResponse registerOrUpdateParticipant(
-            Long eventId, EventParticipantRegisterRequest request, MemberEntity registrant);
+            Long eventId,
+            EventParticipantRegisterRequest request,
+            MemberEntity registrant,
+            EventParticipantChangePath path);
+
+    /*
+     * 신청서 없이 확정으로 들인다 (#612 · 학술 팀원 관리 — 스터디장·학술국장).
+     *
+     *   명단에 없음   → 확정으로 등록한다 (form_rspns_id 없음)
+     *   취소됨        → 재합류(EventParticipantEntity.rejoin)
+     *   확정·대기     → 409 EVENT_PARTICIPANT_DUPLICATED — 이미 팀에 있다
+     *
+     * **대상 회원의 자격(탈퇴·제명 제외)은 여기서 보지 않는다** — 부르는 쪽이 회원 도메인의 배정
+     * 가능 판정(MemberService.findAssignableMember)을 지나 온다. 행사 참가자 API는 떠난 회원도
+     * 경고만 하고 받으므로(§8-5) 그 규칙을 여기 넣으면 그쪽이 바뀐다.
+     */
+    EventParticipantMutationResponse admitParticipant(
+            Long eventId,
+            MemberEntity member,
+            MemberEntity performer,
+            EventParticipantChangePath path);
+
+    /*
+     * 참가 상태 전이에 **재합류를 더한 것** (#612 · 학술 팀원 관리 — PATCH .../members/{id}).
+     * 취소 → 확정이면 rejoin이고, 나머지는 changeParticipantStatus와 같은 전이표다
+     * (승격·강등·취소). 행사 참가자 API(changeParticipantStatus)는 재합류를 받지 않는다 — 그 차이가
+     * 두 메서드를 나눈 이유다.
+     */
+    EventParticipantMutationResponse reviseParticipantStatus(
+            Long eventId,
+            Long eventParticipantId,
+            EventParticipantStatus nextStatus,
+            MemberEntity performer,
+            EventParticipantChangePath path);
 
     /*
      * 참가 상태 전이 (D14). 허용은 승격(WAITLISTED→CONFIRMED)·강등(CONFIRMED→WAITLISTED,

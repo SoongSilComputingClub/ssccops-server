@@ -69,7 +69,7 @@ import com.jayway.jsonpath.JsonPath;
  * 종료는 그 활동의 쓰기를 전부 멈춘다 (#597 · ADR-0057 · AcademicProgramWritePolicy). 폐지도 같다
  * (#611 · ADR-0058) — 같은 WritePath 표를 폐지 상태에도 돌린다(거절 코드만 다르다).
  *
- * **쓰기 경로 여덟을 WritePath 한 표에 둔다.** 서버가 판정을 한 자리에 모은 것과 같은 이유다 —
+ * **쓰기 경로 열(#597의 여덟 + #612의 팀원 추가·상태 변경)을 WritePath 한 표에 둔다.** 서버가 판정을 한 자리에 모은 것과 같은 이유다 —
  * 경로마다 테스트를 흩어 두면 새 쓰기 경로가 생길 때 그 테스트만 빠진다. 경로를 더하면 이 표에
  * 한 줄을 더하고, 두 파라미터화 테스트가 409와 «403이 409보다 먼저»를 함께 본다.
  *
@@ -152,7 +152,7 @@ class AcademicProgramCompletionControllerTest {
         transitionProgram(program, "APPROVE_COMPLETION");
     }
 
-    // ------------------------------------------------------------------ 쓰기 경로 여덟
+    // ------------------------------------------------------------------ 쓰기 경로
 
     /*
      * 종료된 활동의 쓰기는 전부 409 ACADEMIC_PROGRAM_COMPLETED다. 경로마다 «활동이 살아 있으면
@@ -197,7 +197,7 @@ class AcademicProgramCompletionControllerTest {
     // ------------------------------------------------------------------ 폐지도 같은 표 (#611)
 
     /*
-     * 폐지도 같은 쓰기 여덟을 멈춘다(ADR-0058) — 코드만 ACADEMIC_PROGRAM_DISCONTINUED로 다르다(화면이
+     * 폐지도 같은 쓰기 경로를 전부 멈춘다(ADR-0058) — 코드만 ACADEMIC_PROGRAM_DISCONTINUED로 다르다(화면이
      * «재시작»이 아니라 «복원»을 안내해야 한다). setUp이 종료까지 가 있으므로 재시작한 뒤 폐지한다 —
      * 종료에서는 폐지할 수 없다.
      */
@@ -434,6 +434,22 @@ class AcademicProgramCompletionControllerTest {
                         .content(
                                 "{\"rcptBgngDt\": \"%s\", \"rcptEndDt\": \"%s\"}"
                                         .formatted(laterBy(1), laterBy(30)));
+            }
+        },
+        ADD_MEMBER(Qualification.LEADER_OR_MANAGER) {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {
+                // 팀원 추가(#612) — 스터디장 자신도 동아리 회원이라 활동이 살아 있으면 통과한다
+                return post(test.programPath() + "/members")
+                        .content("{\"mbrId\": %d}".formatted(test.leader.getId()));
+            }
+        },
+        CHANGE_MEMBER_STATUS(Qualification.LEADER_OR_MANAGER) {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {
+                // 팀원 상태 변경(#612) — 명단에 없는 행이지만 404보다 종료·폐지가 먼저다
+                return patch(test.programPath() + "/members/1")
+                        .content("{\"ptcpSttsCd\": \"CANCELLED\"}");
             }
         },
         UPDATE_RECRUITMENT_FORM(Qualification.LEADER_OR_MANAGER) {

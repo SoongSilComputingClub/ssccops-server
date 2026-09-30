@@ -15,7 +15,9 @@ import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
  * 등록을 «변경»에 넣은 것은 신청자 입장에서 확정·대기를 처음 아는 순간이 바로 그 등록이기
  * 때문이다 — 모집 선발이 명단을 만드는 길이 등록이라, 등록을 빼면 첫 확정은 아무에게도 가지 않고
  * 강등·승격만 간다. 같은 값으로의 재저장은 서비스가 `changeStatus`를 부르지 않으므로 여기까지
- * 오지 않는다(바뀐 것이 없으면 알릴 것도 없다).
+ * 오지 않는다(바뀐 것이 없으면 알릴 것도 없다). 학술 팀원 관리(#612)의 추가·재합류·전이
+ * (`admitParticipant`·`reviseParticipantStatus`)도 같은 자리(`recordStatusChange`)를 지나므로 따로
+ * 적을 것이 없다 — 이력(`event_ptcp_stts_hstry`)과 이 알림은 한 메서드에서 함께 나간다.
  *
  * 싣는 것은 식별자와 코드값뿐이다(엔티티를 실으면 다른 스레드에서 `LazyInitializationException`).
  *

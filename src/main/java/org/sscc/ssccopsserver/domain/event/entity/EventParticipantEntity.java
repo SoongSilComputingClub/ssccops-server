@@ -166,4 +166,25 @@ public class EventParticipantEntity {
         }
         this.status = nextStatus;
     }
+
+    /*
+     * 재합류 — CANCELLED → CONFIRMED (#612 · 학술 팀원 관리 전용).
+     *
+     * changeStatus의 전이표가 취소에서 나가는 길을 막는 이유는 «정원 판단·대기 순서를 무시하고
+     * 되살리는 경로»다(위 주석). 학술 프로그램은 정원이 참고치라(선발 설계 결정 #2) 그 이유가 서지
+     * 않고, 개인 사정으로 빠졌던 팀원이 돌아오는 것은 정상 운영이다(2026-09-30 결정).
+     *
+     * **전이표를 넓히지 않고 메서드를 따로 둔다** — 넓히면 행사 참가자 API(EVENT_MANAGE)까지 열리고,
+     * 거기서는 여전히 정원·대기 순서를 우회하는 길이다. 이 메서드를 부르는 자리는
+     * EventParticipationServiceImpl의 학술 경로 둘(admitParticipant · reviseParticipantStatus)뿐이다.
+     *
+     * 취소가 아닌 행에 부르면 400이다 — 확정·대기에서 확정으로 가는 일은 전이표가 이미 답한다.
+     * 신청 근거(form_rspns_id)는 그대로 둔다: 처음 올린 근거가 «왜 명단에 있는가»의 답이다.
+     */
+    public void rejoin() {
+        if (this.status != EventParticipantStatus.CANCELLED) {
+            throw new GeneralException(EventErrorCode.INVALID_PARTICIPANT_STATUS_TRANSITION);
+        }
+        this.status = EventParticipantStatus.CONFIRMED;
+    }
 }

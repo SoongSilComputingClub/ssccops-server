@@ -62,12 +62,7 @@ public class AcademicProgramOwnershipPolicy {
      */
     public void requireLeaderOrManager(
             AcademicProgramEntity academicProgram, MemberEntity requester) {
-        if (isLeader(academicProgram, requester)) {
-            return;
-        }
-        if (requester != null
-                && authorityPolicy.hasAuthority(
-                        requester.getId(), AuthorityCode.ACADEMIC_PROGRAM_MANAGE)) {
+        if (isLeaderOrManager(academicProgram, requester)) {
             return;
         }
 
@@ -77,6 +72,20 @@ public class AcademicProgramOwnershipPolicy {
                 academicProgram.getLeader() == null ? null : academicProgram.getLeader().getId(),
                 requester == null ? null : requester.getId());
         throw new GeneralException(AcademicProgramErrorCode.FORBIDDEN);
+    }
+
+    /*
+     * requireLeaderOrManager의 판정만 (#612). 거절하지 않는 조회 — 팀원 명단의 isEditable처럼 «버튼을
+     * 켤까»를 답하는 자리가 쓴다. 판정을 한 벌로 두려고 require가 이것을 부른다.
+     */
+    public boolean isLeaderOrManager(
+            AcademicProgramEntity academicProgram, MemberEntity requester) {
+        if (isLeader(academicProgram, requester)) {
+            return true;
+        }
+        return requester != null
+                && authorityPolicy.hasAuthority(
+                        requester.getId(), AuthorityCode.ACADEMIC_PROGRAM_MANAGE);
     }
 
     public boolean isLeader(AcademicProgramEntity academicProgram, MemberEntity requester) {

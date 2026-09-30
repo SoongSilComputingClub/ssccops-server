@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.academicprogram.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,6 +16,8 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
 import org.hamcrest.Matchers;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,9 +30,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionTransition;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
@@ -57,8 +65,12 @@ import com.jayway.jsonpath.JsonPath;
  *
  * 요청 주체를 요청마다 바꿔야 해서(제출자 · 다른 회원) AcademicProgramTypeControllerTest와
  * 같은 JwtDecoder 스텁을 쓴다. typeCd는 S0(#130)이 시드하는 STUDY/PROJECT를 그대로 쓴다.
+ *
+ * generate_statistics는 목록 진행률이 N+1이 아닌지 재기 위한 것이다(#609). 컨텍스트를 새로
+ * 띄우지 않도록 RoleControllerTest와 설정을 글자까지 맞췄다(#103 — 컨텍스트 수가 테스트 시간을
+ * 지배한다).
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.jpa.properties.hibernate.generate_statistics=true")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(TestJwtDecoderConfig.class)
@@ -76,6 +88,7 @@ class AcademicProgramControllerTest {
     @Autowired private AcademicProgramRepository academicProgramRepository;
     @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
     @Autowired private CurriculumItemRepository curriculumItemRepository;
+    @Autowired private SessionRepository sessionRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormRepository formRepository;
     @PersistenceContext private EntityManager entityManager;
@@ -116,8 +129,10 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data.leadrMbrNm").value("제출자"))
                 .andExpect(jsonPath("$.data.formId").value(Matchers.nullValue()))
                 .andExpect(jsonPath("$.data.formReceiptStatus").value(Matchers.nullValue()))
-                .andExpect(jsonPath("$.data.progress.totalSessionCount").value(0))
+                // 분모는 계획 항목 수다(#609) — 기록이 하나도 없어도 0이 아니라 2다
+                .andExpect(jsonPath("$.data.progress.totalSessionCount").value(2))
                 .andExpect(jsonPath("$.data.progress.approvedSessionCount").value(0))
+                .andExpect(jsonPath("$.data.progress.ratio").value(0))
                 .andExpect(jsonPath("$.data.curriculumItemCount").value(2))
                 .andExpect(jsonPath("$.data.isProposer").value(true))
                 .andExpect(jsonPath("$.data.isLeader").value(true));
@@ -166,7 +181,9 @@ class AcademicProgramControllerTest {
 
     @Test
     void searchAcademicProgramsReturnsListEnvelope() throws Exception {
-        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "목록용 스터디", "1주차");
+        AcademicProgramEntity academicProgram =
+                createAcademicProgram("STUDY", "목록용 스터디", "1주차", "2주차");
+        recordSessions(academicProgram, SessionStatus.APPROVED);
 
         mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
                 .andExpect(status().isOk())
@@ -176,7 +193,8 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data[0].typeCd").value("STUDY"))
                 .andExpect(jsonPath("$.data[0].sttsCd").value("APPROVED"))
                 .andExpect(jsonPath("$.data[0].leadrMbrNm").value("제출자"))
-                .andExpect(jsonPath("$.data[0].progressRatio").value(0))
+                // 계획 2개 중 1개 승인 (#609)
+                .andExpect(jsonPath("$.data[0].progressRatio").value(50))
                 .andExpect(jsonPath("$.data[0].isLeader").value(true))
                 .andExpect(jsonPath("$.page.size").value(20))
                 .andExpect(jsonPath("$.page.sort").value("-createdAt"))
@@ -465,6 +483,146 @@ class AcademicProgramControllerTest {
         mockMvc.perform(get(PROGRAMS)).andExpect(status().isUnauthorized());
     }
 
+    // ------------------------------------------------------------------ 진행률 (#609)
+    //
+    // 승인 회차 ÷ 계획 항목 × 100. #131~#608 동안 목록·상세 모두 언제나 0이었고, 위 테스트들이
+    // 그 0을 기대값으로 못 박고 있어 CI가 잡지 못했다 — 그래서 여기서는 0이 아닌 값을 본다.
+
+    // 계획 항목이 없으면 나눌 것이 없다 — 0으로 떨어지고 오류가 나지 않는다
+    @Test
+    void progressIsZeroWhenProgramHasNoCurriculumItems() throws Exception {
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "계획 없는 스터디");
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", academicProgram.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.totalSessionCount").value(0))
+                .andExpect(jsonPath("$.data.progress.approvedSessionCount").value(0))
+                .andExpect(jsonPath("$.data.progress.ratio").value(0))
+                .andExpect(jsonPath("$.data.curriculumItemCount").value(0));
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].progressRatio").value(0));
+    }
+
+    /*
+     * 분자는 승인된 회차뿐이고 분모는 계획 전부다. 제출됨(학술국장이 아직 보지 않은 기록)과
+     * 수정요청은 세지 않고, 아직 기록이 없는 항목도 분모에서 빠지지 않는다 — 실적 행 수로
+     * 나누면 이 활동은 1/3이 된다.
+     */
+    @Test
+    void progressCountsOnlyApprovedSessionsOverEveryPlannedItem() throws Exception {
+        AcademicProgramEntity academicProgram =
+                createAcademicProgram("STUDY", "일부 승인 스터디", "OT", "1주차", "2주차", "3주차");
+        recordSessions(
+                academicProgram,
+                SessionStatus.APPROVED,
+                SessionStatus.SUBMITTED,
+                SessionStatus.REVISION_REQUESTED);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", academicProgram.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.totalSessionCount").value(4))
+                .andExpect(jsonPath("$.data.progress.approvedSessionCount").value(1))
+                .andExpect(jsonPath("$.data.progress.ratio").value(25))
+                // totalSessionCount는 이름과 달리 계획 항목 수다 — 언제나 이 값과 같다
+                .andExpect(jsonPath("$.data.curriculumItemCount").value(4));
+    }
+
+    @Test
+    void progressReaches100WhenEveryPlannedItemIsApproved() throws Exception {
+        AcademicProgramEntity academicProgram =
+                createAcademicProgram("STUDY", "전부 승인 스터디", "1주차", "2주차");
+        recordSessions(academicProgram, SessionStatus.APPROVED, SessionStatus.APPROVED);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", academicProgram.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.totalSessionCount").value(2))
+                .andExpect(jsonPath("$.data.progress.approvedSessionCount").value(2))
+                .andExpect(jsonPath("$.data.progress.ratio").value(100));
+    }
+
+    // 목록의 progressRatio와 상세의 progress.ratio는 같은 값이다 — 반올림(소수 2자리)까지 같다
+    @Test
+    void listAndDetailCarryTheSameProgress() throws Exception {
+        AcademicProgramEntity academicProgram =
+                createAcademicProgram("STUDY", "목록 상세 비교 스터디", "1주차", "2주차", "3주차");
+        recordSessions(
+                academicProgram,
+                SessionStatus.APPROVED,
+                SessionStatus.APPROVED,
+                SessionStatus.SUBMITTED);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", academicProgram.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.ratio").value(66.67));
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].progressRatio").value(66.67));
+    }
+
+    /*
+     * 목록은 페이지의 활동 id로 묶어 한 번에 센다 — 묶은 집계가 활동끼리 섞이지 않는지 본다.
+     * 정렬(createdAt)은 CI의 시각 분해능에 흔들리므로(searchWithSizeOnePaginatesWithCursor 주석)
+     * 순서가 아니라 제목으로 줄을 찾는다.
+     */
+    @Test
+    void listCountsProgressPerProgramWithoutMixingThem() throws Exception {
+        AcademicProgramEntity allApproved = createAcademicProgram("STUDY", "전부 승인", "1주차", "2주차");
+        AcademicProgramEntity oneOfThree =
+                createAcademicProgram("PROJECT", "셋 중 하나", "1주차", "2주차", "3주차");
+        createAcademicProgram("STUDY", "계획 없음");
+        recordSessions(allApproved, SessionStatus.APPROVED, SessionStatus.APPROVED);
+        recordSessions(oneOfThree, SessionStatus.APPROVED, SessionStatus.SUBMITTED);
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(3)))
+                .andExpect(
+                        jsonPath(
+                                "$.data[?(@.title == '전부 승인')].progressRatio",
+                                Matchers.contains(100.0)))
+                .andExpect(
+                        jsonPath(
+                                "$.data[?(@.title == '셋 중 하나')].progressRatio",
+                                Matchers.contains(33.33)))
+                .andExpect(
+                        jsonPath(
+                                "$.data[?(@.title == '계획 없음')].progressRatio",
+                                Matchers.contains(0.0)));
+    }
+
+    /*
+     * 카드마다 진행률을 세면 100건 페이지가 N+1이다(DB-13). 한 건짜리 페이지와 세 건짜리
+     * 페이지가 **같은 수의 질의**로 끝나는지 본다 — 절대 수를 박지 않는 것은 인증·건수 질의가
+     * 바뀔 때 이 테스트가 함께 빨개지지 않게 하기 위해서다.
+     *
+     * 두 페이지는 keyword로 가른다. 데이터를 다 만든 뒤 flush·clear 하고 재므로 INSERT가 세어지지
+     * 않고, 1차 캐시가 지연 로딩을 가려 주지도 않는다.
+     */
+    @Test
+    void searchCountsProgressWithOneQueryRegardlessOfPageSize() throws Exception {
+        AcademicProgramEntity alone = createAcademicProgram("STUDY", "단독 스터디", "1주차", "2주차");
+        recordSessions(alone, SessionStatus.APPROVED);
+        for (int i = 1; i <= 3; i++) {
+            AcademicProgramEntity grouped =
+                    createAcademicProgram("STUDY", "묶음 스터디 " + i, "1주차", "2주차");
+            recordSessions(grouped, SessionStatus.APPROVED, SessionStatus.SUBMITTED);
+        }
+
+        long onePage =
+                statementCountOf(
+                        authorized(get(PROGRAMS), proposerToken).param("keyword", "단독"), 1);
+        long threePage =
+                statementCountOf(
+                        authorized(get(PROGRAMS), proposerToken).param("keyword", "묶음"), 3);
+
+        // 통계가 꺼져 있으면 둘 다 0이라 아래 단정이 거저 통과한다
+        assertThat(onePage).isPositive();
+        assertThat(threePage).isEqualTo(onePage);
+    }
+
     // ------------------------------------------------------------------ 커리큘럼 계획 조회 (#134)
 
     /*
@@ -607,6 +765,57 @@ class AcademicProgramControllerTest {
                 List.of("1주차"),
                 eventBgngDt,
                 eventBgngDt.plusSeconds(60 * 60 * 24 * 30));
+    }
+
+    /*
+     * 계획 항목 앞에서부터 차례로 회차 기록을 심는다(#609). 뒤에 남는 항목은 기록이 없는
+     * NOT_SUBMITTED다 — 그 상태는 sesn 행이 없다는 뜻이라 심을 수 없다(SessionStatus 주석).
+     *
+     * 승인·수정요청은 전이 API(#136)를 태우지 않고 엔티티 전이를 직접 부른다 — 이 클래스가
+     * 국장 권한 부여까지 지고 가면 그 규칙이 바뀔 때 조회 테스트가 함께 빨개진다
+     * (AcademicSessionControllerTest가 상태를 벌크 UPDATE로 심는 것과 같은 판단).
+     */
+    private void recordSessions(AcademicProgramEntity academicProgram, SessionStatus... statuses) {
+        List<CurriculumItemEntity> items =
+                curriculumItemRepository.findByAcademicProgramIdOrderBySeqnoAsc(
+                        academicProgram.getId());
+        for (int i = 0; i < statuses.length; i++) {
+            SessionEntity session =
+                    SessionEntity.submit(
+                            items.get(i), LocalDate.of(2026, 9, 15), "진행 내용", null, proposer);
+            if (statuses[i] == SessionStatus.APPROVED) {
+                session.changeStatus(SessionTransition.APPROVE, null);
+            } else if (statuses[i] == SessionStatus.REVISION_REQUESTED) {
+                session.changeStatus(SessionTransition.REQUEST_REVISION, "보완해 주세요");
+            } else if (statuses[i] != SessionStatus.SUBMITTED) {
+                throw new IllegalArgumentException(statuses[i] + "는 sesn 행으로 심을 수 없다");
+            }
+            sessionRepository.save(session);
+        }
+    }
+
+    /*
+     * 요청 하나가 DB에 보낸 문장 수. 심어 둔 데이터를 먼저 flush 해 INSERT가 세어지지 않게 하고,
+     * clear 해 1차 캐시가 지연 로딩을 가리지 않게 한다 — 실제 요청은 빈 영속성 컨텍스트에서
+     * 시작한다. 결과 건수를 함께 보는 것은 keyword가 빗나가 두 페이지가 모두 비면 질의 수가
+     * 같아지는 것이 당연하기 때문이다.
+     */
+    private long statementCountOf(MockHttpServletRequestBuilder request, int expectedSize)
+            throws Exception {
+        entityManager.flush();
+        entityManager.clear();
+        Statistics statistics =
+                entityManager
+                        .getEntityManagerFactory()
+                        .unwrap(SessionFactory.class)
+                        .getStatistics();
+        statistics.clear();
+
+        mockMvc.perform(request)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(expectedSize)));
+
+        return statistics.getPrepareStatementCount();
     }
 
     /*

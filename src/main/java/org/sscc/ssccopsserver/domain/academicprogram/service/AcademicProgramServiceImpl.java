@@ -15,6 +15,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramE
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCondition;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCursor;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramDetailResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramProgressResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchQuery;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSummaryResponse;
@@ -27,6 +28,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatu
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramProgressCount;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
@@ -72,8 +74,9 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     public AcademicProgramDetailResponse getAcademicProgram(
             Long academicProgramId, MemberEntity viewer) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        long curriculumItemCount =
-                curriculumItemRepository.countByAcademicProgramId(academicProgramId);
+        AcademicProgramProgressResponse progress =
+                progressesOf(List.of(academicProgramId))
+                        .getOrDefault(academicProgramId, AcademicProgramProgressResponse.zero());
 
         // 연결된 모집 폼에서 formId·파생 접수 상태를 채운다(#186). 이관(#148) 전 활동이나
         // 데이터 정합성이 깨져 폼이 없는 활동은 둘 다 null이다. 접수 상태는 상태 코드만 읽지
@@ -85,7 +88,31 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 form == null ? null : formReceiptPolicy.receiptStatusOf(form).name();
 
         return AcademicProgramDetailResponse.of(
-                academicProgram, (int) curriculumItemCount, viewer, formId, formReceiptStatus);
+                academicProgram, progress, viewer, formId, formReceiptStatus);
+    }
+
+    /*
+     * 활동별 진행률 (#609). 목록은 페이지의 활동 id를, 상세는 id 하나를 넘겨 **같은 집계 질의와
+     * 같은 계산**을 지난다 — 둘을 따로 세면 같은 활동이 두 화면에서 다른 숫자로 보인다.
+     * 카드마다 세면 그대로 N+1이라 질의는 활동 수와 무관하게 하나다(DB-13).
+     *
+     * 계획 항목이 없는 활동은 결과에 키가 없으므로 호출부가 zero()로 읽는다(그 규칙은 질의 주석).
+     * 활동이 한 건도 없으면 질의를 보내지 않는다 — in ()은 DB마다 해석이 갈린다.
+     */
+    private Map<Long, AcademicProgramProgressResponse> progressesOf(List<Long> academicProgramIds) {
+        if (academicProgramIds.isEmpty()) {
+            return Map.of();
+        }
+        return curriculumItemRepository
+                .countProgressByAcademicProgramIds(academicProgramIds)
+                .stream()
+                .collect(
+                        Collectors.toMap(
+                                AcademicProgramProgressCount::getAcademicProgramId,
+                                count ->
+                                        AcademicProgramProgressResponse.of(
+                                                count.getCurriculumItemCount(),
+                                                count.getApprovedSessionCount())));
     }
 
     /*
@@ -153,7 +180,8 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
 
     /*
      * 목록 조회. 쿼리는 목록 · 필터 건수 · 전체 건수 셋으로 work 도메인의 목록 조회(OPS-020)와
-     * 같은 수다(설계 결정 #3).
+     * 같은 수다(설계 결정 #3). 카드의 값을 채우는 집계(접수 건수 #483 · 진행률 #609)가 페이지당
+     * 한 번씩 더해질 뿐 카드 수에 따라 늘지 않는다.
      */
     @Override
     public AcademicProgramSearchResponse searchAcademicPrograms(
@@ -166,6 +194,8 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         List<AcademicProgramEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
         Map<Long, Long> applicationCounts = applicationCountsOf(rows);
+        Map<Long, AcademicProgramProgressResponse> progresses =
+                progressesOf(rows.stream().map(AcademicProgramEntity::getId).toList());
         List<AcademicProgramSummaryResponse> academicPrograms =
                 rows.stream()
                         .map(
@@ -182,7 +212,10 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                                             form == null
                                                     ? 0L
                                                     : applicationCounts.getOrDefault(
-                                                            form.getId(), 0L));
+                                                            form.getId(), 0L),
+                                            progresses.getOrDefault(
+                                                    program.getId(),
+                                                    AcademicProgramProgressResponse.zero()));
                                 })
                         .toList();
 

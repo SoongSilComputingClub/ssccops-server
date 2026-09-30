@@ -21,7 +21,11 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * (FormReceiptPolicy.receiptStatusOf, AcademicProgramTransitionResponse.formReceiptStatus와
  * 같은 문자열)다. 데이터 정합성이 깨져 폼이 연결 안 된 활동도 null로 안전하게 내려간다.
  * 판정은 Clock을 주입받는 FormReceiptPolicy가 하므로 정적 팩토리가 직접 부를 수 없어
- * 서비스가 계산해 인자로 넘긴다(#186). progress도 언제나 0이다 — Session 엔티티가 아직 없다(#135).
+ * 서비스가 계산해 인자로 넘긴다(#186).
+ *
+ * progress는 목록의 progressRatio와 같은 집계 질의·같은 계산을 지난 값이다(#609 ·
+ * AcademicProgramProgressResponse). curriculumItemCount는 따로 세지 않고 progress의 분모를
+ * 그대로 싣는다 — 둘 다 계획 항목 수라 따로 세면 같은 사실이 두 질의가 된다.
  */
 public record AcademicProgramDetailResponse(
         Long academicProgramId,
@@ -55,7 +59,7 @@ public record AcademicProgramDetailResponse(
 
     public static AcademicProgramDetailResponse of(
             AcademicProgramEntity academicProgram,
-            int curriculumItemCount,
+            AcademicProgramProgressResponse progress,
             MemberEntity viewer,
             Long formId,
             String formReceiptStatus) {
@@ -86,8 +90,8 @@ public record AcademicProgramDetailResponse(
                 proposer.getId().equals(viewer.getId()),
                 formId,
                 formReceiptStatus,
-                AcademicProgramProgressResponse.zero(),
-                curriculumItemCount,
+                progress,
+                progress.totalSessionCount(),
                 toOffsetDateTime(academicProgram.getCreatedAt()),
                 toOffsetDateTime(academicProgram.getUpdatedAt()));
     }

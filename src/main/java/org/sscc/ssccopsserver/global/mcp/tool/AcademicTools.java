@@ -101,13 +101,16 @@ public class AcademicTools {
                             + " proposer(내가 기획안 제출자) · true(둘 중 하나). 팀원으로 참여한 활동을 고르는"
                             + " 값은 없다. 그 밖의 값은 400이다. 전부 비우면 전체."
                             + " 상태는 APPROVED(승인됨 · 모집 전)·ONGOING(진행 중)·COMPLETED(종료) 셋이다."
+                            + " isDelayed는 «진행 중인데 예정된 운영 기간이 끝났고 진행률(승인 회차 ÷ 계획 항목)이"
+                            + " 100% 미만»이며, delayed=true면 그것만 본다(sttsCd와 함께 주면 AND)."
                             + " 목록에는 기획 내용(목표·준비·일정)이 없다 — get_academic_program으로."
                             + " 팀원은 list_academic_program_members, 회차는 list_academic_sessions로 본다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramSummaryResponse> listAcademicPrograms(
             @McpToolParam(
                             description =
-                                    "검색 조건 — typeCd·sttsCd·keyword·mine·size·cursor·sort. 전부 선택",
+                                    "검색 조건 — typeCd·sttsCd·keyword·mine·delayed·size·cursor·sort."
+                                            + " 전부 선택",
                             required = false)
                     AcademicProgramCondition condition,
             McpTransportContext context) {

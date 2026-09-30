@@ -88,7 +88,25 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 form == null ? null : formReceiptPolicy.receiptStatusOf(form).name();
 
         return AcademicProgramDetailResponse.of(
-                academicProgram, progress, viewer, formId, formReceiptStatus);
+                academicProgram,
+                progress,
+                isDelayed(academicProgram, progress, Instant.now(clock)),
+                viewer,
+                formId,
+                formReceiptStatus);
+    }
+
+    /*
+     * 지연 판정(#610)을 진행률과 잇는 자리. 판정 자체는 AcademicProgramEntity.isDelayedAt이
+     * 갖고, 목록 필터(AcademicProgramRepositoryImpl.DELAYED)가 같은 조건을 JPQL로 쓴다.
+     * totalSessionCount는 이름과 달리 계획 항목 수다(AcademicProgramProgressResponse 주석).
+     */
+    private boolean isDelayed(
+            AcademicProgramEntity academicProgram,
+            AcademicProgramProgressResponse progress,
+            Instant now) {
+        return academicProgram.isDelayedAt(
+                now, progress.totalSessionCount(), progress.approvedSessionCount());
     }
 
     /*
@@ -182,11 +200,16 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
      * 목록 조회. 쿼리는 목록 · 필터 건수 · 전체 건수 셋으로 work 도메인의 목록 조회(OPS-020)와
      * 같은 수다(설계 결정 #3). 카드의 값을 채우는 집계(접수 건수 #483 · 진행률 #609)가 페이지당
      * 한 번씩 더해질 뿐 카드 수에 따라 늘지 않는다.
+     *
+     * '지금'은 한 번만 읽어 지연 필터(delayed=true)와 응답의 isDelayed가 같은 경계를 보게 한다
+     * (#610) — 따로 읽으면 그 사이에 종료 시각이 지난 활동이 필터에는 걸리고 배지는 없는 줄이
+     * 된다(SubWorkServiceImpl.searchSubWorks가 지연 경계를 한 번 읽는 것과 같다).
      */
     @Override
     public AcademicProgramSearchResponse searchAcademicPrograms(
             AcademicProgramCondition condition, MemberEntity viewer) {
-        AcademicProgramSearchQuery query = condition.toQuery(viewer);
+        Instant now = Instant.now(clock);
+        AcademicProgramSearchQuery query = condition.toQuery(viewer, now);
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<AcademicProgramEntity> fetched = academicProgramRepository.search(query);
@@ -201,6 +224,10 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                         .map(
                                 program -> {
                                     FormEntity form = program.getEvent().getForm();
+                                    AcademicProgramProgressResponse progress =
+                                            progresses.getOrDefault(
+                                                    program.getId(),
+                                                    AcademicProgramProgressResponse.zero());
                                     return AcademicProgramSummaryResponse.of(
                                             program,
                                             viewer,
@@ -213,9 +240,8 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                                                     ? 0L
                                                     : applicationCounts.getOrDefault(
                                                             form.getId(), 0L),
-                                            progresses.getOrDefault(
-                                                    program.getId(),
-                                                    AcademicProgramProgressResponse.zero()));
+                                            progress,
+                                            isDelayed(program, progress, now));
                                 })
                         .toList();
 

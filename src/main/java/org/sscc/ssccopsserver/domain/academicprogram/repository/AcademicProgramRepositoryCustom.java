@@ -7,7 +7,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntit
 
 /*
  * 목록 조회(#131)의 동적 조건 부분. work 도메인의 WorkRepositoryCustom과 같은 이유로 존재한다 —
- * 필터 셋(typeCd·sttsCd·keyword·mine)과 커서가 독립적으로 조합되므로 파생 쿼리 메서드 이름으로는
+ * 필터(typeCd·sttsCd·keyword·mine·delayed)와 커서가 독립적으로 조합되므로 파생 쿼리 메서드 이름으로는
  * 표현이 늘어난다.
  */
 public interface AcademicProgramRepositoryCustom {

@@ -195,4 +195,34 @@ public class AcademicProgramEntity {
         }
         this.status = transition.targetStatus();
     }
+
+    /*
+     * 지연(#610) — **진행 중인데 예정된 운영 기간(event_end_dt)이 지났고 진행률이 100% 미만.**
+     * 학술국장이 정한 정의다(ssccops#551). 저장하지 않고 조회 시점에 판정한다 — 날짜가 지나는
+     * 것만으로 값이 바뀌어 컬럼으로 두면 스케줄러가 필요해진다(SubWorkEntity.isDelayedBefore와
+     * 같은 이유).
+     *
+     * **목록 필터(AcademicProgramRepositoryImpl의 DELAYED)가 같은 조건을 JPQL로 옮겨 쓴다** —
+     * 규칙을 바꾸면 두 곳을 함께 고친다. AcademicProgramControllerTest가 두 결과를 대조한다.
+     *
+     * - 진행 중(ONGOING)만 — 모집 전(APPROVED)은 시작도 하지 않아 지연이 아니라 폐지 후보이고
+     *   (ssccops#552), 종료(COMPLETED)는 이미 학술국장이 끝낸 것이다.
+     * - 종료일이 없으면 지연될 수 없다. 이관이 기획안 필수 문항에서 채우므로 실제로는 없어야 한다.
+     * - 경계는 '지금'이다. 이관이 종료를 그날의 끝(AcademicProgramMigrationServiceImpl.endOfDay)
+     *   으로 저장하므로 종료일 당일은 아직 지연이 아니고 다음 날부터 지연이다.
+     * - «100% 미만»은 비율이 아니라 **개수**로 본다 — 반올림한 비율(소수 2자리)은 항목이 아주
+     *   많으면 한 개가 남아도 100.00이 되어, 목록 필터(개수 비교)와 갈린다. 계획 항목이 0개면
+     *   진행률이 0이라 지연이다(AcademicProgramProgressResponse와 같은 정의).
+     *
+     * 개수를 넘겨받는 것은 엔티티가 스스로 셀 수 없어서다(SubWorkEntity.isReadyForReview와 같다).
+     */
+    public boolean isDelayedAt(Instant now, long curriculumItemCount, long approvedSessionCount) {
+        Instant endAt = event.getEndAt();
+        boolean planCompleted =
+                curriculumItemCount > 0 && approvedSessionCount >= curriculumItemCount;
+        return status == AcademicProgramStatus.ONGOING
+                && endAt != null
+                && endAt.isBefore(now)
+                && !planCompleted;
+    }
 }

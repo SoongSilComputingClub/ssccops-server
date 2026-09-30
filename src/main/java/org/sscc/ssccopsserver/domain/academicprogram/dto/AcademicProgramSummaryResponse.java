@@ -18,6 +18,10 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * progressRatio는 상세의 progress.ratio와 같은 값이다(#609) — 같은 집계 질의와 같은 계산
  * (AcademicProgramProgressResponse.of)을 지나며, 서비스가 페이지 단위로 한 번에 세어 넘긴다.
  *
+ * isDelayed는 «진행 중 · 운영 기간이 지남 · 진행률 100% 미만»이다(#610 ·
+ * AcademicProgramEntity.isDelayedAt). 목록의 delayed=true 필터와 같은 정의이며, 화면이 진행률·
+ * 기간으로 다시 계산하지 않는다 — 계산하던 동안 대시보드의 수와 배지가 서로 어긋났다.
+ *
  * ── 모집 카드에 필요한 값이 #483에서 늘었다 ───────────────────────────────
  * lms "모집 관리"가 카드에 상태 배지·접수 기간·정원·지원 건수·문항 버전·승인일을 그리는데,
  * 그전까지 이 응답에는 그중 하나도 없어 화면이 카드마다 활동 상세를 한 번 더 불러야 했다.
@@ -44,6 +48,7 @@ public record AcademicProgramSummaryResponse(
         OffsetDateTime eventBgngDt,
         OffsetDateTime eventEndDt,
         BigDecimal progressRatio,
+        boolean isDelayed,
         Long formId,
         String formReceiptStatus,
         OffsetDateTime rcptBgngDt,
@@ -62,7 +67,8 @@ public record AcademicProgramSummaryResponse(
      * 쥐고 있어 서비스가 한 번 더 풀어 넘길 이유가 없다. 반면 formReceiptStatus는 주입된
      * Clock을 보는 FormReceiptPolicy만이 답할 수 있고 applicationCount는 폼 도메인의 집계라
      * 정적 팩토리가 부를 수 없으므로 서비스가 계산해 넘긴다(상세 응답과 같은 갈림이다).
-     * progress도 같다 — 페이지 단위 집계 질의의 결과라 서비스가 넘긴다(#609).
+     * progress도 같다 — 페이지 단위 집계 질의의 결과라 서비스가 넘긴다(#609). delayed는 주입된
+     * Clock의 '지금'이 필요해 서비스가 목록 필터와 같은 시각으로 판정해 넘긴다(#610).
      *
      * 폼이 없는 활동(이관 전이거나 정합성이 깨진 경우)은 폼에서 오는 값이 전부 null이다.
      */
@@ -71,7 +77,8 @@ public record AcademicProgramSummaryResponse(
             MemberEntity viewer,
             String formReceiptStatus,
             long applicationCount,
-            AcademicProgramProgressResponse progress) {
+            AcademicProgramProgressResponse progress,
+            boolean delayed) {
         EventEntity event = academicProgram.getEvent();
         MemberEntity leader = academicProgram.getLeader();
         FormEntity form = event.getForm();
@@ -86,6 +93,7 @@ public record AcademicProgramSummaryResponse(
                 toOffsetDateTime(event.getBeginAt()),
                 toOffsetDateTime(event.getEndAt()),
                 progress.ratio(),
+                delayed,
                 form == null ? null : form.getId(),
                 formReceiptStatus,
                 form == null ? null : toOffsetDateTime(form.getReceiptBeginAt()),

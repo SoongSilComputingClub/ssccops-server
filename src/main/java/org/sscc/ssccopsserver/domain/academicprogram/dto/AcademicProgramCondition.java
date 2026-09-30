@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.academicprogram.dto;
 
+import java.time.Instant;
+
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
@@ -21,12 +23,17 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * mine은 Boolean이 아니라 역할 표기다(#215) — true(스터디장 OR 제출자)·leader·proposer를
  * 받으며, 어느 역할로 거를지는 AcademicProgramMineRole이 갖는다. 두 역할이 한 값에 묶여 있던
  * 것이 함정이었던 이유도 그 클래스 주석에 있다.
+ *
+ * delayed=true는 지연된 활동만 본다(#610) — 뜻은 응답의 isDelayed와 같다
+ * (AcademicProgramEntity.isDelayedAt). false·생략은 필터 없음이다(하위 업무의 isOverdue와 같은
+ * 모양). sttsCd와 함께 주면 AND라 sttsCd=COMPLETED&delayed=true는 빈 목록이다.
  */
 public record AcademicProgramCondition(
         String typeCd,
         String sttsCd,
         String keyword,
         String mine,
+        Boolean delayed,
         @Min(value = 1, message = "size는 1 이상이어야 합니다.")
                 @Max(
                         value = AcademicProgramCondition.MAX_SIZE,
@@ -38,7 +45,8 @@ public record AcademicProgramCondition(
     public static final int DEFAULT_SIZE = 20;
     public static final int MAX_SIZE = 100;
 
-    public AcademicProgramSearchQuery toQuery(MemberEntity viewer) {
+    // now는 응답의 isDelayed를 판정하는 시각과 같은 값이어야 한다 — 서비스가 한 번 읽어 넘긴다
+    public AcademicProgramSearchQuery toQuery(MemberEntity viewer, Instant now) {
         AcademicProgramSortOrder sortOrder = AcademicProgramSortOrder.from(sort);
         AcademicProgramMineRole mineRole = AcademicProgramMineRole.from(mine);
         return new AcademicProgramSearchQuery(
@@ -47,6 +55,7 @@ public record AcademicProgramCondition(
                 blankToNull(keyword),
                 mineRole == null ? null : viewer,
                 mineRole,
+                Boolean.TRUE.equals(delayed) ? now : null,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 AcademicProgramCursor.decode(cursor, sortOrder));

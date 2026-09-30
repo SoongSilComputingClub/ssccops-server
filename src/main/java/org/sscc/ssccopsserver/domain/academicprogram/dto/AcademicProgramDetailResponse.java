@@ -26,6 +26,9 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * progress는 목록의 progressRatio와 같은 집계 질의·같은 계산을 지난 값이다(#609 ·
  * AcademicProgramProgressResponse). curriculumItemCount는 따로 세지 않고 progress의 분모를
  * 그대로 싣는다 — 둘 다 계획 항목 수라 따로 세면 같은 사실이 두 질의가 된다.
+ *
+ * isDelayed는 목록 카드의 것과 같은 판정이다(#610 · AcademicProgramEntity.isDelayedAt). '지금'이
+ * 필요해 서비스가 판정해 넘긴다.
  */
 public record AcademicProgramDetailResponse(
         Long academicProgramId,
@@ -51,6 +54,7 @@ public record AcademicProgramDetailResponse(
         Long formId,
         String formReceiptStatus,
         AcademicProgramProgressResponse progress,
+        boolean isDelayed,
         int curriculumItemCount,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
@@ -60,6 +64,7 @@ public record AcademicProgramDetailResponse(
     public static AcademicProgramDetailResponse of(
             AcademicProgramEntity academicProgram,
             AcademicProgramProgressResponse progress,
+            boolean delayed,
             MemberEntity viewer,
             Long formId,
             String formReceiptStatus) {
@@ -91,6 +96,7 @@ public record AcademicProgramDetailResponse(
                 formId,
                 formReceiptStatus,
                 progress,
+                delayed,
                 progress.totalSessionCount(),
                 toOffsetDateTime(academicProgram.getCreatedAt()),
                 toOffsetDateTime(academicProgram.getUpdatedAt()));

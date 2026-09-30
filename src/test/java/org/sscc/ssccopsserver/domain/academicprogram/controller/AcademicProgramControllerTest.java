@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -30,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramTransition;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
@@ -623,6 +625,157 @@ class AcademicProgramControllerTest {
         assertThat(threePage).isEqualTo(onePage);
     }
 
+    // ------------------------------------------------------------------ 지연 (#610)
+    //
+    // 진행 중 · 운영 기간(event_end_dt)이 지남 · 진행률 100% 미만. 판정 시각은 주입된 Clock의
+    // 지금이라 기간은 **지금을 기준으로 상대 일시**로 만든다 — Clock을 @MockitoBean으로 바꾸면
+    // 이 클래스만의 스프링 컨텍스트가 새로 뜬다(모집 폼 편집 창 테스트와 같은 판단 · AGENTS.md).
+
+    // 기간이 끝나기 전에는 진행률이 0이어도 지연이 아니다 — 아직 따라잡을 시간이 있다
+    @Test
+    void notDelayedBeforeTheEndDateEvenAtZeroPercent() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("아직 기간 중", daysFromNow(7), "1주차");
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", program.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.ratio").value(0))
+                .andExpect(jsonPath("$.data.isDelayed").value(false));
+    }
+
+    // 기간이 지났으면 한 회차만 남아도 지연이다 — «거의 끝났다»를 봐주지 않는 것이 요청받은 기준이다
+    @Test
+    void delayedAfterTheEndDateWithOnePlannedItemLeft() throws Exception {
+        AcademicProgramEntity program =
+                createOngoingProgram("하나 남은", daysFromNow(-1), "1주차", "2주차", "3주차");
+        recordSessions(program, SessionStatus.APPROVED, SessionStatus.APPROVED);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", program.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.ratio").value(66.67))
+                .andExpect(jsonPath("$.data.isDelayed").value(true));
+    }
+
+    @Test
+    void notDelayedAfterTheEndDateAtHundredPercent() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("다 마친", daysFromNow(-1), "1주차", "2주차");
+        recordSessions(program, SessionStatus.APPROVED, SessionStatus.APPROVED);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", program.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isDelayed").value(false));
+    }
+
+    // 제출됐지만 아직 승인되지 않은 회차는 진행률에 들지 않으므로 지연을 풀지 못한다(#609)
+    @Test
+    void submittedButUnapprovedSessionsDoNotClearTheDelay() throws Exception {
+        AcademicProgramEntity program =
+                createOngoingProgram("승인 대기", daysFromNow(-1), "1주차", "2주차");
+        recordSessions(program, SessionStatus.APPROVED, SessionStatus.SUBMITTED);
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", program.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isDelayed").value(true));
+    }
+
+    // 종료일이 없으면 «기간이 지났다»가 성립하지 않는다
+    @Test
+    void notDelayedWithoutAnEndDate() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("종료일 없음", null, "1주차");
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", program.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isDelayed").value(false));
+    }
+
+    // 계획 항목이 없으면 진행률이 0이라(#609) 기간이 지나면 지연이다 — 나눌 것이 없다고 봐주지 않는다
+    @Test
+    void delayedAfterTheEndDateWithoutCurriculumItems() throws Exception {
+        AcademicProgramEntity program = createOngoingProgram("계획 없음", daysFromNow(-1));
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", program.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.progress.totalSessionCount").value(0))
+                .andExpect(jsonPath("$.data.isDelayed").value(true));
+    }
+
+    /*
+     * 진행 중만 지연이 된다. 모집 전(APPROVED)은 시작도 하지 않은 건이라 지연이 아니라 폐지
+     * 후보이고(ssccops#552), 종료(COMPLETED)는 학술국장이 이미 끝낸 것이다.
+     */
+    @Test
+    void notDelayedUnlessOngoing() throws Exception {
+        AcademicProgramEntity approved =
+                createProgramEndingAt("모집 전인 채 기간 지남", daysFromNow(-1), "1주차");
+        AcademicProgramEntity completed = createOngoingProgram("종료된", daysFromNow(-1), "1주차");
+        completed.changeStatus(AcademicProgramTransition.APPROVE_COMPLETION);
+        entityManager.flush();
+
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", approved.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sttsCd").value("APPROVED"))
+                .andExpect(jsonPath("$.data.isDelayed").value(false));
+        mockMvc.perform(authorized(get(PROGRAMS + "/{id}", completed.getId()), proposerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sttsCd").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.isDelayed").value(false));
+    }
+
+    /*
+     * **delayed=true의 결과와 응답의 isDelayed=true가 같은 집합이다.** 같은 정의를 엔티티
+     * (isDelayedAt)와 JPQL(AcademicProgramRepositoryImpl.DELAYED)이 두 벌로 쓰므로, 위 경우를
+     * 한 목록에 전부 깔아 두 결과를 대조한다 — 한쪽만 고치면 여기서 갈린다.
+     */
+    @Test
+    void delayedFilterReturnsExactlyTheProgramsMarkedDelayed() throws Exception {
+        seedDelayScenarios();
+
+        List<String> markedDelayed =
+                JsonPath.parse(listContent(authorized(get(PROGRAMS), proposerToken)))
+                        .read("$.data[?(@.isDelayed == true)].title");
+        String filteredContent =
+                listContent(authorized(get(PROGRAMS), proposerToken).param("delayed", "true"));
+        List<String> filtered = JsonPath.parse(filteredContent).read("$.data[*].title");
+
+        assertThat(filtered)
+                .containsExactlyInAnyOrderElementsOf(markedDelayed)
+                .containsExactlyInAnyOrder("하나 남은", "승인 대기", "계획 없음");
+        // 건수 질의도 같은 조건을 지난다
+        assertThat(JsonPath.parse(filteredContent).read("$.page.totalCount", Integer.class))
+                .isEqualTo(3);
+        assertThat(JsonPath.parse(filteredContent).read("$.data[*].isDelayed", List.class))
+                .containsOnly(true);
+    }
+
+    // sttsCd와 함께 주면 AND다 — 종료된 것 중 지연된 것은 정의상 없다
+    @Test
+    void delayedFilterIsAndedWithTheStatusFilter() throws Exception {
+        seedDelayScenarios();
+
+        mockMvc.perform(
+                        authorized(get(PROGRAMS), proposerToken)
+                                .param("sttsCd", "COMPLETED")
+                                .param("delayed", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty())
+                .andExpect(jsonPath("$.page.totalCount").value(0));
+        mockMvc.perform(
+                        authorized(get(PROGRAMS), proposerToken)
+                                .param("sttsCd", "ONGOING")
+                                .param("delayed", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(3)));
+    }
+
+    // delayed=false는 «지연 아닌 것»이 아니라 필터 없음이다(하위 업무의 isOverdue와 같은 모양)
+    @Test
+    void delayedFalseAppliesNoFilter() throws Exception {
+        seedDelayScenarios();
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("delayed", "false"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(8)));
+    }
+
     // ------------------------------------------------------------------ 커리큘럼 계획 조회 (#134)
 
     /*
@@ -747,6 +900,76 @@ class AcademicProgramControllerTest {
                 title,
                 proposer,
                 List.of(curriculumTitles));
+    }
+
+    /*
+     * 지연 판정의 경우를 한 목록에 전부 깐다(#610). 지연인 것은 «하나 남은»·«승인 대기»·
+     * «계획 없음» 셋이고 나머지 다섯은 각자 다른 이유로 아니다 — 대조 테스트가 어느 한 조건만
+     * 빠뜨려도 집합이 달라지게 하려는 것이다.
+     */
+    private void seedDelayScenarios() {
+        createOngoingProgram("아직 기간 중", daysFromNow(7), "1주차");
+        recordSessions(
+                createOngoingProgram("하나 남은", daysFromNow(-1), "1주차", "2주차", "3주차"),
+                SessionStatus.APPROVED,
+                SessionStatus.APPROVED);
+        recordSessions(
+                createOngoingProgram("다 마친", daysFromNow(-1), "1주차", "2주차"),
+                SessionStatus.APPROVED,
+                SessionStatus.APPROVED);
+        recordSessions(
+                createOngoingProgram("승인 대기", daysFromNow(-1), "1주차", "2주차"),
+                SessionStatus.APPROVED,
+                SessionStatus.SUBMITTED);
+        createOngoingProgram("종료일 없음", null, "1주차");
+        createOngoingProgram("계획 없음", daysFromNow(-1));
+        createProgramEndingAt("모집 전인 채 기간 지남", daysFromNow(-1), "1주차");
+        createOngoingProgram("종료된", daysFromNow(-1), "1주차")
+                .changeStatus(AcademicProgramTransition.APPROVE_COMPLETION);
+        entityManager.flush();
+    }
+
+    /*
+     * 모집을 시작한(ONGOING) 활동. 전이 API(#133)를 태우지 않고 엔티티 전이를 직접 부른다 —
+     * 그 API는 폼 오케스트레이션과 국장 권한을 함께 요구해, 지연 판정을 보려는 테스트가 그
+     * 규칙까지 지고 가게 된다(recordSessions와 같은 판단).
+     */
+    private AcademicProgramEntity createOngoingProgram(
+            String title, Instant eventEndDt, String... curriculumTitles) {
+        AcademicProgramEntity program = createProgramEndingAt(title, eventEndDt, curriculumTitles);
+        program.changeStatus(AcademicProgramTransition.START_RECRUITMENT);
+        return program;
+    }
+
+    // eventEndDt가 null이면 종료일 없는 활동이다. 시작은 판정에 쓰이지 않아 한 달 전으로 둔다
+    private AcademicProgramEntity createProgramEndingAt(
+            String title, Instant eventEndDt, String... curriculumTitles) {
+        return AcademicProgramFixture.save(
+                eventRepository,
+                eventClassificationRepository,
+                academicProgramRepository,
+                academicProgramTypeRepository,
+                curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
+                "STUDY",
+                title,
+                proposer,
+                List.of(curriculumTitles),
+                daysFromNow(-30),
+                eventEndDt);
+    }
+
+    private static Instant daysFromNow(long days) {
+        return Instant.now().plus(Duration.ofDays(days));
+    }
+
+    private String listContent(MockHttpServletRequestBuilder request) throws Exception {
+        return mockMvc.perform(request.param("size", "100"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
     }
 
     private AcademicProgramEntity createAcademicProgramWithPeriod(

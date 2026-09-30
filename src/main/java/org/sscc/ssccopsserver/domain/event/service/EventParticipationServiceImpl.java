@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.event.service;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
@@ -11,6 +13,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.event.code.EventParticipantChangePath;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.event.dto.EventApplicationParticipant;
@@ -22,9 +25,11 @@ import org.sscc.ssccopsserver.domain.event.dto.EventParticipantStatusChangeReque
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantWarningResponse;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
+import org.sscc.ssccopsserver.domain.event.entity.EventParticipantStatusHistoryEntity;
 import org.sscc.ssccopsserver.domain.event.event.EventParticipantStatusChangedEvent;
 import org.sscc.ssccopsserver.domain.event.repository.EventApplicationParticipation;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
+import org.sscc.ssccopsserver.domain.event.repository.EventParticipantStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
@@ -70,6 +75,15 @@ public class EventParticipationServiceImpl implements EventParticipationService 
      * 롤백된 변경의 알림은 없다. 어느 자리에서 발행하는지는 그 record의 주석에 있다.
      */
     private final ApplicationEventPublisher eventPublisher;
+
+    /*
+     * 참가 상태 이력 (#612 · ADR-0042). 상태가 바뀌는 자리마다 같은 트랜잭션에서 한 줄 남긴다 —
+     * 알림 발행과 같은 자리(recordStatusChange)라 «바뀌었다»를 두 벌로 판정하지 않는다.
+     */
+    private final EventParticipantStatusHistoryRepository eventParticipantStatusHistoryRepository;
+
+    /* 이력의 chg_dt. DB 기본값이 아니라 주입된 Clock이라 테스트가 시각을 고정할 수 있다 */
+    private final Clock clock;
 
     /*
      * 명단 등록 여부는 응답 목록을 받은 뒤 **한 번의 질의**로 얹는다 (#378). 응답마다 명단을
@@ -148,7 +162,15 @@ public class EventParticipationServiceImpl implements EventParticipationService 
         }
 
         return toMutationResponse(
-                event, register(event, member, request, formResponse, registrant), member);
+                event,
+                register(
+                        event,
+                        member,
+                        request.ptcpSttsCd(),
+                        formResponse,
+                        registrant,
+                        EventParticipantChangePath.EVENT_PARTICIPANTS),
+                member);
     }
 
     /*
@@ -180,7 +202,10 @@ public class EventParticipationServiceImpl implements EventParticipationService 
     @Override
     @Transactional
     public EventParticipantMutationResponse registerOrUpdateParticipant(
-            Long eventId, EventParticipantRegisterRequest request, MemberEntity registrant) {
+            Long eventId,
+            EventParticipantRegisterRequest request,
+            MemberEntity registrant,
+            EventParticipantChangePath path) {
 
         if (!request.ptcpSttsCd().isRegistrable()) {
             throw new GeneralException(EventErrorCode.INVALID_PARTICIPANT_REGISTRATION_STATUS);
@@ -194,13 +219,15 @@ public class EventParticipationServiceImpl implements EventParticipationService 
                 eventParticipantRepository.findByEventAndMember(event, member).orElse(null);
         if (participant == null) {
             return toMutationResponse(
-                    event, register(event, member, request, formResponse, registrant), member);
+                    event,
+                    register(event, member, request.ptcpSttsCd(), formResponse, registrant, path),
+                    member);
         }
 
         if (participant.getStatus() != request.ptcpSttsCd()) {
             EventParticipantStatus previous = participant.getStatus();
             participant.changeStatus(request.ptcpSttsCd());
-            publishStatusChanged(participant, previous, registrant);
+            recordStatusChange(participant, previous, registrant, path);
         }
 
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 (changeParticipantStatus와 같은 이유)
@@ -235,9 +262,81 @@ public class EventParticipationServiceImpl implements EventParticipationService 
 
         EventParticipantStatus previous = participant.getStatus();
         participant.changeStatus(request.ptcpSttsCd());
-        publishStatusChanged(participant, previous, performer);
+        recordStatusChange(
+                participant, previous, performer, EventParticipantChangePath.EVENT_PARTICIPANTS);
 
         // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다 — 먼저 흘려보내야 응답이 실제 값이 된다
+        eventParticipantRepository.flush();
+
+        return toMutationResponse(event, participant, participant.getMember());
+    }
+
+    /*
+     * 신청서 없이 확정으로 들인다 (#612 · 학술 팀원 관리). 규칙은 인터페이스 주석의 표다.
+     *
+     * 등록과 재합류가 한 메서드인 것은 화면의 버튼이 하나이기 때문이다 — «팀원 추가»를 누른
+     * 사람이 그 회원이 예전에 빠졌던 사람인지 먼저 확인하게 하면, 모르는 채 누른 요청이 409로
+     * 돌아와 PATCH를 다시 찾아가야 한다. 재합류는 참가 행을 되살리므로 지난 출석이 그대로 이어진다.
+     *
+     * 선조회는 대부분의 중복을 409로 돌려주기 위한 것이고, 동시 등록의 최종 방어선은 여전히
+     * uk_event_ptcp_event_member다(register의 catch).
+     */
+    @Override
+    @Transactional
+    public EventParticipantMutationResponse admitParticipant(
+            Long eventId,
+            MemberEntity member,
+            MemberEntity performer,
+            EventParticipantChangePath path) {
+        EventEntity event = findEvent(eventId);
+        EventParticipantEntity participant =
+                eventParticipantRepository.findByEventAndMember(event, member).orElse(null);
+        if (participant == null) {
+            return toMutationResponse(
+                    event,
+                    register(
+                            event, member, EventParticipantStatus.CONFIRMED, null, performer, path),
+                    member);
+        }
+        if (participant.getStatus() != EventParticipantStatus.CANCELLED) {
+            throw new GeneralException(EventErrorCode.EVENT_PARTICIPANT_DUPLICATED);
+        }
+
+        participant.rejoin();
+        recordStatusChange(participant, EventParticipantStatus.CANCELLED, performer, path);
+        eventParticipantRepository.flush();
+        return toMutationResponse(event, participant, member);
+    }
+
+    /*
+     * 전이표 + 재합류 (#612 · 학술 팀원 관리). 취소 → 확정만 rejoin으로 보내고 나머지는
+     * changeStatus의 표를 그대로 탄다 — 여기서 표를 한 벌 더 적지 않는다.
+     */
+    @Override
+    @Transactional
+    public EventParticipantMutationResponse reviseParticipantStatus(
+            Long eventId,
+            Long eventParticipantId,
+            EventParticipantStatus nextStatus,
+            MemberEntity performer,
+            EventParticipantChangePath path) {
+        EventEntity event = findEvent(eventId);
+        EventParticipantEntity participant =
+                eventParticipantRepository
+                        .findByIdAndEvent(eventParticipantId, event)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                EventErrorCode.EVENT_PARTICIPANT_NOT_FOUND));
+
+        EventParticipantStatus previous = participant.getStatus();
+        if (previous == EventParticipantStatus.CANCELLED
+                && nextStatus == EventParticipantStatus.CONFIRMED) {
+            participant.rejoin();
+        } else {
+            participant.changeStatus(nextStatus);
+        }
+        recordStatusChange(participant, previous, performer, path);
         eventParticipantRepository.flush();
 
         return toMutationResponse(event, participant, participant.getMember());
@@ -279,12 +378,12 @@ public class EventParticipationServiceImpl implements EventParticipationService 
     private EventParticipantEntity register(
             EventEntity event,
             MemberEntity member,
-            EventParticipantRegisterRequest request,
+            EventParticipantStatus status,
             FormResponseHistoryEntity formResponse,
-            MemberEntity registrant) {
+            MemberEntity registrant,
+            EventParticipantChangePath path) {
         EventParticipantEntity participant =
-                EventParticipantEntity.register(
-                        event, member, request.ptcpSttsCd(), formResponse, registrant);
+                EventParticipantEntity.register(event, member, status, formResponse, registrant);
         try {
             eventParticipantRepository.saveAndFlush(participant);
         } catch (DataIntegrityViolationException ex) {
@@ -292,19 +391,31 @@ public class EventParticipationServiceImpl implements EventParticipationService 
             throw new GeneralException(EventErrorCode.EVENT_PARTICIPANT_DUPLICATED);
         }
         // 처음 명단에 오르는 것도 그 사람에게는 «확정·대기가 됐다»는 사건이다 (previous = null)
-        publishStatusChanged(participant, null, registrant);
+        recordStatusChange(participant, null, registrant, path);
         return participant;
     }
 
     /*
-     * 상태가 실제로 바뀐 자리에서만 부른다 (#528). 같은 값 재저장은 changeStatus를 부르지 않으므로
-     * 여기까지 오지 않는다. 트랜잭션 안에서 발행하지만 듣는 쪽은 AFTER_COMMIT이라 이 변경이
-     * 롤백되면 알림도 없다.
+     * 상태가 실제로 바뀐 자리에서만 부른다 (#528 · #612). 같은 값 재저장은 changeStatus를 부르지
+     * 않으므로 여기까지 오지 않는다 — 그래서 이력에도 «아무것도 바뀌지 않은 줄»이 없다.
+     *
+     * 이력과 알림을 **한 자리**에서 낸다. 둘 다 «상태가 바뀌었다»는 같은 사실에서 나오는데, 따로
+     * 부르면 어느 경로에서 한쪽만 빠진다. 이력은 같은 트랜잭션이라 변경이 롤백되면 함께 사라지고,
+     * 알림은 듣는 쪽이 AFTER_COMMIT이라 역시 없다.
      */
-    private void publishStatusChanged(
+    private void recordStatusChange(
             EventParticipantEntity participant,
             EventParticipantStatus previous,
-            MemberEntity performer) {
+            MemberEntity performer,
+            EventParticipantChangePath path) {
+        eventParticipantStatusHistoryRepository.save(
+                EventParticipantStatusHistoryEntity.record(
+                        participant,
+                        previous,
+                        participant.getStatus(),
+                        performer,
+                        path,
+                        Instant.now(clock)));
         eventPublisher.publishEvent(
                 new EventParticipantStatusChangedEvent(
                         participant.getId(), previous, participant.getStatus(), performer.getId()));

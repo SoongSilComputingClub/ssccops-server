@@ -152,6 +152,21 @@ public enum AcademicProgramErrorCode implements ErrorCode {
     RECRUITMENT_NOT_STARTED(HttpStatus.CONFLICT, "RECRUITMENT_NOT_STARTED", "아직 모집이 시작되지 않았습니다."),
 
     /*
+     * 400 — 팀원으로 넣을 수 없는 회원을 추가하려 할 때 (#612 · POST .../members).
+     *
+     * 판정은 담당자 후보(GET /v1/members/assignable)와 **같은 규칙**이다 —
+     * MemberService.findAssignableMember가 없는 회원과 탈퇴·제명 회원을 함께 빈 값으로 돌려준다.
+     * 규칙을 여기 다시 적지 않는 것은 «누구에게 일을 맡길 수 있는가»가 두 벌이 되면 한쪽만
+     * 바뀌기 때문이다(이슈의 «두 벌 금지»). 둘을 한 코드로 묶는 것도 그쪽을 따른다 — 나누면
+     * 번호를 바꿔 부르는 것만으로 누가 탈퇴했는지가 새어 나간다(OperationErrorCode.
+     * OWNER_NOT_ACTIVE_MEMBER와 같은 자리).
+     *
+     * 행사 참가자 API는 떠난 회원을 경고만 하고 받는다(§8-5 · 홈커밍 같은 행사가 있다). 학술 팀원은
+     * 활동을 함께 할 사람이라 막는다 — 그 차이가 이 판정을 행사 도메인이 아니라 여기 둔 이유다.
+     */
+    MEMBER_NOT_ADDABLE(HttpStatus.BAD_REQUEST, "MEMBER_NOT_ADDABLE", "팀원으로 추가할 수 없는 회원입니다."),
+
+    /*
      * 409 — 종료(COMPLETED)된 활동에 쓰기를 시도했을 때 (#597 · ADR-0057).
      *
      * **종료는 그 활동의 쓰기를 전부 멈춘다** — 회차 제출·재제출·검토, 출석 정정, 인증사진,

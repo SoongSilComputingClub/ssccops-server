@@ -13,7 +13,10 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramErrorCode;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAddRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
@@ -22,12 +25,17 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentScheduleUpda
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentSelectionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
+import org.sscc.ssccopsserver.domain.event.code.EventParticipantChangePath;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
+import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
+import org.sscc.ssccopsserver.domain.event.dto.EventParticipantMutationResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventParticipantRegisterRequest;
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
 import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
+import org.sscc.ssccopsserver.domain.event.repository.EventParticipantStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.event.service.EventParticipationService;
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
@@ -39,6 +47,7 @@ import org.sscc.ssccopsserver.domain.form.service.FormReceiptPolicy;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
 import lombok.RequiredArgsConstructor;
@@ -53,7 +62,10 @@ import lombok.extern.slf4j.Slf4j;
  *
  *   심사     → FormResponseService.reviewResponse                       (#141 · 전이표·검토 이력·처리자)
  *   명단 반영 → EventParticipationService.registerOrUpdateParticipant   (#198 · 근거·전이표·상태 검사)
+ *   팀원 관리 → EventParticipationService.admitParticipant·reviseParticipantStatus (#612 · 재합류)
+ *   대상 회원 → MemberService.findAssignableMember                      (#612 · 담당자 후보와 같은 규칙)
  *   명단 조회 → EventParticipantRepository                              (ssccops#146의 질의 그대로)
+ *   변경 이력 → EventParticipantStatusHistoryRepository                  (#612 · 세 경로가 남긴 줄)
  *
  * 명단 조회만 리포지토리를 직접 부르는 것은 응답 모양이 달라서다. 행사 쪽
  * EventParticipationService.getParticipants는 학번·학과·등급까지 실은
@@ -100,11 +112,87 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
 
     private final EventParticipationService eventParticipationService;
 
+    /* 팀원 추가의 대상 판정 — 담당자 후보(/v1/members/assignable)와 같은 규칙을 그대로 쓴다(#612) */
+    private final MemberService memberService;
+
+    private final EventParticipantStatusHistoryRepository eventParticipantStatusHistoryRepository;
+
     @Override
     public List<AcademicProgramMemberResponse> getMembers(
-            Long academicProgramId, EventParticipantStatus participantStatus) {
+            Long academicProgramId, EventParticipantStatus participantStatus, MemberEntity viewer) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        return membersOf(academicProgram, participantStatus);
+        return membersOf(
+                academicProgram, participantStatus, isRosterEditable(academicProgram, viewer));
+    }
+
+    /*
+     * 팀원 추가 (#612). 순서는 인터페이스 주석 — 자격·상태를 대상 회원보다 먼저 보는 것은 남의 활동에
+     * 대해 회원 번호를 바꿔 가며 불러 누가 탈퇴했는지 알아낼 수 없게 하기 위해서다.
+     *
+     * 모집 시작 전(APPROVED)을 막는 것은 팀원이 모집으로 처음 생기는 활동이라서다 — 모집 전에 넣은
+     * 사람은 선발 화면에서 «선발되지 않은 확정자»로 보이고, 모집 폼이 아직 DRAFT라 신청할 길도 없다.
+     */
+    @Override
+    @Transactional
+    public AcademicProgramMemberResponse addMember(
+            Long academicProgramId, AcademicProgramMemberAddRequest request, MemberEntity actor) {
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.requireLeaderOrManager(academicProgramId, actor);
+        requireRecruitmentStarted(academicProgram);
+
+        MemberEntity member =
+                memberService
+                        .findAssignableMember(request.mbrId())
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                AcademicProgramErrorCode.MEMBER_NOT_ADDABLE));
+
+        EventParticipantMutationResponse admitted =
+                eventParticipationService.admitParticipant(
+                        academicProgram.getEvent().getId(),
+                        member,
+                        actor,
+                        EventParticipantChangePath.TEAM_MEMBERS);
+        return memberOf(academicProgram, admitted.participant().eventPtcpId());
+    }
+
+    /*
+     * 팀원 상태 변경 (#612). 전이표·재합류 판정은 행사 도메인이 갖고(reviseParticipantStatus), 여기서
+     * 더하는 것은 학술의 문(자격·종료·폐지·모집 시작)뿐이다. 명단 행을 이 활동의 행사로 좁혀 찾는
+     * 것도 그쪽이 한다(findByIdAndEvent) — 남의 활동 참가 행 번호는 404다.
+     */
+    @Override
+    @Transactional
+    public AcademicProgramMemberResponse changeMemberStatus(
+            Long academicProgramId,
+            Long eventParticipantId,
+            AcademicProgramMemberStatusChangeRequest request,
+            MemberEntity actor) {
+        AcademicProgramEntity academicProgram =
+                academicProgramWritePolicy.requireLeaderOrManager(academicProgramId, actor);
+        requireRecruitmentStarted(academicProgram);
+
+        eventParticipationService.reviseParticipantStatus(
+                academicProgram.getEvent().getId(),
+                eventParticipantId,
+                request.ptcpSttsCd(),
+                actor,
+                EventParticipantChangePath.TEAM_MEMBERS);
+        return memberOf(academicProgram, eventParticipantId);
+    }
+
+    @Override
+    public List<AcademicProgramMemberHistoryResponse> getMemberHistory(
+            Long academicProgramId, MemberEntity requester) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+
+        return eventParticipantStatusHistoryRepository
+                .findAllByParticipantEventOrderByIdDesc(academicProgram.getEvent())
+                .stream()
+                .map(AcademicProgramMemberHistoryResponse::of)
+                .toList();
     }
 
     /*
@@ -154,7 +242,8 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * 실패는 여전히 전부 되돌린다. 한 줄만 걸러내고 나머지를 반영하지 않는 것은, 어느 줄이
      * 반영됐는지를 화면이 되짚어야 하는 상태를 만들지 않기 위해서다. 취소(CANCELLED)된
      * 참가자를 다시 고르는 요청은 400 INVALID_PARTICIPANT_STATUS_TRANSITION이다 — 취소를
-     * 되돌리는 것은 이 이슈의 범위 밖이고, 그 판정도 전이표가 그대로 갖는다.
+     * 되돌리는 것은 팀원 관리의 재합류(#612 · addMember·changeMemberStatus)가 하고, 선발은 신청서
+     * 기준이라 그 길을 받지 않는다. 판정은 전이표가 그대로 갖는다.
      *
      * 검사 순서는 활동 404 → (애스펙트의 403) → 종료 409 → 모집 시작 409 → 폼 연결 409다.
      * 종료된 활동은 선발을 받지 않는다(#597 · AcademicProgramWritePolicy).
@@ -177,10 +266,12 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
                     eventId,
                     new EventParticipantRegisterRequest(
                             selection.formRspnsId(), null, selection.ptcpSttsCd()),
-                    performer);
+                    performer,
+                    EventParticipantChangePath.RECRUITMENT_SELECTION);
         }
 
-        List<AcademicProgramMemberResponse> members = membersOf(academicProgram, null);
+        List<AcademicProgramMemberResponse> members =
+                membersOf(academicProgram, null, isRosterEditable(academicProgram, performer));
         warnIfCapacityExceeded(academicProgram, members);
         return members;
     }
@@ -311,7 +402,9 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * 그대로 쓰므로 정렬도 등록 순번 오름차순이다).
      */
     private List<AcademicProgramMemberResponse> membersOf(
-            AcademicProgramEntity academicProgram, EventParticipantStatus participantStatus) {
+            AcademicProgramEntity academicProgram,
+            EventParticipantStatus participantStatus,
+            boolean editable) {
         Collection<EventParticipantStatus> statuses =
                 participantStatus == null
                         ? EnumSet.allOf(EventParticipantStatus.class)
@@ -319,8 +412,44 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
         return eventParticipantRepository
                 .findAllByEventAndStatusInOrderByIdAsc(academicProgram.getEvent(), statuses)
                 .stream()
-                .map(participant -> AcademicProgramMemberResponse.of(participant, academicProgram))
+                .map(
+                        participant ->
+                                AcademicProgramMemberResponse.of(
+                                        participant, academicProgram, editable))
                 .toList();
+    }
+
+    /*
+     * 쓰기 응답의 한 줄 (#612). 행사 서비스는 행사 쪽 DTO(학번·학과가 실린다)를 돌려주므로 방금 바꾼
+     * 행을 다시 읽어 학술 쪽 모양으로 굳힌다. 같은 영속성 컨텍스트라 질의 없이 1차 캐시에서 나온다.
+     * 쓰기를 통과한 요청자라 isEditable은 참이다.
+     */
+    private AcademicProgramMemberResponse memberOf(
+            AcademicProgramEntity academicProgram, Long eventParticipantId) {
+        EventParticipantEntity participant =
+                eventParticipantRepository
+                        .findByIdAndEvent(eventParticipantId, academicProgram.getEvent())
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                EventErrorCode.EVENT_PARTICIPANT_NOT_FOUND));
+        return AcademicProgramMemberResponse.of(participant, academicProgram, true);
+    }
+
+    /*
+     * 이 요청자가 지금 명단을 고칠 수 있는가 (#612 · 팀원 명단의 isEditable). 쓰기 경로가 차례로 거는
+     * 판정 셋 — 자격(스터디장·학술국장) · 쓰기를 받는 상태(acceptsWrites) · 모집 시작
+     * (hasStartedRecruitment) — 의 곱이라, 버튼이 켜진 줄에서 저장이 409가 되지 않는다. 결과적으로
+     * 진행 중(ONGOING)인 활동뿐이다.
+     *
+     * 자격을 마지막에 묻는 것은 그쪽만 조회(권한 트리)가 들 수 있어서다 — 상태에서 이미 거짓이면
+     * 묻지 않는다.
+     */
+    private boolean isRosterEditable(AcademicProgramEntity academicProgram, MemberEntity viewer) {
+        AcademicProgramStatus status = academicProgram.getStatus();
+        return status.acceptsWrites()
+                && status.hasStartedRecruitment()
+                && academicProgramOwnershipPolicy.isLeaderOrManager(academicProgram, viewer);
     }
 
     /*

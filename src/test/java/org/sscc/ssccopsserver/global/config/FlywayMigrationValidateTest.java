@@ -266,7 +266,9 @@ class FlywayMigrationValidateTest {
                         "fkfo0xp7208swp62tbiw1pl4nmy", // sub_work_rjct.mbr_id
                         "fk51eb6sl115o38xmcux4l66ne9", // form_rspns_rvw_hstry.form_rspns_id
                         "fk2yfmj6dd4h4l2phh0smwi0kb9", // event_ptcp.form_rspns_id
-                        "fkqka61prj9r2o70ii0o0u0xgbv"); // atndc.event_ptcp_id
+                        "fkqka61prj9r2o70ii0o0u0xgbv", // atndc.event_ptcp_id
+                        "fk_event_ptcp_stts_hstry_event_ptcp"); // event_ptcp_stts_hstry (V28 ·
+        // #612)
         for (String name : cascading) {
             assertThat(rules.get(name)).as("본인 데이터 FK %s는 cascade여야 한다", name).isEqualTo("CASCADE");
         }

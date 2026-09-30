@@ -15,8 +15,8 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 목록(#131 · GET /v1/academic-programs) 카드 한 장. 스터디·프로젝트 목록 화면, 대시보드
  * 상태별 카운트 겸용이다.
  *
- * progressRatio는 상세의 progress.ratio와 같은 값이다 — Session 엔티티가 아직 없어(#135)
- * 언제나 0이다.
+ * progressRatio는 상세의 progress.ratio와 같은 값이다(#609) — 같은 집계 질의와 같은 계산
+ * (AcademicProgramProgressResponse.of)을 지나며, 서비스가 페이지 단위로 한 번에 세어 넘긴다.
  *
  * ── 모집 카드에 필요한 값이 #483에서 늘었다 ───────────────────────────────
  * lms "모집 관리"가 카드에 상태 배지·접수 기간·정원·지원 건수·문항 버전·승인일을 그리는데,
@@ -62,6 +62,7 @@ public record AcademicProgramSummaryResponse(
      * 쥐고 있어 서비스가 한 번 더 풀어 넘길 이유가 없다. 반면 formReceiptStatus는 주입된
      * Clock을 보는 FormReceiptPolicy만이 답할 수 있고 applicationCount는 폼 도메인의 집계라
      * 정적 팩토리가 부를 수 없으므로 서비스가 계산해 넘긴다(상세 응답과 같은 갈림이다).
+     * progress도 같다 — 페이지 단위 집계 질의의 결과라 서비스가 넘긴다(#609).
      *
      * 폼이 없는 활동(이관 전이거나 정합성이 깨진 경우)은 폼에서 오는 값이 전부 null이다.
      */
@@ -69,7 +70,8 @@ public record AcademicProgramSummaryResponse(
             AcademicProgramEntity academicProgram,
             MemberEntity viewer,
             String formReceiptStatus,
-            long applicationCount) {
+            long applicationCount,
+            AcademicProgramProgressResponse progress) {
         EventEntity event = academicProgram.getEvent();
         MemberEntity leader = academicProgram.getLeader();
         FormEntity form = event.getForm();
@@ -83,7 +85,7 @@ public record AcademicProgramSummaryResponse(
                 leader == null ? null : leader.getName(),
                 toOffsetDateTime(event.getBeginAt()),
                 toOffsetDateTime(event.getEndAt()),
-                AcademicProgramProgressResponse.zero().ratio(),
+                progress.ratio(),
                 form == null ? null : form.getId(),
                 formReceiptStatus,
                 form == null ? null : toOffsetDateTime(form.getReceiptBeginAt()),

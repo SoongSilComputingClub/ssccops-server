@@ -7,8 +7,8 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramAppro
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalPoint;
 
 /*
- * acdm_actv_aprv 저장소 (#133·#136·#139). 쓰기 경로는 APPROVE_COMPLETION(#133)과 회차
- * 승인·수정요청(#136) 둘이고, 읽기 경로는 회차 상세의 latestOpinion(#135)과 승인 이력 조회
+ * acdm_actv_aprv 저장소 (#133·#136·#139). 쓰기 경로는 활동 전이(종료 #133 · 재시작 #597 ·
+ * 폐지·복원 #611)와 회차 승인·수정요청(#136)이고, 읽기 경로는 회차 상세의 latestOpinion(#135)과 승인 이력 조회
  * (#139)다.
  */
 public interface AcademicProgramApprovalRepository
@@ -28,6 +28,13 @@ public interface AcademicProgramApprovalRepository
      */
     Optional<AcademicProgramApprovalEntity> findFirstBySessionIdAndPointOrderByIdDesc(
             Long sessionId, AcademicProgramApprovalPoint point);
+
+    /*
+     * 활동의 마지막 폐지 줄 (#611 · 복원이 되돌아갈 상태). 폐지·복원을 반복했다면 지금의 폐지는
+     * 가장 최근 줄이다 — 정렬이 식별자인 이유는 위 메서드와 같다.
+     */
+    Optional<AcademicProgramApprovalEntity> findFirstByAcademicProgramIdAndPointOrderByIdDesc(
+            Long academicProgramId, AcademicProgramApprovalPoint point);
 
     /*
      * 활동 하나의 승인 이력 전체 건수(#139 · page.overallCount). 필터와 무관한 분모라 지점·회차

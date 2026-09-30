@@ -12,11 +12,16 @@ package org.sscc.ssccopsserver.domain.academicprogram.entity;
  * 읽어 오는 API가 없기 때문이다. 종료 줄은 지우지 않고 재시작 줄을 덧붙인다 — 종료·재시작을
  * 반복한 사실도 기록이다.
  *
- * 값을 늘리면 acdm_actv_aprv_se_cd CHECK 제약도 새 마이그레이션으로 넓힌다(V26) —
+ * DISCONTINUE(폐지)·REINSTATE(복원, #611 · ADR-0058)도 REOPEN과 같은 **처리** 줄이다. 폐지 줄만
+ * 폐지 전 상태(bfr_acdm_actv_stts_cd)를 채운다 — 복원이 되돌아갈 곳을 거기서 읽는다.
+ *
+ * 값을 늘리면 acdm_actv_aprv_se_cd CHECK 제약도 새 마이그레이션으로 넓힌다(V26 · V27) —
  * FlywayMigrationValidateTest.checkConstraintsMatchTheirEnums가 둘을 대조한다.
  */
 public enum AcademicProgramApprovalPoint {
     SESSION,
     COMPLETION,
-    REOPEN
+    REOPEN,
+    DISCONTINUE,
+    REINSTATE
 }

@@ -16,6 +16,11 @@ import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
  *   START_RECRUITMENT  폼을 OPEN 전이한다                → 언제나 값이 있다
  *   APPROVE_COMPLETION 접수 중(OPEN)인 폼만 CLOSE 한다    → 닫았으면 CLOSED, 아니면 NULL (#597)
  *   REOPEN             폼을 다시 열지 않는다              → 언제나 NULL (#597 · ADR-0057)
+ *   DISCONTINUE        접수 중(OPEN)인 폼만 CLOSE 한다    → 닫았으면 CLOSED, 아니면 NULL (#611)
+ *   REINSTATE          폼을 다시 열지 않는다              → 언제나 NULL (#611 · ADR-0058)
+ *
+ * afterSttsCd는 REINSTATE에서 폐지 전 상태(APPROVED 또는 ONGOING)다 — 표가 아니라 폐지 이력이
+ * 정한 값이라 화면은 이 필드를 그대로 읽는다.
  */
 public record AcademicProgramTransitionResponse(
         Long academicProgramId,

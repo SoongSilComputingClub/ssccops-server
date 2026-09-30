@@ -23,8 +23,10 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransiti
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.CurriculumItemWithSessionResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalPoint;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramTransition;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
@@ -284,14 +286,14 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     }
 
     /*
-     * 국장 전용 3액션(#133 · 재시작 #597). 전이 가능 여부부터 검증한다(changeStatus가 먼저
-     * 던진다) — 애초에 성립하지 않는 전이에 폼 오케스트레이션·승인 이력 기록 같은 부수 효과를
-     * 먼저 만들면 검사 순서가 뒤집혀 엉뚱한 오류가 먼저 보인다(FormEntity.changeStatus와 같은
-     * 태도).
+     * 국장 전용 5액션(#133 · 재시작 #597 · 폐지·복원 #611). 전이 가능 여부부터 검증한다
+     * (changeStatus·reinstate가 먼저 던진다) — 애초에 성립하지 않는 전이에 폼 오케스트레이션·승인
+     * 이력 기록 같은 부수 효과를 먼저 만들면 검사 순서가 뒤집혀 엉뚱한 오류가 먼저 보인다
+     * (FormEntity.changeStatus와 같은 태도). 폐지의 사유 누락(400)도 그 뒤, 부수 효과 앞이다.
      *
-     * **이 경로는 AcademicProgramWritePolicy를 지나지 않는다** — 종료된 활동의 쓰기를 막는
-     * 그 판정을 여기 걸면 재시작이 영영 성립하지 않는다. 종료된 활동에서 성립하는 전이가
-     * REOPEN 하나라는 것은 전이표가 이미 말한다.
+     * **이 경로는 AcademicProgramWritePolicy를 지나지 않는다** — 종료·폐지된 활동의 쓰기를 막는
+     * 그 판정을 여기 걸면 재시작·복원이 영영 성립하지 않는다. 종료된 활동에서 성립하는 전이가
+     * REOPEN 하나, 폐지된 활동에서는 REINSTATE 하나라는 것은 전이표가 이미 말한다.
      */
     @Override
     @Transactional
@@ -302,13 +304,20 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
         AcademicProgramStatus before = academicProgram.getStatus();
 
-        academicProgram.changeStatus(request.transition());
+        if (request.transition() == AcademicProgramTransition.REINSTATE) {
+            academicProgram.reinstate(statusBeforeDiscontinuation(academicProgramId));
+        } else {
+            academicProgram.changeStatus(request.transition(), request.reason());
+        }
 
         FormReceiptStatus formReceiptStatus =
                 switch (request.transition()) {
                     case START_RECRUITMENT -> startRecruitment(academicProgram, request);
                     case APPROVE_COMPLETION -> approveCompletion(academicProgram, performer);
                     case REOPEN -> reopen(academicProgram, performer);
+                    case DISCONTINUE ->
+                            discontinue(academicProgram, before, request.reason(), performer);
+                    case REINSTATE -> reinstate(academicProgram, request.reason(), performer);
                 };
 
         auditLog.record(
@@ -420,6 +429,58 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 AcademicProgramApprovalEntity.forReopen(
                         academicProgram, performer, Instant.now(clock)));
         return null;
+    }
+
+    /*
+     * 폐지(#611 · ADR-0058). 승인·진행 중인 활동의 운영을 멈춘다 — 쓰기를 멈추는 것은 상태가
+     * 하고(AcademicProgramWritePolicy), 여기서는 그 사실과 폐지 전 상태를 이력에 남기고 접수 중인
+     * 모집 폼을 닫는다(종료와 같은 자리 · closeRecruitmentFormIfOpen).
+     *
+     * **폐지 전 상태를 폐지 줄에 적는다** — 복원이 되돌아갈 곳이다. 모집 전에 폐지한 건을 언제나
+     * 진행 중으로 복원하면 모집이 열린 적 없는 «진행 중»이 생긴다.
+     *
+     * **팀원 명단은 건드리지 않는다**(2026-09-30 결정) — 참가 취소는 최종 상태라 전원 취소하면
+     * 복원해도 명단이 돌아오지 않고, 지난 출석의 주체가 취소로 바뀐다. 스터디장 역할도 그대로다.
+     *
+     * **공개 목록에서 빼는 조건을 따로 두지 않는다**(ADR-0058) — 학술 행사는 모집 폼이 접수 중일
+     * 때만 공개라(#187 · PublicEventServiceImpl.isVisibleToPublic) 여기서 폼을 닫는 순간 빠진다.
+     * 모집 전(APPROVED)이면 폼이 DRAFT라 애초에 공개 전이다.
+     */
+    private FormReceiptStatus discontinue(
+            AcademicProgramEntity academicProgram,
+            AcademicProgramStatus before,
+            String reason,
+            MemberEntity performer) {
+        academicProgramApprovalRepository.save(
+                AcademicProgramApprovalEntity.forDiscontinuation(
+                        academicProgram, performer, reason, before, Instant.now(clock)));
+        return closeRecruitmentFormIfOpen(academicProgram.getEvent().getForm());
+    }
+
+    /*
+     * 복원(#611 · ADR-0058). 상태는 이미 reinstate가 폐지 전 상태로 되돌렸고 여기서는 한 줄을
+     * 덧붙인다 — 폐지 줄은 지우지 않는다(재시작과 같다). **모집 폼은 다시 열지 않는다** — 폐지가
+     * 닫은 폼만 골라 되살리려면 «누가 닫았나»를 따로 적어야 하고, 모집은 폼 화면에서 따로 연다
+     * (ADR-0057의 재시작과 같은 판단). 그래서 복원해도 모집을 다시 열기 전까지는 공개 목록에 없다.
+     */
+    private FormReceiptStatus reinstate(
+            AcademicProgramEntity academicProgram, String reason, MemberEntity performer) {
+        academicProgramApprovalRepository.save(
+                AcademicProgramApprovalEntity.forReinstatement(
+                        academicProgram, performer, reason, Instant.now(clock)));
+        return null;
+    }
+
+    /*
+     * 복원이 되돌아갈 상태 — 마지막 폐지 줄의 bfr_acdm_actv_stts_cd. 폐지된 활동이 아니면 줄이
+     * 없거나 지난 폐지의 것이지만, 그때는 reinstate가 이 값을 보기 전에 409로 끊는다.
+     */
+    private AcademicProgramStatus statusBeforeDiscontinuation(Long academicProgramId) {
+        return academicProgramApprovalRepository
+                .findFirstByAcademicProgramIdAndPointOrderByIdDesc(
+                        academicProgramId, AcademicProgramApprovalPoint.DISCONTINUE)
+                .map(AcademicProgramApprovalEntity::getStatusBeforeTransition)
+                .orElse(null);
     }
 
     private Long requireFormId(EventEntity event) {

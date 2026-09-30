@@ -23,7 +23,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
  * size·cursor 규칙은 다른 목록과 같은 값을 쓴다(SessionCondition의 상수를 그대로 참조한다 —
  * 목록마다 상한이 다르면 클라이언트가 API마다 다른 한도를 외워야 한다).
  *
- * **종료된 활동의 회차는 빠진다**(#597 · 2026-09-28 결정). 종료가 그 활동의 쓰기를 멈추므로
+ * **종료·폐지된 활동의 회차는 빠진다**(#597 · 2026-09-28 결정 · 폐지 #611). 종료가 그 활동의 쓰기를 멈추므로
  * (AcademicProgramWritePolicy) 그 회차는 국장이 처리할 수 없는 줄이다 — 남겨 두면 대기열을
  * 차지하고 어드민 학술 대시보드의 «승인 대기» 수(이 목록의 page.totalCount)와 MCP
  * list_academic_sessions_to_review의 답이 부풀려진다. 처리하려면 어차피 재시작해야 하고,

@@ -109,8 +109,9 @@ public class AcademicProgramController {
     }
 
     /*
-     * 상태 전이 (#133 · 재시작 #597). 상세 화면의 '모집 시작'·'종료 승인'·'재시작' 버튼이 이
-     * 하나의 액션 경로를 쓴다(work·form 도메인의 전이 엔드포인트 선례). 셋 다 학술국장 전용이라
+     * 상태 전이 (#133 · 재시작 #597 · 폐지·복원 #611). 상세 화면의 '모집 시작'·'종료 승인'·
+     * '재시작'·'폐지'·'복원' 버튼이 이 하나의 액션 경로를 쓴다(work·form 도메인의 전이 엔드포인트
+     * 선례). 다섯 다 학술국장 전용이라
      * 클래스가 아니라 메서드에 건다 — 조회 두 개는 인증만 요구한다.
      *
      * 전이 가능 여부·폼 오케스트레이션·승인 이력 기록은 서비스와 도메인이 판단하므로 여기서
@@ -119,12 +120,16 @@ public class AcademicProgramController {
     @Operation(
             summary = "학술 활동 상태 전이",
             description =
-                    "transition은 START_RECRUITMENT·APPROVE_COMPLETION·REOPEN 중 하나다."
-                        + " APPROVED→ONGOING·ONGOING→COMPLETED·COMPLETED→ONGOING만 허용하며 그 밖의 전이는 409"
-                        + " INVALID_ACADEMIC_PROGRAM_TRANSITION으로 응답한다. START_RECRUITMENT는 연결된"
+                    "transition은 START_RECRUITMENT·APPROVE_COMPLETION·REOPEN·DISCONTINUE·REINSTATE"
+                        + " 중 하나다. APPROVED→ONGOING · ONGOING→COMPLETED · COMPLETED→ONGOING ·"
+                        + " (APPROVED|ONGOING)→DISCONTINUED · DISCONTINUED→폐지 전 상태만 허용하며 그 밖의 전이는"
+                        + " 409 INVALID_ACADEMIC_PROGRAM_TRANSITION으로 응답한다. START_RECRUITMENT는 연결된"
                         + " Form을 OPEN 전이한다 — 문항이 없으면 폼 도메인의 400 FORM_HAS_NO_QUESTION이 그대로 전파된다."
                         + " APPROVE_COMPLETION은 그 활동의 쓰기를 전부 멈추고(409 ACADEMIC_PROGRAM_COMPLETED) 접수"
-                        + " 중인 모집 폼을 마감한다. REOPEN은 종료를 되돌리되 모집 폼은 다시 열지 않는다.")
+                        + " 중인 모집 폼을 마감한다. REOPEN은 종료를 되돌리되 모집 폼은 다시 열지 않는다. DISCONTINUE(폐지)는"
+                        + " reason이 필수이며(400 DISCONTINUATION_REASON_REQUIRED) 종료와 같이 쓰기를 멈추고(409"
+                        + " ACADEMIC_PROGRAM_DISCONTINUED) 접수 중인 모집 폼을 마감한다 — 팀원 명단은 그대로다."
+                        + " REINSTATE(복원)는 폐지 전 상태로 되돌리며 reason은 선택이고 모집 폼은 다시 열지 않는다.")
     @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
     @PostMapping("/{academicProgramId}/transitions")
     public ApiResponse<AcademicProgramTransitionResponse> transition(

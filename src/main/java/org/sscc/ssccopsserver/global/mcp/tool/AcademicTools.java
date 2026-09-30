@@ -51,10 +51,12 @@ import lombok.RequiredArgsConstructor;
  *
  * ── ② 전이는 셋이고, 무엇이 가능한지는 서버가 안다 ─────────────
  *
- * 활동 전이는 `START_RECRUITMENT`·`APPROVE_COMPLETION`·`REOPEN` 셋이다 — 승인·반려·수정요청 3종은
- * **없다**(승인은 기획안 이관이 대신하고 반려·수정요청은 폼 응답 상태로 옮겨 갔다, #133).
- * **종료는 그 활동의 쓰기를 전부 멈추고**(409 `ACADEMIC_PROGRAM_COMPLETED`) `REOPEN`이 되돌린다
- * (#597 · ADR-0057) — 회차 검토·선발·출석 정정 도구가 전부 그 409를 받을 수 있다. 회차 전이는
+ * 활동 전이는 `START_RECRUITMENT`·`APPROVE_COMPLETION`·`REOPEN`·`DISCONTINUE`·`REINSTATE` 다섯이다 —
+ * 승인·반려·수정요청 3종은 **없다**(승인은 기획안 이관이 대신하고 반려·수정요청은 폼 응답 상태로
+ * 옮겨 갔다, #133). **종료는 그 활동의 쓰기를 전부 멈추고**(409 `ACADEMIC_PROGRAM_COMPLETED`)
+ * `REOPEN`이 되돌린다(#597 · ADR-0057). **폐지도 같이 멈추고**(409 `ACADEMIC_PROGRAM_DISCONTINUED`)
+ * `REINSTATE`가 폐지 전 상태로 되돌린다(#611 · ADR-0058) — 회차 검토·선발·출석 정정 도구가 전부
+ * 그 둘을 받을 수 있다. 회차 전이는
  * `APPROVE`·`REQUEST_REVISION` 둘이고 **`REQUEST_REVISION`은 사유가 필수**이며 둘 다 `SUBMITTED`
  * 에서만 간다. **승인된 회차는 되돌리지 않는다** — 출석부·진행률의 기준선이라서다.
  *
@@ -96,15 +98,14 @@ public class AcademicTools {
     @McpTool(
             name = "list_academic_programs",
             description =
-                    "학술 활동(스터디·프로젝트·트랙) 목록. typeCd(유형 코드)·sttsCd(상태)·keyword(제목)로"
-                            + " 거르고, mine으로 내 것만 본다 — leader(내가 스터디장/팀장) ·"
-                            + " proposer(내가 기획안 제출자) · true(둘 중 하나). 팀원으로 참여한 활동을 고르는"
-                            + " 값은 없다. 그 밖의 값은 400이다. 전부 비우면 전체."
-                            + " 상태는 APPROVED(승인됨 · 모집 전)·ONGOING(진행 중)·COMPLETED(종료) 셋이다."
-                            + " isDelayed는 «진행 중인데 예정된 운영 기간이 끝났고 진행률(승인 회차 ÷ 계획 항목)이"
-                            + " 100% 미만»이며, delayed=true면 그것만 본다(sttsCd와 함께 주면 AND)."
-                            + " 목록에는 기획 내용(목표·준비·일정)이 없다 — get_academic_program으로."
-                            + " 팀원은 list_academic_program_members, 회차는 list_academic_sessions로 본다.",
+                    "학술 활동(스터디·프로젝트·트랙) 목록. typeCd(유형 코드)·sttsCd(상태)·keyword(제목)로 거르고, mine으로 내 것만"
+                        + " 본다 — leader(내가 스터디장/팀장) · proposer(내가 기획안 제출자) · true(둘 중 하나). 팀원으로 참여한"
+                        + " 활동을 고르는 값은 없다. 그 밖의 값은 400이다. 전부 비우면 전체. 상태는 APPROVED(승인됨 · 모집"
+                        + " 전)·ONGOING(진행 중)·COMPLETED(종료)·DISCONTINUED(폐지) 넷이다. isDelayed는 «진행 중인데"
+                        + " 예정된 운영 기간이 끝났고 진행률(승인 회차 ÷ 계획 항목)이 100% 미만»이며, delayed=true면 그것만"
+                        + " 본다(sttsCd와 함께 주면 AND). 목록에는 기획 내용(목표·준비·일정)이 없다 —"
+                        + " get_academic_program으로. 팀원은 list_academic_program_members, 회차는"
+                        + " list_academic_sessions로 본다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramSummaryResponse> listAcademicPrograms(
             @McpToolParam(
@@ -218,7 +219,7 @@ public class AcademicTools {
     @McpTool(
             name = "transition_academic_program",
             description =
-                    "학술 활동 상태를 옮긴다. 할 수 있는 것은 셋이다 —"
+                    "학술 활동 상태를 옮긴다. 할 수 있는 것은 다섯이다 —"
                             + " START_RECRUITMENT(APPROVED → ONGOING · 연결된 폼의 접수를 함께 연다,"
                             + " recruitmentStartDt·recruitmentEndDt를 주면 모집 기간이 된다) ·"
                             + " APPROVE_COMPLETION(ONGOING → COMPLETED · 진행률이 모자라도 막지 않는다."
@@ -226,7 +227,13 @@ public class AcademicTools {
                             + " 모집 선발·일정·문항이 409 ACADEMIC_PROGRAM_COMPLETED가 되고,"
                             + " 접수 중인 모집 폼은 함께 마감된다) ·"
                             + " REOPEN(COMPLETED → ONGOING · 종료를 되돌려 쓰기를 다시 받는다."
-                            + " 모집 폼은 다시 열지 않는다)."
+                            + " 모집 폼은 다시 열지 않는다) ·"
+                            + " DISCONTINUE(APPROVED·ONGOING → DISCONTINUED · 폐지 — 최소 인원 미달 등으로 운영을"
+                            + " 멈춘다. **reason이 필수다**. 종료와 같이 쓰기를 전부 멈추고"
+                            + " (409 ACADEMIC_PROGRAM_DISCONTINUED) 접수 중인 모집 폼을 마감한다. 팀원 명단은 그대로다."
+                            + " 종료(COMPLETED)된 활동은 폐지할 수 없다) ·"
+                            + " REINSTATE(DISCONTINUED → 폐지 전 상태 · 복원 — 승인에서 폐지했으면 승인으로,"
+                            + " 진행 중에서 폐지했으면 진행 중으로 돌아간다. reason은 선택. 모집 폼은 다시 열지 않는다)."
                             + " 승인·반려·수정요청은 여기 없다 — 활동의 승인은 기획안 폼 응답 검토가 대신한다."
                             + " 지금 상태에서 갈 수 없는 전이는 409이고 재시도해도 같다."
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
@@ -235,8 +242,10 @@ public class AcademicTools {
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(
                             description =
-                                    "transition(필수 · START_RECRUITMENT·APPROVE_COMPLETION·REOPEN)과"
-                                            + " 모집 기간(선택 · START_RECRUITMENT일 때만 뜻이 있다)")
+                                    "transition(필수 ·"
+                                        + " START_RECRUITMENT·APPROVE_COMPLETION·REOPEN·DISCONTINUE·REINSTATE)"
+                                        + " · 모집 기간(선택 · START_RECRUITMENT일 때만 뜻이 있다) ·"
+                                        + " reason(DISCONTINUE면 필수 · REINSTATE면 선택 · 승인 이력에 남는다)")
                     AcademicProgramTransitionRequest request,
             McpTransportContext context) {
         log.info(
@@ -253,14 +262,13 @@ public class AcademicTools {
     @McpTool(
             name = "transition_academic_session",
             description =
-                    "회차를 승인하거나 수정요청한다. APPROVE(SUBMITTED → APPROVED) ·"
-                            + " REQUEST_REVISION(SUBMITTED → REVISION_REQUESTED · **사유가 필수**)."
-                            + " 둘 다 제출된 회차에서만 되고, **승인은 되돌릴 수 없다** —"
-                            + " 승인된 회차 기록이 출석부·진행률의 기준선이라 '승인 취소'라는 것이 없다."
-                            + " 사유는 통보의 전부이므로 무엇을 고쳐야 하는지 구체적으로 적는다."
-                            + " 종료(COMPLETED)된 활동의 회차는 409 ACADEMIC_PROGRAM_COMPLETED다 —"
-                            + " 처리하려면 먼저 transition_academic_program REOPEN으로 재시작한다."
-                            + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
+                    "회차를 승인하거나 수정요청한다. APPROVE(SUBMITTED → APPROVED) · REQUEST_REVISION(SUBMITTED →"
+                        + " REVISION_REQUESTED · **사유가 필수**). 둘 다 제출된 회차에서만 되고, **승인은 되돌릴 수 없다** —"
+                        + " 승인된 회차 기록이 출석부·진행률의 기준선이라 '승인 취소'라는 것이 없다. 사유는 통보의 전부이므로 무엇을 고쳐야 하는지"
+                        + " 구체적으로 적는다. 종료(COMPLETED)된 활동의 회차는 409 ACADEMIC_PROGRAM_COMPLETED다 —"
+                        + " 처리하려면 먼저 transition_academic_program REOPEN으로 재시작한다. 폐지(DISCONTINUED)된"
+                        + " 활동이면 409 ACADEMIC_PROGRAM_DISCONTINUED이고 REINSTATE로 복원한다. 학술 활동"
+                        + " 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SessionTransitionResponse transitionAcademicSession(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -317,7 +325,8 @@ public class AcademicTools {
                             + " **정원은 참고치라 넘겨도 막지 않는다** — 확정 인원이 정원을 넘는지는 호출한 쪽이 본다."
                             + " 지원 목록을 먼저 읽어 formRspnsId를 확인할 것."
                             + " 모집 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED,"
-                            + " 종료(COMPLETED)된 활동이면 409 ACADEMIC_PROGRAM_COMPLETED다."
+                            + " 종료(COMPLETED)된 활동이면 409 ACADEMIC_PROGRAM_COMPLETED,"
+                            + " 폐지(DISCONTINUED)된 활동이면 409 ACADEMIC_PROGRAM_DISCONTINUED다."
                             + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public List<AcademicProgramMemberResponse> selectAcademicRecruitment(
@@ -366,7 +375,8 @@ public class AcademicTools {
                             + " 리더가 아니면 403이다."
                             + " 검토 대기(SUBMITTED)·수정요청된 회차의 출석은 고칠 수 있지만"
                             + " **승인된(APPROVED) 회차는 409 SESSION_NOT_EDITABLE**이고,"
-                            + " 종료(COMPLETED)된 활동이면 409 ACADEMIC_PROGRAM_COMPLETED다.",
+                            + " 종료(COMPLETED)된 활동이면 409 ACADEMIC_PROGRAM_COMPLETED,"
+                            + " 폐지(DISCONTINUED)된 활동이면 409 ACADEMIC_PROGRAM_DISCONTINUED다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public AttendancePatchResponse correctAcademicAttendances(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,

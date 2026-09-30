@@ -23,6 +23,7 @@ import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import lombok.RequiredArgsConstructor;
 
@@ -45,6 +46,14 @@ import lombok.RequiredArgsConstructor;
  * 표현되지 않아 **서비스가** 판정하고(AcademicProgramWritePolicy · OwnershipPolicy), 경로도 같은
  * /members 자원이다. 자격 판정이 빠진 쓰기는 AcademicProgramCompletionControllerTest.WritePath의
  * 403 테스트가 잡는다.
+ *
+ * ── @CurrentMember에 @Parameter(hidden = true)를 거는 이유 ──────────────
+ * springdoc은 커스텀 리졸버가 채우는 인자를 모르고 **필수 쿼리 파라미터**로 스펙에 싣는다(이 레포
+ * 전체에서 76곳이 그렇게 새어 있다). 새 엔드포인트라면 틀린 문서로 끝나지만, 기존 GET에 붙이면
+ * OpenAPI 하위 호환 게이트(oasdiff · #412)가 «필수 요청 파라미터 추가»로 읽어 막는다(#612 PR에서
+ * 실제로 막혔다) — 실제 클라이언트는 그 값을 보내지 않고 서버도 쿼리에서 읽지 않는다. 그래서 이
+ * 컨트롤러는 숨긴다. 나머지 76곳을 전역으로 걷는 것(springdoc에 CurrentMember를 무시할 애노테이션으로
+ * 등록)은 스펙이 한꺼번에 바뀌는 일이라 따로 한다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -66,7 +75,7 @@ public class AcademicProgramMemberController {
     public ApiResponse<List<AcademicProgramMemberResponse>> getMembers(
             @PathVariable Long academicProgramId,
             @RequestParam(required = false) EventParticipantStatus ptcpSttsCd,
-            @CurrentMember MemberEntity viewer) {
+            @Parameter(hidden = true) @CurrentMember MemberEntity viewer) {
         return ApiResponse.success(
                 academicProgramRecruitmentService.getMembers(
                         academicProgramId, ptcpSttsCd, viewer));
@@ -89,7 +98,7 @@ public class AcademicProgramMemberController {
     public ApiResponse<AcademicProgramMemberResponse> addMember(
             @PathVariable Long academicProgramId,
             @Valid @RequestBody AcademicProgramMemberAddRequest request,
-            @CurrentMember MemberEntity actor) {
+            @Parameter(hidden = true) @CurrentMember MemberEntity actor) {
         return ApiResponse.success(
                 academicProgramRecruitmentService.addMember(academicProgramId, request, actor));
     }
@@ -107,7 +116,7 @@ public class AcademicProgramMemberController {
             @PathVariable Long academicProgramId,
             @PathVariable Long eventPtcpId,
             @Valid @RequestBody AcademicProgramMemberStatusChangeRequest request,
-            @CurrentMember MemberEntity actor) {
+            @Parameter(hidden = true) @CurrentMember MemberEntity actor) {
         return ApiResponse.success(
                 academicProgramRecruitmentService.changeMemberStatus(
                         academicProgramId, eventPtcpId, request, actor));
@@ -126,7 +135,8 @@ public class AcademicProgramMemberController {
                             + " 활동도 볼 수 있다.")
     @GetMapping("/history")
     public ApiResponse<List<AcademicProgramMemberHistoryResponse>> getMemberHistory(
-            @PathVariable Long academicProgramId, @CurrentMember MemberEntity requester) {
+            @PathVariable Long academicProgramId,
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
         return ApiResponse.success(
                 academicProgramRecruitmentService.getMemberHistory(academicProgramId, requester));
     }

@@ -22,7 +22,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /*
- * acdm_actv_aprv(승인 이력) — 회차·종료 승인과 재시작(#597) 기록 (#133, 학술관리_데이터모델.md §2).
+ * acdm_actv_aprv(승인 이력) — 회차·종료 승인과 재시작(#597)·폐지·복원(#611) 기록 (#133, 학술관리_데이터모델.md §2).
  * `sub_work_aprv`와 같은 패턴(승인자·승인일시·사유)을 따르되, FK가 sub_work_id로 고정된
  * sub_work_aprv를 재사용하지 않고 테이블을 분리했다(질의응답으로 확정) — 승인 대상 종류마다
  * 커지는 변경을 학술 도메인 안에 가둔다.
@@ -50,7 +50,7 @@ public class AcademicProgramApprovalEntity {
     private AcademicProgramEntity academicProgram;
 
     /*
-     * 회차 승인일 때만 값이 있다(#136). COMPLETION·REOPEN은 활동 단위라 항상 NULL이다.
+     * 회차 승인일 때만 값이 있다(#136). COMPLETION·REOPEN·DISCONTINUE·REINSTATE는 활동 단위라 항상 NULL이다.
      *
      * updatable = false인 것은 이 행이 "그때 그 처리"를 가리키는 이력이기 때문이다 — 대상이
      * 바뀌는 승인 이력은 이력이 아니다.
@@ -60,7 +60,7 @@ public class AcademicProgramApprovalEntity {
     private SessionEntity session;
 
     /*
-     * 승인 지점(SESSION/COMPLETION/REOPEN). 컬럼명이 acdm_actv_aprv_se_cd가 아닌 것은 데이터사전 등재(#178)
+     * 승인 지점(SESSION/COMPLETION/REOPEN/DISCONTINUE/REINSTATE). 컬럼명이 acdm_actv_aprv_se_cd가 아닌 것은 데이터사전 등재(#178)
      * 때문이다 — 표준코드 시트의 코드그룹 ID는 유일해야 하는데 aprv_stts_cd 그룹이 이미 하위
      * 업무용으로 있고 값 집합이 다르다(NOT_REQUIRED·REAPPROVAL_REQUIRED를 포함한다). 그래서
      * 학술 쪽 두 코드에는 acdm_actv_aprv 접두를 붙였고, '지점(pnt)'은 표준단어인 '구분(se)'으로
@@ -86,6 +86,17 @@ public class AcademicProgramApprovalEntity {
     private Instant approvedAt;
 
     /*
+     * 폐지 전 상태(#611 · ADR-0058 · V27). **폐지 줄에만 값이 있다** — 복원(REINSTATE)이 되돌아갈
+     * 곳을 여기서 읽는다(AcademicProgramEntity.reinstate). 추론하지 않고 적어 두는 이유는 그
+     * 메서드 주석에 있다. 이름의 bfr_는 ADR-0042의 어휘다(«변경 전 값» — mbr_grd_hstry 등).
+     *
+     * 값 집합이 acdm_actv_stts_cd와 같아 CHECK도 같은 넷이다 — 실제로는 승인·진행 중만 들어온다.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "bfr_acdm_actv_stts_cd", length = 20, updatable = false)
+    private AcademicProgramStatus statusBeforeTransition;
+
+    /*
      * 회차 승인·수정요청 기록(#136). 종료 승인과 마찬가지로 대기 없이 곧바로 결정을 담아
      * 만든다 — 제출 시점에 PENDING 행을 깔아 두지 않는 이유는 AcademicProgramApprovalStatus
      * 주석에 있다.
@@ -108,7 +119,8 @@ public class AcademicProgramApprovalEntity {
                 transition.approvalStatus(),
                 approver,
                 opinionContent,
-                approvedAt);
+                approvedAt,
+                null);
     }
 
     /*
@@ -125,7 +137,8 @@ public class AcademicProgramApprovalEntity {
                 AcademicProgramApprovalStatus.APPROVED,
                 approver,
                 null,
-                approvedAt);
+                approvedAt,
+                null);
     }
 
     /*
@@ -143,6 +156,51 @@ public class AcademicProgramApprovalEntity {
                 AcademicProgramApprovalStatus.APPROVED,
                 approver,
                 null,
-                approvedAt);
+                approvedAt,
+                null);
+    }
+
+    /*
+     * 폐지 기록(#611 DISCONTINUE · ADR-0058). 재시작과 같은 모양에 둘이 더 붙는다 — 사유(필수 ·
+     * 검증은 AcademicProgramEntity.changeStatus가 이미 했다)와 **폐지 전 상태**다. 복원은 이 줄의
+     * 폐지 전 상태로 되돌아간다.
+     */
+    public static AcademicProgramApprovalEntity forDiscontinuation(
+            AcademicProgramEntity academicProgram,
+            MemberEntity approver,
+            String reason,
+            AcademicProgramStatus statusBeforeDiscontinuation,
+            Instant approvedAt) {
+        return new AcademicProgramApprovalEntity(
+                null,
+                academicProgram,
+                null,
+                AcademicProgramApprovalPoint.DISCONTINUE,
+                AcademicProgramApprovalStatus.APPROVED,
+                approver,
+                reason,
+                approvedAt,
+                statusBeforeDiscontinuation);
+    }
+
+    /*
+     * 복원 기록(#611 REINSTATE · ADR-0058). 사유는 선택이다. 폐지 줄을 지우거나 고치지 않고 이
+     * 줄을 덧붙인다(재시작과 같다) — 폐지와 복원을 반복한 사실도 기록이다.
+     */
+    public static AcademicProgramApprovalEntity forReinstatement(
+            AcademicProgramEntity academicProgram,
+            MemberEntity approver,
+            String reason,
+            Instant approvedAt) {
+        return new AcademicProgramApprovalEntity(
+                null,
+                academicProgram,
+                null,
+                AcademicProgramApprovalPoint.REINSTATE,
+                AcademicProgramApprovalStatus.APPROVED,
+                approver,
+                reason,
+                approvedAt,
+                null);
     }
 }

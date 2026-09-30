@@ -16,7 +16,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
  * 하지 않는다).
  *
  * isEditable도 서버가 판정해 내린다 — 스터디장/팀장 본인 여부(AcademicProgramOwnershipPolicy)와
- * 활동이 쓰기를 받는가(AcademicProgramStatus.acceptsWrites, #597 — 종료된 활동은 꺼진다)와
+ * 활동이 쓰기를 받는가(AcademicProgramStatus.acceptsWrites, #597 — 종료·폐지(#611)된 활동은 꺼진다)와
  * 회차 상태(SessionStatus.allowsRecording)를 곱한 값이라, 웹이 leadrMbrId === 내 mbrId를 다시
  * 계산하면 버튼과 실제 판정이 갈린다. 앞의 둘은 활동 단위라 호출부가 한 번 곱해 writable로
  * 넘긴다.

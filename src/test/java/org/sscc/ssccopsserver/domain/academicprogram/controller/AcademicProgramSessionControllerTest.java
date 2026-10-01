@@ -15,6 +15,8 @@ import jakarta.persistence.EntityManager;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,6 +25,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.result.JsonPathResultMatchers;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
@@ -356,6 +359,116 @@ class AcademicProgramSessionControllerTest {
                             assertThat(attendance.getId()).isEqualTo(attendanceId);
                             assertThat(attendance.isPresent()).isFalse();
                         });
+    }
+
+    /*
+     * 기록된 뒤 제외·강등된 참가자의 줄은 재제출이 지우지 않는다 (#617). 화면은 지금 명단(확정
+     * 팀원)만 싣는데, 그 줄은 지난 회차의 이력이다 — 출석 정정이 고칠 수 있게 남겨 두는 것과
+     * 같은 이유다. «요청에 없으면 지운다»는 확정 팀원의 줄에만 남는다.
+     */
+    @ParameterizedTest
+    @EnumSource(
+            value = EventParticipantStatus.class,
+            names = {"CANCELLED", "WAITLISTED"})
+    void resubmitSessionKeepsAttendanceRowOfParticipantRemovedSinceSubmission(
+            EventParticipantStatus removedTo) throws Exception {
+        EventParticipantEntity removed =
+                confirmParticipant(
+                        academicProgram, saveMember(UUID.randomUUID(), "20260407", "빠진 팀원"));
+        Long sessionId =
+                submitSessionWith(
+                        firstItem,
+                        "처음",
+                        attendance(confirmedMember, true),
+                        attendance(removed, true));
+        Long removedRowId = attendanceIdOf(removed);
+        revertToRevisionRequested(sessionId);
+        changeParticipantStatus(removed, removedTo);
+
+        mockMvc.perform(
+                        authorized(put(sessionPath(academicProgram, sessionId)), leaderToken)
+                                .content(
+                                        submitBodyWith(
+                                                firstItem,
+                                                "다시",
+                                                attendance(confirmedMember, false))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.attendances", Matchers.hasSize(2)))
+                .andExpect(atndYnOf(confirmedMember).value(Matchers.contains(false)))
+                .andExpect(atndYnOf(removed).value(Matchers.contains(true)))
+                .andExpect(jsonPath("$.data.presentCount").value(1))
+                .andExpect(jsonPath("$.data.totalCount").value(2));
+
+        entityManager.flush();
+        assertThat(attendanceRepository.findById(removedRowId)).isPresent();
+    }
+
+    // 남은 줄은 재제출에 실어 체크 값을 고칠 수 있다 — 출석 정정이 받는 범위와 같다 (#617)
+    @ParameterizedTest
+    @EnumSource(
+            value = EventParticipantStatus.class,
+            names = {"CANCELLED", "WAITLISTED"})
+    void resubmitSessionChangesPresentOfParticipantRemovedSinceSubmission(
+            EventParticipantStatus removedTo) throws Exception {
+        EventParticipantEntity removed =
+                confirmParticipant(
+                        academicProgram, saveMember(UUID.randomUUID(), "20260407", "빠진 팀원"));
+        Long sessionId =
+                submitSessionWith(
+                        firstItem,
+                        "처음",
+                        attendance(confirmedMember, true),
+                        attendance(removed, true));
+        Long removedRowId = attendanceIdOf(removed);
+        revertToRevisionRequested(sessionId);
+        changeParticipantStatus(removed, removedTo);
+
+        mockMvc.perform(
+                        authorized(put(sessionPath(academicProgram, sessionId)), leaderToken)
+                                .content(
+                                        submitBodyWith(
+                                                firstItem,
+                                                "다시",
+                                                attendance(confirmedMember, true),
+                                                attendance(removed, false))))
+                .andExpect(status().isOk())
+                .andExpect(atndYnOf(removed).value(Matchers.contains(false)))
+                .andExpect(jsonPath("$.data.presentCount").value(1))
+                .andExpect(jsonPath("$.data.totalCount").value(2));
+
+        // 지웠다 새로 만들지 않고 같은 줄의 체크 값만 바뀐다
+        entityManager.flush();
+        assertThat(attendanceRepository.findById(removedRowId))
+                .hasValueSatisfying(attendance -> assertThat(attendance.isPresent()).isFalse());
+    }
+
+    /*
+     * 그 회차에 줄이 없는 대기자·취소자는 여전히 출석 대상이 아니다 — 받아 주면 그 회차에 없던
+     * 사람이 재제출로 출석부에 들어온다 (#617).
+     */
+    @ParameterizedTest
+    @EnumSource(
+            value = EventParticipantStatus.class,
+            names = {"CANCELLED", "WAITLISTED"})
+    void resubmitSessionWithRemovedParticipantWithoutRowReturns400(EventParticipantStatus removedTo)
+            throws Exception {
+        EventParticipantEntity removed =
+                confirmParticipant(
+                        academicProgram, saveMember(UUID.randomUUID(), "20260407", "빠진 팀원"));
+        Long sessionId = submitSessionWith(firstItem, "처음", attendance(confirmedMember, true));
+        revertToRevisionRequested(sessionId);
+        changeParticipantStatus(removed, removedTo);
+
+        mockMvc.perform(
+                        authorized(put(sessionPath(academicProgram, sessionId)), leaderToken)
+                                .content(
+                                        submitBodyWith(
+                                                firstItem,
+                                                "다시",
+                                                attendance(confirmedMember, true),
+                                                attendance(removed, true))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_ATTENDANCE_TARGET"));
     }
 
     // 회차를 잘못 골라 기록한 것은 재제출에서 바로잡을 수 있다 (전체 교체)
@@ -770,6 +883,68 @@ class AcademicProgramSessionControllerTest {
 
     private void revertToRevisionRequested(Long sessionId) {
         changeStatus(sessionId, SessionStatus.REVISION_REQUESTED);
+    }
+
+    /*
+     * 진행 중 제외·강등(#612)을 엔티티 전이로 심는다 — 전이표를 그대로 지나므로 실제로 생길 수
+     * 없는 상태를 만들지 않는다. 팀원 관리 API를 태우지 않는 것은 회차 상태를 벌크로 심는 것과
+     * 같은 이유다(클래스 주석).
+     */
+    private void changeParticipantStatus(
+            EventParticipantEntity participant, EventParticipantStatus status) {
+        eventParticipantRepository.findById(participant.getId()).orElseThrow().changeStatus(status);
+        entityManager.flush();
+        entityManager.clear();
+    }
+
+    private Long attendanceIdOf(EventParticipantEntity participant) {
+        return attendanceRepository.findAll().stream()
+                .filter(
+                        attendance ->
+                                attendance.getParticipant().getId().equals(participant.getId()))
+                .findFirst()
+                .orElseThrow()
+                .getId();
+    }
+
+    // 응답 출석부에서 그 참가자 줄의 체크 값 — 줄 순서에 기대지 않는다(필터 결과라 배열이다)
+    private static JsonPathResultMatchers atndYnOf(EventParticipantEntity participant) {
+        return jsonPath("$.data.attendances[?(@.eventPtcpId == %d)].atndYn", participant.getId());
+    }
+
+    /* 출석 여러 줄을 싣는 제출 (#617) — 한 줄짜리 픽스처로는 «기록된 뒤 빠진 사람»을 만들 수 없다 */
+    private Long submitSessionWith(
+            CurriculumItemEntity curriculumItem, String content, String... attendances) {
+        try {
+            String response =
+                    mockMvc.perform(
+                                    authorized(sessions(academicProgram), leaderToken)
+                                            .content(
+                                                    submitBodyWith(
+                                                            curriculumItem, content, attendances)))
+                            .andExpect(status().isCreated())
+                            .andReturn()
+                            .getResponse()
+                            .getContentAsString();
+            return JsonPath.parse(response).read("$.data.sessionId", Long.class);
+        } catch (Exception ex) {
+            throw new IllegalStateException("회차 제출 픽스처 실패", ex);
+        }
+    }
+
+    private String submitBodyWith(
+            CurriculumItemEntity curriculumItem, String content, String... attendances) {
+        return """
+               {"curriculumItemId": %d, "actlYmd": "2026-09-05", "prgrsCn": "%s",
+                "ntcCn": "다음 주 준비물", "attendances": [%s]}
+               """
+                .formatted(curriculumItem.getId(), content, String.join(",", attendances));
+    }
+
+    private static String attendance(EventParticipantEntity participant, boolean present) {
+        return """
+               {"eventPtcpId": %d, "atndYn": %b}"""
+                .formatted(participant.getId(), present);
     }
 
     private String submitBody(

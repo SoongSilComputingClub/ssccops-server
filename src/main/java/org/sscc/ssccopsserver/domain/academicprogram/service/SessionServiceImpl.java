@@ -1,12 +1,12 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -65,7 +65,7 @@ public class SessionServiceImpl implements SessionService {
     /*
      * 출석 대상은 확정 팀원뿐이다(설계 결정 #3). 대기자는 아직 팀원이 아니고, 취소자는 더 이상
      * 팀원이 아니다 — 이미 저장된 지난 회차의 출석 행은 그대로 남지만(이력) 새 기록에는 실을 수
-     * 없다.
+     * 없다. 재제출에서도 그 행은 지워지지 않고 체크 값만 고칠 수 있다(#617 · replaceAttendances).
      */
     private static final Set<EventParticipantStatus> ATTENDANCE_TARGET_STATUSES =
             Set.of(EventParticipantStatus.CONFIRMED);
@@ -99,7 +99,8 @@ public class SessionServiceImpl implements SessionService {
             throw new GeneralException(AcademicProgramErrorCode.SESSION_ALREADY_EXISTS);
         }
 
-        List<AttendanceRow> rows = resolveAttendances(academicProgram, request);
+        // 새 회차라 이미 기록된 출석 줄이 없다 — 출석 대상은 확정 팀원뿐이다
+        List<AttendanceRow> rows = resolveAttendances(academicProgram, request, List.of());
 
         SessionEntity session =
                 saveSession(
@@ -145,11 +146,14 @@ public class SessionServiceImpl implements SessionService {
                 findCurriculumItem(request.curriculumItemId(), academicProgramId);
         requireVacantWhenMoved(session, curriculumItem);
 
-        List<AttendanceRow> rows = resolveAttendances(academicProgram, request);
+        // 기존 출석 줄은 한 번만 읽어 대상 검증과 교체가 함께 쓴다
+        List<AttendanceEntity> recorded =
+                attendanceRepository.findAllBySessionOrderByIdAsc(session);
+        List<AttendanceRow> rows = resolveAttendances(academicProgram, request, recorded);
 
         session.resubmit(
                 curriculumItem, request.actlYmd(), request.prgrsCn(), request.ntcCn(), requester);
-        replaceAttendances(session, rows);
+        replaceAttendances(session, recorded, rows);
 
         return detailOf(session, requester);
     }
@@ -234,14 +238,22 @@ public class SessionServiceImpl implements SessionService {
     }
 
     /*
-     * 요청의 출석 목록을 확정 팀원 행으로 해석한다. 대상이 아닌 참가자·중복된 참가자는 여기서
+     * 요청의 출석 목록을 출석 대상 행으로 해석한다. 대상이 아닌 참가자·중복된 참가자는 여기서
      * 400으로 끊는다 — 조용히 버리거나 접으면 화면이 보낸 명단과 저장된 출석부가 어긋난다.
      *
+     * 출석 대상 = 확정 팀원 ∪ **이 회차에 이미 줄이 있는 참가자**(#617). 뒤의 것은 기록된 뒤
+     * 취소·대기로 바뀐 사람이며, 재제출에서 체크 값만 바꿀 수 있다 — 출석 정정이 받는 범위와
+     * 같다(AttendanceServiceImpl.applyCorrections: 지난 출석은 이력이라 고칠 수 있어야 한다).
+     * 줄이 없는 대기자·취소자는 지금처럼 400이다 — 받아 주면 그 회차에 없던 사람이 재제출로
+     * 출석부에 들어온다.
+     *
      * 확정 팀원은 요청 줄 수와 무관하게 한 번만 읽는다(참가자 명단 조회를 재사용한다) —
-     * 줄마다 조회하면 그대로 N+1이다.
+     * 줄마다 조회하면 그대로 N+1이다. 기존 줄의 참가자는 호출부가 이미 읽어 둔 것을 쓴다.
      */
     private List<AttendanceRow> resolveAttendances(
-            AcademicProgramEntity academicProgram, SessionSubmitRequest request) {
+            AcademicProgramEntity academicProgram,
+            SessionSubmitRequest request,
+            List<AttendanceEntity> recorded) {
         List<SessionAttendanceSubmitRequest> requested = request.attendancesOrEmpty();
         if (requested.isEmpty()) {
             return List.of();
@@ -258,21 +270,22 @@ public class SessionServiceImpl implements SessionService {
             }
         }
 
-        Map<Long, EventParticipantEntity> confirmed =
-                eventParticipantRepository
-                        .findAllByEventAndStatusInOrderByIdAsc(
-                                academicProgram.getEvent(), ATTENDANCE_TARGET_STATUSES)
-                        .stream()
-                        .collect(
-                                Collectors.toMap(
-                                        EventParticipantEntity::getId, Function.identity()));
+        Map<Long, EventParticipantEntity> targets = new HashMap<>();
+        for (EventParticipantEntity participant :
+                eventParticipantRepository.findAllByEventAndStatusInOrderByIdAsc(
+                        academicProgram.getEvent(), ATTENDANCE_TARGET_STATUSES)) {
+            targets.put(participant.getId(), participant);
+        }
+        for (AttendanceEntity attendance : recorded) {
+            targets.putIfAbsent(attendance.getParticipant().getId(), attendance.getParticipant());
+        }
 
         List<AttendanceRow> rows = new ArrayList<>(requested.size());
         for (SessionAttendanceSubmitRequest attendance : requested) {
-            EventParticipantEntity participant = confirmed.get(attendance.eventPtcpId());
+            EventParticipantEntity participant = targets.get(attendance.eventPtcpId());
             if (participant == null) {
                 log.warn(
-                        "확정 팀원이 아닌 출석 대상. academicProgramId={}, eventPtcpId={}",
+                        "출석 대상이 아닌 참가자. academicProgramId={}, eventPtcpId={}",
                         academicProgram.getId(),
                         attendance.eventPtcpId());
                 throw new GeneralException(AcademicProgramErrorCode.INVALID_ATTENDANCE_TARGET);
@@ -287,10 +300,17 @@ public class SessionServiceImpl implements SessionService {
      * replaceFormLabels와 같은 이유) — 같은 (sesn, event_ptcp) 쌍을 한 트랜잭션에서 지웠다
      * 넣으면 Hibernate가 INSERT를 DELETE보다 먼저 흘려보내 uk_atndc_sesn_ptcp에
      * 걸린다. 남는 줄은 체크 값만 갈아 끼운다.
+     *
+     * «요청에 없으면 지운다»는 **참가자가 지금 확정 팀원인 줄에만** 적용한다(#617). 기록된 뒤
+     * 취소·대기로 바뀐 참가자의 줄은 요청에 없어도 남는다 — 그 줄은 지난 회차의 이력이고(명단
+     * 영구 보존 · D16), 화면은 명단에서 빠진 사람을 실을 이유가 없다. #612가 진행 중 언제든
+     * 제외·강등을 열면서 «수정요청 → 그 사이 제외 → 재제출»이 흔한 경로가 됐고, 그전에는
+     * 이 경로가 그 줄을 조용히 지웠다.
      */
-    private void replaceAttendances(SessionEntity session, List<AttendanceRow> rows) {
+    private void replaceAttendances(
+            SessionEntity session, List<AttendanceEntity> recorded, List<AttendanceRow> rows) {
         Map<Long, AttendanceEntity> existing =
-                attendanceRepository.findAllBySessionOrderByIdAsc(session).stream()
+                recorded.stream()
                         .collect(
                                 Collectors.toMap(
                                         attendance -> attendance.getParticipant().getId(),
@@ -308,9 +328,16 @@ public class SessionServiceImpl implements SessionService {
             }
         }
 
-        // remove로 훑고 남은 것이 이번 요청에 없는 출석이다
-        if (!existing.isEmpty()) {
-            attendanceRepository.deleteAllInBatch(existing.values());
+        // remove로 훑고 남은 것이 이번 요청에 없는 출석이다 — 그중 지금 확정 팀원의 줄만 지운다
+        List<AttendanceEntity> removed =
+                existing.values().stream()
+                        .filter(
+                                attendance ->
+                                        ATTENDANCE_TARGET_STATUSES.contains(
+                                                attendance.getParticipant().getStatus()))
+                        .toList();
+        if (!removed.isEmpty()) {
+            attendanceRepository.deleteAllInBatch(removed);
         }
         if (!added.isEmpty()) {
             attendanceRepository.saveAll(added);

@@ -189,10 +189,86 @@ public class AcademicProgramEntity {
      * 전이·모집 기간 반영과 한 트랜잭션으로 오케스트레이션되므로 그 부수 효과도 호출부가 맡는다.
      */
     public void changeStatus(AcademicProgramTransition transition) {
+        changeStatus(transition, null);
+    }
+
+    /*
+     * 사유가 딸린 전이(#611 · DISCONTINUE는 사유가 필수다). 전이 가능 여부를 사유보다 먼저 본다 —
+     * 이미 종료된 활동에 사유 없는 폐지가 오면 답해야 할 것은 «사유를 적어라»가 아니라 «그
+     * 상태에서는 폐지할 수 없다»다(SessionEntity.changeStatus와 같은 순서). 사유는 여기 저장하지
+     * 않는다 — 남는 자리는 승인 이력(acdm_actv_aprv.opnn_cn)이고 호출부가 같은 트랜잭션에서 쓴다.
+     *
+     * REINSTATE는 여기로 오지 않는다 — 목적 상태를 폐지 이력에서 받아야 해서 reinstate가 따로 있다.
+     */
+    public void changeStatus(AcademicProgramTransition transition, String reason) {
+        if (!transition.hasFixedTarget()) {
+            throw new IllegalArgumentException(
+                    transition + "는 reinstate로 부른다 — 목적 상태를 폐지 이력에서 받아야 한다");
+        }
+        requireAllowed(transition);
+        if (transition.requiresReason() && (reason == null || reason.isBlank())) {
+            throw new GeneralException(AcademicProgramErrorCode.DISCONTINUATION_REASON_REQUIRED);
+        }
+        this.status = transition.targetStatus();
+    }
+
+    /*
+     * 복원(#611 REINSTATE · ADR-0058) — 폐지 전 상태로 되돌린다. 그 상태는 **추론하지 않고** 폐지
+     * 줄이 남긴 값(bfr_acdm_actv_stts_cd)을 받는다: 모집 시작은 이력 줄을 남기지 않고 모집 폼
+     * 상태는 폼 화면에서도 바뀌어, 둘 다 «폐지 전에 모집을 시작했었나»의 증거가 못 된다.
+     *
+     * 폐지된 활동이 아니면 409가 먼저다(changeStatus와 같은 순서). 넘겨받은 값이 폐지가 출발할 수
+     * 있는 상태(승인·진행 중)가 아니면 정합성이 깨진 것이라 IllegalStateException이다 — 조용히
+     * 진행 중으로 되돌리면 모집이 열린 적 없는 «진행 중»이 생긴다.
+     */
+    public void reinstate(AcademicProgramStatus statusBeforeDiscontinuation) {
+        requireAllowed(AcademicProgramTransition.REINSTATE);
+        if (statusBeforeDiscontinuation == null
+                || !AcademicProgramTransition.DISCONTINUE.isAllowedFrom(
+                        statusBeforeDiscontinuation)) {
+            throw new IllegalStateException(
+                    "폐지 이력에 되돌아갈 상태가 없다. academicProgramId="
+                            + id
+                            + ", statusBeforeDiscontinuation="
+                            + statusBeforeDiscontinuation);
+        }
+        this.status = statusBeforeDiscontinuation;
+    }
+
+    private void requireAllowed(AcademicProgramTransition transition) {
         if (!transition.isAllowedFrom(this.status)) {
             throw new GeneralException(
                     AcademicProgramErrorCode.INVALID_ACADEMIC_PROGRAM_TRANSITION);
         }
-        this.status = transition.targetStatus();
+    }
+
+    /*
+     * 지연(#610) — **진행 중인데 예정된 운영 기간(event_end_dt)이 지났고 진행률이 100% 미만.**
+     * 학술국장이 정한 정의다(ssccops#551). 저장하지 않고 조회 시점에 판정한다 — 날짜가 지나는
+     * 것만으로 값이 바뀌어 컬럼으로 두면 스케줄러가 필요해진다(SubWorkEntity.isDelayedBefore와
+     * 같은 이유).
+     *
+     * **목록 필터(AcademicProgramRepositoryImpl의 DELAYED)가 같은 조건을 JPQL로 옮겨 쓴다** —
+     * 규칙을 바꾸면 두 곳을 함께 고친다. AcademicProgramControllerTest가 두 결과를 대조한다.
+     *
+     * - 진행 중(ONGOING)만 — 모집 전(APPROVED)은 시작도 하지 않아 지연이 아니라 폐지 후보이고
+     *   (ssccops#552), 종료(COMPLETED)·폐지(DISCONTINUED · #611)는 이미 학술국장이 멈춘 것이다.
+     * - 종료일이 없으면 지연될 수 없다. 이관이 기획안 필수 문항에서 채우므로 실제로는 없어야 한다.
+     * - 경계는 '지금'이다. 이관이 종료를 그날의 끝(AcademicProgramMigrationServiceImpl.endOfDay)
+     *   으로 저장하므로 종료일 당일은 아직 지연이 아니고 다음 날부터 지연이다.
+     * - «100% 미만»은 비율이 아니라 **개수**로 본다 — 반올림한 비율(소수 2자리)은 항목이 아주
+     *   많으면 한 개가 남아도 100.00이 되어, 목록 필터(개수 비교)와 갈린다. 계획 항목이 0개면
+     *   진행률이 0이라 지연이다(AcademicProgramProgressResponse와 같은 정의).
+     *
+     * 개수를 넘겨받는 것은 엔티티가 스스로 셀 수 없어서다(SubWorkEntity.isReadyForReview와 같다).
+     */
+    public boolean isDelayedAt(Instant now, long curriculumItemCount, long approvedSessionCount) {
+        Instant endAt = event.getEndAt();
+        boolean planCompleted =
+                curriculumItemCount > 0 && approvedSessionCount >= curriculumItemCount;
+        return status == AcademicProgramStatus.ONGOING
+                && endAt != null
+                && endAt.isBefore(now)
+                && !planCompleted;
     }
 }

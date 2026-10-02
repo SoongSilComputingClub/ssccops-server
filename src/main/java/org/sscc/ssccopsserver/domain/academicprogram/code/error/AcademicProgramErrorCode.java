@@ -92,7 +92,8 @@ public enum AcademicProgramErrorCode implements ErrorCode {
     /*
      * 400 — attendances에 그 활동의 확정 팀원(event_ptcp, CONFIRMED)이 아닌 대상이 실려 왔을 때
      * (#135, 설계 결정 #3). 대기자·취소자·다른 활동의 참가자가 모두 여기로 온다 — 조용히
-     * 버리면 출석부의 totalCount가 화면이 보낸 명단과 어긋난 채로 저장된다.
+     * 버리면 출석부의 totalCount가 화면이 보낸 명단과 어긋난 채로 저장된다. 예외는 재제출에서
+     * **그 회차에 이미 줄이 있는** 대기자·취소자다 — 체크 값만 바꿀 수 있다(#617).
      *
      * 같은 참가자가 두 번 실려 온 것도 같은 코드다. 폼 라벨 교체가 중복을 한 번으로 접는 것과
      * 갈리는데, 라벨은 붙었는지 여부뿐이지만 출석은 값이 딸린 체크라 두 줄이 서로 다른 답을
@@ -145,10 +146,26 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      * COMPLETED는 여기 걸리지 않는다. 이름 그대로 **ONGOING 이전**만 막는 것이고, 끝난 활동의
      * 신청 명부는 지나간 사실이라 조회를 막을 이유가 없다 — 그 시점의 선발·일정 변경은
      * ACADEMIC_PROGRAM_COMPLETED가 이보다 먼저 막는다(AcademicProgramWritePolicy, #597).
+     * DISCONTINUED(#611)도 걸리지 않는다 — 이유는 AcademicProgramStatus.hasStartedRecruitment.
      * (⚠️ 이 줄은 원래 «참가 상태 전이가 이미 막는다»고 적었지만 그런 코드는 없었다 —
      * EventParticipantEntity.changeStatus는 참가 상태 쌍만 본다.)
      */
     RECRUITMENT_NOT_STARTED(HttpStatus.CONFLICT, "RECRUITMENT_NOT_STARTED", "아직 모집이 시작되지 않았습니다."),
+
+    /*
+     * 400 — 팀원으로 넣을 수 없는 회원을 추가하려 할 때 (#612 · POST .../members).
+     *
+     * 판정은 담당자 후보(GET /v1/members/assignable)와 **같은 규칙**이다 —
+     * MemberService.findAssignableMember가 없는 회원과 탈퇴·제명 회원을 함께 빈 값으로 돌려준다.
+     * 규칙을 여기 다시 적지 않는 것은 «누구에게 일을 맡길 수 있는가»가 두 벌이 되면 한쪽만
+     * 바뀌기 때문이다(이슈의 «두 벌 금지»). 둘을 한 코드로 묶는 것도 그쪽을 따른다 — 나누면
+     * 번호를 바꿔 부르는 것만으로 누가 탈퇴했는지가 새어 나간다(OperationErrorCode.
+     * OWNER_NOT_ACTIVE_MEMBER와 같은 자리).
+     *
+     * 행사 참가자 API는 떠난 회원을 경고만 하고 받는다(§8-5 · 홈커밍 같은 행사가 있다). 학술 팀원은
+     * 활동을 함께 할 사람이라 막는다 — 그 차이가 이 판정을 행사 도메인이 아니라 여기 둔 이유다.
+     */
+    MEMBER_NOT_ADDABLE(HttpStatus.BAD_REQUEST, "MEMBER_NOT_ADDABLE", "팀원으로 추가할 수 없는 회원입니다."),
 
     /*
      * 409 — 종료(COMPLETED)된 활동에 쓰기를 시도했을 때 (#597 · ADR-0057).
@@ -166,6 +183,29 @@ public enum AcademicProgramErrorCode implements ErrorCode {
      */
     ACADEMIC_PROGRAM_COMPLETED(
             HttpStatus.CONFLICT, "ACADEMIC_PROGRAM_COMPLETED", "종료된 학술 활동이라 수정할 수 없습니다."),
+
+    /*
+     * 409 — 폐지(DISCONTINUED)된 활동에 쓰기를 시도했을 때 (#611 · ADR-0058).
+     *
+     * 멈추는 쓰기·판정 순서·막지 않는 것이 전부 ACADEMIC_PROGRAM_COMPLETED와 같다 — 거절하는
+     * 자리도 같은 AcademicProgramWritePolicy다. **코드를 나눈 것은 되돌리는 길이 다르기 때문이다** —
+     * 종료는 재시작(REOPEN)으로, 폐지는 복원(REINSTATE)으로 풀린다. 한 코드로 묶으면 화면이
+     * 폐지된 활동에 «재시작을 요청하세요»를 띄운다.
+     */
+    ACADEMIC_PROGRAM_DISCONTINUED(
+            HttpStatus.CONFLICT, "ACADEMIC_PROGRAM_DISCONTINUED", "폐지된 학술 활동이라 수정할 수 없습니다."),
+
+    /*
+     * 400 — 사유 없이 폐지하려 할 때 (#611 · ADR-0058). 왜 멈췄는지가 남는 자리는 승인 이력의
+     * opnn_cn 하나뿐이라 비워 두면 폐지 현황을 셀 수는 있어도 설명할 수 없다. 공백만 있는 문자열도
+     * 여기 걸린다.
+     *
+     * DTO의 @NotBlank로 막지 않는 것은 REVISION_REASON_REQUIRED와 같은 이유다 — 필수 여부가 함께
+     * 온 transition에 달려 있고(복원은 선택), 전역 핸들러의 VALIDATION_FAILED로는 웹이 «사유를
+     * 적으라»는 안내를 고를 수 없다. 실제로 막는 자리는 AcademicProgramEntity.changeStatus다.
+     */
+    DISCONTINUATION_REASON_REQUIRED(
+            HttpStatus.BAD_REQUEST, "DISCONTINUATION_REASON_REQUIRED", "폐지는 사유를 반드시 입력해야 합니다."),
 
     /*
      * 409 — 모집 시작 일시가 지난 뒤 스터디장/팀장이 모집 폼 문항을 고치려 했을 때 (#483).

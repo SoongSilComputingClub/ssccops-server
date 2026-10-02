@@ -15,6 +15,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.code.error.AcademicProgramE
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCondition;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCursor;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramDetailResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramProgressResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchQuery;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSearchResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSummaryResponse;
@@ -22,11 +23,14 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransiti
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.CurriculumItemWithSessionResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalPoint;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramTransition;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramProgressCount;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.SessionRepository;
@@ -72,8 +76,9 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     public AcademicProgramDetailResponse getAcademicProgram(
             Long academicProgramId, MemberEntity viewer) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        long curriculumItemCount =
-                curriculumItemRepository.countByAcademicProgramId(academicProgramId);
+        AcademicProgramProgressResponse progress =
+                progressesOf(List.of(academicProgramId))
+                        .getOrDefault(academicProgramId, AcademicProgramProgressResponse.zero());
 
         // 연결된 모집 폼에서 formId·파생 접수 상태를 채운다(#186). 이관(#148) 전 활동이나
         // 데이터 정합성이 깨져 폼이 없는 활동은 둘 다 null이다. 접수 상태는 상태 코드만 읽지
@@ -85,7 +90,49 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 form == null ? null : formReceiptPolicy.receiptStatusOf(form).name();
 
         return AcademicProgramDetailResponse.of(
-                academicProgram, (int) curriculumItemCount, viewer, formId, formReceiptStatus);
+                academicProgram,
+                progress,
+                isDelayed(academicProgram, progress, Instant.now(clock)),
+                viewer,
+                formId,
+                formReceiptStatus);
+    }
+
+    /*
+     * 지연 판정(#610)을 진행률과 잇는 자리. 판정 자체는 AcademicProgramEntity.isDelayedAt이
+     * 갖고, 목록 필터(AcademicProgramRepositoryImpl.DELAYED)가 같은 조건을 JPQL로 쓴다.
+     * totalSessionCount는 이름과 달리 계획 항목 수다(AcademicProgramProgressResponse 주석).
+     */
+    private boolean isDelayed(
+            AcademicProgramEntity academicProgram,
+            AcademicProgramProgressResponse progress,
+            Instant now) {
+        return academicProgram.isDelayedAt(
+                now, progress.totalSessionCount(), progress.approvedSessionCount());
+    }
+
+    /*
+     * 활동별 진행률 (#609). 목록은 페이지의 활동 id를, 상세는 id 하나를 넘겨 **같은 집계 질의와
+     * 같은 계산**을 지난다 — 둘을 따로 세면 같은 활동이 두 화면에서 다른 숫자로 보인다.
+     * 카드마다 세면 그대로 N+1이라 질의는 활동 수와 무관하게 하나다(DB-13).
+     *
+     * 계획 항목이 없는 활동은 결과에 키가 없으므로 호출부가 zero()로 읽는다(그 규칙은 질의 주석).
+     * 활동이 한 건도 없으면 질의를 보내지 않는다 — in ()은 DB마다 해석이 갈린다.
+     */
+    private Map<Long, AcademicProgramProgressResponse> progressesOf(List<Long> academicProgramIds) {
+        if (academicProgramIds.isEmpty()) {
+            return Map.of();
+        }
+        return curriculumItemRepository
+                .countProgressByAcademicProgramIds(academicProgramIds)
+                .stream()
+                .collect(
+                        Collectors.toMap(
+                                AcademicProgramProgressCount::getAcademicProgramId,
+                                count ->
+                                        AcademicProgramProgressResponse.of(
+                                                count.getCurriculumItemCount(),
+                                                count.getApprovedSessionCount())));
     }
 
     /*
@@ -153,12 +200,18 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
 
     /*
      * 목록 조회. 쿼리는 목록 · 필터 건수 · 전체 건수 셋으로 work 도메인의 목록 조회(OPS-020)와
-     * 같은 수다(설계 결정 #3).
+     * 같은 수다(설계 결정 #3). 카드의 값을 채우는 집계(접수 건수 #483 · 진행률 #609)가 페이지당
+     * 한 번씩 더해질 뿐 카드 수에 따라 늘지 않는다.
+     *
+     * '지금'은 한 번만 읽어 지연 필터(delayed=true)와 응답의 isDelayed가 같은 경계를 보게 한다
+     * (#610) — 따로 읽으면 그 사이에 종료 시각이 지난 활동이 필터에는 걸리고 배지는 없는 줄이
+     * 된다(SubWorkServiceImpl.searchSubWorks가 지연 경계를 한 번 읽는 것과 같다).
      */
     @Override
     public AcademicProgramSearchResponse searchAcademicPrograms(
             AcademicProgramCondition condition, MemberEntity viewer) {
-        AcademicProgramSearchQuery query = condition.toQuery(viewer);
+        Instant now = Instant.now(clock);
+        AcademicProgramSearchQuery query = condition.toQuery(viewer, now);
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<AcademicProgramEntity> fetched = academicProgramRepository.search(query);
@@ -166,11 +219,17 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         List<AcademicProgramEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
         Map<Long, Long> applicationCounts = applicationCountsOf(rows);
+        Map<Long, AcademicProgramProgressResponse> progresses =
+                progressesOf(rows.stream().map(AcademicProgramEntity::getId).toList());
         List<AcademicProgramSummaryResponse> academicPrograms =
                 rows.stream()
                         .map(
                                 program -> {
                                     FormEntity form = program.getEvent().getForm();
+                                    AcademicProgramProgressResponse progress =
+                                            progresses.getOrDefault(
+                                                    program.getId(),
+                                                    AcademicProgramProgressResponse.zero());
                                     return AcademicProgramSummaryResponse.of(
                                             program,
                                             viewer,
@@ -182,7 +241,9 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                                             form == null
                                                     ? 0L
                                                     : applicationCounts.getOrDefault(
-                                                            form.getId(), 0L));
+                                                            form.getId(), 0L),
+                                            progress,
+                                            isDelayed(program, progress, now));
                                 })
                         .toList();
 
@@ -225,14 +286,14 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
     }
 
     /*
-     * 국장 전용 3액션(#133 · 재시작 #597). 전이 가능 여부부터 검증한다(changeStatus가 먼저
-     * 던진다) — 애초에 성립하지 않는 전이에 폼 오케스트레이션·승인 이력 기록 같은 부수 효과를
-     * 먼저 만들면 검사 순서가 뒤집혀 엉뚱한 오류가 먼저 보인다(FormEntity.changeStatus와 같은
-     * 태도).
+     * 국장 전용 5액션(#133 · 재시작 #597 · 폐지·복원 #611). 전이 가능 여부부터 검증한다
+     * (changeStatus·reinstate가 먼저 던진다) — 애초에 성립하지 않는 전이에 폼 오케스트레이션·승인
+     * 이력 기록 같은 부수 효과를 먼저 만들면 검사 순서가 뒤집혀 엉뚱한 오류가 먼저 보인다
+     * (FormEntity.changeStatus와 같은 태도). 폐지의 사유 누락(400)도 그 뒤, 부수 효과 앞이다.
      *
-     * **이 경로는 AcademicProgramWritePolicy를 지나지 않는다** — 종료된 활동의 쓰기를 막는
-     * 그 판정을 여기 걸면 재시작이 영영 성립하지 않는다. 종료된 활동에서 성립하는 전이가
-     * REOPEN 하나라는 것은 전이표가 이미 말한다.
+     * **이 경로는 AcademicProgramWritePolicy를 지나지 않는다** — 종료·폐지된 활동의 쓰기를 막는
+     * 그 판정을 여기 걸면 재시작·복원이 영영 성립하지 않는다. 종료된 활동에서 성립하는 전이가
+     * REOPEN 하나, 폐지된 활동에서는 REINSTATE 하나라는 것은 전이표가 이미 말한다.
      */
     @Override
     @Transactional
@@ -243,13 +304,20 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
         AcademicProgramStatus before = academicProgram.getStatus();
 
-        academicProgram.changeStatus(request.transition());
+        if (request.transition() == AcademicProgramTransition.REINSTATE) {
+            academicProgram.reinstate(statusBeforeDiscontinuation(academicProgramId));
+        } else {
+            academicProgram.changeStatus(request.transition(), request.reason());
+        }
 
         FormReceiptStatus formReceiptStatus =
                 switch (request.transition()) {
                     case START_RECRUITMENT -> startRecruitment(academicProgram, request);
                     case APPROVE_COMPLETION -> approveCompletion(academicProgram, performer);
                     case REOPEN -> reopen(academicProgram, performer);
+                    case DISCONTINUE ->
+                            discontinue(academicProgram, before, request.reason(), performer);
+                    case REINSTATE -> reinstate(academicProgram, request.reason(), performer);
                 };
 
         auditLog.record(
@@ -361,6 +429,58 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
                 AcademicProgramApprovalEntity.forReopen(
                         academicProgram, performer, Instant.now(clock)));
         return null;
+    }
+
+    /*
+     * 폐지(#611 · ADR-0058). 승인·진행 중인 활동의 운영을 멈춘다 — 쓰기를 멈추는 것은 상태가
+     * 하고(AcademicProgramWritePolicy), 여기서는 그 사실과 폐지 전 상태를 이력에 남기고 접수 중인
+     * 모집 폼을 닫는다(종료와 같은 자리 · closeRecruitmentFormIfOpen).
+     *
+     * **폐지 전 상태를 폐지 줄에 적는다** — 복원이 되돌아갈 곳이다. 모집 전에 폐지한 건을 언제나
+     * 진행 중으로 복원하면 모집이 열린 적 없는 «진행 중»이 생긴다.
+     *
+     * **팀원 명단은 건드리지 않는다**(2026-09-30 결정) — 참가 취소는 최종 상태라 전원 취소하면
+     * 복원해도 명단이 돌아오지 않고, 지난 출석의 주체가 취소로 바뀐다. 스터디장 역할도 그대로다.
+     *
+     * **공개 목록에서 빼는 조건을 따로 두지 않는다**(ADR-0058) — 학술 행사는 모집 폼이 접수 중일
+     * 때만 공개라(#187 · PublicEventServiceImpl.isVisibleToPublic) 여기서 폼을 닫는 순간 빠진다.
+     * 모집 전(APPROVED)이면 폼이 DRAFT라 애초에 공개 전이다.
+     */
+    private FormReceiptStatus discontinue(
+            AcademicProgramEntity academicProgram,
+            AcademicProgramStatus before,
+            String reason,
+            MemberEntity performer) {
+        academicProgramApprovalRepository.save(
+                AcademicProgramApprovalEntity.forDiscontinuation(
+                        academicProgram, performer, reason, before, Instant.now(clock)));
+        return closeRecruitmentFormIfOpen(academicProgram.getEvent().getForm());
+    }
+
+    /*
+     * 복원(#611 · ADR-0058). 상태는 이미 reinstate가 폐지 전 상태로 되돌렸고 여기서는 한 줄을
+     * 덧붙인다 — 폐지 줄은 지우지 않는다(재시작과 같다). **모집 폼은 다시 열지 않는다** — 폐지가
+     * 닫은 폼만 골라 되살리려면 «누가 닫았나»를 따로 적어야 하고, 모집은 폼 화면에서 따로 연다
+     * (ADR-0057의 재시작과 같은 판단). 그래서 복원해도 모집을 다시 열기 전까지는 공개 목록에 없다.
+     */
+    private FormReceiptStatus reinstate(
+            AcademicProgramEntity academicProgram, String reason, MemberEntity performer) {
+        academicProgramApprovalRepository.save(
+                AcademicProgramApprovalEntity.forReinstatement(
+                        academicProgram, performer, reason, Instant.now(clock)));
+        return null;
+    }
+
+    /*
+     * 복원이 되돌아갈 상태 — 마지막 폐지 줄의 bfr_acdm_actv_stts_cd. 폐지된 활동이 아니면 줄이
+     * 없거나 지난 폐지의 것이지만, 그때는 reinstate가 이 값을 보기 전에 409로 끊는다.
+     */
+    private AcademicProgramStatus statusBeforeDiscontinuation(Long academicProgramId) {
+        return academicProgramApprovalRepository
+                .findFirstByAcademicProgramIdAndPointOrderByIdDesc(
+                        academicProgramId, AcademicProgramApprovalPoint.DISCONTINUE)
+                .map(AcademicProgramApprovalEntity::getStatusBeforeTransition)
+                .orElse(null);
     }
 
     private Long requireFormId(EventEntity event) {

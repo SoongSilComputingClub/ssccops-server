@@ -75,6 +75,9 @@ public class AcademicProgramSessionController {
             description =
                     "REVISION_REQUESTED 상태에서만 쓸 수 있다(그 밖의 상태는 409 SESSION_NOT_EDITABLE)."
                             + " 부분 수정이 아니라 전체 교체이며, 이전 제출 내용의 이력은 남기지 않는다."
+                            + " 출석 대상은 확정 팀원과 **이 회차에 이미 줄이 있는 참가자**다 — 기록된 뒤"
+                            + " 취소·대기로 바뀐 참가자의 줄은 요청에 없어도 지워지지 않고, 실으면 체크"
+                            + " 값만 바뀐다(#617). 그 밖의 대상은 400 INVALID_ATTENDANCE_TARGET이다."
                             + " 생성이 아니므로 200이다.")
     @PutMapping("/{sessionId}")
     public ApiResponse<SessionDetailResponse> resubmitSession(

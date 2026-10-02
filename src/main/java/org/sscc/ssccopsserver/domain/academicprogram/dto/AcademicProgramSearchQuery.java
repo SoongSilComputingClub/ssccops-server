@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.academicprogram.dto;
 
+import java.time.Instant;
+
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
@@ -15,6 +17,10 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 언제나 함께 있거나 함께 없다 — 회원 없이 역할만 오면 무엇과 비교할지가 없고, 역할 없이
  * 회원만 오면 Repository가 다시 기본 역할을 정해야 해서 "기본이 무엇인가"가 두 곳에 놓인다.
  * 그 불변식을 생성자에서 깬다.
+ *
+ * delayedAsOf는 지연 필터(#610)의 기준 시각이다 — null이면 필터가 없다. Boolean이 아니라
+ * 시각인 것은 mine과 같은 이유다: Repository가 '지금'을 다시 읽으면 응답의 isDelayed(서비스가
+ * 같은 시각으로 판정한다)와 경계가 갈릴 수 있다.
  */
 public record AcademicProgramSearchQuery(
         AcademicProgramStatus status,
@@ -22,6 +28,7 @@ public record AcademicProgramSearchQuery(
         String keyword,
         MemberEntity mine,
         AcademicProgramMineRole mineRole,
+        Instant delayedAsOf,
         int size,
         AcademicProgramSortOrder sort,
         AcademicProgramCursor cursor) {
@@ -46,6 +53,10 @@ public record AcademicProgramSearchQuery(
 
     public boolean hasMineFilter() {
         return mine != null;
+    }
+
+    public boolean hasDelayedFilter() {
+        return delayedAsOf != null;
     }
 
     public boolean hasCursor() {

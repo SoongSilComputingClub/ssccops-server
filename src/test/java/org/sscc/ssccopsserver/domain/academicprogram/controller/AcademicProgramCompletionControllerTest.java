@@ -66,9 +66,10 @@ import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 import com.jayway.jsonpath.JsonPath;
 
 /*
- * 종료는 그 활동의 쓰기를 전부 멈춘다 (#597 · ADR-0057 · AcademicProgramWritePolicy).
+ * 종료는 그 활동의 쓰기를 전부 멈춘다 (#597 · ADR-0057 · AcademicProgramWritePolicy). 폐지도 같다
+ * (#611 · ADR-0058) — 같은 WritePath 표를 폐지 상태에도 돌린다(거절 코드만 다르다).
  *
- * **쓰기 경로 여덟을 WritePath 한 표에 둔다.** 서버가 판정을 한 자리에 모은 것과 같은 이유다 —
+ * **쓰기 경로 열(#597의 여덟 + #612의 팀원 추가·상태 변경)을 WritePath 한 표에 둔다.** 서버가 판정을 한 자리에 모은 것과 같은 이유다 —
  * 경로마다 테스트를 흩어 두면 새 쓰기 경로가 생길 때 그 테스트만 빠진다. 경로를 더하면 이 표에
  * 한 줄을 더하고, 두 파라미터화 테스트가 409와 «403이 409보다 먼저»를 함께 본다.
  *
@@ -151,7 +152,7 @@ class AcademicProgramCompletionControllerTest {
         transitionProgram(program, "APPROVE_COMPLETION");
     }
 
-    // ------------------------------------------------------------------ 쓰기 경로 여덟
+    // ------------------------------------------------------------------ 쓰기 경로
 
     /*
      * 종료된 활동의 쓰기는 전부 409 ACADEMIC_PROGRAM_COMPLETED다. 경로마다 «활동이 살아 있으면
@@ -191,6 +192,66 @@ class AcademicProgramCompletionControllerTest {
                                 .content("{\"transition\": \"APPROVE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.afterSttsCd").value("APPROVED"));
+    }
+
+    // ------------------------------------------------------------------ 폐지도 같은 표 (#611)
+
+    /*
+     * 폐지도 같은 쓰기 경로를 전부 멈춘다(ADR-0058) — 코드만 ACADEMIC_PROGRAM_DISCONTINUED로 다르다(화면이
+     * «재시작»이 아니라 «복원»을 안내해야 한다). setUp이 종료까지 가 있으므로 재시작한 뒤 폐지한다 —
+     * 종료에서는 폐지할 수 없다.
+     */
+    @ParameterizedTest
+    @EnumSource(WritePath.class)
+    void discontinuedProgramRejectsWrite(WritePath path) throws Exception {
+        discontinueProgram();
+
+        mockMvc.perform(authorized(path.request(this), tokenOf(path.qualification)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ACADEMIC_PROGRAM_DISCONTINUED"));
+    }
+
+    // 폐지도 권한 없는 요청자에게는 403이 먼저다 — 멈췄다는 사실을 먼저 알리지 않는다
+    @ParameterizedTest
+    @EnumSource(WritePath.class)
+    void forbiddenPrecedesDiscontinued(WritePath path) throws Exception {
+        discontinueProgram();
+
+        mockMvc.perform(authorized(path.request(this), outsiderToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    // 복원하면 같은 쓰기가 다시 된다 — 진행 중에서 폐지했으므로 진행 중으로 돌아간다
+    @Test
+    void reinstateLetsWritesThroughAgain() throws Exception {
+        discontinueProgram();
+        transitionProgram(program, "REINSTATE");
+
+        mockMvc.perform(
+                        authorized(
+                                        post(sessionPath(sessionAwaitingReview) + "/transitions"),
+                                        managerToken)
+                                .content("{\"transition\": \"APPROVE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.afterSttsCd").value("APPROVED"));
+    }
+
+    // 계획 표의 편집 버튼과 승인 대기 목록도 종료와 같이 따라온다 — 둘 다 acceptsWrites를 본다
+    @Test
+    void discontinuedProgramTurnsOffCurriculumEditingAndLeavesTheReviewQueue() throws Exception {
+        discontinueProgram();
+
+        mockMvc.perform(authorized(get(programPath() + "/curriculum-items"), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath("$.data[*].isEditable", Matchers.everyItem(Matchers.is(false))));
+        mockMvc.perform(authorized(get(REVIEW_SESSIONS), managerToken).param("size", "100"))
+                .andExpect(status().isOk())
+                .andExpect(
+                        jsonPath(
+                                "$.data[*].sessionId",
+                                Matchers.not(Matchers.hasItem(sessionAwaitingReview.intValue()))));
     }
 
     // ------------------------------------------------------------------ 막지 않는 것
@@ -316,8 +377,8 @@ class AcademicProgramCompletionControllerTest {
     }
 
     /*
-     * 종료가 멈추는 쓰기 전부 (#597 이슈의 표). **새 쓰기 경로를 만들면 여기에 한 줄을 더한다.**
-     * 막지 않는 것(조회 · 공유 링크 · 재시작 전이)은 이 표에 없다.
+     * 종료·폐지가 멈추는 쓰기 전부 (#597 이슈의 표 · #611). **새 쓰기 경로를 만들면 여기에 한 줄을
+     * 더한다.** 막지 않는 것(조회 · 공유 링크 · 재시작·복원 전이)은 이 표에 없다.
      */
     private enum WritePath {
         SUBMIT_SESSION(Qualification.LEADER) {
@@ -373,6 +434,22 @@ class AcademicProgramCompletionControllerTest {
                         .content(
                                 "{\"rcptBgngDt\": \"%s\", \"rcptEndDt\": \"%s\"}"
                                         .formatted(laterBy(1), laterBy(30)));
+            }
+        },
+        ADD_MEMBER(Qualification.LEADER_OR_MANAGER) {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {
+                // 팀원 추가(#612) — 스터디장 자신도 동아리 회원이라 활동이 살아 있으면 통과한다
+                return post(test.programPath() + "/members")
+                        .content("{\"mbrId\": %d}".formatted(test.leader.getId()));
+            }
+        },
+        CHANGE_MEMBER_STATUS(Qualification.LEADER_OR_MANAGER) {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {
+                // 팀원 상태 변경(#612) — 명단에 없는 행이지만 404보다 종료·폐지가 먼저다
+                return patch(test.programPath() + "/members/1")
+                        .content("{\"ptcpSttsCd\": \"CANCELLED\"}");
             }
         },
         UPDATE_RECRUITMENT_FORM(Qualification.LEADER_OR_MANAGER) {
@@ -461,6 +538,19 @@ class AcademicProgramCompletionControllerTest {
                         authorized(post(programPath(target) + "/transitions"), managerToken)
                                 .content("{\"transition\": \"%s\"}".formatted(transition)))
                 .andExpect(status().isOk());
+    }
+
+    // 종료된 setUp 상태에서 폐지까지 — 종료에서는 폐지할 수 없어 재시작을 거친다
+    private void discontinueProgram() throws Exception {
+        transitionProgram(program, "REOPEN");
+        mockMvc.perform(
+                        authorized(post(programPath() + "/transitions"), managerToken)
+                                .content(
+                                        """
+                                        {"transition": "DISCONTINUE", "reason": "최소 인원 미달"}
+                                        """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.afterSttsCd").value("DISCONTINUED"));
     }
 
     private void startRecruitmentAt(AcademicProgramEntity target, String beginAt, String endAt)

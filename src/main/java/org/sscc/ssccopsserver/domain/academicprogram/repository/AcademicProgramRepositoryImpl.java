@@ -66,6 +66,27 @@ public class AcademicProgramRepositoryImpl implements AcademicProgramRepositoryC
     private static final String LEADER_IS_MINE = "l.id = :mineId";
     private static final String PROPOSER_IS_MINE = "a.proposer.id = :mineId";
 
+    /*
+     * 지연 필터(#610). **AcademicProgramEntity.isDelayedAt과 같은 조건이어야 한다** — 응답의
+     * isDelayed와 이 필터가 갈리면 «지연» 칩을 눌렀는데 배지가 없는 줄이 나온다.
+     * AcademicProgramControllerTest가 두 결과를 같은 집합으로 대조한다.
+     *
+     * 진행 중 · 종료일이 :delayedAsOf보다 앞(NULL이면 비교가 참이 아니라 빠진다) · 계획 항목이
+     * 없거나 승인 회차가 항목보다 적다. 승인 수는 계획에 매달린 실적만 세므로(진행률 집계와
+     * 같다 · CurriculumItemRepository.countProgressByAcademicProgramIds) 항목을 넘지 않는다.
+     *
+     * 상태 두 값은 파라미터가 아니라 리터럴이다 — sttsCd 필터가 같은 a.status를 따로 걸고
+     * (sttsCd=COMPLETED&delayed=true는 AND라 빈 목록), «무엇이 지연인가»는 요청이 바꿀 값이 아니다.
+     */
+    private static final String DELAYED =
+            "a.status ="
+                + " org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramStatus.ONGOING"
+                + " and e.endAt < :delayedAsOf and ((select count(c) from CurriculumItemEntity c"
+                + " where c.academicProgram = a) = 0 or (select count(s) from SessionEntity s where"
+                + " s.curriculumItem.academicProgram = a and s.status ="
+                + " org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus.APPROVED) <"
+                + " (select count(c) from CurriculumItemEntity c where c.academicProgram = a))";
+
     private static final String CREATED_AT_PATH = "a.createdAt";
     private static final String EVENT_BGNG_DT_PATH = "e.beginAt";
 
@@ -124,6 +145,10 @@ public class AcademicProgramRepositoryImpl implements AcademicProgramRepositoryC
         if (query.hasMineFilter()) {
             conditions.add(mineCondition(query.mineRole()));
             parameters.put("mineId", query.mine().getId());
+        }
+        if (query.hasDelayedFilter()) {
+            conditions.add("(" + DELAYED + ")");
+            parameters.put("delayedAsOf", query.delayedAsOf());
         }
         if (withCursor && query.hasCursor()) {
             conditions.add(cursorCondition(query, parameters));

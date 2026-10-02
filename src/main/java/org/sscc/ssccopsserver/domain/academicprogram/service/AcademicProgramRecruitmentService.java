@@ -2,7 +2,10 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import java.util.List;
 
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAddRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
@@ -26,10 +29,11 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * 그 조립이 두 벌이 된다(FormResponseService가 응답자용·운영자용 컨트롤러를 함께 받치는 것과
  * 같은 판단).
  *
- * **인가 판정이 서비스에 있는 것은 신청자 조회 하나뿐이다.** 그쪽만 "스터디장 본인 또는
- * 학술국장"이라는 OR이고 @RequireAuthority로 표현되지 않아 AcademicProgramOwnershipPolicy를
- * 태운다. 선발은 ACADEMIC_PROGRAM_MANAGE 단일 권한이라 컨트롤러의 애노테이션이 이미 끊고,
- * 팀원 조회는 인증만 요구하므로 판정 자체가 없다.
+ * **인가 판정이 서비스에 있는 것은 "스터디장 본인 또는 학술국장"인 자리다** — 신청자 조회 ·
+ * 모집 폼 · 팀원 관리(#612 · 추가·상태 변경·이력). 그 OR은 @RequireAuthority로 표현되지 않아
+ * AcademicProgramOwnershipPolicy(쓰기는 AcademicProgramWritePolicy)를 태운다. 선발은
+ * ACADEMIC_PROGRAM_MANAGE 단일 권한이라 컨트롤러의 애노테이션이 이미 끊고, 팀원 조회는 인증만
+ * 요구하므로 판정 자체가 없다(isEditable만 요청자를 본다).
  */
 public interface AcademicProgramRecruitmentService {
 
@@ -40,9 +44,44 @@ public interface AcademicProgramRecruitmentService {
      *
      * 모집 시작 여부를 보지 않는다 — 아직 아무도 뽑지 않은 활동의 빈 명단은 정상적인 답이고,
      * 이 조회는 모집이 아니라 활동 상세 화면의 일부다.
+     *
+     * 줄마다 isEditable을 싣는다(#612) — viewer가 스터디장·학술국장이고 활동이 진행 중이면 참이다.
+     * 쓰기 경로(addMember·changeMemberStatus)가 거는 판정과 같은 술어를 쓴다.
      */
     List<AcademicProgramMemberResponse> getMembers(
-            Long academicProgramId, EventParticipantStatus participantStatus);
+            Long academicProgramId, EventParticipantStatus participantStatus, MemberEntity viewer);
+
+    /*
+     * 팀원 추가 (#612 · 스터디장·학술국장). **신청서 없이** 확정으로 넣고, 예전에 빠졌던(취소)
+     * 사람이면 재합류다 — 행사 도메인의 EventParticipationService.admitParticipant가 등록·재합류·중복을
+     * 가른다.
+     *
+     * 검사 순서: 활동 404 → 자격 403 → 종료·폐지 409 → 모집 시작 409 → 대상 회원 400
+     * (MEMBER_NOT_ADDABLE · 담당자 후보와 같은 규칙) → 이미 팀에 있음 409 EVENT_PARTICIPANT_DUPLICATED.
+     * 학술국장의 승인 없이 곧바로 반영되고 이력(event_ptcp_stts_hstry)이 남는다.
+     */
+    AcademicProgramMemberResponse addMember(
+            Long academicProgramId, AcademicProgramMemberAddRequest request, MemberEntity actor);
+
+    /*
+     * 팀원 상태 변경 (#612) — 승격 · 강등 · 제외(취소) · 재합류(취소 → 확정). 검사 순서는 추가와 같고
+     * 대상 회원 검사 대신 명단 행 404(EVENT_PARTICIPANT_NOT_FOUND · 남의 활동 참가 행 포함) →
+     * 전이 400이다. 제외해도 행은 남는다 — 지난 출석이 그 행을 가리키고, 다음 회차 출석 대상
+     * (확정 팀원)에서는 빠진다.
+     */
+    AcademicProgramMemberResponse changeMemberStatus(
+            Long academicProgramId,
+            Long eventParticipantId,
+            AcademicProgramMemberStatusChangeRequest request,
+            MemberEntity actor);
+
+    /*
+     * 팀원 명단 변경 이력, 최신순 (#612). 스터디장·학술국장만 본다 — 누가 누구를 뺐는지는 팀원
+     * 전원이 볼 자리가 아니다. 경로를 가리지 않는다: 모집 선발·행사 참가자 API·팀원 관리가 남긴 줄이
+     * 전부 나온다. 조회라 종료·폐지와 무관하다.
+     */
+    List<AcademicProgramMemberHistoryResponse> getMemberHistory(
+            Long academicProgramId, MemberEntity requester);
 
     /*
      * 신청자(= 연결된 모집 폼의 응답) 목록. 규칙을 복제하지 않고 FormResponseService.getResponses에

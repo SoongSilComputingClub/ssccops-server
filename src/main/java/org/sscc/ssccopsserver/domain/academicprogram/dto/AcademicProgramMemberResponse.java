@@ -23,7 +23,13 @@ import org.sscc.ssccopsserver.domain.event.entity.EventParticipantEntity;
  * 아직 자기 활동의 참가자로 등록되지 않았다면 이 목록에는 아예 나오지 않는다.
  *
  * joinedAt은 등록 일시(crt_dt)다 — "언제 팀에 들어왔는가"이고, 상태가 대기에서 확정으로 바뀐
- * 시점(mdfcn_dt)이 아니다. 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
+ * 시점(mdfcn_dt)이 아니다. 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다. 재합류(#612)는
+ * 같은 행을 되살리므로 joinedAt도 처음 들어온 날 그대로다 — 오간 자취는 이력(.../members/history)이다.
+ *
+ * isEditable(#612)은 **요청자가 이 명단을 고칠 수 있는가**다 — 스터디장·학술국장이고 활동이 진행
+ * 중일 때 참이다. 줄마다 같은 값인 것은 판정이 줄이 아니라 활동과 요청자에 달려서이고, 응답이
+ * 배열이라 봉투 밖에 한 번만 둘 자리가 없다(배열을 객체로 바꾸면 하위 호환이 깨진다). 화면이
+ * 상태·권한으로 다시 판정하지 않게 서버가 답한다(ADR-0057 — 버튼과 실제 판정이 갈리지 않게).
  */
 public record AcademicProgramMemberResponse(
         Long eventPtcpId,
@@ -31,12 +37,15 @@ public record AcademicProgramMemberResponse(
         String mbrNm,
         EventParticipantStatus ptcpSttsCd,
         boolean isLeader,
-        OffsetDateTime joinedAt) {
+        OffsetDateTime joinedAt,
+        boolean isEditable) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static AcademicProgramMemberResponse of(
-            EventParticipantEntity participant, AcademicProgramEntity academicProgram) {
+            EventParticipantEntity participant,
+            AcademicProgramEntity academicProgram,
+            boolean editable) {
         Long memberId = participant.getMember().getId();
         return new AcademicProgramMemberResponse(
                 participant.getId(),
@@ -44,7 +53,8 @@ public record AcademicProgramMemberResponse(
                 participant.getMember().getName(),
                 participant.getStatus(),
                 isLeader(academicProgram, memberId),
-                toOffsetDateTime(participant.getCreatedAt()));
+                toOffsetDateTime(participant.getCreatedAt()),
+                editable);
     }
 
     private static boolean isLeader(AcademicProgramEntity academicProgram, Long memberId) {

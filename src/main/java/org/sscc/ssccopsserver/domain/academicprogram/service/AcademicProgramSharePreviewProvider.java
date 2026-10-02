@@ -46,7 +46,8 @@ import lombok.RequiredArgsConstructor;
  *
  * **`acdm_actv`에는 소프트 삭제가 없다**(`AcademicProgramEntity` 주석 · 설계 결정 #2) — 승인이
  * 곧 생성이라 반려된 기획안은 행 자체가 만들어지지 않고, 만들어진 행을 지우는 유스케이스가
- * 없다. 상태 셋(APPROVED·ONGOING·COMPLETED)은 전부 실재하는 활동이고, 상세 조회
+ * 없다. 상태 넷(APPROVED·ONGOING·COMPLETED·DISCONTINUED — 폐지 #611도 지우는 것이 아니라 멈추는
+ * 것이다)은 전부 실재하는 활동이고, 상세 조회
  * (`GET /v1/academic-programs/{id}`)도 "존재하면 항상 조회된다"이므로 미리보기가 상세보다
  * 더 감출 것이 없다 — **미리보기가 감추는 것은 상세가 감추는 것과 같아야 한다.**
  *

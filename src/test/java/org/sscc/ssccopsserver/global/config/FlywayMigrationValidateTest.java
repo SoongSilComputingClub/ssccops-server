@@ -405,6 +405,51 @@ class FlywayMigrationValidateTest {
     }
 
     /*
+     * V30이 드래프트 안건을 되살리며 건 제약을 본다 (#625 · ADR-0059).
+     *
+     * 엔티티의 @Check는 H2(ddl-auto: create)에만 제약을 만들고 `validate`는 CHECK를 보지 않는다 —
+     * V30이 제약을 빠뜨리거나 식을 틀려도 위의 스키마 검증은 초록이다. 그러면 «제목도 운영 건도 없는
+     * 안건»을 막는 최종 방어선이 배포 DB에만 없게 되므로, 컬럼 모양과 제약 식을 여기서 함께 본다.
+     */
+    @Test
+    void meetingAgendaIsEitherLinkedOrADraft() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+
+        Map<String, String> nullable = new HashMap<>();
+        jdbc.query(
+                "SELECT column_name, is_nullable FROM information_schema.columns"
+                        + " WHERE table_schema = 'public' AND table_name = 'mtg_dtl'"
+                        + " AND column_name IN ('agnd_nm', 'oper_id')",
+                rs -> {
+                    nullable.put(rs.getString(1), rs.getString(2));
+                });
+        assertThat(nullable)
+                .as("V30이 agnd_nm을 되살리고 oper_id의 NOT NULL을 풀었다")
+                .containsEntry("agnd_nm", "YES")
+                .containsEntry("oper_id", "YES");
+        assertThat(
+                        jdbc.queryForObject(
+                                "SELECT character_maximum_length FROM information_schema.columns"
+                                        + " WHERE table_schema = 'public'"
+                                        + " AND table_name = 'mtg_dtl' AND column_name = 'agnd_nm'",
+                                Integer.class))
+                .as("V24 이전 정의(V1)와 같은 길이")
+                .isEqualTo(100);
+
+        String check =
+                jdbc.queryForObject(
+                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+                                + " WHERE conrelid = 'public.mtg_dtl'::regclass"
+                                + " AND conname = 'mtg_dtl_agnd_nm_oper_id_check'",
+                        String.class);
+        assertThat(check)
+                .as("제목과 운영 건 중 정확히 하나")
+                .contains("agnd_nm IS NULL")
+                .contains("oper_id IS NULL")
+                .contains("<>");
+    }
+
+    /*
      * V10의 벡터 저장소가 Spring AI가 기대하는 모양인지 본다 (#396 · ADR-0028).
      *
      * **스키마를 Flyway가 만들기로 한 대가가 이 테스트다.** 스타터의 자동 생성을 껐으므로

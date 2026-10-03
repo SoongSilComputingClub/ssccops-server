@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
@@ -24,6 +25,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.service.MeetingService;
 import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
 import org.sscc.ssccopsserver.domain.share.dto.ShareLinkResponse;
@@ -115,8 +117,8 @@ public class MeetingController {
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 
-    // 안건 수정(OPS-028). 논의 내용·처리 구분만 바꾼다 — 연결 운영 건·제목·제출자는 이 API의 범위 밖이다(MeetingAgendaEntity.update
-    // 참고)
+    // 안건 수정(OPS-028). 논의 내용·처리 구분(드래프트면 제목도)을 바꾼다 — 연결 운영 건·제출자는 이 API의 범위 밖이다
+    // (MeetingAgendaEntity.update 참고)
     @RequireAuthority(AuthorityCode.MEETING_AGENDA_WRITE)
     @PatchMapping("/{meetingId}/agendas/{agendaId}")
     public ApiResponse<MeetingAgendaResponse> updateAgenda(
@@ -124,6 +126,31 @@ public class MeetingController {
             @PathVariable Long agendaId,
             @Valid @RequestBody MeetingAgendaUpdateRequest request) {
         return ApiResponse.success(meetingService.updateAgenda(meetingId, agendaId, request));
+    }
+
+    /*
+     * 드래프트 안건 승격 — «업무로 만들기» (#625 · ADR-0059). 본문은 업무 등록(POST /v1/works)과
+     * 같은 WorkCreateRequest이고, 업무를 만든 뒤 안건이 그 업무를 가리키게 한다(한 트랜잭션).
+     *
+     * **권한은 WORK_MANAGE다** — 업무 등록과 같다. 결과물이 업무이므로 안건 작성 권한
+     * (MEETING_AGENDA_WRITE · 국원도 가진다)만으로 업무가 생기는 길을 열지 않는다. 안건 쪽 권한을
+     * 겹쳐 요구하지 않는 것은 ADR-0059가 «업무 등록과 같은 권한»으로 정했기 때문이다 — 시드에서
+     * WORK_MANAGE를 가진 역할(국장 이상)은 OPERATOR를 통해 안건 작성 권한도 함께 가진다.
+     *
+     * 경로가 /v1/works가 아니라 안건 아래인 것은 «이 안건을» 승격하는 행위라서다. 업무가 새로
+     * 생기므로 201이고 Location은 그 업무다.
+     */
+    @RequireAuthority(AuthorityCode.WORK_MANAGE)
+    @PostMapping("/{meetingId}/agendas/{agendaId}/promote")
+    public ResponseEntity<ApiResponse<MeetingAgendaPromoteResponse>> promoteAgenda(
+            @PathVariable Long meetingId,
+            @PathVariable Long agendaId,
+            @Valid @RequestBody WorkCreateRequest request,
+            @CurrentMember MemberEntity registrant) {
+        MeetingAgendaPromoteResponse response =
+                meetingService.promoteAgendaToWork(meetingId, agendaId, request, registrant);
+        URI location = URI.create("/v1/works/" + response.work().workId());
+        return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 
     // 안건 상정 철회(OPS-029). 회의 시작 전(SCHEDULED)만 허용한다 — 서비스가 그 밖의 시도를 409로 막는다

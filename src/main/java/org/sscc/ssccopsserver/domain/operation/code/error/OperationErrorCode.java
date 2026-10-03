@@ -48,6 +48,15 @@ public enum OperationErrorCode implements ErrorCode {
     SUB_WORK_TYPE_INACTIVE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "사용하지 않는 하위 업무 유형입니다."),
 
     /*
+     * 400 — 안건이 운영 건과 제목(agendaName)을 둘 다 갖거나 둘 다 갖지 않을 때, 그리고 운영 건을
+     * 가리키는 안건에 제목을 주려 할 때 (#625 · ADR-0059). 요청 DTO의 @AssertTrue가 먼저 막지만
+     * 서비스를 직접 부르는 경로와 «연결 안건 수정»(요청만 봐서는 알 수 없다)은 엔티티가 이 코드로
+     * 던진다. 화면이 보기에 입력 검증 실패와 같은 거절이라 코드 문자열은 VALIDATION_FAILED다.
+     */
+    AGENDA_TARGET_INVALID(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "연결할 운영 건 또는 안건 제목 중 하나만 입력해야 합니다."),
+
+    /*
      * 403 — 승인자 역할이 아닌 회원의 승인·반려(TR-03·TR-04), 운영진이 아닌 회원의 투표(OPS-015).
      * 판정은 ApprovalAuthorityPolicy가 한 곳에서 한다.
      *
@@ -117,6 +126,14 @@ public enum OperationErrorCode implements ErrorCode {
 
     // 409 — 종료·취소된 회의에 안건을 상정하거나 수정하려 할 때 (OPS-027·OPS-028)
     MEETING_CLOSED(HttpStatus.CONFLICT, "MEETING_CLOSED", "이미 종료된 회의입니다."),
+
+    /*
+     * 409 — 이미 운영 건을 가리키는 안건을 업무로 승격하려 할 때 (#625 · ADR-0059). 승격은
+     * 드래프트 안건에서 한 번뿐이고 되돌아가지 않는다. 전이 거절(TRANSITION_NOT_ALLOWED)을
+     * 재사용하지 않은 것은 해소 방법이 달라서다 — 이 안건은 이미 업무가 있으니 그 업무를 열면 된다.
+     */
+    MEETING_AGENDA_ALREADY_LINKED(
+            HttpStatus.CONFLICT, "MEETING_AGENDA_ALREADY_LINKED", "이미 운영 건에 연결된 안건입니다."),
 
     /*
      * 409 — 이미 있는 유형명으로 등록·수정할 때(OPS-019). 선조회만으로는 동시 요청을 막지 못하므로

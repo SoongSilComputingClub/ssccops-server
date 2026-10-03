@@ -281,6 +281,9 @@ class OperationToolsIntegrationTest {
                             JsonPath.parse(text)
                                     .read("$.agenda.targetOperation.operationId", Long.class))
                     .isEqualTo(operationId);
+            // 상세를 여는 값은 운영 ID가 아니라 업무 ID다(#635) — 모델도 get_work 에 이 값을 넘긴다
+            assertThat(JsonPath.parse(text).read("$.agenda.targetOperation.targetId", Long.class))
+                    .isEqualTo(JsonPath.parse(text).read("$.work.workId", Long.class));
         }
     }
 

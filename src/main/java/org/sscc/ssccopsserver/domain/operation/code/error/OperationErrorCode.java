@@ -66,6 +66,19 @@ public enum OperationErrorCode implements ErrorCode {
     ATTACHMENT_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "ATTACHMENT_TOO_LARGE", "첨부 파일이 너무 큽니다."),
     WORK_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "업무를 찾을 수 없습니다."),
 
+    /*
+     * 404 — 없는 업무 태그 (#624). 지정 교체에 없는 태그 id가 섞여도 여기다. 코드 문자열을 NOT_FOUND로
+     * 묶지 않고 따로 둔 것은 폼 라벨(FORM_LABEL_NOT_FOUND)과 같은 이유다 — 지정 교체에서는 업무가 없는
+     * 것(WORK_NOT_FOUND)과 태그가 없는 것을 화면이 갈라 안내해야 한다.
+     */
+    WORK_TAG_NOT_FOUND(HttpStatus.NOT_FOUND, "WORK_TAG_NOT_FOUND", "업무 태그를 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 있는 태그 이름으로 만들거나 바꿀 때 (#624). 선조회를 통과한 동시 요청이
+     * uk_work_tag_name에 걸린 것도 같은 코드로 옮긴다.
+     */
+    WORK_TAG_NAME_DUPLICATED(HttpStatus.CONFLICT, "WORK_TAG_NAME_DUPLICATED", "이미 등록된 태그 이름입니다."),
+
     // 404 — 선택한 하위 업무 유형이 없을 때. 유형은 기준 데이터라 삭제·변경될 수 있다
     SUB_WORK_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "하위 업무 유형을 찾을 수 없습니다."),
 

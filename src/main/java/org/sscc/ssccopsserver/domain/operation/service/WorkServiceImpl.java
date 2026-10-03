@@ -26,6 +26,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTagSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
@@ -33,6 +34,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.ProgressRate;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTagRelationEntity;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
@@ -103,8 +105,8 @@ public class WorkServiceImpl implements WorkService {
     }
 
     /*
-     * 상세 조회(OPS-003). 쿼리는 업무 1 + 하위 업무 목록 1 + 체크리스트 집계 1로 3회다 —
-     * 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13).
+     * 상세 조회(OPS-003). 쿼리는 업무 1 + 하위 업무 목록 1 + 체크리스트 집계 1 + 태그 1(#624)로
+     * 4회다 — 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13).
      *
      * 조회는 어떤 상태도 바꾸지 않는다 (AP-07). 진행률은 저장하지 않고 계산만 한다.
      */
@@ -198,7 +200,8 @@ public class WorkServiceImpl implements WorkService {
         List<WorkSubWorkSummaryResponse> summaries =
                 subWorks.stream().map(subWork -> summarize(subWork, progressBySubWorkId)).toList();
 
-        return WorkDetailResponse.of(work, summaries);
+        return WorkDetailResponse.of(
+                work, summaries, tagsOf(List.of(work)).getOrDefault(work.getId(), List.of()));
     }
 
     private OperationPriority orNormalPriority(OperationPriority priority) {
@@ -208,8 +211,8 @@ public class WorkServiceImpl implements WorkService {
     /*
      * 목록 조회(OPS-020). 카드 그리드 한 장이 이 호출 하나다.
      *
-     * 쿼리는 다섯 번이다 — 목록 · 하위 업무 집계 · 체크리스트 진행률 집계 · 필터 건수 ·
-     * 전체 건수. 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 변하지 않는다
+     * 쿼리는 여섯 번이다 — 목록 · 하위 업무 집계 · 체크리스트 진행률 집계 · 태그(#624) ·
+     * 필터 건수 · 전체 건수. 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 변하지 않는다
      * (DB-13). 집계는 이번 페이지에 실린 업무에 대해서만 돌리며, 목록이 비거나 하위 업무가
      * 하나도 없으면 그 쿼리는 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라
      * 문법 오류다.
@@ -223,16 +226,7 @@ public class WorkServiceImpl implements WorkService {
         boolean hasNext = fetched.size() > query.size();
         List<WorkEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
-        Map<Long, List<BigDecimal>> ratesByWorkId = subWorkRatesOf(rows);
-        List<WorkListItemResponse> works =
-                rows.stream()
-                        .map(
-                                work ->
-                                        WorkListItemResponse.of(
-                                                work,
-                                                ratesByWorkId.getOrDefault(
-                                                        work.getId(), List.of())))
-                        .toList();
+        List<WorkListItemResponse> works = toListItems(rows);
 
         PageResponse page =
                 new PageResponse(
@@ -250,21 +244,49 @@ public class WorkServiceImpl implements WorkService {
      * 조회(OPS-020)와 같아야 하므로, 집계(subWorkRatesOf)와 DTO 조립을 그대로 공유한다 —
      * 여기서 산식을 다시 적으면 통합 화면과 업무 화면이 같은 업무를 다른 %로 그린다.
      *
-     * 쿼리는 목록 1 + 하위 업무 집계 1 + 체크리스트 진행률 집계 1로 3회이며, 업무·하위
-     * 업무가 몇 건이든 이 수는 변하지 않는다 (DB-13).
+     * 쿼리는 목록 1 + 하위 업무 집계 1 + 체크리스트 진행률 집계 1 + 태그 1로 4회이며,
+     * 업무·하위 업무가 몇 건이든 이 수는 변하지 않는다 (DB-13).
      */
     @Override
     public List<WorkListItemResponse> listWorks() {
         List<WorkEntity> rows =
                 workRepository
                         .findAllByOperationDeletedAtIsNullOrderByOperationCreatedAtDescIdDesc();
+        return toListItems(rows);
+    }
+
+    // 목록(OPS-020)과 운영 통합(OPS-001)이 카드 한 장을 같은 재료로 만든다 — 한쪽만 태그를 싣지 않게
+    private List<WorkListItemResponse> toListItems(List<WorkEntity> rows) {
         Map<Long, List<BigDecimal>> ratesByWorkId = subWorkRatesOf(rows);
+        Map<Long, List<WorkTagSummaryResponse>> tagsByWorkId = tagsOf(rows);
         return rows.stream()
                 .map(
                         work ->
                                 WorkListItemResponse.of(
-                                        work, ratesByWorkId.getOrDefault(work.getId(), List.of())))
+                                        work,
+                                        ratesByWorkId.getOrDefault(work.getId(), List.of()),
+                                        tagsByWorkId.getOrDefault(work.getId(), List.of())))
                 .toList();
+    }
+
+    /*
+     * 업무별 태그 칩 (#624). 이번 페이지의 업무 전부를 한 번에 읽어 나눈다 — 업무마다 읽으면 N+1이다.
+     * 순서는 쿼리가 정한 이름 오름차순을 그대로 지킨다(LinkedHashMap · 각 목록은 삽입 순서).
+     */
+    private Map<Long, List<WorkTagSummaryResponse>> tagsOf(List<WorkEntity> rows) {
+        if (rows.isEmpty()) {
+            // IN () 은 DB에 따라 문법 오류이므로 애초에 쿼리를 보내지 않는다
+            return Map.of();
+        }
+        Map<Long, List<WorkTagSummaryResponse>> tagsByWorkId = new LinkedHashMap<>();
+        for (WorkTagRelationEntity relation :
+                workRepository.findTagRelationsByWorkIds(
+                        rows.stream().map(WorkEntity::getId).toList())) {
+            tagsByWorkId
+                    .computeIfAbsent(relation.getWork().getId(), workId -> new ArrayList<>())
+                    .add(WorkTagSummaryResponse.from(relation.getTag()));
+        }
+        return tagsByWorkId;
     }
 
     // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다

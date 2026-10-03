@@ -107,6 +107,9 @@ class McpToolSchemaContractTest {
                 .containsExactlyInAnyOrder("slug", "ttl", "mtxt");
         assertThat(nestedRequired("transition_sub_work", "request")).contains("transition");
         assertThat(nestedRequired("change_member_grade", "request")).contains("aftrMbrGrdCd");
+        // 지정은 전체 교체라 빈 배열은 «전부 해제»이고 필드 누락은 서버가 400이다 (#624)
+        assertThat(nestedRequired("assign_work_tags", "request")).containsExactly("tagIds");
+        assertThat(nestedRequired("assign_form_labels", "request")).containsExactly("labelIds");
     }
 
     /** 배열 요소의 record 도 같은 규칙을 받는다 — 거기까지 내려가지 않으면 목록 도구가 그대로 막힌다. */

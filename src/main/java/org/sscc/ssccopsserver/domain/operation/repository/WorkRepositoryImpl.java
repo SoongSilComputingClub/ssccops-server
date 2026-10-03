@@ -123,6 +123,17 @@ public class WorkRepositoryImpl implements WorkRepositoryCustom {
             conditions.append(" and o.personInCharge.id = :personInChargeId");
             parameters.put("personInChargeId", query.personInChargeId());
         }
+        /*
+         * 태그 필터 (#624). join이 아니라 exists인 것은 목록 쿼리가 페이징(setMaxResults)과 fetch join을
+         * 함께 쓰기 때문이다 — 관계를 join하면 태그 수만큼 행이 불어 커서·건수가 어긋난다. 폼 목록의
+         * labelId와 같은 모양이며, countMatching도 같은 조건을 받아 건수가 필터 결과를 말한다.
+         */
+        if (query.hasTagFilter()) {
+            conditions.append(
+                    " and exists (select 1 from WorkTagRelationEntity r"
+                            + " where r.work = w and r.tag.id = :tagId)");
+            parameters.put("tagId", query.tagId());
+        }
         return conditions.toString();
     }
 

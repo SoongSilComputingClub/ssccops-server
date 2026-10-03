@@ -423,10 +423,10 @@ class WorkServiceImplTest {
 
     /*
      * 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13). 업무 1 + 하위 업무 목록 1 +
-     * 체크리스트 집계 1로 끝나는지 못 박아 둔다 — 하위 업무가 몇 건이든 이 수는 그대로다.
+     * 체크리스트 집계 1 + 태그 1(#624)로 끝나는지 못 박아 둔다 — 하위 업무가 몇 건이든 이 수는 그대로다.
      */
     @Test
-    void getWorkRunsThreeQueries() {
+    void getWorkRunsFourQueries() {
         Long workId = createWork("쿼리 수 확인용 업무", null);
         addSubWork(workId, "하위 업무 1", END.toInstant(), 5, 3);
         addSubWork(workId, "하위 업무 2", END.plusHours(1).toInstant(), 5, 4);
@@ -444,7 +444,7 @@ class WorkServiceImplTest {
 
         workService.getWork(workId);
 
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
     }
 
     private Long createWork(String title, String review) {

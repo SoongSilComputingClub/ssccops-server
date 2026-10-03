@@ -1,11 +1,15 @@
 package org.sscc.ssccopsserver.domain.operation.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTagRelationEntity;
 
 public interface WorkRepository extends JpaRepository<WorkEntity, Long>, WorkRepositoryCustom {
 
@@ -32,4 +36,18 @@ public interface WorkRepository extends JpaRepository<WorkEntity, Long>, WorkRep
      */
     @EntityGraph(attributePaths = {"operation", "operation.personInCharge"})
     List<WorkEntity> findAllByOperationDeletedAtIsNullOrderByOperationCreatedAtDescIdDesc();
+
+    /*
+     * 업무 목록·상세에 싣는 태그 칩 (#624). 이번 페이지의 업무 전부를 한 번에 받아 호출부가 업무별로
+     * 나눈다 — 업무마다 부르면 N+1이다 (DB-13). 정렬은 칩 순서(이름 오름차순)다.
+     *
+     * WorkTagRelationRepository가 아니라 여기 있는 것은 WorkServiceImpl의 생성자를 넓히지 않기
+     * 위해서다 — 그 구현체를 테스트 일곱 곳이 new로 직접 만든다. 업무를 읽는 쿼리이기도 하다:
+     * 목록 필터(WorkRepositoryImpl)도 같은 관계를 업무 쪽에서 본다.
+     */
+    @Query(
+            "select r from WorkTagRelationEntity r join fetch r.tag t"
+                    + " where r.work.id in :workIds order by t.name asc, t.id asc")
+    List<WorkTagRelationEntity> findTagRelationsByWorkIds(
+            @Param("workIds") Collection<Long> workIds);
 }

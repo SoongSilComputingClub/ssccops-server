@@ -17,6 +17,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.global.mcp.client.McpListResult;
 import org.sscc.ssccopsserver.global.mcp.client.McpRestClient;
 import org.sscc.ssccopsserver.global.mcp.tool.patch.SubWorkPatch;
@@ -95,6 +97,32 @@ public class WorkTools {
                 client.get(context, "/v1/works/" + workId, WorkDetailResponse.class);
         return client.patch(
                 context, "/v1/works/" + workId, patch.merge(current), WorkDetailResponse.class);
+    }
+
+    @McpTool(
+            name = "transition_work",
+            description =
+                    "업무(상위 업무) 상태 전이. transition은 START(기획→진행) · REQUEST_REVIEW(진행→검토) ·"
+                            + " COMPLETE(검토→완료) · REVERT_REVIEW(검토→진행) · REOPEN(완료→진행) 중 하나."
+                            + " **완료가 아닌 하위 업무가 하나라도 남으면 COMPLETE는 409(SUB_WORK_UNFINISHED)**이고"
+                            + " 메시지에 남은 수가 있다 — 하위 업무를 먼저 마무리하라고 사용자에게 알린다(하위"
+                            + " 업무는 transition_sub_work). 표에 없는 순서는 409(TRANSITION_NOT_ALLOWED)라"
+                            + " get_work로 현재 상태를 먼저 확인한다. 업무 관리(WORK_MANAGE) 권한이 필요하다."
+                            + " 사용자가 명시적으로 요청한 경우에만 부른다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public WorkTransitionResponse transitionWork(
+            @McpToolParam(description = "업무 id") Long workId,
+            @McpToolParam(description = "전이 요청 — transition(필수)") WorkTransitionRequest request,
+            McpTransportContext context) {
+        log.info(
+                "mcp tool transition_work target={} transition={}",
+                workId,
+                request == null ? null : request.transition());
+        return client.post(
+                context,
+                "/v1/works/" + workId + "/transitions",
+                request,
+                WorkTransitionResponse.class);
     }
 
     @McpTool(

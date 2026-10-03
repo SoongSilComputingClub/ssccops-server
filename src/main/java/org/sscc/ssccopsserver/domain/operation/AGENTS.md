@@ -14,7 +14,8 @@
 
 ## 규칙
 
-- 전이 판단은 엔티티가 한다 — `SubWorkEntity.applyTransition`·`requireChecklistEditable`·`requireVotable` · `MeetingEntity.applyTransition`·`requireAgendaEditable`. 서비스(`SubWorkServiceImpl.transitionSubWork`)는 조회·기록·집계만 맡는다.
+- 전이 판단은 엔티티가 한다 — `SubWorkEntity.applyTransition`·`requireChecklistEditable`·`requireVotable` · `MeetingEntity.applyTransition`·`requireAgendaEditable` · `WorkEntity.applyTransition`. 서비스(`SubWorkServiceImpl.transitionSubWork`·`WorkServiceImpl.transitionWork`)는 조회·기록·집계만 맡는다.
+- **상위 업무 전이** (#622 · ssccops#563) — `POST /v1/works/{workId}/transitions`, `WORK_MANAGE`. 착수(기획→진행)·검토 요청(진행→검토)·완료(검토→완료)·검토 되돌리기(검토→진행)·재개(완료→진행) 다섯 줄(`WorkTransitionAction`)이고 나머지는 409 `TRANSITION_NOT_ALLOWED`. **완료가 아니고 지우지 않은 하위 업무가 하나라도 있으면 완료는 409 `SUB_WORK_UNFINISHED`**이며 남은 수는 코드가 아니라 메시지(`GeneralException` detail)에 실린다(하위 업무 0건이면 통과). 지운 하위 업무를 세지 않는 것은 되살릴 길이 없어(`OperationEntity`에 restore가 없다) 그 업무가 영영 완료되지 못하기 때문이다. **상태 이력 표는 없다** — 운영진이 «감사 로그로 충분»을 골랐고 기록은 `work.transition` 감사 줄(decision = 전이 · change = 상태 전후)뿐이다. 하위 업무 전이(`TransitionAction`)와 enum을 나눈 이유는 `WorkTransitionAction` 주석. 하위 업무처럼 담당자 본인에게 열지 않은 이유는 상위 업무의 담당자가 운영 건 수준이라서다(ssccops#563 판단 표).
 - 승인·완료·반려는 유형이 지정한 결재 권한 보유자만, 찬반 투표는 `APPROVAL_VOTE` 보유자만 — 자격의 시드와 표시명 규칙은 회원 도메인 문서의 «승인·투표 자격도 권한이 준다» 항목(`../member/AGENTS.md`). 자가 승인 판정은 담당자가 아니라 **등록자** 기준이다(`SubWorkServiceImpl` 주석).
 - 삭제는 자기 `oper`만 소프트 삭제(`del_dt`, #125)하고 이미 지운 건은 409 `ALREADY_DELETED`다 — 폼·행사의 소프트 삭제가 이 코드 문자열을 따라갔다. 삭제 권한은 `WORK_DELETE`·`MEETING_DELETE`로 따로 있다.
 - 지연·마감임박 판정은 응답값(`SubWorkEntity.isDelayedBefore`)과 목록 필터(`SubWorkRepositoryImpl`)가 `DeadlinePolicy` 한 곳의 경계를 함께 쓴다 — 각자 오늘 0시를 계산하지 않는다.

@@ -23,6 +23,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
@@ -89,6 +91,23 @@ public class WorkController {
     public ApiResponse<WorkDetailResponse> updateWork(
             @PathVariable Long workId, @Valid @RequestBody WorkUpdateRequest request) {
         return ApiResponse.success(workService.updateWork(workId, request));
+    }
+
+    /*
+     * 상태 전이 (#622 · ssccops#563 · OPS-005). 착수·검토 요청·완료·검토 되돌리기·재개가 모두 이
+     * 하나의 액션 경로를 쓴다 — 하위 업무·회의 전이(POST …/transitions)와 같은 모양이다. 상태를
+     * PATCH로 직접 쓰는 경로는 두지 않는다(POL-003 · WorkUpdateRequest에 상태 필드가 없다).
+     *
+     * 권한은 WORK_MANAGE 하나다 — 등록·수정과 같은 층이다(ssccops#563). 거절 계단은 다른 전이와
+     * 같다: 표에 없는 순서 409 TRANSITION_NOT_ALLOWED · 하위 업무가 남은 완료 409
+     * SUB_WORK_UNFINISHED(메시지에 남은 수) · 없거나 지운 업무 404. 상태 변경은 생성이 아니므로
+     * 200이다(LY-06).
+     */
+    @RequireAuthority(AuthorityCode.WORK_MANAGE)
+    @PostMapping("/{workId}/transitions")
+    public ApiResponse<WorkTransitionResponse> transition(
+            @PathVariable Long workId, @Valid @RequestBody WorkTransitionRequest request) {
+        return ApiResponse.success(workService.transitionWork(workId, request));
     }
 
     /*

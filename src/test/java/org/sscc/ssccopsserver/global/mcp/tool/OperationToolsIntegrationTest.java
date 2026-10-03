@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.global.mcp.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -83,7 +84,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 68종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 69종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -139,6 +140,8 @@ class OperationToolsIntegrationTest {
                             "vote_sub_work_approval",
                             "add_sub_work_checklist_item",
                             "update_sub_work_checklist_item_article",
+                            // 상위 업무 전이 (#622 · ssccops#563)
+                            "transition_work",
                             // W1 — 회의·승인함·대시보드·유형
                             "create_meeting",
                             "transition_meeting",
@@ -212,6 +215,48 @@ class OperationToolsIntegrationTest {
             assertThat(text).contains("\"priority\":\"HIGH\"");
             // 주지 않은 값이 살아 있다
             assertThat(text).contains("2026 동아리 박람회").contains("총평을 미리 적어 둔다");
+        }
+    }
+
+    /*
+     * #622 — 업무 전이는 REST를 그대로 지난다. 완료가 막히는 409의 코드와 «남은 수»가 도구 오류
+     * 문장으로 와야 모델이 «하위 업무를 먼저 마무리하라»고 사용자에게 말할 수 있다.
+     */
+    @Test
+    @DisplayName("transition_work — 착수는 진행이 되고, 하위 업무가 남은 완료는 남은 수와 함께 409로 끝난다")
+    void transitionWorkCarriesRemainingSubWorks() throws Exception {
+        Long subWorkId = createSubWork();
+        String detail =
+                mockMvc.perform(
+                                get("/v1/sub-works/" + subWorkId)
+                                        .header("Authorization", "Bearer " + FOUNDER))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long workId = JsonPath.parse(detail).read("$.data.workId", Long.class);
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult started =
+                    call(
+                            client,
+                            "transition_work",
+                            Map.of("workId", workId, "request", Map.of("transition", "START")));
+            assertThat(started.isError()).as(text(started)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(started)).contains("\"workStatus\":\"IN_PROGRESS\"");
+
+            call(
+                    client,
+                    "transition_work",
+                    Map.of("workId", workId, "request", Map.of("transition", "REQUEST_REVIEW")));
+            McpSchema.CallToolResult completed =
+                    call(
+                            client,
+                            "transition_work",
+                            Map.of("workId", workId, "request", Map.of("transition", "COMPLETE")));
+
+            assertThat(completed.isError()).isTrue();
+            assertThat(text(completed)).contains("SUB_WORK_UNFINISHED").contains("1건");
         }
     }
 

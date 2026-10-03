@@ -6,7 +6,8 @@ package org.sscc.ssccopsserver.domain.operation.entity;
  * work_type_cd 표기를 따라 영문 대문자로 둔다 (개발지침서 EX-10·LY-15).
  *
  * REQ-019는 보류·취소를 포함한 6종을 요구하나 데이터사전에 없어 반영하지 않았다.
- * 상태 전이 규칙은 전이표가 확정되는 별도 이슈에서 전이 메서드로 붙인다 (AR-10·LY-14).
+ * 상위 업무의 전이는 WorkEntity.applyTransition(#622 · WorkTransitionAction)이, 하위 업무의
+ * 전이는 SubWorkEntity.applyTransition(TransitionAction)이 맡는다 (AR-10·LY-14).
  */
 public enum WorkStatus {
     PLANNING, // 기획

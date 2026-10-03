@@ -120,6 +120,15 @@ class AuditPointsTest {
                 roleAuthorityRelationRepository,
                 manager,
                 AuthorityCode.FORM_STATUS_CHANGE);
+        // 상위 업무 전이(#622)는 WORK_MANAGE다 — 업무를 만드는 것도 같은 권한이다
+        AuthorityFixture.grant(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                manager,
+                AuthorityCode.WORK_MANAGE);
         managerEntity = manager;
         MemberFixture.save(
                 memberRepository,
@@ -311,6 +320,48 @@ class AuditPointsTest {
         assertThat(section(audit, "change"))
                 .containsEntry("before", "WWW")
                 .containsEntry("after", "NONE");
+    }
+
+    /*
+     * 상위 업무 전이 (#622 · ssccops#563). 상태 이력 표를 두지 않아 이 줄이 «누가 언제 옮겼나»의
+     * 유일한 기록이다 — 대상은 업무, decision은 전이 이름, change는 상태 전후다.
+     */
+    @Test
+    void workTransitionIsAuditedWithStatusChange() throws Exception {
+        String created =
+                mockMvc.perform(
+                                post("/v1/works")
+                                        .header("Authorization", "Bearer " + MANAGER)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                "{\"title\": \"감사 확인용 업무\", \"itemType\":"
+                                                        + " \"EVENT\", \"ownerId\": "
+                                                        + managerId
+                                                        + "}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        long workId = mapper.readTree(created).path("data").path("workId").asLong();
+        captured.list.clear();
+
+        mockMvc.perform(
+                        post("/v1/works/" + workId + "/transitions")
+                                .header("Authorization", "Bearer " + MANAGER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"transition\": \"START\"}"))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("work.transition");
+        assertThat(section(line, "event")).containsEntry("outcome", "success");
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target"))
+                .containsEntry("type", "work")
+                .containsEntry("id", String.valueOf(workId));
+        assertThat(audit).containsEntry("decision", "START");
+        assertThat(section(audit, "change"))
+                .containsEntry("before", "PLANNING")
+                .containsEntry("after", "IN_PROGRESS");
     }
 
     private void designate(Long formId) throws Exception {

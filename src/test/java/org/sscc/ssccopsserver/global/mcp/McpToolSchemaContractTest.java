@@ -106,6 +106,7 @@ class McpToolSchemaContractTest {
         assertThat(nestedRequired("create_page", "request"))
                 .containsExactlyInAnyOrder("slug", "ttl", "mtxt");
         assertThat(nestedRequired("transition_sub_work", "request")).contains("transition");
+        assertThat(nestedRequired("transition_work", "request")).containsExactly("transition");
         assertThat(nestedRequired("change_member_grade", "request")).contains("aftrMbrGrdCd");
     }
 

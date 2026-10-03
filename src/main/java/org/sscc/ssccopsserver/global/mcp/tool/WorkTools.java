@@ -53,6 +53,9 @@ public class WorkTools {
 
     private static final Logger log = LoggerFactory.getLogger(WorkTools.class);
 
+    // 업무 단건 경로의 앞부분 — 조회·수정·전이 세 도구가 같은 REST 경로를 부른다
+    private static final String WORK_PATH = "/v1/works/";
+
     private final McpRestClient client;
 
     @McpTool(
@@ -101,9 +104,9 @@ public class WorkTools {
             McpTransportContext context) {
         log.info("mcp tool update_work workId={}", workId);
         WorkDetailResponse current =
-                client.get(context, "/v1/works/" + workId, WorkDetailResponse.class);
+                client.get(context, WORK_PATH + workId, WorkDetailResponse.class);
         return client.patch(
-                context, "/v1/works/" + workId, patch.merge(current), WorkDetailResponse.class);
+                context, WORK_PATH + workId, patch.merge(current), WorkDetailResponse.class);
     }
 
     /* ── 태그 (#637 · 처음 #624) ─────────────────────────────── */
@@ -176,7 +179,7 @@ public class WorkTools {
                 request == null ? null : request.transition());
         return client.post(
                 context,
-                "/v1/works/" + workId + "/transitions",
+                WORK_PATH + workId + "/transitions",
                 request,
                 WorkTransitionResponse.class);
     }

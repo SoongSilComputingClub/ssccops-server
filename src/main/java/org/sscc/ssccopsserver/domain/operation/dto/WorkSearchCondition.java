@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.operation.dto;
 
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -101,7 +102,7 @@ public record WorkSearchCondition(
         }
         return excludeWorkStatus.stream()
                 .map(value -> toEnum(WorkStatus.class, value))
-                .filter(status -> status != null)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(() -> EnumSet.noneOf(WorkStatus.class)));
     }
 

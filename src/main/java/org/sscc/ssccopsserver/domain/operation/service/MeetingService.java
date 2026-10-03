@@ -44,8 +44,8 @@ public interface MeetingService {
      * 업무의 운영 건을 안건에 이은 뒤 안건 제목(agnd_nm)을 비운다 — 한 트랜잭션이다. registrant는
      * 업무 등록자이며 인증 주체에서 온다(LY-05).
      *
-     * 회의·안건이 없으면 404, 회의가 종료·취소됐으면 MEETING_CLOSED(409), 안건이 이미 운영 건을
-     * 가리키면 MEETING_AGENDA_ALREADY_LINKED(409). 업무 등록의 거절(담당자 400 등)은 그대로 난다.
+     * 회의·안건이 없으면 404, 안건이 이미 운영 건을 가리키면 MEETING_AGENDA_ALREADY_LINKED(409).
+     * 종료·취소된 회의에서도 승격한다(#634) — 안건 추가·수정과 달리 MEETING_CLOSED를 내지 않는다. 업무 등록의 거절(담당자 400 등)은 그대로 난다.
      */
     MeetingAgendaPromoteResponse promoteAgendaToWork(
             Long meetingId, Long agendaId, WorkCreateRequest request, MemberEntity registrant);

@@ -86,7 +86,11 @@ public class MeetingTools {
 
     @McpTool(
             name = "list_meeting_agendas",
-            description = "회의의 안건 목록. 회의 조회(MEETING_READ) 권한이 필요하다.",
+            description =
+                    "회의의 안건 목록. 연결 안건의 targetOperation.targetId 는 운영 유형(operationType)의"
+                            + " 상세 id 다 — WORK 면 get_work, SUB_WORK 면 get_sub_work, MEETING 이면"
+                            + " get_meeting 에 넘긴다(operationId 는 운영 id 라 그 자리에 쓰면 다른 건이"
+                            + " 열린다). 회의 조회(MEETING_READ) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<MeetingAgendaResponse> listMeetingAgendas(
             @McpToolParam(description = "회의 id") Long meetingId, McpTransportContext context) {

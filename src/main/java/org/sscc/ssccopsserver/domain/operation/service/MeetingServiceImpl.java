@@ -6,6 +6,8 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -33,6 +35,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.repository.MeetingAgendaCount;
 import org.sscc.ssccopsserver.domain.operation.repository.MeetingAgendaRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.MeetingRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.OperationDetailIds;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -104,11 +107,11 @@ public class MeetingServiceImpl implements MeetingService {
         if (items == null || items.isEmpty()) {
             return List.of();
         }
-        List<MeetingAgendaResponse> agendas = new ArrayList<>();
+        List<MeetingAgendaEntity> agendas = new ArrayList<>();
         int order = 1;
         for (MeetingAgendaItemRequest item : items) {
             OperationEntity targetOperation = resolveTargetOperation(item.targetOperationId());
-            MeetingAgendaEntity agenda =
+            agendas.add(
                     meetingAgendaRepository.save(
                             MeetingAgendaEntity.create(
                                     meeting,
@@ -117,10 +120,52 @@ public class MeetingServiceImpl implements MeetingService {
                                     order++,
                                     targetOperation,
                                     item.content(),
-                                    submitter));
-            agendas.add(MeetingAgendaResponse.from(agenda));
+                                    submitter)));
         }
-        return agendas;
+        return toAgendaResponses(agendas);
+    }
+
+    /*
+     * 안건 응답 묶음. 연결 안건의 targetOperation.targetId(업무·하위 업무·회의의 상세 ID · #635)를
+     * 운영 건 묶음으로 한 번에 읽는다 — 안건이 몇 건이든 쿼리 1회다(DB-13). 드래프트만 있으면
+     * 쿼리하지 않는다.
+     */
+    private List<MeetingAgendaResponse> toAgendaResponses(List<MeetingAgendaEntity> agendas) {
+        List<Long> operationIds =
+                agendas.stream()
+                        .map(MeetingAgendaEntity::getOperation)
+                        .filter(Objects::nonNull)
+                        .map(OperationEntity::getId)
+                        .distinct()
+                        .toList();
+        Map<Long, OperationDetailIds> detailIdsByOperationId =
+                operationIds.isEmpty()
+                        ? Map.of()
+                        : operationRepository.findDetailIdsByOperationIds(operationIds).stream()
+                                .collect(
+                                        Collectors.toMap(
+                                                OperationDetailIds::getOperationId,
+                                                Function.identity(),
+                                                (first, second) -> first));
+        return agendas.stream()
+                .map(
+                        agenda -> {
+                            OperationEntity operation = agenda.getOperation();
+                            OperationDetailIds detailIds =
+                                    operation == null
+                                            ? null
+                                            : detailIdsByOperationId.get(operation.getId());
+                            Long targetId =
+                                    detailIds == null
+                                            ? null
+                                            : detailIds.idFor(operation.getOperationType());
+                            return MeetingAgendaResponse.from(agenda, targetId);
+                        })
+                .toList();
+    }
+
+    private MeetingAgendaResponse toAgendaResponse(MeetingAgendaEntity agenda) {
+        return toAgendaResponses(List.of(agenda)).get(0);
     }
 
     /*
@@ -137,16 +182,16 @@ public class MeetingServiceImpl implements MeetingService {
     }
 
     /*
-     * 상세 조회(OPS-025). 쿼리는 회의 1 + 안건 목록 1로 2회다 — 안건마다 연결 운영 건·제출자를
-     * 다시 조회하면 그대로 N+1이 된다(MeetingAgendaRepository의 EntityGraph가 막는다).
+     * 상세 조회(OPS-025). 쿼리는 회의 1 + 안건 목록 1 + 안건이 가리키는 상세 ID 1로 3회다 —
+     * 안건마다 연결 운영 건·제출자를 다시 조회하면 그대로 N+1이 된다(MeetingAgendaRepository의
+     * EntityGraph와 toAgendaResponses가 막는다).
      */
     @Override
     public MeetingDetailResponse getMeeting(Long meetingId) {
         MeetingEntity meeting = findMeeting(meetingId);
         List<MeetingAgendaResponse> agendas =
-                meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting).stream()
-                        .map(MeetingAgendaResponse::from)
-                        .toList();
+                toAgendaResponses(
+                        meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting));
         return MeetingDetailResponse.of(meeting, agendas);
     }
 
@@ -212,9 +257,8 @@ public class MeetingServiceImpl implements MeetingService {
     @Override
     public List<MeetingAgendaResponse> getAgendas(Long meetingId) {
         MeetingEntity meeting = findMeeting(meetingId);
-        return meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting).stream()
-                .map(MeetingAgendaResponse::from)
-                .toList();
+        return toAgendaResponses(
+                meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting));
     }
 
     // 안건 상정(OPS-027)
@@ -242,7 +286,7 @@ public class MeetingServiceImpl implements MeetingService {
                                 targetOperation,
                                 request.content(),
                                 submitter));
-        return MeetingAgendaResponse.from(agenda);
+        return toAgendaResponse(agenda);
     }
 
     // 안건 수정(OPS-028)
@@ -259,7 +303,7 @@ public class MeetingServiceImpl implements MeetingService {
                 request.content(),
                 request.resultContent(),
                 request.processStatus());
-        return MeetingAgendaResponse.from(agenda);
+        return toAgendaResponse(agenda);
     }
 
     /*
@@ -291,7 +335,7 @@ public class MeetingServiceImpl implements MeetingService {
                         .orElseThrow(
                                 () -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
         agenda.promoteTo(operation);
-        return new MeetingAgendaPromoteResponse(MeetingAgendaResponse.from(agenda), work);
+        return new MeetingAgendaPromoteResponse(toAgendaResponse(agenda), work);
     }
 
     // 안건 상정 철회(OPS-029)

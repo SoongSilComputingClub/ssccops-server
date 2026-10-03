@@ -57,7 +57,7 @@ public record WorkSearchQuery(
         return personInChargeId != null;
     }
 
-    // 태그 필터 (#624). 값이 없으면 조건 자체를 붙이지 않는다
+    // 태그 필터 (#637 · 업무의 운영 건에 달린 태그). 값이 없으면 조건 자체를 붙이지 않는다
     public boolean hasTagFilter() {
         return tagId != null;
     }

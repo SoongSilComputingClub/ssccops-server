@@ -140,9 +140,9 @@ class OperationToolsIntegrationTest {
                             "vote_sub_work_approval",
                             "add_sub_work_checklist_item",
                             "update_sub_work_checklist_item_article",
-                            // 업무 태그 (#624 · 폼 라벨과 같은 모양 — 만들기·지우기 도구는 없다)
-                            "list_work_tags",
-                            "assign_work_tags",
+                            // 운영 태그 (#637 · 폼 라벨과 같은 모양 — 만들기·지우기 도구는 없다)
+                            "list_operation_tags",
+                            "assign_operation_tags",
                             // 상위 업무 전이 (#622 · ssccops#563)
                             "transition_work",
                             // W1 — 회의·승인함·대시보드·유형
@@ -288,16 +288,26 @@ class OperationToolsIntegrationTest {
     }
 
     /*
-     * 업무 태그 (#624) — 목록에서 id를 얻고, 지정은 전체 교체이며, list_works의 tagId가 그 결과로
-     * 거른다. 태그는 화면이 만드는 기준정보라(도구가 없다) 여기서도 REST로 만든다.
+     * 운영 태그 (#637) — 목록에서 id를 얻고, 지정은 운영 건(operationId) 단위 전체 교체이며, 업무·회의·
+     * 운영 통합 목록의 tagId가 그 결과로 거른다. 태그는 화면이 만드는 기준정보라(도구가 없다) 여기서도
+     * REST로 만든다.
      */
     @Test
-    @DisplayName("list_work_tags · assign_work_tags · list_works(tagId) — 지정이 필터로 이어진다")
-    void workTagToolsRoundTrip() throws Exception {
+    @DisplayName("list_operation_tags · assign_operation_tags · 목록 tagId — 지정이 필터로 이어진다")
+    void operationTagToolsRoundTrip() throws Exception {
         Long workId = createWorkWithReview();
+        String detail =
+                mockMvc.perform(
+                                get("/v1/works/" + workId)
+                                        .header("Authorization", "Bearer " + FOUNDER))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long operationId = JsonPath.parse(detail).read("$.data.operationId", Long.class);
         String created =
                 mockMvc.perform(
-                                post("/v1/work-tags")
+                                post("/v1/operation-tags")
                                         .header("Authorization", "Bearer " + FOUNDER)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content("{\"tagNm\": \"MCP 학술국\"}"))
@@ -305,23 +315,45 @@ class OperationToolsIntegrationTest {
                         .andReturn()
                         .getResponse()
                         .getContentAsString();
-        Long tagId = JsonPath.parse(created).read("$.data.workTagId", Long.class);
+        Long tagId = JsonPath.parse(created).read("$.data.operationTagId", Long.class);
 
         try (McpSyncClient client = connect(FOUNDER)) {
-            assertThat(text(call(client, "list_work_tags", Map.of()))).contains("MCP 학술국");
+            assertThat(text(call(client, "list_operation_tags", Map.of()))).contains("MCP 학술국");
 
             McpSchema.CallToolResult assigned =
                     call(
                             client,
-                            "assign_work_tags",
-                            Map.of("workId", workId, "request", Map.of("tagIds", List.of(tagId))));
+                            "assign_operation_tags",
+                            Map.of(
+                                    "operationId",
+                                    operationId,
+                                    "request",
+                                    Map.of("tagIds", List.of(tagId))));
             assertThat(assigned.isError()).isNotEqualTo(Boolean.TRUE);
-            assertThat(text(assigned)).contains("\"workTagId\":" + tagId);
+            assertThat(text(assigned)).contains("\"operationTagId\":" + tagId);
 
             String filtered =
                     text(call(client, "list_works", Map.of("condition", Map.of("tagId", tagId))));
             assertThat(filtered).contains("\"workId\":" + workId).contains("MCP 학술국");
             assertThat(filtered).contains("\"totalCount\":1");
+
+            // 운영 통합은 세 배열을 같은 태그로 거른다 — 업무 하나만 남고 하위 업무·회의는 비었다
+            String hub =
+                    text(
+                            call(
+                                    client,
+                                    "list_operations",
+                                    Map.of("condition", Map.of("tagId", tagId))));
+            assertThat(JsonPath.parse(hub).read("$.works.length()", Integer.class)).isEqualTo(1);
+            assertThat(JsonPath.parse(hub).read("$.meetings.length()", Integer.class)).isZero();
+
+            // 조건 없이도 부를 수 있다 — 조건은 선택이다
+            McpSchema.CallToolResult meetings = call(client, "list_meetings", Map.of());
+            assertThat(meetings.isError()).isNotEqualTo(Boolean.TRUE);
+            McpSchema.CallToolResult taggedMeetings =
+                    call(client, "list_meetings", Map.of("condition", Map.of("tagId", tagId)));
+            assertThat(taggedMeetings.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(taggedMeetings)).doesNotContain("meetingId");
         }
     }
 

@@ -44,8 +44,9 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * 주면 둘 다 걸린다(AND). 기본값은 서버가 «미완료»로 바꾸지 않는다 — 기존 호출자(MCP 포함)의
  * 뜻이 바뀐다. 기본은 화면이 정한다.
  *
- * tagId(태그 필터)도 같은 이유로 서버에서 건다 (#624 · ssccops#565) — 칩 하나를 고르면 그 태그가
- * 달린 업무만 남고 커서·건수도 그 결과를 말한다. 한 번에 하나만 받는 것은 폼 목록의 labelId와 같은
+ * tagId(태그 필터)도 같은 이유로 서버에서 건다 (#637 · ssccops#576) — 칩 하나를 고르면 그 태그가
+ * 달린 업무만 남고 커서·건수도 그 결과를 말한다. 태그는 운영 건(oper)에 달리고 id는
+ * /v1/operation-tags의 operationTagId다 — 하위 업무·회의·운영 통합의 tagId와 같은 값이다. 한 번에 하나만 받는 것은 폼 목록의 labelId와 같은
  * 모양이다. 없는 태그 id는 400이 아니라 빈 결과다 — 태그를 지운 직후 화면에 남은 칩으로 조회해도
  * 오류가 아니라 «그런 업무가 없다»가 맞다.
  *

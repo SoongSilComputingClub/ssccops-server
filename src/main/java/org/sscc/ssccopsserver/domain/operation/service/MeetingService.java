@@ -20,7 +20,11 @@ public interface MeetingService {
 
     MeetingDetailResponse getMeeting(Long meetingId);
 
-    List<MeetingListItemResponse> listMeetings();
+    /*
+     * 회의 전량 목록. tagId가 있으면 그 태그가 달린 회의만이다(#637 · null이면 전체 · 없는 태그 id는
+     * 빈 결과).
+     */
+    List<MeetingListItemResponse> listMeetings(Long tagId);
 
     MeetingTransitionResponse transitionMeeting(
             Long meetingId, MeetingTransitionRequest request, MemberEntity performer);

@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -24,6 +25,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.AgendaProcessStatus;
@@ -99,7 +101,8 @@ public class MeetingServiceImpl implements MeetingService {
                                 request.location()));
 
         List<MeetingAgendaResponse> agendas = createAgendas(meeting, request.agendas(), registrant);
-        return MeetingDetailResponse.of(meeting, agendas);
+        // 방금 만든 운영 건에 달린 태그는 있을 수 없다 — 태그는 지정 교체(#637)로만 붙는다
+        return MeetingDetailResponse.of(meeting, agendas, List.of());
     }
 
     private List<MeetingAgendaResponse> createAgendas(
@@ -182,9 +185,9 @@ public class MeetingServiceImpl implements MeetingService {
     }
 
     /*
-     * 상세 조회(OPS-025). 쿼리는 회의 1 + 안건 목록 1 + 안건이 가리키는 상세 ID 1로 3회다 —
-     * 안건마다 연결 운영 건·제출자를 다시 조회하면 그대로 N+1이 된다(MeetingAgendaRepository의
-     * EntityGraph와 toAgendaResponses가 막는다).
+     * 상세 조회(OPS-025). 쿼리는 회의 1 + 안건 목록 1 + 안건이 가리키는 상세 ID 1 + 태그 1(#637)로
+     * 4회다 — 안건마다 연결 운영 건·제출자를 다시 조회하면 그대로 N+1이 된다
+     * (MeetingAgendaRepository의 EntityGraph와 toAgendaResponses가 막는다).
      */
     @Override
     public MeetingDetailResponse getMeeting(Long meetingId) {
@@ -192,17 +195,30 @@ public class MeetingServiceImpl implements MeetingService {
         List<MeetingAgendaResponse> agendas =
                 toAgendaResponses(
                         meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting));
-        return MeetingDetailResponse.of(meeting, agendas);
+        return MeetingDetailResponse.of(
+                meeting,
+                agendas,
+                tagsOf(List.of(meeting)).getOrDefault(meeting.getOperation().getId(), List.of()));
     }
 
     /*
-     * 목록 조회(신규). 쿼리는 목록 1 + 안건 건수 집계 1로 2회이며, 회의가 몇 건이든 안건이
-     * 몇 건이든 이 수는 변하지 않는다(DB-13, WorkServiceImpl.searchWorks와 같은 판단).
+     * 목록 조회(신규). 쿼리는 목록 1 + 안건 건수 집계 1 + 태그 1(#637)로 3회이며, 회의가 몇 건이든
+     * 안건이 몇 건이든 이 수는 변하지 않는다(DB-13, WorkServiceImpl.searchWorks와 같은 판단).
+     *
+     * 태그 필터(#637)는 그 태그의 운영 건 id를 한 번 더 읽어 메모리에서 거른다 — 페이징이 없는 전량
+     * 목록이라 어차피 전부 읽고, 집계는 거른 행에 대해서만 돈다(업무·하위 업무의 전량 목록과 같다).
      */
     @Override
-    public List<MeetingListItemResponse> listMeetings() {
+    public List<MeetingListItemResponse> listMeetings(Long tagId) {
         List<MeetingEntity> meetings =
                 meetingRepository.findAllByOperationDeletedAtIsNullOrderByOperationCreatedAtDesc();
+        if (tagId != null) {
+            Set<Long> tagged = Set.copyOf(operationRepository.findOperationIdsByTagId(tagId));
+            meetings =
+                    meetings.stream()
+                            .filter(meeting -> tagged.contains(meeting.getOperation().getId()))
+                            .toList();
+        }
         if (meetings.isEmpty()) {
             return List.of();
         }
@@ -216,6 +232,7 @@ public class MeetingServiceImpl implements MeetingService {
                                 Collectors.toMap(
                                         MeetingAgendaCount::getMeetingId,
                                         MeetingAgendaCount::getAgendaCount));
+        Map<Long, List<OperationTagSummaryResponse>> tagsByOperationId = tagsOf(meetings);
 
         return meetings.stream()
                 .map(
@@ -224,8 +241,20 @@ public class MeetingServiceImpl implements MeetingService {
                                         meeting,
                                         agendaCountByMeetingId
                                                 .getOrDefault(meeting.getId(), 0L)
-                                                .intValue()))
+                                                .intValue(),
+                                        tagsByOperationId.getOrDefault(
+                                                meeting.getOperation().getId(), List.of())))
                 .toList();
+    }
+
+    /*
+     * 회의별 태그 칩 (#637). 태그는 회의의 운영 건(oper)에 달리므로 키가 oper_id다. 목록 전부를 한
+     * 번에 읽어 나눈다 — 회의마다 읽으면 N+1이다 (DB-13). 비었으면 부르는 쪽이 먼저 돌려보낸다.
+     */
+    private Map<Long, List<OperationTagSummaryResponse>> tagsOf(List<MeetingEntity> meetings) {
+        return OperationTagSummaryResponse.groupByOperationId(
+                operationRepository.findTagRelationsByOperationIds(
+                        meetings.stream().map(meeting -> meeting.getOperation().getId()).toList()));
     }
 
     /*

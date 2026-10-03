@@ -37,6 +37,10 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * **대상 회원을 파라미터로 받지 않는다** — '내' 업무이므로 조회자는 @CurrentMember에서 오고
  * mine은 그 필터를 켤지만 말한다. 식별자를 받으면 값을 바꾸는 것만으로 남의 담당 목록이
  * 되는데, 이 목록은 이미 열려 있다.
+ *
+ * tagId는 태그 칩이다 (#637 · ssccops#576). 태그는 하위 업무 자신의 운영 건(oper)에 달린 것을 본다 —
+ * 상위 업무의 태그를 물려받지 않는다(상위 업무에 «학술국»이 달려도 하위 업무는 따로 단다). 업무
+ * 목록과 같은 모양이라 커서·건수도 필터 결과를 말하고, 없는 태그 id는 400이 아니라 빈 결과다.
  */
 public record SubWorkSearchCondition(
         String workStatus,
@@ -47,6 +51,7 @@ public record SubWorkSearchCondition(
         Boolean isReviewStale,
         String keyword,
         Boolean mine,
+        Long tagId,
         @Min(value = 1, message = "size는 1 이상이어야 합니다.")
                 @Max(
                         value = SubWorkSearchCondition.MAX_SIZE,
@@ -80,6 +85,7 @@ public record SubWorkSearchCondition(
                 reviewStaleBefore,
                 KeywordSearch.normalize(keyword),
                 Boolean.TRUE.equals(mine) ? viewerId : null,
+                tagId,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 SubWorkCursor.decode(cursor, sortOrder));

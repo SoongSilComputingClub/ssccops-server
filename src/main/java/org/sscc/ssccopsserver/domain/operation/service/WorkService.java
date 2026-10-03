@@ -50,9 +50,10 @@ public interface WorkService {
     /*
      * 운영 통합(OPS-001)의 업무 전량 목록. 목록 조회(OPS-020)와 같은 카드 요약이지만
      * 화면이 목록과 트리를 한 번에 그리므로 커서 페이징 없이 전량을 돌려준다.
-     * 정렬은 OPS-020의 기본값과 같은 등록 최신순이다.
+     * 정렬은 OPS-020의 기본값과 같은 등록 최신순이다. tagId가 있으면 그 태그가 달린 업무만이다
+     * (#637 · null이면 전체).
      */
-    List<WorkListItemResponse> listWorks();
+    List<WorkListItemResponse> listWorks(Long tagId);
 
     /*
      * 업무를 소프트 삭제한다 (#125). 자기 operation뿐 아니라 그 아래 살아있는 sub-work

@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.List;
 
 import org.sscc.ssccopsserver.domain.operation.entity.ApprovalStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
@@ -27,6 +28,9 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * 것). isDelayed처럼 저장하지 않고 조회 시점에 서버가 판정한다. 화면이 진행률·상태로 다시
  * 계산하지 않는 것은 지연 판정이 화면과 갈렸던 전례(#121·#194) 때문이다.
  *
+ * tags는 하위 업무 자신의 운영 건에 달린 태그 칩이다 (#637 · 이름 오름차순 · 없으면 빈 배열). 상위
+ * 업무의 태그를 물려받지 않는다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record SubWorkSummaryResponse(
@@ -42,7 +46,8 @@ public record SubWorkSummaryResponse(
         OffsetDateTime dueAt,
         boolean isDelayed,
         boolean isReadyForReview,
-        boolean isReviewStale) {
+        boolean isReviewStale,
+        List<OperationTagSummaryResponse> tags) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -57,7 +62,8 @@ public record SubWorkSummaryResponse(
             long completedItems,
             long totalItems,
             boolean delayed,
-            boolean reviewStale) {
+            boolean reviewStale,
+            List<OperationTagSummaryResponse> tags) {
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         return new SubWorkSummaryResponse(
                 subWork.getId(),
@@ -72,7 +78,8 @@ public record SubWorkSummaryResponse(
                 toOffsetDateTime(subWork.getDueAt()),
                 delayed,
                 subWork.isReadyForReview(completedItems, totalItems),
-                reviewStale);
+                reviewStale,
+                tags);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

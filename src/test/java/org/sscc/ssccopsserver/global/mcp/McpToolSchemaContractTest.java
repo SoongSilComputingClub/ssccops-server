@@ -107,6 +107,11 @@ class McpToolSchemaContractTest {
         assertThat(nestedRequired("list_forms", "condition")).isEmpty();
         assertThat(nestedRequired("list_events", "condition")).isEmpty();
         assertThat(nestedRequired("list_academic_programs", "condition")).isEmpty();
+        // 태그 필터만 받는 전량 목록 둘 (#637) — 조건 자체도 선택이라 비워 부를 수 있어야 한다
+        assertThat(nestedRequired("list_meetings", "condition")).isEmpty();
+        assertThat(nestedRequired("list_operations", "condition")).isEmpty();
+        assertThat(tool("list_meetings").inputSchema().required()).isNullOrEmpty();
+        assertThat(tool("list_operations").inputSchema().required()).isNullOrEmpty();
     }
 
     /*
@@ -123,8 +128,10 @@ class McpToolSchemaContractTest {
         assertThat(nestedRequired("transition_sub_work", "request")).contains("transition");
         assertThat(nestedRequired("transition_work", "request")).containsExactly("transition");
         assertThat(nestedRequired("change_member_grade", "request")).contains("aftrMbrGrdCd");
-        // 지정은 전체 교체라 빈 배열은 «전부 해제»이고 필드 누락은 서버가 400이다 (#624)
-        assertThat(nestedRequired("assign_work_tags", "request")).containsExactly("tagIds");
+        // 지정은 전체 교체라 빈 배열은 «전부 해제»이고 필드 누락은 서버가 400이다 (#637)
+        assertThat(nestedRequired("assign_operation_tags", "request")).containsExactly("tagIds");
+        assertThat(tool("assign_operation_tags").inputSchema().required())
+                .containsExactlyInAnyOrder("operationId", "request");
         assertThat(nestedRequired("assign_form_labels", "request")).containsExactly("labelIds");
     }
 

@@ -1,10 +1,13 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationHubResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagCondition;
 import org.sscc.ssccopsserver.domain.operation.service.OperationService;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
@@ -21,6 +24,10 @@ import lombok.RequiredArgsConstructor;
  * 시드에서 MEETING_MANAGE는 늘 WORK_MANAGE와 같은 묶음(OPERATOR)으로 부여된다.
  *
  * 응답에 보는 사람에 따라 달라지는 값이 없어 @CurrentMember를 받지 않는다.
+ *
+ * tagId(#637)를 주면 세 배열 모두 그 태그가 달린 행만 남는다 — 각 행은 자기 운영 건의 태그를 본다
+ * (하위 업무가 상위 업무의 태그를 물려받지 않는다). 트리의 상위 업무가 걸러져도 그 아래 하위 업무
+ * 행은 자기 태그대로 남는다 — 화면이 트리를 그릴 때 부모 없는 행을 다룬다.
  */
 @RestController
 @RequiredArgsConstructor
@@ -31,7 +38,8 @@ public class OperationController {
     private final OperationService operationService;
 
     @GetMapping
-    public ApiResponse<OperationHubResponse> getOperationHub() {
-        return ApiResponse.success(operationService.getOperationHub());
+    public ApiResponse<OperationHubResponse> getOperationHub(
+            @ParameterObject @ModelAttribute OperationTagCondition condition) {
+        return ApiResponse.success(operationService.getOperationHub(condition.tagId()));
     }
 }

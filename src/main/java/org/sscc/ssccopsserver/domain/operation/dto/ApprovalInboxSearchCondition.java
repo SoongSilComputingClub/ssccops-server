@@ -47,6 +47,8 @@ public record ApprovalInboxSearchCondition(
                 // 담당자 필터도 마찬가지다 (ssccops#225). 승인함은 승인 자격으로 이미 좁혀진
                 // 화면이고, 승인자와 담당자는 대개 다른 사람이라 이 축이 뜻을 갖지 않는다
                 null,
+                // 태그 필터도 열지 않는다 (#637) — 승인함은 탭이 곧 필터이고 비워 내는 화면이다
+                null,
                 size == null ? SubWorkSearchCondition.DEFAULT_SIZE : size,
                 SubWorkSortOrder.DEFAULT,
                 SubWorkCursor.decode(cursor, SubWorkSortOrder.DEFAULT));

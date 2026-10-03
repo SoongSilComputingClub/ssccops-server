@@ -43,7 +43,9 @@ docker compose up postgres    # DB만 띄우고
 앱까지 컨테이너로 띄우려면 `docker compose up` 한 줄이면 됩니다(`DB_HOST`를 compose가 덮어씁니다).
 `.env` 한 벌을 `docker compose`와 `bootRun`이 함께 읽습니다.
 
-확인: `GET /actuator/health` · API 문서는 `local`·`dev`에서 `/swagger-ui.html`(prod는 끕니다).
+확인: `GET /actuator/health/readiness`(DB 연결까지 봅니다) · API 문서는 `local`·`dev`에서 `/swagger-ui.html`(prod는 끕니다).
+토큰 없이 열리는 것은 `/actuator/health/liveness`·`/actuator/health/readiness`·`/actuator/info`뿐이라
+`/actuator/health` 자체는 401입니다.
 **DB를 새로 만들면 첫 가입자가 최고관리자가 됩니다.**
 
 ### 환경 변수

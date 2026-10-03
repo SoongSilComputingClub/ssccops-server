@@ -1232,11 +1232,6 @@ class SubWorkServiceImplSearchTest {
             return this;
         }
 
-        private ConditionBuilder tagId(Long value) {
-            this.tagId = value;
-            return this;
-        }
-
         private ConditionBuilder cursor(String value) {
             this.cursor = value;
             return this;

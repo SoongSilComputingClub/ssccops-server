@@ -427,6 +427,51 @@ class WorkControllerTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
+    /*
+     * «완료 제외» (#623). 쿼리 파라미터를 같은 이름으로 반복해도, 쉼표로 이어도 목록으로 받는다 —
+     * 기존 단일 workStatus는 그대로다.
+     */
+    @Test
+    void searchWorksExcludesGivenStatuses() throws Exception {
+        Long planning = createWork();
+        Long done = createWork();
+        for (String action : new String[] {"START", "REQUEST_REVIEW", "COMPLETE"}) {
+            mockMvc.perform(transition(done, action, AUTH_USER_ID)).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("excludeWorkStatus", "DONE")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].workId").value(planning))
+                .andExpect(jsonPath("$.page.totalCount").value(1));
+
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("excludeWorkStatus", "DONE", "PLANNING")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+
+        mockMvc.perform(
+                        get("/v1/works?excludeWorkStatus=DONE,PLANNING")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void searchWorksWithUnknownExcludedStatusReturnsInvalidCodeValue() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("excludeWorkStatus", "FINISHED")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
     @Test
     void searchWorksWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/v1/works")).andExpect(status().isUnauthorized());

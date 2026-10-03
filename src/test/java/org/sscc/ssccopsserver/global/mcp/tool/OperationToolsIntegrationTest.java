@@ -260,6 +260,42 @@ class OperationToolsIntegrationTest {
         }
     }
 
+    /*
+     * #623 — 검색 조건 record의 목록 필드는 같은 이름의 반복 파라미터로 실린다(McpRestClient).
+     * 그 길로 «완료 제외»가 서버까지 닿는지 본다 — 닿지 않으면 완료 업무가 섞여 나온다.
+     */
+    @Test
+    @DisplayName("list_works — excludeWorkStatus로 완료 업무를 빼고 받는다")
+    void listWorksExcludesDoneWorks() throws Exception {
+        Long workId = createWorkWithReview();
+        try (McpSyncClient client = connect(FOUNDER)) {
+            for (String action : new String[] {"START", "REQUEST_REVIEW", "COMPLETE"}) {
+                McpSchema.CallToolResult moved =
+                        call(
+                                client,
+                                "transition_work",
+                                Map.of("workId", workId, "request", Map.of("transition", action)));
+                assertThat(moved.isError()).as(text(moved)).isNotEqualTo(Boolean.TRUE);
+            }
+
+            McpSchema.CallToolResult withDone =
+                    call(client, "list_works", Map.of("condition", Map.of("size", 100)));
+            McpSchema.CallToolResult withoutDone =
+                    call(
+                            client,
+                            "list_works",
+                            Map.of(
+                                    "condition",
+                                    Map.of("size", 100, "excludeWorkStatus", List.of("DONE"))));
+
+            assertThat(text(withDone)).contains("\"workId\":" + workId + ",");
+            assertThat(withoutDone.isError()).as(text(withoutDone)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(withoutDone))
+                    .doesNotContain("\"workId\":" + workId + ",")
+                    .doesNotContain("\"workStatus\":\"DONE\"");
+        }
+    }
+
     @Test
     @DisplayName("get_me — 봉투를 벗긴 세션이 오고 연락처·이메일·학번은 없다")
     void getMeUnwrapsAndRedacts() {

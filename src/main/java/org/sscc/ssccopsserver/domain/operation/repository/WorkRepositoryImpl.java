@@ -77,7 +77,7 @@ public class WorkRepositoryImpl implements WorkRepositoryCustom {
     }
 
     /*
-     * 카드 배지와 같은 축인 두 필터. 값이 없는 필터는 조건 자체를 붙이지 않는다 —
+     * 카드 배지와 같은 축인 두 필터(상태는 «제외»까지 둘로 받는다 · #623). 값이 없는 필터는 조건 자체를 붙이지 않는다 —
      * ':param is null or ...' 형태로 항상 붙이면 옵티마이저가 인덱스를 못 쓴다.
      */
     private String filterConditions(WorkSearchQuery query, Map<String, Object> parameters) {
@@ -86,6 +86,15 @@ public class WorkRepositoryImpl implements WorkRepositoryCustom {
         if (query.hasWorkStatusFilter()) {
             conditions.append(" and w.workStatus = :workStatus");
             parameters.put("workStatus", query.workStatus());
+        }
+        /*
+         * 제외할 상태 (#623 · «완료 제외»). 화면이 받은 페이지를 다시 거르면 커서 페이징이 빈
+         * 페이지를 내므로 여기서 거른다 — 목록·건수 두 쿼리에 함께 걸려 화면의 건수도 거른 결과를
+         * 말한다. work_stts_cd는 NOT NULL이라 not in이 NULL 행을 흘리지 않는다.
+         */
+        if (query.hasExcludedWorkStatusFilter()) {
+            conditions.append(" and w.workStatus not in :excludedWorkStatuses");
+            parameters.put("excludedWorkStatuses", query.excludedWorkStatuses());
         }
         if (query.hasWorkTypeFilter()) {
             conditions.append(" and w.workType = :workType");

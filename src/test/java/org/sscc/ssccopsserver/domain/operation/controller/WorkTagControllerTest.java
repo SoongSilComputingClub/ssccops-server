@@ -14,6 +14,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
+import jakarta.persistence.EntityManager;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,6 +61,7 @@ class WorkTagControllerTest {
     private static final String STAFF_ROLE = "국원";
 
     @Autowired private MockMvc mockMvc;
+    @Autowired private EntityManager entityManager;
     @Autowired private WorkRepository workRepository;
     @Autowired private WorkTagRepository workTagRepository;
     @Autowired private WorkTagRelationRepository workTagRelationRepository;
@@ -315,6 +318,14 @@ class WorkTagControllerTest {
             assign(tagged, "[%d]".formatted(academic));
             createWork("다른 업무 " + index);
         }
+        /*
+         * 커서는 DB에서 읽은 시각으로 만들어야 한다 (#632). 이 테스트는 한 트랜잭션 안에서 만들고 곧바로
+         * 넘기므로, 비우지 않으면 첫 페이지가 영속성 컨텍스트에 남은 엔티티의 createdAt(Instant.now() —
+         * 마이크로초 아래 자릿수가 있다)으로 커서를 만들고, 둘째 페이지는 timestamp(6)로 반올림된 DB 값과
+         * 비교해 첫 페이지 마지막 행이 다시 나왔다(간헐 실패). 운영은 요청마다 DB에서 읽어 이 어긋남이 없다.
+         */
+        entityManager.flush();
+        entityManager.clear();
 
         String firstPage =
                 mockMvc.perform(

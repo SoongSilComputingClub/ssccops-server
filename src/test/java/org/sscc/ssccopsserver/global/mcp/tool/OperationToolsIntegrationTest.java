@@ -83,7 +83,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 68종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 69종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -146,6 +146,8 @@ class OperationToolsIntegrationTest {
                             "add_meeting_agenda",
                             // 회의의 내용을 적는 유일한 자리 (#599 — V25가 회의 단위 본문을 걷었다)
                             "update_meeting_agenda",
+                            // 드래프트 안건 → 업무 (#625 · ADR-0059)
+                            "promote_meeting_agenda",
                             "list_approvals",
                             "get_dashboard",
                             "list_sub_work_types",
@@ -212,6 +214,67 @@ class OperationToolsIntegrationTest {
             assertThat(text).contains("\"priority\":\"HIGH\"");
             // 주지 않은 값이 살아 있다
             assertThat(text).contains("2026 동아리 박람회").contains("총평을 미리 적어 둔다");
+        }
+    }
+
+    /*
+     * 드래프트 안건 → 업무 (#625 · ADR-0059). 제목만으로 올린 안건이 promote_meeting_agenda 한 번에
+     * 업무를 가리키게 되는지 REST 왕복으로 본다 — 도구가 안건 제목을 업무 제목으로 채우지 않으므로
+     * title 은 호출이 준다.
+     */
+    @Test
+    @DisplayName("add_meeting_agenda(제목만) → promote_meeting_agenda — 드래프트가 업무를 가리키게 된다")
+    void draftAgendaIsPromotedToWork() {
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult meeting =
+                    call(
+                            client,
+                            "create_meeting",
+                            Map.of(
+                                    "request",
+                                    Map.of(
+                                            "title", "10월 정기회의",
+                                            "meetingCategory", "REGULAR",
+                                            "personInChargeId", founderId,
+                                            "startAt", "2026-10-03T19:00:00+09:00")));
+            assertThat(meeting.isError()).as(text(meeting)).isNotEqualTo(Boolean.TRUE);
+            Long meetingId = JsonPath.parse(text(meeting)).read("$.meetingId", Long.class);
+
+            McpSchema.CallToolResult draft =
+                    call(
+                            client,
+                            "add_meeting_agenda",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "request",
+                                    Map.of("agendaName", "동아리방 정리 당번")));
+            assertThat(draft.isError()).as(text(draft)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(draft)).contains("\"draft\":true").contains("동아리방 정리 당번");
+            Long agendaId = JsonPath.parse(text(draft)).read("$.agendaId", Long.class);
+
+            McpSchema.CallToolResult promoted =
+                    call(
+                            client,
+                            "promote_meeting_agenda",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "agendaId",
+                                    agendaId,
+                                    "request",
+                                    Map.of(
+                                            "title", "동아리방 정리 당번",
+                                            "itemType", "ROUTINE",
+                                            "ownerId", founderId)));
+            assertThat(promoted.isError()).as(text(promoted)).isNotEqualTo(Boolean.TRUE);
+            String text = text(promoted);
+            assertThat(JsonPath.parse(text).read("$.agenda.draft", Boolean.class)).isFalse();
+            Long operationId = JsonPath.parse(text).read("$.work.operationId", Long.class);
+            assertThat(
+                            JsonPath.parse(text)
+                                    .read("$.agenda.targetOperation.operationId", Long.class))
+                    .isEqualTo(operationId);
         }
     }
 

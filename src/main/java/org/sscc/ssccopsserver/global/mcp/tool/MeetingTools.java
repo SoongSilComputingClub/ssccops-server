@@ -11,6 +11,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalInboxSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.DashboardResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
@@ -18,6 +19,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.global.mcp.client.McpListResult;
 import org.sscc.ssccopsserver.global.mcp.client.McpRestClient;
 
@@ -26,7 +28,8 @@ import io.modelcontextprotocol.common.McpTransportContext;
 import lombok.RequiredArgsConstructor;
 
 /*
- * 회의 쓰기 도구와 운영 읽기 보강 (ssccops#365 W1 · ADR-0027).
+ * 회의 쓰기 도구와 운영 읽기 보강 (ssccops#365 W1 · ADR-0027). 드래프트 안건 승격
+ * (promote_meeting_agenda · #625 · ADR-0059)도 여기 둔다 — 업무를 만들지만 출발점이 안건이다.
  *
  * 규약은 `OperationTools`와 같다 — REST만 부르고, 타입은 컨트롤러 record 그대로, 로그는 이름과 id만.
  *
@@ -99,10 +102,12 @@ public class MeetingTools {
     @McpTool(
             name = "add_meeting_agenda",
             description =
-                    "회의에 안건을 올린다. **안건은 언제나 운영 건(업무·하위 업무·회의)을 가리킨다** —"
-                            + " targetOperationId 가 필수이고 안건의 제목은 그 운영 건의 제목이다"
-                            + "(안건이 따로 제목을 갖지 않는다 · ADR-0055). 다룰 운영 건이 아직 없으면"
-                            + " 업무나 하위 업무를 먼저 만든다(create_work · create_sub_work)."
+                    "회의에 안건을 올린다. **targetOperationId(연결할 운영 건 — 업무·하위 업무·회의)와"
+                            + " agendaName(제목) 중 정확히 하나**를 준다 — 둘 다 주거나 둘 다 없으면 400."
+                            + " 운영 건을 주면 안건의 제목은 그 운영 건의 제목이다. 아직 업무가 아닌"
+                            + " 논의는 agendaName 만으로 **드래프트 안건**으로 올리고, 업무가 될 만하면"
+                            + " promote_meeting_agenda 로 업무를 만들어 잇는다(ADR-0059) — 업무를"
+                            + " 먼저 만들 필요가 없다."
                             + " 없는 운영 건은 404. 종료·취소된 회의에는 올릴 수 없다."
                             + " 상정 시점에는 결과가 없다 — 논의 결과와 처리 구분은 그 뒤"
                             + " update_meeting_agenda 로 적는다."
@@ -111,7 +116,10 @@ public class MeetingTools {
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingAgendaResponse addMeetingAgenda(
             @McpToolParam(description = "회의 id") Long meetingId,
-            @McpToolParam(description = "안건 — targetOperationId(필수) · processStatus · content")
+            @McpToolParam(
+                            description =
+                                    "안건 — targetOperationId 또는 agendaName 중 하나(필수) ·"
+                                            + " processStatus · content")
                     MeetingAgendaItemRequest request,
             McpTransportContext context) {
         log.info("mcp tool add_meeting_agenda meetingId={}", meetingId);
@@ -135,13 +143,16 @@ public class MeetingTools {
     @McpTool(
             name = "update_meeting_agenda",
             description =
-                    "올라온 안건의 논의 내용·결과 내용·처리 구분을 고친다."
+                    "올라온 안건의 논의 내용·결과 내용·처리 구분을 고친다. 드래프트 안건(draft=true)이면"
+                            + " agendaName 으로 제목도 고칠 수 있다 — 생략하면 제목은 그대로다."
                             + " **전체 교체다** — content·resultContent 를 생략하면 지운 것으로 본다."
                             + " 한 칸만 바꾸려면 list_meeting_agendas 로 지금 값을 읽어 함께 보낸다"
                             + "(update_work 같은 읽고-합치기 도구와 다르다)."
                             + " processStatus 는 필수다."
-                            + " 바꿀 수 없는 것: 연결 운영 건·제목·제출자 — 다시 상정하는 것과 같아"
-                            + " 이 API 의 범위 밖이다(안건은 제목을 따로 갖지 않는다 · ADR-0055)."
+                            + " 바꿀 수 없는 것: 연결 운영 건·제출자 — 다시 상정하는 것과 같아"
+                            + " 이 API 의 범위 밖이다. 운영 건을 가리키는 안건에 agendaName 을 주면"
+                            + " 400 이다(제목은 그 운영 건의 제목이다). 드래프트를 업무에 잇는 길은"
+                            + " promote_meeting_agenda 하나다."
                             + " 종료·취소된 회의의 안건은 409 다. 없는 안건은 404."
                             + " 회의 안건 작성(MEETING_AGENDA_WRITE) 권한이며 회의 관리와 다르다"
                             + "(국원도 가진다).",
@@ -151,7 +162,8 @@ public class MeetingTools {
             @McpToolParam(description = "안건 id") Long agendaId,
             @McpToolParam(
                             description =
-                                    "바꿀 값 전부 — processStatus(필수) · content · resultContent."
+                                    "바꿀 값 전부 — processStatus(필수) · content · resultContent ·"
+                                            + " agendaName(드래프트만 · 생략하면 그대로)."
                                             + " 생략한 내용 칸은 비워진다")
                     MeetingAgendaUpdateRequest request,
             McpTransportContext context) {
@@ -161,6 +173,38 @@ public class MeetingTools {
                 "/v1/meetings/" + meetingId + "/agendas/" + agendaId,
                 request,
                 MeetingAgendaResponse.class);
+    }
+
+    /*
+     * 드래프트 안건 승격 — «업무로 만들기» (#625 · ADR-0059).
+     *
+     * 입력은 create_work 와 같은 WorkCreateRequest 다. **도구가 안건 제목으로 업무 제목을 채우지
+     * 않는다** — 서버가 필수 값을 지어내지 않는다는 결정(ADR-0059)을 도구도 따른다. 모델이 안건
+     * 제목을 쓰고 싶으면 list_meeting_agendas 로 읽어 title 에 넣는다(설명에 적었다).
+     */
+    @McpTool(
+            name = "promote_meeting_agenda",
+            description =
+                    "드래프트 안건(draft=true · 제목만 있는 안건)을 업무로 만든다 — 업무를 등록하고"
+                            + " 안건이 그 업무를 가리키게 한다(한 트랜잭션 · ADR-0059). 입력은"
+                            + " create_work 와 같다: title·itemType·ownerId 가 필수다. **제목을 서버가"
+                            + " 채우지 않는다** — 안건 제목을 그대로 쓰려면 list_meeting_agendas 로"
+                            + " agendaName 을 읽어 title 에 넣는다. 결과는 바뀐 안건(agenda)과 새"
+                            + " 업무(work). 이미 운영 건을 가리키는 안건은 409(되돌아가지 않는다)."
+                            + " 종료·취소된 회의는 409. 업무 등록과 같은 업무 관리(WORK_MANAGE)"
+                            + " 권한이 필요하다(안건 작성 권한만으로는 안 된다).",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public MeetingAgendaPromoteResponse promoteMeetingAgenda(
+            @McpToolParam(description = "회의 id") Long meetingId,
+            @McpToolParam(description = "드래프트 안건 id") Long agendaId,
+            @McpToolParam(description = "만들 업무 — create_work 와 같은 요청") WorkCreateRequest request,
+            McpTransportContext context) {
+        log.info("mcp tool promote_meeting_agenda meetingId={} agendaId={}", meetingId, agendaId);
+        return client.post(
+                context,
+                "/v1/meetings/" + meetingId + "/agendas/" + agendaId + "/promote",
+                request,
+                MeetingAgendaPromoteResponse.class);
     }
 
     @McpTool(

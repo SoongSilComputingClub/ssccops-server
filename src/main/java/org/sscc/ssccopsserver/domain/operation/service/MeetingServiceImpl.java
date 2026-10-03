@@ -14,6 +14,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
@@ -21,6 +22,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.AgendaProcessStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.MeetingAgendaEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.MeetingEntity;
@@ -44,6 +47,9 @@ public class MeetingServiceImpl implements MeetingService {
     private final MeetingRepository meetingRepository;
     private final MeetingAgendaRepository meetingAgendaRepository;
     private final MemberService memberService;
+
+    // 드래프트 안건 승격(#625)이 업무 등록을 그대로 부른다 — 업무를 만드는 규칙을 두 곳에 두지 않는다
+    private final WorkService workService;
 
     // 전이 일시의 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -106,6 +112,7 @@ public class MeetingServiceImpl implements MeetingService {
                     meetingAgendaRepository.save(
                             MeetingAgendaEntity.create(
                                     meeting,
+                                    item.agendaName(),
                                     item.processStatus(),
                                     order++,
                                     targetOperation,
@@ -117,11 +124,13 @@ public class MeetingServiceImpl implements MeetingService {
     }
 
     /*
-     * 안건이 가리키는 운영 건. **널 분기를 두지 않는다**(#593 · ADR-0055) — 요청 DTO 가 @NotNull 로
-     * 막고 엔티티도 nullable = false 라, 여기서 널을 돌려주면 그 어긋남이 persist 시점의 제약 위반
-     * 으로 미뤄져 원인이 흐려진다.
+     * 안건이 가리키는 운영 건. 드래프트 안건(제목만 있는 안건 · ADR-0059)은 운영 건이 없으므로
+     * 널을 돌려준다 — «둘 중 하나»는 요청 DTO와 MeetingAgendaEntity.create가 판정한다.
      */
     private OperationEntity resolveTargetOperation(Long targetOperationId) {
+        if (targetOperationId == null) {
+            return null;
+        }
         return operationRepository
                 .findByIdAndDeletedAtIsNull(targetOperationId)
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
@@ -227,6 +236,7 @@ public class MeetingServiceImpl implements MeetingService {
                 meetingAgendaRepository.save(
                         MeetingAgendaEntity.create(
                                 meeting,
+                                request.agendaName(),
                                 request.processStatus(),
                                 nextOrder,
                                 targetOperation,
@@ -244,8 +254,44 @@ public class MeetingServiceImpl implements MeetingService {
         meeting.requireAgendaEditable();
 
         MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
-        agenda.update(request.content(), request.resultContent(), request.processStatus());
+        agenda.update(
+                request.agendaName(),
+                request.content(),
+                request.resultContent(),
+                request.processStatus());
         return MeetingAgendaResponse.from(agenda);
+    }
+
+    /*
+     * 드래프트 안건을 업무로 승격한다 (#625 · ADR-0059). 업무 등록(WorkService.createWork)을 그대로
+     * 부르고, 만든 업무의 운영 건을 안건에 잇는다 — 이 메서드의 트랜잭션에 createWork가 합류하므로
+     * 업무 생성과 안건 연결은 **한 트랜잭션**이다. 연결이 실패하면 업무도 남지 않는다.
+     *
+     * 업무의 필수 값(제목·유형·담당자)은 요청이 준다. 서버가 안건 제목을 업무 제목으로 채우거나
+     * 유형·담당자를 정하지 않는 것은 결정이다(ADR-0059 «승격의 필수 값») — 화면은 업무 등록 시트를
+     * 안건 제목으로 미리 채워 열고, 사람이 고른 값이 그대로 온다.
+     *
+     * 회의가 종료·취소됐으면 안건 수정과 같이 409(MEETING_CLOSED)다 — 승격도 안건을 바꾸는 일이다.
+     * 순서는 회의 → 안건 → «이미 연결됨»을 업무 INSERT 전에 본다(MeetingAgendaEntity.requireDraft).
+     */
+    @Override
+    @Transactional
+    public MeetingAgendaPromoteResponse promoteAgendaToWork(
+            Long meetingId, Long agendaId, WorkCreateRequest request, MemberEntity registrant) {
+        MeetingEntity meeting = findMeeting(meetingId);
+        meeting.requireAgendaEditable();
+
+        MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
+        agenda.requireDraft();
+
+        WorkCreateResponse work = workService.createWork(request, registrant);
+        OperationEntity operation =
+                operationRepository
+                        .findById(work.operationId())
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
+        agenda.promoteTo(operation);
+        return new MeetingAgendaPromoteResponse(MeetingAgendaResponse.from(agenda), work);
     }
 
     // 안건 상정 철회(OPS-029)

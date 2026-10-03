@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
@@ -11,6 +12,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 
 public interface MeetingService {
 
@@ -32,6 +34,17 @@ public interface MeetingService {
             Long meetingId, Long agendaId, MeetingAgendaUpdateRequest request);
 
     void withdrawAgenda(Long meetingId, Long agendaId);
+
+    /*
+     * 드래프트 안건을 업무로 승격한다 (#625 · ADR-0059). 요청으로 받은 값으로 업무를 등록하고 그
+     * 업무의 운영 건을 안건에 이은 뒤 안건 제목(agnd_nm)을 비운다 — 한 트랜잭션이다. registrant는
+     * 업무 등록자이며 인증 주체에서 온다(LY-05).
+     *
+     * 회의·안건이 없으면 404, 회의가 종료·취소됐으면 MEETING_CLOSED(409), 안건이 이미 운영 건을
+     * 가리키면 MEETING_AGENDA_ALREADY_LINKED(409). 업무 등록의 거절(담당자 400 등)은 그대로 난다.
+     */
+    MeetingAgendaPromoteResponse promoteAgendaToWork(
+            Long meetingId, Long agendaId, WorkCreateRequest request, MemberEntity registrant);
 
     /*
      * 회의를 소프트 삭제한다 (#125). 자기 operation만 del_dt를 채운다 — 안건(mtg_dtl)은

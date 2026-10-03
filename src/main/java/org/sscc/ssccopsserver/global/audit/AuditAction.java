@@ -28,6 +28,11 @@ public enum AuditAction {
     MEMBER_DELETE("member.delete", "member"),
     MEMBER_IMPORT("member.import", "member_import"),
     SUBWORK_TRANSITION("subwork.transition", "sub_work"),
+    /*
+     * 상위 업무 전이 (#622 · ssccops#563). 상태 이력 표를 두지 않기로 해서(운영진 «감사 로그로 충분»)
+     * «누가 언제 완료·재개했나»가 남는 유일한 자리다. decision은 전이 이름, change는 상태 전후다.
+     */
+    WORK_TRANSITION("work.transition", "work"),
     /** 운영 건 첨부 삭제 (#493) — 추가는 감사하지 않는다(파일이 곧 증거), 지운 것만 남긴다 */
     OPERATION_ATTACHMENT_DELETE("operation.attachment.delete", "file_rfrnc"),
     SUBWORK_APPROVAL_VOTE("subwork.approval.vote", "sub_work"),

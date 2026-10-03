@@ -32,6 +32,9 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
  * 기수는 담지 않는다 — 시안에 표기가 있으나 프론트 디자인에서 제외하기로 했고, oper의
  * 기수 컬럼 자체가 데이터사전 개정으로 삭제된 결번이다 (MemberSummaryResponse도 같다).
  *
+ * tags는 이 업무에 달린 태그 칩이다(이름 오름차순 · 없으면 빈 배열 · #624). 지정 교체는 이 응답이
+ * 아니라 PUT /v1/works/{workId}/tags가 맡는다 — 수정(OPS-004) 본문에 태그를 받지 않는다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record WorkDetailResponse(
@@ -51,7 +54,8 @@ public record WorkDetailResponse(
         int subWorkCount,
         List<WorkSubWorkSummaryResponse> subWorks,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        List<WorkTagSummaryResponse> tags) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -63,7 +67,9 @@ public record WorkDetailResponse(
      * 진행률은 저장하지 않고 조회 때마다 계산한다 — ProgressRate 주석 참고.
      */
     public static WorkDetailResponse of(
-            WorkEntity work, List<WorkSubWorkSummaryResponse> subWorks) {
+            WorkEntity work,
+            List<WorkSubWorkSummaryResponse> subWorks,
+            List<WorkTagSummaryResponse> tags) {
         OperationEntity operation = work.getOperation();
         List<BigDecimal> rates =
                 subWorks.stream().map(WorkSubWorkSummaryResponse::progressRate).toList();
@@ -85,7 +91,8 @@ public record WorkDetailResponse(
                 subWorks.size(),
                 subWorks,
                 toOffsetDateTime(operation.getCreatedAt()),
-                toOffsetDateTime(operation.getUpdatedAt()));
+                toOffsetDateTime(operation.getUpdatedAt()),
+                tags);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

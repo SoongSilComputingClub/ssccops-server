@@ -780,13 +780,41 @@ class MeetingControllerTest {
                 .andExpect(jsonPath("$.code").value("MEETING_AGENDA_ALREADY_LINKED"));
     }
 
+    // 종료된 회의에서도 승격한다 — 승격은 안건 내용을 고치는 게 아니라 업무를 만드는 일이다(#634)
     @Test
-    void promoteOnCanceledMeetingReturns409MeetingClosed() throws Exception {
+    void promoteOnClosedMeetingCreatesWork() throws Exception {
+        Long meetingId = createMeeting(registrantId);
+        Long agendaId = draftAgendaId(meetingId, "동아리방 정리 당번");
+        mockMvc.perform(transition(meetingId, "OPEN", null)).andExpect(status().isOk());
+        mockMvc.perform(transition(meetingId, "WRITE_MINUTES", null)).andExpect(status().isOk());
+        mockMvc.perform(updateAgenda(meetingId, agendaId, "HOLD")).andExpect(status().isOk());
+        mockMvc.perform(transition(meetingId, "CLOSE", null)).andExpect(status().isOk());
+
+        mockMvc.perform(promote(meetingId, agendaId, "동아리방 정리 당번"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.agenda.draft").value(false))
+                .andExpect(jsonPath("$.data.work.title").value("동아리방 정리 당번"));
+    }
+
+    @Test
+    void promoteOnCanceledMeetingCreatesWork() throws Exception {
         Long meetingId = createMeeting(otherMemberId);
         Long agendaId = draftAgendaId(meetingId, "동아리방 정리 당번");
         mockMvc.perform(transition(meetingId, "CANCEL", "일정 취소")).andExpect(status().isOk());
 
         mockMvc.perform(promote(meetingId, agendaId, "동아리방 정리 당번"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.agenda.draft").value(false));
+    }
+
+    // 승격만 열었다 — 취소된 회의의 드래프트 안건 수정은 그대로 409다(#634)
+    @Test
+    void updateDraftAgendaOnCanceledMeetingReturns409MeetingClosed() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        Long agendaId = draftAgendaId(meetingId, "동아리방 정리 당번");
+        mockMvc.perform(transition(meetingId, "CANCEL", "일정 취소")).andExpect(status().isOk());
+
+        mockMvc.perform(updateAgenda(meetingId, agendaId, "HOLD"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("MEETING_CLOSED"));
     }

@@ -315,7 +315,10 @@ public class MeetingServiceImpl implements MeetingService {
      * 유형·담당자를 정하지 않는 것은 결정이다(ADR-0059 «승격의 필수 값») — 화면은 업무 등록 시트를
      * 안건 제목으로 미리 채워 열고, 사람이 고른 값이 그대로 온다.
      *
-     * 회의가 종료·취소됐으면 안건 수정과 같이 409(MEETING_CLOSED)다 — 승격도 안건을 바꾸는 일이다.
+     * 종료·취소된 회의에서도 승격한다(#634 · ssccops#573) — 승격은 안건 내용을 고치는 게 아니라
+     * 업무를 만드는 일이라, 회의가 끝난 뒤 «그때 나온 얘기를 업무로» 옮기는 길을 막지 않는다. 기각:
+     * 안건 수정과 같이 requireAgendaEditable로 409(MEETING_CLOSED) — #625가 그렇게 시작했으나
+     * 운영진 결정(2026-10-03)으로 뺐다. 안건 추가·수정·철회는 그대로 막는다.
      * 순서는 회의 → 안건 → «이미 연결됨»을 업무 INSERT 전에 본다(MeetingAgendaEntity.requireDraft).
      */
     @Override
@@ -323,8 +326,6 @@ public class MeetingServiceImpl implements MeetingService {
     public MeetingAgendaPromoteResponse promoteAgendaToWork(
             Long meetingId, Long agendaId, WorkCreateRequest request, MemberEntity registrant) {
         MeetingEntity meeting = findMeeting(meetingId);
-        meeting.requireAgendaEditable();
-
         MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
         agenda.requireDraft();
 

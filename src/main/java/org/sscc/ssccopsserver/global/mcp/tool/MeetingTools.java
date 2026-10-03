@@ -195,7 +195,8 @@ public class MeetingTools {
                             + " 채우지 않는다** — 안건 제목을 그대로 쓰려면 list_meeting_agendas 로"
                             + " agendaName 을 읽어 title 에 넣는다. 결과는 바뀐 안건(agenda)과 새"
                             + " 업무(work). 이미 운영 건을 가리키는 안건은 409(되돌아가지 않는다)."
-                            + " 종료·취소된 회의는 409. 업무 등록과 같은 업무 관리(WORK_MANAGE)"
+                            + " 종료·취소된 회의의 드래프트 안건도 업무로 만들 수 있다(안건 추가·수정은"
+                            + " 409). 업무 등록과 같은 업무 관리(WORK_MANAGE)"
                             + " 권한이 필요하다(안건 작성 권한만으로는 안 된다).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingAgendaPromoteResponse promoteMeetingAgenda(

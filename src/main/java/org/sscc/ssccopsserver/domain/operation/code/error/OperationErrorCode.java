@@ -96,7 +96,8 @@ public enum OperationErrorCode implements ErrorCode {
 
     // 409 — 전이표(TR-01~TR-04)에 없는 상태 전환. 완료 → 진행 되돌리기도 여기에 걸린다.
     // 회의 전이표(TR-M1~TR-M4)에 없는 조합과 시작 전(SCHEDULED)이 아닌 회의의 안건 상정
-    // 철회(OPS-029)도 전용 코드를 새로 만들지 않고 이 코드를 재사용한다 (#47 선례 준용)
+    // 철회(OPS-029), 상위 업무 전이표(#622)에 없는 조합도 전용 코드를 새로 만들지 않고 이 코드를
+    // 재사용한다 (#47 선례 준용)
     TRANSITION_NOT_ALLOWED(HttpStatus.CONFLICT, "TRANSITION_NOT_ALLOWED", "현재 상태에서 할 수 없는 작업입니다."),
 
     /*
@@ -104,6 +105,15 @@ public enum OperationErrorCode implements ErrorCode {
      * 다음 회의로 이월하겠다는 의사 표시라 막지 않는다 (MeetingEntity.close 참고).
      */
     AGENDA_UNRESOLVED(HttpStatus.CONFLICT, "AGENDA_UNRESOLVED", "처리하지 않은 안건이 있습니다."),
+
+    /*
+     * 409 — 완료가 아닌 하위 업무가 남은 채 상위 업무를 완료하려 할 때 (#622 · ssccops#563).
+     * 남은 수는 코드가 아니라 값이라 메시지(GeneralException detail)에 싣는다 — 예: «완료되지 않은
+     * 하위 업무가 2건 남아 있습니다.» TRANSITION_NOT_ALLOWED를 재사용하지 않은 것은 해소 방법이
+     * 달라서다(CHECKLIST_ITEM_COMPLETED와 같은 판단) — 순서 위반은 다른 전이를 눌러야 풀리고,
+     * 이쪽은 하위 업무를 마무리하면 같은 버튼이 통과한다.
+     */
+    SUB_WORK_UNFINISHED(HttpStatus.CONFLICT, "SUB_WORK_UNFINISHED", "완료되지 않은 하위 업무가 남아 있습니다."),
 
     // 409 — 종료·취소된 회의에 안건을 상정하거나 수정하려 할 때 (OPS-027·OPS-028)
     MEETING_CLOSED(HttpStatus.CONFLICT, "MEETING_CLOSED", "이미 종료된 회의입니다."),

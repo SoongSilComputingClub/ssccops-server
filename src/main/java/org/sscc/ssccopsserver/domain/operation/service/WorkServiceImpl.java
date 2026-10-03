@@ -27,6 +27,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkTagSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
@@ -35,6 +37,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkTagRelationEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTransitionAction;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
@@ -43,6 +46,9 @@ import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkSubWorkAggregate;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -66,6 +72,9 @@ public class WorkServiceImpl implements WorkService {
      * WorkDetailResponse를 만들면 방금 바꾼 값인데도 updatedAt이 직전 값 그대로 나간다.
      */
     private final EntityManager entityManager;
+
+    // 상태 전이의 기록 자리 (#622). 상태 이력 표를 두지 않기로 해서(ssccops#563) 이것이 유일하다
+    private final AuditLog auditLog;
 
     /*
      * oper(공통)와 work(확장)를 한 트랜잭션에서 INSERT 한다. 둘 중 하나만 남으면
@@ -153,6 +162,43 @@ public class WorkServiceImpl implements WorkService {
         entityManager.flush();
 
         return buildDetail(work);
+    }
+
+    /*
+     * 상태 전이 (#622 · ssccops#563). 전이 판단은 엔티티가 하고(WorkEntity.applyTransition) 여기서는
+     * 조회·집계·기록만 맡는다 (LY-09 — SubWorkServiceImpl.transitionSubWork와 같은 경계).
+     *
+     * 남은 하위 업무 수는 완료 전이에서만 센다 — 다른 전이에서는 쓰지 않는 값이라 쿼리를 더하지
+     * 않는다(회의 종료가 미처리 안건을 CLOSE에서만 보는 것과 같다).
+     *
+     * 인가는 컨트롤러의 WORK_MANAGE 하나다. 하위 업무처럼 담당자 본인에게 열지 않은 것은 상위
+     * 업무의 담당자가 운영 건 수준이라 등록·수정 권한과 맞췄기 때문이다(ssccops#563 판단 표).
+     *
+     * 기록은 감사 로그뿐이다 — 상태 이력 표(work_stts_hstry)는 운영진이 «감사 로그로 충분»이라
+     * 두지 않았다. 그래서 «누가 언제 완료했나»를 화면이 읽어 올 API는 없다.
+     */
+    @Override
+    @Transactional
+    public WorkTransitionResponse transitionWork(Long workId, WorkTransitionRequest request) {
+        WorkEntity work = findWork(workId);
+        WorkTransitionAction action = request.transition();
+        WorkStatus previousStatus = work.getWorkStatus();
+
+        long unfinishedSubWorkCount =
+                action == WorkTransitionAction.COMPLETE
+                        ? subWorkRepository.countAliveByWorkExcludingStatus(work, WorkStatus.DONE)
+                        : 0L;
+        Instant changedAt = clock.instant();
+        work.applyTransition(action, unfinishedSubWorkCount);
+
+        auditLog.record(
+                AuditEvent.success(AuditAction.WORK_TRANSITION)
+                        .target(workId)
+                        .decision(action)
+                        .change(previousStatus, work.getWorkStatus())
+                        .build());
+
+        return WorkTransitionResponse.of(work, action, previousStatus, changedAt);
     }
 
     private WorkEntity findWork(Long workId) {

@@ -427,6 +427,51 @@ class WorkControllerTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
+    /*
+     * «완료 제외» (#623). 쿼리 파라미터를 같은 이름으로 반복해도, 쉼표로 이어도 목록으로 받는다 —
+     * 기존 단일 workStatus는 그대로다.
+     */
+    @Test
+    void searchWorksExcludesGivenStatuses() throws Exception {
+        Long planning = createWork();
+        Long done = createWork();
+        for (String action : new String[] {"START", "REQUEST_REVIEW", "COMPLETE"}) {
+            mockMvc.perform(transition(done, action, AUTH_USER_ID)).andExpect(status().isOk());
+        }
+
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("excludeWorkStatus", "DONE")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.length()").value(1))
+                .andExpect(jsonPath("$.data[0].workId").value(planning))
+                .andExpect(jsonPath("$.page.totalCount").value(1));
+
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("excludeWorkStatus", "DONE", "PLANNING")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+
+        mockMvc.perform(
+                        get("/v1/works?excludeWorkStatus=DONE,PLANNING")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    @Test
+    void searchWorksWithUnknownExcludedStatusReturnsInvalidCodeValue() throws Exception {
+        mockMvc.perform(
+                        get("/v1/works")
+                                .param("excludeWorkStatus", "FINISHED")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
     @Test
     void searchWorksWithoutTokenReturns401() throws Exception {
         mockMvc.perform(get("/v1/works")).andExpect(status().isUnauthorized());
@@ -478,6 +523,117 @@ class WorkControllerTest {
     @Test
     void deleteWorkWithoutTokenReturns401() throws Exception {
         mockMvc.perform(delete("/v1/works/{workId}", 1L)).andExpect(status().isUnauthorized());
+    }
+
+    // ------------------------------------------------------------------ 상태 전이 (#622)
+
+    @Test
+    void transitionWorkReturns200WithBeforeAndAfter() throws Exception {
+        Long workId = createWork();
+
+        mockMvc.perform(transition(workId, "START", AUTH_USER_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.workId").value(workId))
+                .andExpect(jsonPath("$.data.transition").value("START"))
+                .andExpect(jsonPath("$.data.previousWorkStatus").value("PLANNING"))
+                .andExpect(jsonPath("$.data.workStatus").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.data.changedAt").isString());
+
+        // 목록·상세의 상태 배지가 같은 값을 말한다
+        mockMvc.perform(
+                        get("/v1/works/{workId}", workId)
+                                .header("Authorization", "Bearer " + AUTH_USER_ID))
+                .andExpect(jsonPath("$.data.workStatus").value("IN_PROGRESS"));
+    }
+
+    @Test
+    void transitionOutOfOrderReturns409() throws Exception {
+        Long workId = createWork();
+
+        mockMvc.perform(transition(workId, "COMPLETE", AUTH_USER_ID))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("TRANSITION_NOT_ALLOWED"));
+    }
+
+    // 화면이 남은 수를 보여 줄 수 있게 메시지에 수가 실린다 — 코드는 SUB_WORK_UNFINISHED 하나다
+    @Test
+    void completeWithUnfinishedSubWorkReturns409WithRemainingCount() throws Exception {
+        Long workId = createWork();
+        createSubWork(workId);
+        mockMvc.perform(transition(workId, "START", AUTH_USER_ID)).andExpect(status().isOk());
+        mockMvc.perform(transition(workId, "REQUEST_REVIEW", AUTH_USER_ID))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(transition(workId, "COMPLETE", AUTH_USER_ID))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("SUB_WORK_UNFINISHED"))
+                .andExpect(jsonPath("$.message").value("완료되지 않은 하위 업무가 1건 남아 있습니다."));
+    }
+
+    @Test
+    void unknownTransitionReturnsInvalidCodeValue() throws Exception {
+        Long workId = createWork();
+
+        mockMvc.perform(transition(workId, "APPROVE_COMPLETE", AUTH_USER_ID))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    // 국원은 WORK_READ만 있다 — 조회는 되지만 전이는 403이다(404로 감추지 않는다)
+    @Test
+    void transitionWithoutWorkManageReturns403() throws Exception {
+        Long workId = createWork();
+        UUID staffAuthId = UUID.randomUUID();
+        MemberEntity staff = saveMember(staffAuthId, "20200003", "박지훈", "staff@sscc.org");
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                staff,
+                "국원");
+
+        mockMvc.perform(transition(workId, "START", staffAuthId))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void transitionWithoutTokenReturns401() throws Exception {
+        mockMvc.perform(
+                        post("/v1/works/{workId}/transitions", 1L)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"transition\": \"START\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
+            transition(Long workId, String action, UUID actor) {
+        return post("/v1/works/{workId}/transitions", workId)
+                .header("Authorization", "Bearer " + actor)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"transition\": \"" + action + "\"}");
+    }
+
+    // 하위 업무 유형 3 = 내부행사(승인 불필요) — data.sql 시드
+    private void createSubWork(Long workId) throws Exception {
+        String body =
+                """
+                {
+                  "workId": %d,
+                  "title": "부스 배치도 확정",
+                  "subWorkTypeId": 3,
+                  "ownerId": %d
+                }
+                """
+                        .formatted(workId, ownerId);
+        mockMvc.perform(
+                        post("/v1/sub-works")
+                                .header("Authorization", "Bearer " + AUTH_USER_ID)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(body))
+                .andExpect(status().isCreated());
     }
 
     private Long createWork() throws Exception {

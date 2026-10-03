@@ -47,6 +47,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
@@ -54,6 +55,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkTagEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkTagRelationEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkApprovalRepository;
@@ -150,7 +152,8 @@ class WorkServiceImplSearchTest {
                         subWorkChecklistItemRepository,
                         memberService,
                         FIXED_CLOCK,
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        new AuditLog());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -260,6 +263,65 @@ class WorkServiceImplSearchTest {
         assertThat(idsOf(search(condition().workStatus("PLANNING").build())))
                 .containsExactly(planning);
         assertThat(idsOf(search(condition().workStatus("DONE").build()))).isEmpty();
+    }
+
+    /*
+     * «완료 제외» (#623 · ssccops#564). 업무 목록의 첫 화면이 이 조건이다 — 화면이 받은 페이지를
+     * 다시 거르면 커서 페이징이 빈 페이지를 내므로 서버가 거르고, 건수도 거른 결과를 말한다.
+     */
+    @Test
+    void excludeWorkStatusDropsThoseStatusesFromRowsAndCount() {
+        Long planning = createWork("기획 중", WorkType.EVENT, null, null).workId();
+        Long reviewing = createWork("검토 중", WorkType.EVENT, null, null).workId();
+        moveTo(reviewing, WorkTransitionAction.START, WorkTransitionAction.REQUEST_REVIEW);
+        Long done = createWork("끝난 업무", WorkType.EVENT, null, null).workId();
+        moveTo(
+                done,
+                WorkTransitionAction.START,
+                WorkTransitionAction.REQUEST_REVIEW,
+                WorkTransitionAction.COMPLETE);
+
+        WorkSearchResponse response = search(condition().excludeWorkStatus("DONE").build());
+
+        assertThat(idsOf(response)).containsExactlyInAnyOrder(planning, reviewing);
+        assertThat(response.page().totalCount()).isEqualTo(2);
+        // 제외는 여러 개를 받는다
+        assertThat(idsOf(search(condition().excludeWorkStatus("DONE", "REVIEW").build())))
+                .containsExactly(planning);
+    }
+
+    // 단일 workStatus와 함께 주면 둘 다 걸린다(AND) — 기존 단일 필터의 뜻은 그대로다
+    @Test
+    void excludeWorkStatusCombinesWithWorkStatus() {
+        createWork("기획 중", WorkType.EVENT, null, null);
+
+        assertThat(
+                        idsOf(
+                                search(
+                                        condition()
+                                                .workStatus("PLANNING")
+                                                .excludeWorkStatus("PLANNING")
+                                                .build())))
+                .isEmpty();
+    }
+
+    // 값 없이 붙은 파라미터(`?excludeWorkStatus=`)는 조건 없음이다
+    @Test
+    void blankExcludeWorkStatusIsIgnored() {
+        Long planning = createWork("기획 중", WorkType.EVENT, null, null).workId();
+
+        assertThat(idsOf(search(condition().excludeWorkStatus("", " ").build())))
+                .containsExactly(planning);
+    }
+
+    @Test
+    void unknownExcludeWorkStatusCodeIsRejected() {
+        WorkSearchCondition unknown = condition().excludeWorkStatus("완료").build();
+
+        assertThatThrownBy(() -> search(unknown))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(CommonErrorCode.INVALID_CODE_VALUE);
     }
 
     @Test
@@ -922,6 +984,12 @@ class WorkServiceImplSearchTest {
      * 조회자는 담당자(owner)다. mine 필터가 '내가 담당인 건'을 뜻하므로, 기본 조회자를
      * 담당자로 두면 mine을 켠 조회가 픽스처의 업무를 그대로 돌려준다.
      */
+    private void moveTo(Long workId, WorkTransitionAction... actions) {
+        for (WorkTransitionAction action : actions) {
+            workService.transitionWork(workId, new WorkTransitionRequest(action));
+        }
+    }
+
     private WorkSearchResponse search(WorkSearchCondition condition) {
         return searchAs(condition, owner);
     }
@@ -948,6 +1016,7 @@ class WorkServiceImplSearchTest {
     private static final class ConditionBuilder {
 
         private String workStatus;
+        private List<String> excludeWorkStatus;
         private String workType;
         private String keyword;
         private Boolean mine;
@@ -958,6 +1027,11 @@ class WorkServiceImplSearchTest {
 
         private ConditionBuilder workStatus(String value) {
             this.workStatus = value;
+            return this;
+        }
+
+        private ConditionBuilder excludeWorkStatus(String... values) {
+            this.excludeWorkStatus = List.of(values);
             return this;
         }
 
@@ -998,7 +1072,15 @@ class WorkServiceImplSearchTest {
 
         private WorkSearchCondition build() {
             return new WorkSearchCondition(
-                    workStatus, workType, keyword, mine, tagId, size, cursor, sort);
+                    workStatus,
+                    excludeWorkStatus,
+                    workType,
+                    keyword,
+                    mine,
+                    tagId,
+                    size,
+                    cursor,
+                    sort);
         }
     }
 }

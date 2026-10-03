@@ -118,6 +118,20 @@ public interface SubWorkRepository
             @Param("ownerId") Long ownerId, @Param("excludedStatus") WorkStatus excludedStatus);
 
     /*
+     * 상위 업무 완료(#622 · ssccops#563)를 막는 «남은 하위 업무» 수. 완료(DONE)가 아닌 살아 있는
+     * 하위 업무를 센다 — 지운 하위 업무가 완료를 막으면 그 업무는 영영 완료되지 못한다
+     * (OperationEntity에 restore가 없어 지운 것을 되살릴 길이 없다). 소프트 삭제 기준은 다른
+     * 집계와 같다(부모 oper의 del_dt).
+     */
+    @Query(
+            "select count(s) from SubWorkEntity s"
+                    + " join s.operation o"
+                    + " where s.work = :work"
+                    + " and s.workStatus <> :doneStatus and o.deletedAt is null")
+    long countAliveByWorkExcludingStatus(
+            @Param("work") WorkEntity work, @Param("doneStatus") WorkStatus doneStatus);
+
+    /*
      * 운영 대시보드(OPS-038) '다가오는 마감'. 조회 시점 기준 ±5일 범위에 마감이 있는 하위
      * 업무다(이슈#60). 이미 끝난 건은 뺀다 — 완료된 일의 마감을 다시 알릴 이유가 없다.
      */

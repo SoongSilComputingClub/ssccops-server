@@ -106,6 +106,7 @@ class McpToolSchemaContractTest {
         assertThat(nestedRequired("create_page", "request"))
                 .containsExactlyInAnyOrder("slug", "ttl", "mtxt");
         assertThat(nestedRequired("transition_sub_work", "request")).contains("transition");
+        assertThat(nestedRequired("transition_work", "request")).containsExactly("transition");
         assertThat(nestedRequired("change_member_grade", "request")).contains("aftrMbrGrdCd");
         // 지정은 전체 교체라 빈 배열은 «전부 해제»이고 필드 누락은 서버가 400이다 (#624)
         assertThat(nestedRequired("assign_work_tags", "request")).containsExactly("tagIds");

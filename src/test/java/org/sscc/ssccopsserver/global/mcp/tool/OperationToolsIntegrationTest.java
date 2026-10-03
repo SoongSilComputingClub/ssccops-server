@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.global.mcp.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -83,7 +84,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 70종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 71종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -142,6 +143,8 @@ class OperationToolsIntegrationTest {
                             // 업무 태그 (#624 · 폼 라벨과 같은 모양 — 만들기·지우기 도구는 없다)
                             "list_work_tags",
                             "assign_work_tags",
+                            // 상위 업무 전이 (#622 · ssccops#563)
+                            "transition_work",
                             // W1 — 회의·승인함·대시보드·유형
                             "create_meeting",
                             "transition_meeting",
@@ -253,6 +256,84 @@ class OperationToolsIntegrationTest {
                     text(call(client, "list_works", Map.of("condition", Map.of("tagId", tagId))));
             assertThat(filtered).contains("\"workId\":" + workId).contains("MCP 학술국");
             assertThat(filtered).contains("\"totalCount\":1");
+        }
+    }
+
+    /*
+     * #622 — 업무 전이는 REST를 그대로 지난다. 완료가 막히는 409의 코드와 «남은 수»가 도구 오류
+     * 문장으로 와야 모델이 «하위 업무를 먼저 마무리하라»고 사용자에게 말할 수 있다.
+     */
+    @Test
+    @DisplayName("transition_work — 착수는 진행이 되고, 하위 업무가 남은 완료는 남은 수와 함께 409로 끝난다")
+    void transitionWorkCarriesRemainingSubWorks() throws Exception {
+        Long subWorkId = createSubWork();
+        String detail =
+                mockMvc.perform(
+                                get("/v1/sub-works/" + subWorkId)
+                                        .header("Authorization", "Bearer " + FOUNDER))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long workId = JsonPath.parse(detail).read("$.data.workId", Long.class);
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult started =
+                    call(
+                            client,
+                            "transition_work",
+                            Map.of("workId", workId, "request", Map.of("transition", "START")));
+            assertThat(started.isError()).as(text(started)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(started)).contains("\"workStatus\":\"IN_PROGRESS\"");
+
+            call(
+                    client,
+                    "transition_work",
+                    Map.of("workId", workId, "request", Map.of("transition", "REQUEST_REVIEW")));
+            McpSchema.CallToolResult completed =
+                    call(
+                            client,
+                            "transition_work",
+                            Map.of("workId", workId, "request", Map.of("transition", "COMPLETE")));
+
+            assertThat(completed.isError()).isTrue();
+            assertThat(text(completed)).contains("SUB_WORK_UNFINISHED").contains("1건");
+        }
+    }
+
+    /*
+     * #623 — 검색 조건 record의 목록 필드는 같은 이름의 반복 파라미터로 실린다(McpRestClient).
+     * 그 길로 «완료 제외»가 서버까지 닿는지 본다 — 닿지 않으면 완료 업무가 섞여 나온다.
+     */
+    @Test
+    @DisplayName("list_works — excludeWorkStatus로 완료 업무를 빼고 받는다")
+    void listWorksExcludesDoneWorks() throws Exception {
+        Long workId = createWorkWithReview();
+        try (McpSyncClient client = connect(FOUNDER)) {
+            for (String action : new String[] {"START", "REQUEST_REVIEW", "COMPLETE"}) {
+                McpSchema.CallToolResult moved =
+                        call(
+                                client,
+                                "transition_work",
+                                Map.of("workId", workId, "request", Map.of("transition", action)));
+                assertThat(moved.isError()).as(text(moved)).isNotEqualTo(Boolean.TRUE);
+            }
+
+            McpSchema.CallToolResult withDone =
+                    call(client, "list_works", Map.of("condition", Map.of("size", 100)));
+            McpSchema.CallToolResult withoutDone =
+                    call(
+                            client,
+                            "list_works",
+                            Map.of(
+                                    "condition",
+                                    Map.of("size", 100, "excludeWorkStatus", List.of("DONE"))));
+
+            assertThat(text(withDone)).contains("\"workId\":" + workId + ",");
+            assertThat(withoutDone.isError()).as(text(withoutDone)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(withoutDone))
+                    .doesNotContain("\"workId\":" + workId + ",")
+                    .doesNotContain("\"workStatus\":\"DONE\"");
         }
     }
 

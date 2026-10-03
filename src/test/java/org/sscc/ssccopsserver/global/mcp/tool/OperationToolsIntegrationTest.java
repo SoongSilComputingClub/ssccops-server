@@ -84,7 +84,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 69종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 71종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -140,6 +140,9 @@ class OperationToolsIntegrationTest {
                             "vote_sub_work_approval",
                             "add_sub_work_checklist_item",
                             "update_sub_work_checklist_item_article",
+                            // 업무 태그 (#624 · 폼 라벨과 같은 모양 — 만들기·지우기 도구는 없다)
+                            "list_work_tags",
+                            "assign_work_tags",
                             // 상위 업무 전이 (#622 · ssccops#563)
                             "transition_work",
                             // W1 — 회의·승인함·대시보드·유형
@@ -215,6 +218,44 @@ class OperationToolsIntegrationTest {
             assertThat(text).contains("\"priority\":\"HIGH\"");
             // 주지 않은 값이 살아 있다
             assertThat(text).contains("2026 동아리 박람회").contains("총평을 미리 적어 둔다");
+        }
+    }
+
+    /*
+     * 업무 태그 (#624) — 목록에서 id를 얻고, 지정은 전체 교체이며, list_works의 tagId가 그 결과로
+     * 거른다. 태그는 화면이 만드는 기준정보라(도구가 없다) 여기서도 REST로 만든다.
+     */
+    @Test
+    @DisplayName("list_work_tags · assign_work_tags · list_works(tagId) — 지정이 필터로 이어진다")
+    void workTagToolsRoundTrip() throws Exception {
+        Long workId = createWorkWithReview();
+        String created =
+                mockMvc.perform(
+                                post("/v1/work-tags")
+                                        .header("Authorization", "Bearer " + FOUNDER)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"tagNm\": \"MCP 학술국\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long tagId = JsonPath.parse(created).read("$.data.workTagId", Long.class);
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            assertThat(text(call(client, "list_work_tags", Map.of()))).contains("MCP 학술국");
+
+            McpSchema.CallToolResult assigned =
+                    call(
+                            client,
+                            "assign_work_tags",
+                            Map.of("workId", workId, "request", Map.of("tagIds", List.of(tagId))));
+            assertThat(assigned.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(assigned)).contains("\"workTagId\":" + tagId);
+
+            String filtered =
+                    text(call(client, "list_works", Map.of("condition", Map.of("tagId", tagId))));
+            assertThat(filtered).contains("\"workId\":" + workId).contains("MCP 학술국");
+            assertThat(filtered).contains("\"totalCount\":1");
         }
     }
 

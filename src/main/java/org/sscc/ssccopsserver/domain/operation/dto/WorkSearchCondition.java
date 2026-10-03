@@ -44,6 +44,11 @@ import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
  * 주면 둘 다 걸린다(AND). 기본값은 서버가 «미완료»로 바꾸지 않는다 — 기존 호출자(MCP 포함)의
  * 뜻이 바뀐다. 기본은 화면이 정한다.
  *
+ * tagId(태그 필터)도 같은 이유로 서버에서 건다 (#624 · ssccops#565) — 칩 하나를 고르면 그 태그가
+ * 달린 업무만 남고 커서·건수도 그 결과를 말한다. 한 번에 하나만 받는 것은 폼 목록의 labelId와 같은
+ * 모양이다. 없는 태그 id는 400이 아니라 빈 결과다 — 태그를 지운 직후 화면에 남은 칩으로 조회해도
+ * 오류가 아니라 «그런 업무가 없다»가 맞다.
+ *
  * 상태 코드를 enum이 아니라 문자열로 받는 이유는 SubWorkSearchCondition과 같다. 바인딩
  * 단계에서 enum 변환이 실패하면 스프링이 '형식 오류'로 묶어 VALIDATION_FAILED(400)를 내는데,
  * 기준 코드 위반은 INVALID_CODE_VALUE(400)여야 프론트가 둘을 나눠 안내할 수 있다.
@@ -54,6 +59,7 @@ public record WorkSearchCondition(
         String workType,
         String keyword,
         Boolean mine,
+        Long tagId,
         @Min(value = 1, message = "size는 1 이상이어야 합니다.")
                 @Max(
                         value = WorkSearchCondition.MAX_SIZE,
@@ -81,6 +87,7 @@ public record WorkSearchCondition(
                 toEnum(WorkType.class, workType),
                 KeywordSearch.normalize(keyword),
                 Boolean.TRUE.equals(mine) ? viewerId : null,
+                tagId,
                 size == null ? DEFAULT_SIZE : size,
                 sortOrder,
                 WorkCursor.decode(cursor, sortOrder));

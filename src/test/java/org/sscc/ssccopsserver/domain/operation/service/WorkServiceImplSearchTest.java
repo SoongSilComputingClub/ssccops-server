@@ -51,7 +51,10 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTagEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTagRelationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkTransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
@@ -450,6 +453,37 @@ class WorkServiceImplSearchTest {
         assertThat(idsOf(search(condition().mine(true).build()))).containsExactly(needle);
     }
 
+    /*
+     * 태그 필터 (#624) — 다른 필터와 AND로 겹치고 건수도 그 결과를 말한다. exists로 거르므로 태그가
+     * 둘 달린 업무가 두 번 나오지 않는다(join이었다면 행이 불었다).
+     */
+    @Test
+    void tagFilterCombinesWithOtherFiltersAndCounts() {
+        WorkTagEntity academic = entityManager.persist(WorkTagEntity.create("학술국"));
+        WorkTagEntity planning = entityManager.persist(WorkTagEntity.create("기획국"));
+        Long mineTagged = createWorkOwnedBy("내 학술 업무", owner);
+        Long othersTagged = createWorkOwnedBy("남의 학술 업무", registrant);
+        createWorkOwnedBy("태그 없는 내 업무", owner);
+        tag(mineTagged, academic, planning);
+        tag(othersTagged, academic);
+
+        WorkSearchResponse byTag = search(condition().tagId(academic.getId()).build());
+        assertThat(idsOf(byTag)).containsExactlyInAnyOrder(mineTagged, othersTagged);
+        assertThat(byTag.page().totalCount()).isEqualTo(2);
+        assertThat(byTag.page().overallCount()).isEqualTo(3);
+
+        assertThat(idsOf(search(condition().tagId(academic.getId()).mine(true).build())))
+                .containsExactly(mineTagged);
+    }
+
+    private void tag(Long workId, WorkTagEntity... tags) {
+        WorkEntity work = workRepository.findById(workId).orElseThrow();
+        for (WorkTagEntity tag : tags) {
+            entityManager.persist(WorkTagRelationEntity.create(work, tag));
+        }
+        entityManager.flush();
+    }
+
     // 건수도 필터 결과를 말한다 — filterConditions를 목록·건수 쿼리가 공유한다
     @Test
     void mineIsAppliedToCountsAsWell() {
@@ -795,11 +829,11 @@ class WorkServiceImplSearchTest {
 
     /*
      * 진행률은 업무 → 하위 업무 → 체크리스트로 3단이라 그대로 두면 N+1이 두 겹으로 쌓인다
-     * (DB-13). 목록 1 + 하위 업무 집계 1 + 체크리스트 집계 1 + 걸러진 건수 1 + 전체 건수 1로
+     * (DB-13). 목록 1 + 하위 업무 집계 1 + 체크리스트 집계 1 + 태그 1(#624) + 걸러진 건수 1 + 전체 건수 1로
      * 끝나는지 못 박아 둔다 — 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 그대로다.
      */
     @Test
-    void searchRunsFiveQueriesRegardlessOfRowCount() {
+    void searchRunsSixQueriesRegardlessOfRowCount() {
         for (int workIndex = 0; workIndex < 3; workIndex++) {
             Long workId = createWork("업무 " + workIndex, WorkType.EVENT, null, null).workId();
             for (int subWorkIndex = 0; subWorkIndex < 2; subWorkIndex++) {
@@ -822,7 +856,7 @@ class WorkServiceImplSearchTest {
         assertThat(response.works()).hasSize(3);
         assertThat(response.works())
                 .allSatisfy(card -> assertThat(card.subWorkCount()).isEqualTo(2));
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(5);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(6);
     }
 
     /*
@@ -986,6 +1020,7 @@ class WorkServiceImplSearchTest {
         private String workType;
         private String keyword;
         private Boolean mine;
+        private Long tagId;
         private Integer size;
         private String cursor;
         private String sort;
@@ -1015,6 +1050,11 @@ class WorkServiceImplSearchTest {
             return this;
         }
 
+        private ConditionBuilder tagId(Long value) {
+            this.tagId = value;
+            return this;
+        }
+
         private ConditionBuilder size(Integer value) {
             this.size = value;
             return this;
@@ -1032,7 +1072,15 @@ class WorkServiceImplSearchTest {
 
         private WorkSearchCondition build() {
             return new WorkSearchCondition(
-                    workStatus, excludeWorkStatus, workType, keyword, mine, size, cursor, sort);
+                    workStatus,
+                    excludeWorkStatus,
+                    workType,
+                    keyword,
+                    mine,
+                    tagId,
+                    size,
+                    cursor,
+                    sort);
         }
     }
 }

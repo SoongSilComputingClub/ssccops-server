@@ -21,6 +21,7 @@ public record WorkSearchQuery(
         WorkType workType,
         String keyword,
         Long personInChargeId,
+        Long tagId,
         int size,
         WorkSortOrder sort,
         WorkCursor cursor) {
@@ -54,6 +55,11 @@ public record WorkSearchQuery(
      */
     public boolean hasPersonInChargeFilter() {
         return personInChargeId != null;
+    }
+
+    // 태그 필터 (#624). 값이 없으면 조건 자체를 붙이지 않는다
+    public boolean hasTagFilter() {
+        return tagId != null;
     }
 
     public boolean hasCursor() {

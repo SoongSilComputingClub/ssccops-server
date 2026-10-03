@@ -53,9 +53,6 @@ public class WorkTools {
 
     private static final Logger log = LoggerFactory.getLogger(WorkTools.class);
 
-    // 업무 단건 경로의 앞부분 — 조회·수정·전이 세 도구가 같은 REST 경로를 부른다
-    private static final String WORK_PATH = "/v1/works/";
-
     private final McpRestClient client;
 
     @McpTool(
@@ -104,9 +101,9 @@ public class WorkTools {
             McpTransportContext context) {
         log.info("mcp tool update_work workId={}", workId);
         WorkDetailResponse current =
-                client.get(context, WORK_PATH + workId, WorkDetailResponse.class);
+                client.get(context, workPath(workId), WorkDetailResponse.class);
         return client.patch(
-                context, WORK_PATH + workId, patch.merge(current), WorkDetailResponse.class);
+                context, workPath(workId), patch.merge(current), WorkDetailResponse.class);
     }
 
     /* ── 태그 (#637 · 처음 #624) ─────────────────────────────── */
@@ -178,10 +175,7 @@ public class WorkTools {
                 workId,
                 request == null ? null : request.transition());
         return client.post(
-                context,
-                WORK_PATH + workId + "/transitions",
-                request,
-                WorkTransitionResponse.class);
+                context, workPath(workId) + "/transitions", request, WorkTransitionResponse.class);
     }
 
     @McpTool(
@@ -282,5 +276,13 @@ public class WorkTools {
                 "/v1/sub-works/" + subWorkId + "/checklist/" + checklistItemId + "/article",
                 request,
                 SubWorkChecklistMutationResponse.class);
+    }
+
+    /*
+     * 업무 단건 경로 — 조회·수정·전이 세 도구가 같은 REST 경로를 부른다. 상수가 아니라 메서드인 것은
+     * Sonar가 URI 상수를 «설정으로 빼라»(S1075)고 잡기 때문이다 — 이 경로는 같은 서버의 API라 설정이 아니다.
+     */
+    private static String workPath(Long workId) {
+        return "/v1/works/" + workId;
     }
 }

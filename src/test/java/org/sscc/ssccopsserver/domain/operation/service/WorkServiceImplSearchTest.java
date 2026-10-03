@@ -147,7 +147,8 @@ class WorkServiceImplSearchTest {
                         subWorkChecklistItemRepository,
                         memberService,
                         FIXED_CLOCK,
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        new AuditLog());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,

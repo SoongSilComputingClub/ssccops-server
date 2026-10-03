@@ -9,6 +9,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 
 public interface WorkService {
@@ -31,6 +33,13 @@ public interface WorkService {
      * 던진다. 응답은 조회(getWork)와 같은 WorkDetailResponse다.
      */
     WorkDetailResponse updateWork(Long workId, WorkUpdateRequest request);
+
+    /*
+     * 상태를 전이표대로 옮긴다 (#622 · ssccops#563). 완료는 완료가 아닌 하위 업무가 남아 있으면
+     * SUB_WORK_UNFINISHED(409), 표에 없는 순서는 TRANSITION_NOT_ALLOWED(409)다. 소프트 삭제된
+     * 업무는 없는 것으로 보고 WORK_NOT_FOUND를 던진다.
+     */
+    WorkTransitionResponse transitionWork(Long workId, WorkTransitionRequest request);
 
     /*
      * 상위 업무 목록을 조건에 따라 조회한다 (OPS-020). '운영 통합 › 업무' 화면의 카드 그리드가

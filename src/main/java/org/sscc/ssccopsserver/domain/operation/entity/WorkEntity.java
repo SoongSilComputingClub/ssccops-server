@@ -13,6 +13,9 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -90,5 +93,50 @@ public class WorkEntity {
 
     public void writeGeneralReview(String generalReview) {
         this.generalReview = generalReview;
+    }
+
+    /*
+     * 상태 전이 (#622 · ssccops#563). 전이표에 있는 조합만 통과하고 나머지는 전부
+     * TRANSITION_NOT_ALLOWED(409)다.
+     *
+     * 완료가 아닌 하위 업무 수는 다른 테이블(sub_work)에 있어 엔티티가 스스로 셀 수 없으므로
+     * 사실만 넘겨받는다 — 회의 종료(MeetingEntity.close)가 미처리 안건 여부를 받는 것과 같은
+     * 경계다. 수는 완료 전이에서만 쓰며, 다른 전이에서는 서비스가 세지 않고 0을 넘긴다.
+     */
+    public void applyTransition(WorkTransitionAction action, long unfinishedSubWorkCount) {
+        switch (action) {
+            case START -> move(WorkStatus.PLANNING, WorkStatus.IN_PROGRESS);
+            case REQUEST_REVIEW -> move(WorkStatus.IN_PROGRESS, WorkStatus.REVIEW);
+            case COMPLETE -> complete(unfinishedSubWorkCount);
+            case REVERT_REVIEW -> move(WorkStatus.REVIEW, WorkStatus.IN_PROGRESS);
+            case REOPEN -> move(WorkStatus.DONE, WorkStatus.IN_PROGRESS);
+        }
+    }
+
+    /*
+     * 완료. 하위 업무가 하나라도 완료가 아니면 막는다(하위 업무 0건이면 통과) — 운영진이 «경고만»
+     * 대신 고른 규칙이다(ssccops#563 · 남은 일이 완료 업무 밑에 묻힌다). 남은 수는 오류 메시지에
+     * 실어 화면이 그대로 보여 줄 수 있게 한다. 상태 검사를 먼저 하는 것은 «검토가 아닌 업무»에는
+     * 남은 수보다 순서 위반이 먼저 할 말이기 때문이다.
+     */
+    private void complete(long unfinishedSubWorkCount) {
+        requireStatus(WorkStatus.REVIEW);
+        if (unfinishedSubWorkCount > 0) {
+            throw new GeneralException(
+                    OperationErrorCode.SUB_WORK_UNFINISHED,
+                    "완료되지 않은 하위 업무가 " + unfinishedSubWorkCount + "건 남아 있습니다.");
+        }
+        this.workStatus = WorkStatus.DONE;
+    }
+
+    private void move(WorkStatus from, WorkStatus to) {
+        requireStatus(from);
+        this.workStatus = to;
+    }
+
+    private void requireStatus(WorkStatus required) {
+        if (this.workStatus != required) {
+            throw new GeneralException(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        }
     }
 }

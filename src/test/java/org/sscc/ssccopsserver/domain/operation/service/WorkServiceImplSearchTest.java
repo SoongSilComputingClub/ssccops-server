@@ -48,13 +48,13 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.entity.OperationTagEntity;
+import org.sscc.ssccopsserver.domain.operation.entity.OperationTagRelationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkChecklistItemEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.TransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
-import org.sscc.ssccopsserver.domain.operation.entity.WorkTagEntity;
-import org.sscc.ssccopsserver.domain.operation.entity.WorkTagRelationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkTransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
@@ -454,13 +454,13 @@ class WorkServiceImplSearchTest {
     }
 
     /*
-     * 태그 필터 (#624) — 다른 필터와 AND로 겹치고 건수도 그 결과를 말한다. exists로 거르므로 태그가
+     * 태그 필터 (#637 · 운영 건의 태그) — 다른 필터와 AND로 겹치고 건수도 그 결과를 말한다. exists로 거르므로 태그가
      * 둘 달린 업무가 두 번 나오지 않는다(join이었다면 행이 불었다).
      */
     @Test
     void tagFilterCombinesWithOtherFiltersAndCounts() {
-        WorkTagEntity academic = entityManager.persist(WorkTagEntity.create("학술국"));
-        WorkTagEntity planning = entityManager.persist(WorkTagEntity.create("기획국"));
+        OperationTagEntity academic = entityManager.persist(OperationTagEntity.create("학술국"));
+        OperationTagEntity planning = entityManager.persist(OperationTagEntity.create("기획국"));
         Long mineTagged = createWorkOwnedBy("내 학술 업무", owner);
         Long othersTagged = createWorkOwnedBy("남의 학술 업무", registrant);
         createWorkOwnedBy("태그 없는 내 업무", owner);
@@ -476,10 +476,10 @@ class WorkServiceImplSearchTest {
                 .containsExactly(mineTagged);
     }
 
-    private void tag(Long workId, WorkTagEntity... tags) {
+    private void tag(Long workId, OperationTagEntity... tags) {
         WorkEntity work = workRepository.findById(workId).orElseThrow();
-        for (WorkTagEntity tag : tags) {
-            entityManager.persist(WorkTagRelationEntity.create(work, tag));
+        for (OperationTagEntity tag : tags) {
+            entityManager.persist(OperationTagRelationEntity.create(work.getOperation(), tag));
         }
         entityManager.flush();
     }
@@ -829,7 +829,7 @@ class WorkServiceImplSearchTest {
 
     /*
      * 진행률은 업무 → 하위 업무 → 체크리스트로 3단이라 그대로 두면 N+1이 두 겹으로 쌓인다
-     * (DB-13). 목록 1 + 하위 업무 집계 1 + 체크리스트 집계 1 + 태그 1(#624) + 걸러진 건수 1 + 전체 건수 1로
+     * (DB-13). 목록 1 + 하위 업무 집계 1 + 체크리스트 집계 1 + 태그 1(#637) + 걸러진 건수 1 + 전체 건수 1로
      * 끝나는지 못 박아 둔다 — 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 그대로다.
      */
     @Test

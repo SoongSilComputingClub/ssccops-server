@@ -8,6 +8,9 @@ import org.slf4j.LoggerFactory;
 import org.springaicommunity.mcp.annotation.McpTool;
 import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagAssignRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagAssignmentResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistMutationResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
@@ -20,9 +23,6 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
-import org.sscc.ssccopsserver.domain.operation.dto.WorkTagAssignRequest;
-import org.sscc.ssccopsserver.domain.operation.dto.WorkTagAssignmentResponse;
-import org.sscc.ssccopsserver.domain.operation.dto.WorkTagResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.global.mcp.client.McpListResult;
@@ -58,12 +58,11 @@ public class WorkTools {
     @McpTool(
             name = "list_works",
             description =
-                    "업무(행사·상시·정례 운영 단위) 목록을 조건으로 찾는다. 조건은 전부 선택이며"
-                            + " 비우면 전체다 — workStatus(PLANNING·IN_PROGRESS·REVIEW·DONE 중 하나),"
-                            + " excludeWorkStatus(뺄 상태 목록 — 완료를 빼고 보려면 [\"DONE\"]),"
-                            + " workType, keyword(제목), mine(true면 내가 담당), tagId(그 태그가 달린 업무만 ·"
-                            + " id는 list_work_tags), size(기본 20·최대 100), sort. 여럿 주면 전부 걸린다."
-                            + " 하위 업무는 list_sub_works가 따로 답한다.",
+                    "업무(행사·상시·정례 운영 단위) 목록을 조건으로 찾는다. 조건은 전부 선택이며 비우면 전체다 —"
+                        + " workStatus(PLANNING·IN_PROGRESS·REVIEW·DONE 중 하나), excludeWorkStatus(뺄"
+                        + " 상태 목록 — 완료를 빼고 보려면 [\"DONE\"]), workType, keyword(제목), mine(true면 내가"
+                        + " 담당), tagId(그 태그가 달린 업무만 · id는 list_operation_tags의 operationTagId),"
+                        + " size(기본 20·최대 100), sort. 여럿 주면 전부 걸린다. 하위 업무는 list_sub_works가 따로 답한다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public McpListResult<WorkListItemResponse> listWorks(
             @McpToolParam(description = "검색 조건. 전부 선택이며 비우면 전체", required = false)
@@ -107,46 +106,52 @@ public class WorkTools {
                 context, "/v1/works/" + workId, patch.merge(current), WorkDetailResponse.class);
     }
 
-    /* ── 태그 (#624) ─────────────────────────────────────────── */
+    /* ── 태그 (#637 · 처음 #624) ─────────────────────────────── */
 
     /*
+     * 태그는 운영 건(oper)에 달린다 — 업무·하위 업무·회의가 같은 태그 목록을 쓰고, 지정은 각 상세의
+     * operationId로 한다. 업무 도구 옆에 두는 것은 태그 관리·지정 권한이 업무와 같은 WORK_MANAGE라서다.
+     *
      * 태그를 만들거나 이름을 바꾸거나 지우는 도구는 없다 — 폼 라벨(list_form_labels)과 같은 판단이다.
      * 태그 목록은 운영진이 화면에서 손대는 기준정보이고, 모델이 «학술국»·«학술»을 따로 만들기 시작하면
      * 태그가 업무명 접두처럼 다시 난잡해진다(ssccops#565가 기각한 «입력하면 태그 생성»).
      */
     @McpTool(
-            name = "list_work_tags",
+            name = "list_operation_tags",
             description =
-                    "업무 태그 목록(이름 오름차순 · 각 태그가 달린 업무 수 usageCount 포함). 주관 국(학술국 등)도"
-                            + " 태그다. **assign_work_tags에 넘길 workTagId와 list_works의 tagId가 여기서"
+                    "운영 태그 목록(이름 오름차순 · 각 태그가 달린 운영 건 수 usageCount — 업무·하위 업무·회의 합계)."
+                            + " 주관 국(학술국 등)도 태그다. **assign_operation_tags에 넘길 operationTagId와"
+                            + " list_works·list_sub_works·list_meetings·list_operations의 tagId가 여기서"
                             + " 나온다.** 태그를 새로 만들거나 지우는 도구는 없다 — 화면에서 한다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<WorkTagResponse> listWorkTags(McpTransportContext context) {
-        log.info("mcp tool list_work_tags");
-        return client.getList(context, "/v1/work-tags", null, WorkTagResponse.class).items();
+    public List<OperationTagResponse> listOperationTags(McpTransportContext context) {
+        log.info("mcp tool list_operation_tags");
+        return client.getList(context, "/v1/operation-tags", null, OperationTagResponse.class)
+                .items();
     }
 
     @McpTool(
-            name = "assign_work_tags",
+            name = "assign_operation_tags",
             description =
-                    "업무에 달린 태그를 tagIds로 **통째로 교체한다.** 요청에 없는 태그는 떨어지고 빈 배열이면"
-                            + " 전부 떨어진다 — 하나를 더하려면 **지금 달린 것들을 함께 보내야 한다**(get_work의"
-                            + " tags를 먼저 읽을 것). 같은 요청을 두 번 보내도 결과가 같고 유지되는 지정은 지정"
-                            + " 시각이 보존된다. 없는 태그가 섞이면 404 WORK_TAG_NOT_FOUND. 업무 관리(WORK_MANAGE)"
-                            + " 권한.",
+                    "운영 건(업무·하위 업무·회의)에 달린 태그를 tagIds로 **통째로 교체한다.** operationId는"
+                        + " get_work·get_sub_work·get_meeting 응답의"
+                        + " operationId다(workId·subWorkId·meetingId가 아니다). 요청에 없는 태그는 떨어지고 빈 배열이면"
+                        + " 전부 떨어진다 — 하나를 더하려면 **지금 달린 것들을 함께 보내야 한다**(상세의 tags를 먼저 읽을 것). 같은 요청을 두"
+                        + " 번 보내도 결과가 같고 유지되는 지정은 지정 시각이 보존된다. 없는 태그가 섞이면 404"
+                        + " OPERATION_TAG_NOT_FOUND. 업무 관리(WORK_MANAGE) 권한.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
-    public List<WorkTagAssignmentResponse> assignWorkTags(
-            @McpToolParam(description = "업무 id") Long workId,
-            @McpToolParam(description = "tagIds — 이 업무에 달아 둘 태그 id 전부. 빈 배열이면 전부 해제")
-                    WorkTagAssignRequest request,
+    public List<OperationTagAssignmentResponse> assignOperationTags(
+            @McpToolParam(description = "운영 건 id — 상세 응답의 operationId") Long operationId,
+            @McpToolParam(description = "tagIds — 이 운영 건에 달아 둘 태그 id 전부. 빈 배열이면 전부 해제")
+                    OperationTagAssignRequest request,
             McpTransportContext context) {
-        log.info("mcp tool assign_work_tags workId={}", workId);
-        WorkTagAssignmentResponse[] assignments =
+        log.info("mcp tool assign_operation_tags operationId={}", operationId);
+        OperationTagAssignmentResponse[] assignments =
                 client.put(
                         context,
-                        "/v1/works/" + workId + "/tags",
+                        "/v1/operations/" + operationId + "/tags",
                         request,
-                        WorkTagAssignmentResponse[].class);
+                        OperationTagAssignmentResponse[].class);
         return assignments == null ? List.of() : Arrays.asList(assignments);
     }
 

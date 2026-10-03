@@ -195,6 +195,17 @@ public class SubWorkRepositoryImpl implements SubWorkRepositoryCustom {
             conditions.append(" and o.personInCharge.id = :personInChargeId");
             parameters.put("personInChargeId", query.personInChargeId());
         }
+        /*
+         * 태그 필터 (#637). o는 하위 업무 자신의 oper다 — 상위 업무의 태그를 물려받지 않는다. join이
+         * 아니라 exists인 이유는 업무 목록(WorkRepositoryImpl)과 같다: 페이징 + fetch join 쿼리에 관계를
+         * join하면 태그 수만큼 행이 불어 커서·건수가 어긋난다. countMatching에도 같은 조건이 걸린다.
+         */
+        if (query.hasTagFilter()) {
+            conditions.append(
+                    " and exists (select 1 from OperationTagRelationEntity r"
+                            + " where r.operation = o and r.tag.id = :tagId)");
+            parameters.put("tagId", query.tagId());
+        }
         return conditions.toString();
     }
 

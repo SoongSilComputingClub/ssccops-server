@@ -11,6 +11,7 @@ import org.sscc.ssccopsserver.domain.auth.dto.AuthSessionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationHubResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkDetailResponse;
@@ -59,13 +60,21 @@ public class OperationTools {
     @McpTool(
             name = "list_operations",
             description =
-                    "운영 통합 목록 — 업무·하위 업무·회의를 한 번에 돌려준다(각 목록의 첫 페이지 요약)."
-                            + " 전체 현황을 훑을 때 쓴다. 권한 WORK_MANAGE 필요 — 담당자 권한(WORK_READ)만"
-                            + " 있으면 403이므로 그때는 list_sub_works를 쓴다.",
+                    "운영 통합 목록 — 업무·하위 업무·회의를 한 번에 돌려준다(페이징 없는 전량 · 행마다 tags)."
+                            + " 전체 현황을 훑을 때 쓴다. 조건 tagId(선택 · list_operation_tags의"
+                            + " operationTagId)를 주면 세 목록 모두 그 태그가 달린 행만 남는다. 권한 WORK_MANAGE"
+                            + " 필요 — 담당자 권한(WORK_READ)만 있으면 403이므로 그때는 list_sub_works를 쓴다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public OperationHubResponse listOperations(McpTransportContext context) {
+    public OperationHubResponse listOperations(
+            @McpToolParam(description = "검색 조건(tagId). 선택이며 비우면 전체", required = false)
+                    OperationTagCondition condition,
+            McpTransportContext context) {
         log.info("mcp tool list_operations");
-        return client.get(context, "/v1/operations", OperationHubResponse.class);
+        String path =
+                condition == null || condition.tagId() == null
+                        ? "/v1/operations"
+                        : "/v1/operations?tagId=" + condition.tagId();
+        return client.get(context, path, OperationHubResponse.class);
     }
 
     @McpTool(
@@ -86,9 +95,10 @@ public class OperationTools {
                     "하위 업무 목록 — 조건(workStatus: PLANNING·IN_PROGRESS·REVIEW·DONE / approvalStatus:"
                         + " NOT_REQUIRED·PENDING·APPROVED·REJECTED·REAPPROVAL_REQUIRED / isOverdue"
                         + " / dueBefore(ISO 일시) / isReadyForReview / isReviewStale / keyword /"
-                        + " mine=true는 내 담당만 / sort: dueAt·-dueAt·createdAt·-createdAt /"
-                        + " size≤100)으로 거른다. 커서 페이징을 최대 3페이지까지만 따라가며 hasMore면 nextCursor를 조건의"
-                        + " cursor에 넣어 이어 부른다. 권한 WORK_READ.",
+                        + " mine=true는 내 담당만 / tagId(list_operation_tags의 operationTagId · 하위 업무"
+                        + " 자신에 달린 태그) / sort: dueAt·-dueAt·createdAt·-createdAt / size≤100)으로 거른다."
+                        + " 커서 페이징을 최대 3페이지까지만 따라가며 hasMore면 nextCursor를 조건의 cursor에 넣어 이어 부른다. 권한"
+                        + " WORK_READ.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public McpListResult<SubWorkSummaryResponse> listSubWorks(
             @McpToolParam(description = "검색 조건. 전부 선택이며 비우면 전체", required = false)
@@ -115,11 +125,17 @@ public class OperationTools {
             name = "list_meetings",
             description =
                     "회의 목록 전체 — 제목·분류·상태(SCHEDULED·IN_PROGRESS·MINUTES·CLOSED·CANCELED)·"
-                            + "주재자·장소·안건 수·일시. 페이징 없이 전량이다. 권한 MEETING_READ.",
+                            + "주재자·장소·안건 수·일시·태그. 페이징 없이 전량이다. 조건 tagId(선택 ·"
+                            + " list_operation_tags의 operationTagId)를 주면 그 태그가 달린 회의만. 권한"
+                            + " MEETING_READ.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<MeetingListItemResponse> listMeetings(McpTransportContext context) {
+    public List<MeetingListItemResponse> listMeetings(
+            @McpToolParam(description = "검색 조건(tagId). 선택이며 비우면 전체", required = false)
+                    OperationTagCondition condition,
+            McpTransportContext context) {
         log.info("mcp tool list_meetings");
-        return client.getList(context, "/v1/meetings", null, MeetingListItemResponse.class).items();
+        return client.getList(context, "/v1/meetings", condition, MeetingListItemResponse.class)
+                .items();
     }
 
     @McpTool(

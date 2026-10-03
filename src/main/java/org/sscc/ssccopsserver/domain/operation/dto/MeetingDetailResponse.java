@@ -25,6 +25,9 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationType;
  * 회의 단위 회의록 본문(내부 상세본·제출 요약본)은 싣지 않는다 (#595). 그 자리였던
  * insd_mtg_dtl_cn·otsd_mtg_dtl_cn은 값을 쓰는 경로가 없어 늘 null로 나갔고 V25에서 지웠다.
  * 회의 결과는 안건별 결과(agendas[].resultContent)가 담는다.
+ *
+ * tags는 이 회의의 운영 건(operationId)에 달린 태그 칩이다 (#637 · 이름 오름차순 · 없으면 빈 배열).
+ * 지정 교체는 PUT /v1/operations/{operationId}/tags가 맡는다.
  */
 public record MeetingDetailResponse(
         Long meetingId,
@@ -42,12 +45,15 @@ public record MeetingDetailResponse(
         String location,
         List<MeetingAgendaResponse> agendas,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        List<OperationTagSummaryResponse> tags) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
     public static MeetingDetailResponse of(
-            MeetingEntity meeting, List<MeetingAgendaResponse> agendas) {
+            MeetingEntity meeting,
+            List<MeetingAgendaResponse> agendas,
+            List<OperationTagSummaryResponse> tags) {
         OperationEntity operation = meeting.getOperation();
         return new MeetingDetailResponse(
                 meeting.getId(),
@@ -65,7 +71,8 @@ public record MeetingDetailResponse(
                 meeting.getLocation(),
                 agendas,
                 toOffsetDateTime(operation.getCreatedAt()),
-                toOffsetDateTime(operation.getUpdatedAt()));
+                toOffsetDateTime(operation.getUpdatedAt()),
+                tags);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

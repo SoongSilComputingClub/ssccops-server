@@ -8,6 +8,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -25,6 +26,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.service.MeetingService;
 import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
@@ -67,11 +69,15 @@ public class MeetingController {
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 
-    // 회의 목록 조회(신규). '회의' 화면 진입 시 카드 그리드를 채운다. 페이징이 없어 page 봉투를 싣지 않는다
+    /*
+     * 회의 목록 조회(신규). '회의' 화면 진입 시 카드 그리드를 채운다. 페이징이 없어 page 봉투를 싣지
+     * 않는다. tagId(#637)를 주면 그 태그가 달린 회의만 — 업무·하위 업무 목록의 tagId와 같은 값이다.
+     */
     @RequireAuthority(AuthorityCode.MEETING_READ)
     @GetMapping
-    public ApiResponse<List<MeetingListItemResponse>> listMeetings() {
-        return ApiResponse.success(meetingService.listMeetings());
+    public ApiResponse<List<MeetingListItemResponse>> listMeetings(
+            @ModelAttribute OperationTagCondition condition) {
+        return ApiResponse.success(meetingService.listMeetings(condition.tagId()));
     }
 
     // 회의 상세 조회(OPS-025). '회의 상세' 화면이 진입 시 호출한다. 소프트 삭제된 건은 서비스가 404로 막는다(LY-02)

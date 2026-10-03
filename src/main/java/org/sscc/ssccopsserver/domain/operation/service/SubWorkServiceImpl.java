@@ -7,6 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import jakarta.persistence.EntityManager;
@@ -19,6 +20,7 @@ import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalQuorumResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistHistoryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemSaveRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkChecklistItemUpdateRequest;
@@ -314,7 +316,8 @@ public class SubWorkServiceImpl implements SubWorkService {
                                 .findFirstBySubWorkOrderByRejectedAtDescIdDesc(subWork)
                                 .orElse(null)),
                 canDecideOn(subWork, viewer),
-                authorizerAuthorityNameOf(subWorkType));
+                authorizerAuthorityNameOf(subWorkType),
+                tagsOf(List.of(subWork)).getOrDefault(subWork.getOperation().getId(), List.of()));
     }
 
     /*
@@ -469,6 +472,7 @@ public class SubWorkServiceImpl implements SubWorkService {
             List<SubWorkEntity> rows, Instant overdueBefore, Instant reviewStaleBefore) {
         Map<Long, SubWorkChecklistProgress> progressBySubWorkId = checklistProgressOf(rows);
         Map<Long, Instant> lastRequestedAtBySubWorkId = lastReviewRequestsOf(rows);
+        Map<Long, List<OperationTagSummaryResponse>> tagsByOperationId = tagsOf(rows);
         return rows.stream()
                 .map(
                         subWork -> {
@@ -484,9 +488,26 @@ public class SubWorkServiceImpl implements SubWorkService {
                                     subWork.isDelayedBefore(overdueBefore),
                                     subWork.isReviewStaleBefore(
                                             lastRequestedAtBySubWorkId.get(subWork.getId()),
-                                            reviewStaleBefore));
+                                            reviewStaleBefore),
+                                    tagsByOperationId.getOrDefault(
+                                            subWork.getOperation().getId(), List.of()));
                         })
                 .toList();
+    }
+
+    /*
+     * 하위 업무별 태그 칩 (#637). 태그는 하위 업무 자신의 운영 건(oper)에 달리므로 키가 oper_id다.
+     * 이번 페이지 전부를 한 번에 읽어 나눈다 — 행마다 읽으면 N+1이다 (DB-13). 목록·대시보드·운영
+     * 통합·상세가 전부 이 하나를 지나므로 어느 화면도 칩을 빠뜨리지 않는다.
+     */
+    private Map<Long, List<OperationTagSummaryResponse>> tagsOf(List<SubWorkEntity> rows) {
+        if (rows.isEmpty()) {
+            // IN () 은 DB에 따라 문법 오류이므로 애초에 쿼리를 보내지 않는다
+            return Map.of();
+        }
+        return OperationTagSummaryResponse.groupByOperationId(
+                operationRepository.findTagRelationsByOperationIds(
+                        rows.stream().map(subWork -> subWork.getOperation().getId()).toList()));
     }
 
     /*
@@ -884,11 +905,20 @@ public class SubWorkServiceImpl implements SubWorkService {
     /*
      * 운영 통합(OPS-001)의 하위 업무 전량. 진행률·지연 판정은 대시보드·목록 조회와 같은
      * 집계·판정을 그대로 쓴다 — 스코프만 전체로 넓힌 것이라 새 규칙이 없다.
-     * 쿼리는 목록 1 + 체크리스트 집계 1로 2회다 (DB-13).
+     * 쿼리는 목록 1 + 체크리스트 집계 1 + 태그 1(+ 검토 중인 건이 있으면 검토요청 이력 1)이다
+     * (DB-13). 태그 필터(#637)는 그 태그의 운영 건 id를 한 번 더 읽어 메모리에서 거른다 — 전량
+     * 목록이라 어차피 전부 읽고, 집계는 거른 행에 대해서만 돈다.
      */
     @Override
-    public List<SubWorkSummaryResponse> listSubWorks() {
+    public List<SubWorkSummaryResponse> listSubWorks(Long tagId) {
         List<SubWorkEntity> rows = subWorkRepository.findAllAlive();
+        if (tagId != null) {
+            Set<Long> tagged = Set.copyOf(operationRepository.findOperationIdsByTagId(tagId));
+            rows =
+                    rows.stream()
+                            .filter(subWork -> tagged.contains(subWork.getOperation().getId()))
+                            .toList();
+        }
         return toSummaries(
                 rows, deadlinePolicy.overdueBefore(), deadlinePolicy.reviewStaleBefore());
     }

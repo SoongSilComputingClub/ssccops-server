@@ -16,6 +16,9 @@ import java.util.List;
  *
  * 커서 페이징이 없다 — 목록과 트리가 같은 데이터를 다른 모양으로 그리는 화면이라 페이지를
  * 나누면 트리가 잘린다(회의 목록 OPS-031이 페이징을 두지 않은 것과 같은 판단).
+ *
+ * 세 배열의 행마다 tags(자기 운영 건에 달린 태그 칩 · #637)가 실린다 — 업무·하위 업무·회의가 같은
+ * 태그 목록(/v1/operation-tags)을 쓰므로 칩 하나로 세 탭을 같은 기준으로 거른다(?tagId=).
  */
 public record OperationHubResponse(
         List<WorkListItemResponse> works,

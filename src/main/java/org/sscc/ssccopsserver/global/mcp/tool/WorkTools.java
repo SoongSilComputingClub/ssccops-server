@@ -53,9 +53,10 @@ public class WorkTools {
             name = "list_works",
             description =
                     "업무(행사·상시·정례 운영 단위) 목록을 조건으로 찾는다. 조건은 전부 선택이며"
-                            + " 비우면 전체다 — workStatus(PLANNING·IN_PROGRESS·REVIEW·DONE),"
+                            + " 비우면 전체다 — workStatus(PLANNING·IN_PROGRESS·REVIEW·DONE 중 하나),"
+                            + " excludeWorkStatus(뺄 상태 목록 — 완료를 빼고 보려면 [\"DONE\"]),"
                             + " workType, keyword(제목), mine(true면 내가 담당), size(기본 20·최대 100),"
-                            + " sort. 하위 업무는 list_sub_works가 따로 답한다.",
+                            + " sort. 둘 다 주면 둘 다 걸린다. 하위 업무는 list_sub_works가 따로 답한다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public McpListResult<WorkListItemResponse> listWorks(
             @McpToolParam(description = "검색 조건. 전부 선택이며 비우면 전체", required = false)

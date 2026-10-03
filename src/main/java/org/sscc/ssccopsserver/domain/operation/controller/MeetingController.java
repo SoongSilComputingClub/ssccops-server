@@ -5,6 +5,7 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -76,7 +77,7 @@ public class MeetingController {
     @RequireAuthority(AuthorityCode.MEETING_READ)
     @GetMapping
     public ApiResponse<List<MeetingListItemResponse>> listMeetings(
-            @ModelAttribute OperationTagCondition condition) {
+            @ParameterObject @ModelAttribute OperationTagCondition condition) {
         return ApiResponse.success(meetingService.listMeetings(condition.tagId()));
     }
 

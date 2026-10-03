@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.operation.controller;
 
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,7 +39,7 @@ public class OperationController {
 
     @GetMapping
     public ApiResponse<OperationHubResponse> getOperationHub(
-            @ModelAttribute OperationTagCondition condition) {
+            @ParameterObject @ModelAttribute OperationTagCondition condition) {
         return ApiResponse.success(operationService.getOperationHub(condition.tagId()));
     }
 }

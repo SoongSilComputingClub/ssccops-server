@@ -5,8 +5,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
@@ -87,13 +89,38 @@ class FileReferenceUpsertEraseTest {
     void deletesReferenceAndErasesObject() {
         FileReferenceEntity existing =
                 FileReferenceEntity.of(FileTargetType.RAG_DOCUMENT, TARGET_ID, OLD_KEY);
-        when(repository.findByTargetTypeAndTargetId(FileTargetType.RAG_DOCUMENT, TARGET_ID))
-                .thenReturn(Optional.of(existing));
+        when(repository.findAllByTargetTypeAndTargetIdOrderByIdAsc(
+                        FileTargetType.RAG_DOCUMENT, TARGET_ID))
+                .thenReturn(List.of(existing));
 
         service.deleteByTarget(FileTargetType.RAG_DOCUMENT, TARGET_ID);
 
-        verify(repository).delete(existing);
-        verify(fileEraser).eraseAfterCommit(OLD_KEY);
+        verify(repository).deleteAll(List.of(existing));
+        verify(fileEraser).eraseAfterCommit(List.of(OLD_KEY));
+    }
+
+    /*
+     * **다건 대상도 전부 지운다** (#638). 단건 질의이던 동안 갤러리·운영 첨부처럼 대상당 여러 건인
+     * 대상에 부르면 둘째 행에서 IncorrectResultSizeDataAccessException이었다 — 저장소를 목으로 두면
+     * 그 예외가 나지 않으므로, 여기서는 «목록 질의로 찾고 그 전부를 지우라고 했는가»를 본다.
+     */
+    @Test
+    void deletesEveryReferenceOfAMultiFileTarget() {
+        String firstKey = "operations/7/first.pdf";
+        String secondKey = "operations/7/second.jpg";
+        List<FileReferenceEntity> references =
+                List.of(
+                        FileReferenceEntity.of(FileTargetType.OPERATION, TARGET_ID, firstKey),
+                        FileReferenceEntity.of(FileTargetType.OPERATION, TARGET_ID, secondKey));
+        when(repository.findAllByTargetTypeAndTargetIdOrderByIdAsc(
+                        FileTargetType.OPERATION, TARGET_ID))
+                .thenReturn(references);
+
+        service.deleteByTarget(FileTargetType.OPERATION, TARGET_ID);
+
+        verify(repository).deleteAll(references);
+        verify(fileEraser).eraseAfterCommit(List.of(firstKey, secondKey));
+        verify(repository, never()).findByTargetTypeAndTargetId(any(), anyLong());
     }
 
     /*
@@ -102,13 +129,15 @@ class FileReferenceUpsertEraseTest {
      */
     @Test
     void deleteIsQuietWhenThereIsNoReference() {
-        when(repository.findByTargetTypeAndTargetId(FileTargetType.RAG_DOCUMENT, TARGET_ID))
-                .thenReturn(Optional.empty());
+        when(repository.findAllByTargetTypeAndTargetIdOrderByIdAsc(
+                        FileTargetType.RAG_DOCUMENT, TARGET_ID))
+                .thenReturn(List.of());
 
         service.deleteByTarget(FileTargetType.RAG_DOCUMENT, TARGET_ID);
 
+        verify(repository, never()).deleteAll(any());
         verify(repository, never()).delete(any(FileReferenceEntity.class));
-        verify(fileEraser, never()).eraseAfterCommit(any(String.class));
+        verifyNoInteractions(fileEraser);
     }
 
     /** 부르지 않은 것도 못 박아 둔다 — 조회 키가 어긋나면 위 단언이 통과해도 실제로는 안 지운다 */

@@ -10,13 +10,13 @@ import org.sscc.ssccopsserver.domain.file.entity.FileReferenceEntity;
 public interface FileReferenceRepository extends JpaRepository<FileReferenceEntity, Long> {
 
     /*
-     * 대상 하나에 붙은 참조 (#220). 지금 대상은 회차 하나뿐이고 회차당 1건이라 단건이다 —
-     * 재업로드(UPSERT)가 갈아 끼울 대상을 찾는 자리이자, 회차 상세(#135)가 사진 유무를 싣는
-     * 자리다.
+     * 대상 하나에 붙은 참조 (#220). **대상당 1건인 대상 전용이다** — 회차 인증사진(SESSION)과
+     * 규정 문서 원본(RAG_DOCUMENT). 재업로드(UPSERT)가 갈아 끼울 대상을 찾는 자리이자, 회차
+     * 상세(#135)가 사진 유무를 싣는 자리다.
      *
-     * **대상당 여러 건이 정상인 대상이 생기면 여기에 목록 질의를 더한다.** 그때 이 단건 질의를
-     * 그 대상에 쓰면 두 번째 행부터 조용히 사라지므로, 새 대상을 열 때 반드시 지나야 하는
-     * 자리로 남겨 둔다.
+     * **대상당 여러 건이 정상인 대상(CONTENT_POST·OPERATION)에는 아래 목록 질의를 쓴다.** 이 단건
+     * 질의를 그 대상에 쓰면 두 번째 행부터 IncorrectResultSizeDataAccessException이다 — 대상의
+     * 전부를 지우는 FileReferenceService.deleteByTarget이 그래서 목록 질의로 옮겨 갔다(#638).
      */
     Optional<FileReferenceEntity> findByTargetTypeAndTargetId(
             FileTargetType targetType, Long targetId);

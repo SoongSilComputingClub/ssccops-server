@@ -65,7 +65,11 @@ public class ContentPostImageServiceImpl implements ContentPostImageService {
                 fileReferenceService.add(FileTargetType.CONTENT_POST, postId, objectKey);
 
         String uploadUrl =
-                filePresigner.presignPut(objectKey, imageType.getContentType(), request.fileSize());
+                filePresigner.presignPut(
+                        objectKey,
+                        imageType.getContentType(),
+                        request.fileSize(),
+                        filePresigner.maxUploadSizeBytes());
         return new ContentImageUploadResponse(
                 reference.getId(),
                 uploadUrl,

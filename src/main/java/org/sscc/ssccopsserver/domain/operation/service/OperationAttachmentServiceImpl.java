@@ -39,7 +39,8 @@ import lombok.RequiredArgsConstructor;
  * 종류별로 갈리는 것은 권한뿐이고 그것은 OperationAttachmentAccessPolicy가 한다.
  *
  * ── 크기 상한 ─────────────────────────────────────────────
- * 이미지 10MB(FilePresigner)와 별개로 25MB — 발표 자료·압축이 흔하다. 실제 강제는 서명의 Content-Length.
+ * 이미지 10MB(FilePresigner)와 별개로 25MB — 발표 자료·압축이 흔하다. 아래 413은 안내이고, 강제는 이 상한을
+ * 받아 넘으면 서명하지 않는 FilePresigner.presignPut과 서명의 Content-Length다(#638).
  *
  * ── 이력이 아니라 감사 ────────────────────────────────────
  * 첨부는 흐름을 바꾸지 않는 «추가»라 이력 테이블 대상이 아니다(ADR-0042). 지운 것만 감사 로그에 남긴다.
@@ -78,8 +79,7 @@ public class OperationAttachmentServiceImpl implements OperationAttachmentServic
         }
 
         String objectKey =
-                KEY_FORMAT.formatted(
-                        operationId, UUID.randomUUID() + "." + type.primaryExtension());
+                KEY_FORMAT.formatted(operationId, UUID.randomUUID() + "." + type.getExtension());
         FileReferenceEntity reference =
                 fileReferenceService.addAttachment(
                         FileTargetType.OPERATION,
@@ -90,7 +90,11 @@ public class OperationAttachmentServiceImpl implements OperationAttachmentServic
                         performer.getId(),
                         clock.instant());
         String uploadUrl =
-                filePresigner.presignPut(objectKey, type.getContentType(), request.fileSize());
+                filePresigner.presignPut(
+                        objectKey,
+                        type.getContentType(),
+                        request.fileSize(),
+                        MAX_ATTACHMENT_SIZE_BYTES);
         return new OperationAttachmentUploadResponse(
                 reference.getId(),
                 uploadUrl,

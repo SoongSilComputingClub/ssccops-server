@@ -58,11 +58,6 @@ public class FileReferenceService {
                 fileId, targetType, targetId);
     }
 
-    /*
-     * 참조 한 건 추가 (ssccops#381). upsert와 달리 옛 행을 갈아 끼우지 않는다 — 다중 첨부 대상의
-     * «한 장 더»다. 오브젝트가 실제로 올라왔는지는 여기서도 모른다(발급형 업로드는 PUT이
-     * 서버를 지나지 않는다) — 올라오지 않은 행은 대상 도메인이 지우는 경로로 정리한다.
-     */
     /** 첨부 한 건 — 메타를 함께 (#493). 대상당 여러 건이 정상이라 upsert가 아니다 */
     @Transactional
     public FileReferenceEntity addAttachment(
@@ -84,9 +79,16 @@ public class FileReferenceService {
                         now));
     }
 
+    /*
+     * 참조 한 건 추가 (ssccops#381). upsert와 달리 옛 행을 갈아 끼우지 않는다 — 다중 첨부 대상의
+     * «한 장 더»다. 오브젝트가 실제로 올라왔는지는 여기서도 모른다(발급형 업로드는 PUT이
+     * 서버를 지나지 않는다) — 올라오지 않은 행은 대상 도메인이 지우는 경로로 정리한다.
+     *
+     * flush가 필요 없다 — 식별자가 IDENTITY라 save가 곧 INSERT이고 id가 그 자리에서 나온다.
+     */
     @Transactional
     public FileReferenceEntity add(FileTargetType targetType, Long targetId, String objectKey) {
-        return fileReferenceRepository.saveAndFlush(
+        return fileReferenceRepository.save(
                 FileReferenceEntity.of(targetType, targetId, objectKey));
     }
 
@@ -115,6 +117,11 @@ public class FileReferenceService {
      *
      * <p><b>오브젝트는 커밋 뒤에 지운다</b>({@link FileEraser}) — 안에서 지우면 롤백된 삭제 뒤에 «행은 있는데 파일이 없는» 조합이 남는다.
      *
+     * <p><b>대상의 참조 전부를 지운다</b> (#638). 처음에는 단건 {@link #findByTarget}으로 찾아 대상당 1건인 대상(규정 문서)만 맞았고,
+     * 다건 대상(`CONTENT_POST`·`OPERATION`)에 부르면 2건부터 {@code
+     * IncorrectResultSizeDataAccessException}이었다. 목록 조회는 단건 대상도 그대로 처리하므로 «단건 대상 전용»이라는 제약을 문서로 남기지
+     * 않고 없앴다.
+     *
      * <p>참조가 없으면 아무 일도 하지 않는다. 업로드가 중간에 실패해 행만 있는 대상이 정상적으로 있을 수 있고, 그것은 지울 것이 없다는 뜻이지 오류가 아니다.
      *
      * <p><b>소프트 삭제 도메인은 이것을 부르지 않는다</b> — 폼(#329)·행사(#347)는 되살아날 수 있어 오브젝트가 남아 있어야 한다. 부르는 쪽은 되살리기가
@@ -122,12 +129,13 @@ public class FileReferenceService {
      */
     @Transactional
     public void deleteByTarget(FileTargetType targetType, Long targetId) {
-        findByTarget(targetType, targetId)
-                .ifPresent(
-                        reference -> {
-                            fileReferenceRepository.delete(reference);
-                            fileEraser.eraseAfterCommit(reference.objectKey());
-                        });
+        List<FileReferenceEntity> references = findAllByTarget(targetType, targetId);
+        if (references.isEmpty()) {
+            return;
+        }
+        fileReferenceRepository.deleteAll(references);
+        fileEraser.eraseAfterCommit(
+                references.stream().map(FileReferenceEntity::objectKey).toList());
     }
 
     /*

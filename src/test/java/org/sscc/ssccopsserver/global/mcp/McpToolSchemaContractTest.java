@@ -75,6 +75,20 @@ class McpToolSchemaContractTest {
     }
 
     /*
+     * 하위 업무 승격은 하위 업무 등록과 같은 입력이다 (#644). 필수는 등록의 넷(상위 업무·제목·유형·
+     * 담당자)이고 업무 승격과 마찬가지로 title 을 서버가 채우지 않는다. 업무 승격과 도구를 나눈
+     * 이유가 이 단정이다 — 한 도구였다면 required 가 «대상에 따라 다르다»가 된다.
+     */
+    @Test
+    @DisplayName("promote_meeting_agenda_to_sub_work — 필수는 하위 업무 등록과 같은 넷")
+    void agendaSubWorkPromotionRequiresWhatSubWorkCreationRequires() {
+        assertThat(nestedRequired("promote_meeting_agenda_to_sub_work", "request"))
+                .containsExactlyInAnyOrder("workId", "title", "subWorkTypeId", "ownerId");
+        assertThat(tool("promote_meeting_agenda_to_sub_work").inputSchema().required())
+                .containsExactlyInAnyOrder("meetingId", "agendaId", "request");
+    }
+
+    /*
      * 안건 수정은 «전체 교체»라 읽고-합치기 도구와 다르다 (#599). 내용 둘은 생략하면 비우는 것이
      * **뜻이 있는 값**이므로 optional 이 맞고, 처리 구분만 `@NotNull` 이다 — 화면이 칩 중 하나를
      * 늘 골라 두기 때문이다(MeetingAgendaUpdateRequest 주석). 드래프트 제목(agendaName · #625)도

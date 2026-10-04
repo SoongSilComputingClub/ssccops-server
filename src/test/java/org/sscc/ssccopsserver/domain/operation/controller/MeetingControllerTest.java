@@ -26,6 +26,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -857,6 +858,124 @@ class MeetingControllerTest {
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
+    // ------------------------------------------------------------------ 하위 업무 승격 (#644)
+
+    @Test
+    void promoteDraftAgendaToSubWorkCreatesSubWorkAndLinksIt() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        Long agendaId = draftAgendaId(meetingId, "부스 배치도 확정");
+
+        MvcResult result =
+                mockMvc.perform(promoteSubWork(meetingId, agendaId, subWorkBody(linkedWorkId)))
+                        .andExpect(status().isCreated())
+                        .andExpect(jsonPath("$.data.subWork.title").value("부스 배치도 확정"))
+                        .andExpect(jsonPath("$.data.subWork.workId").value(linkedWorkId))
+                        .andExpect(jsonPath("$.data.subWork.ownerId").value(otherMemberId))
+                        .andExpect(jsonPath("$.data.subWork.registrantId").value(registrantId))
+                        .andExpect(jsonPath("$.data.agenda.agendaId").value(agendaId))
+                        .andExpect(jsonPath("$.data.agenda.draft").value(false))
+                        .andExpect(jsonPath("$.data.agenda.agendaName").doesNotExist())
+                        .andExpect(
+                                jsonPath("$.data.agenda.targetOperation.operationType")
+                                        .value("SUB_WORK"))
+                        .andReturn();
+        String response = result.getResponse().getContentAsString();
+        Long subWorkId = JsonPath.parse(response).read("$.data.subWork.subWorkId", Long.class);
+        Long operationId = JsonPath.parse(response).read("$.data.subWork.operationId", Long.class);
+        assertThat(result.getResponse().getHeader("Location"))
+                .isEqualTo("/v1/sub-works/" + subWorkId);
+        // 상세를 여는 값은 운영 ID가 아니라 하위 업무 ID다(#635)
+        assertThat(
+                        JsonPath.parse(response)
+                                .read("$.data.agenda.targetOperation.targetId", Long.class))
+                .isEqualTo(subWorkId);
+
+        // 다시 읽어도 안건이 그 하위 업무를 가리킨다 — 응답만이 아니라 저장된 상태다
+        mockMvc.perform(authenticated(get("/v1/meetings/{meetingId}/agendas", meetingId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].targetOperation.operationId").value(operationId))
+                .andExpect(jsonPath("$.data[0].draft").value(false));
+        mockMvc.perform(authenticated(get("/v1/sub-works/{subWorkId}", subWorkId)))
+                .andExpect(status().isOk());
+    }
+
+    // 상위 업무는 요청이 준다 — 하위 업무 등록과 같은 검증(workId 필수)
+    @Test
+    void promoteToSubWorkWithoutWorkIdReturnsValidationFailed() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        Long agendaId = draftAgendaId(meetingId, "부스 배치도 확정");
+        String body =
+                """
+                {"title": "부스 배치도 확정", "subWorkTypeId": %d, "ownerId": %d}
+                """
+                        .formatted(approvalFreeTypeId(), otherMemberId);
+
+        mockMvc.perform(promoteSubWork(meetingId, agendaId, body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    // 하위 업무 등록의 거절이 그대로 난다 — 없는 상위 업무는 404
+    @Test
+    void promoteToSubWorkWithUnknownWorkReturns404() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        Long agendaId = draftAgendaId(meetingId, "부스 배치도 확정");
+
+        mockMvc.perform(promoteSubWork(meetingId, agendaId, subWorkBody(999_999L)))
+                .andExpect(status().isNotFound());
+    }
+
+    // 업무 승격과 같다 — 이미 운영 건을 가리키는 안건은 하위 업무를 만들기 전에 409
+    @Test
+    void promoteLinkedAgendaToSubWorkReturns409AlreadyLinked() throws Exception {
+        String response = createMeetingWithOneLinkedAgendaAndCapture(otherMemberId);
+        Long meetingId = JsonPath.parse(response).read("$.data.meetingId", Long.class);
+        Long agendaId = JsonPath.parse(response).read("$.data.agendas[0].agendaId", Long.class);
+
+        mockMvc.perform(promoteSubWork(meetingId, agendaId, subWorkBody(linkedWorkId)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MEETING_AGENDA_ALREADY_LINKED"));
+    }
+
+    // 종료된 회의에서도 하위 업무로 승격한다(#634와 같다)
+    @Test
+    void promoteToSubWorkOnClosedMeetingCreatesSubWork() throws Exception {
+        Long meetingId = createMeeting(registrantId);
+        Long agendaId = draftAgendaId(meetingId, "부스 배치도 확정");
+        mockMvc.perform(transition(meetingId, "OPEN", null)).andExpect(status().isOk());
+        mockMvc.perform(transition(meetingId, "WRITE_MINUTES", null)).andExpect(status().isOk());
+        mockMvc.perform(updateAgenda(meetingId, agendaId, "HOLD")).andExpect(status().isOk());
+        mockMvc.perform(transition(meetingId, "CLOSE", null)).andExpect(status().isOk());
+
+        mockMvc.perform(promoteSubWork(meetingId, agendaId, subWorkBody(linkedWorkId)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.agenda.draft").value(false))
+                .andExpect(jsonPath("$.data.subWork.workId").value(linkedWorkId));
+    }
+
+    // 국원은 안건을 쓸 수 있지만 하위 업무를 만들 수는 없다 — 하위 업무 승격도 WORK_MANAGE다
+    @Test
+    void promoteToSubWorkWithoutWorkManageReturns403() throws Exception {
+        Long meetingId = createMeeting(otherMemberId);
+        Long agendaId = draftAgendaId(meetingId, "부스 배치도 확정");
+        UUID staffToken = UUID.randomUUID();
+        MemberEntity staff = saveMember(staffToken, "20200004", "최민지", "staff@sscc.org");
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                staff,
+                "국원");
+
+        mockMvc.perform(
+                        post(promoteSubWorkPath(), meetingId, agendaId)
+                                .header("Authorization", "Bearer " + staffToken)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(subWorkBody(linkedWorkId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
     // ------------------------------------------------------------------ 헬퍼
 
     // ------------------------------------------------------------------ 삭제 (#125)
@@ -985,6 +1104,26 @@ class MeetingControllerTest {
         return authenticated(
                 post("/v1/meetings/{meetingId}/agendas/{agendaId}/promote", meetingId, agendaId),
                 body);
+    }
+
+    private static String promoteSubWorkPath() {
+        return "/v1/meetings/{meetingId}/agendas/{agendaId}/promote-sub-work";
+    }
+
+    private MockHttpServletRequestBuilder promoteSubWork(
+            Long meetingId, Long agendaId, String body) {
+        return authenticated(post(promoteSubWorkPath(), meetingId, agendaId), body);
+    }
+
+    private String subWorkBody(Long workId) {
+        return """
+                {"workId": %d, "title": "부스 배치도 확정", "subWorkTypeId": %d, "ownerId": %d}
+                """
+                .formatted(workId, approvalFreeTypeId(), otherMemberId);
+    }
+
+    private Long approvalFreeTypeId() {
+        return SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
     }
 
     private MockHttpServletRequestBuilder transition(Long meetingId, String action, String reason)

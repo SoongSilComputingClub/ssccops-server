@@ -19,6 +19,7 @@ import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaSubWorkPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
@@ -26,6 +27,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.AgendaProcessStatus;
@@ -55,6 +58,9 @@ public class MeetingServiceImpl implements MeetingService {
 
     // 드래프트 안건 승격(#625)이 업무 등록을 그대로 부른다 — 업무를 만드는 규칙을 두 곳에 두지 않는다
     private final WorkService workService;
+
+    // 하위 업무 승격(#644)도 같은 이유로 하위 업무 등록을 그대로 부른다
+    private final SubWorkService subWorkService;
 
     // 전이 일시의 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -359,13 +365,43 @@ public class MeetingServiceImpl implements MeetingService {
         agenda.requireDraft();
 
         WorkCreateResponse work = workService.createWork(request, registrant);
+        linkDraftAgenda(agenda, work.operationId());
+        return new MeetingAgendaPromoteResponse(toAgendaResponse(agenda), work);
+    }
+
+    /*
+     * 드래프트 안건을 하위 업무로 승격한다 (#644 · ssccops#580). 업무 승격과 같은 모양이다 — 하위
+     * 업무 등록(SubWorkService.createSubWork)을 그대로 불러 그 규칙(상위 업무 존재·유형 사용 여부·
+     * 담당자·체크리스트 복사·진행률 재집계)을 한 곳에 두고, 이 메서드의 트랜잭션에 합류시켜 생성과
+     * 안건 연결을 한 트랜잭션으로 묶는다.
+     *
+     * 상위 업무의 상태는 따로 보지 않는다 — 하위 업무 등록이 보지 않기 때문이다. 승격 경로만 더
+     * 엄격하면 «회의에서 만들면 막히고 하위 업무 화면에서 만들면 되는» 일이 생긴다. 기각: 기존
+     * /promote 본문에 대상 구분을 넣기 — 업무·하위 업무 본문이 달라 한 요청이 두 모양이 되고 기존
+     * 계약이 깨진다(#644). 종료·취소된 회의 허용과 «이미 연결됨»을 INSERT 전에 보는 순서는 업무
+     * 승격과 같다.
+     */
+    @Override
+    @Transactional
+    public MeetingAgendaSubWorkPromoteResponse promoteAgendaToSubWork(
+            Long meetingId, Long agendaId, SubWorkCreateRequest request, MemberEntity registrant) {
+        MeetingEntity meeting = findMeeting(meetingId);
+        MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
+        agenda.requireDraft();
+
+        SubWorkCreateResponse subWork = subWorkService.createSubWork(request, registrant);
+        linkDraftAgenda(agenda, subWork.operationId());
+        return new MeetingAgendaSubWorkPromoteResponse(toAgendaResponse(agenda), subWork);
+    }
+
+    // 승격이 방금 만든 운영 건을 안건에 잇는다 — 업무·하위 업무 승격이 같이 쓴다
+    private void linkDraftAgenda(MeetingAgendaEntity agenda, Long operationId) {
         OperationEntity operation =
                 operationRepository
-                        .findById(work.operationId())
+                        .findById(operationId)
                         .orElseThrow(
                                 () -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
         agenda.promoteTo(operation);
-        return new MeetingAgendaPromoteResponse(toAgendaResponse(agenda), work);
     }
 
     // 안건 상정 철회(OPS-029)

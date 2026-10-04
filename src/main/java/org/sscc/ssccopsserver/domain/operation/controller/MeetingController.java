@@ -21,6 +21,7 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaSubWorkPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
@@ -28,6 +29,7 @@ import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationTagCondition;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.service.MeetingService;
 import org.sscc.ssccopsserver.domain.share.code.ShareTargetType;
@@ -157,6 +159,28 @@ public class MeetingController {
         MeetingAgendaPromoteResponse response =
                 meetingService.promoteAgendaToWork(meetingId, agendaId, request, registrant);
         URI location = URI.create("/v1/works/" + response.work().workId());
+        return ResponseEntity.created(location).body(ApiResponse.created(response));
+    }
+
+    /*
+     * 드래프트 안건 승격 — «하위 업무로 만들기» (#644 · ssccops#580). 본문은 하위 업무 등록
+     * (POST /v1/sub-works)과 같은 SubWorkCreateRequest이고(상위 업무·유형·담당자 필수), 하위 업무를
+     * 만든 뒤 안건이 그 하위 업무를 가리키게 한다(한 트랜잭션).
+     *
+     * 권한은 하위 업무 등록과 같은 WORK_MANAGE다 — 업무 승격과 같은 이유. 경로를 /promote와 나눈
+     * 것은 본문 모양이 달라서다: 한 경로에 대상 구분을 넣으면 한 요청이 두 모양이 되고 기존
+     * /promote 계약이 깨진다. 201이고 Location은 새 하위 업무다.
+     */
+    @RequireAuthority(AuthorityCode.WORK_MANAGE)
+    @PostMapping("/{meetingId}/agendas/{agendaId}/promote-sub-work")
+    public ResponseEntity<ApiResponse<MeetingAgendaSubWorkPromoteResponse>> promoteAgendaToSubWork(
+            @PathVariable Long meetingId,
+            @PathVariable Long agendaId,
+            @Valid @RequestBody SubWorkCreateRequest request,
+            @CurrentMember MemberEntity registrant) {
+        MeetingAgendaSubWorkPromoteResponse response =
+                meetingService.promoteAgendaToSubWork(meetingId, agendaId, request, registrant);
+        URI location = URI.create("/v1/sub-works/" + response.subWork().subWorkId());
         return ResponseEntity.created(location).body(ApiResponse.created(response));
     }
 

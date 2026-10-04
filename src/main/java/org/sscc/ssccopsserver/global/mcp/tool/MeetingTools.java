@@ -13,11 +13,13 @@ import org.sscc.ssccopsserver.domain.operation.dto.DashboardResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaSubWorkPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.SubWorkTypeResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.global.mcp.client.McpListResult;
@@ -29,7 +31,8 @@ import lombok.RequiredArgsConstructor;
 
 /*
  * 회의 쓰기 도구와 운영 읽기 보강 (ssccops#365 W1 · ADR-0027). 드래프트 안건 승격
- * (promote_meeting_agenda · #625 · ADR-0059)도 여기 둔다 — 업무를 만들지만 출발점이 안건이다.
+ * (promote_meeting_agenda · #625 · ADR-0059 · 하위 업무는 promote_meeting_agenda_to_sub_work · #644)도
+ * 여기 둔다 — 업무를 만들지만 출발점이 안건이다.
  *
  * 규약은 `OperationTools`와 같다 — REST만 부르고, 타입은 컨트롤러 record 그대로, 로그는 이름과 id만.
  *
@@ -110,7 +113,8 @@ public class MeetingTools {
                             + " agendaName(제목) 중 정확히 하나**를 준다 — 둘 다 주거나 둘 다 없으면 400."
                             + " 운영 건을 주면 안건의 제목은 그 운영 건의 제목이다. 아직 업무가 아닌"
                             + " 논의는 agendaName 만으로 **드래프트 안건**으로 올리고, 업무가 될 만하면"
-                            + " promote_meeting_agenda 로 업무를 만들어 잇는다(ADR-0059) — 업무를"
+                            + " promote_meeting_agenda 로 업무를, promote_meeting_agenda_to_sub_work 로"
+                            + " 이미 있는 업무의 하위 업무를 만들어 잇는다(ADR-0059) — 업무를"
                             + " 먼저 만들 필요가 없다."
                             + " 없는 운영 건은 404. 종료·취소된 회의에는 올릴 수 없다."
                             + " 상정 시점에는 결과가 없다 — 논의 결과와 처리 구분은 그 뒤"
@@ -155,8 +159,8 @@ public class MeetingTools {
                             + " processStatus 는 필수다."
                             + " 바꿀 수 없는 것: 연결 운영 건·제출자 — 다시 상정하는 것과 같아"
                             + " 이 API 의 범위 밖이다. 운영 건을 가리키는 안건에 agendaName 을 주면"
-                            + " 400 이다(제목은 그 운영 건의 제목이다). 드래프트를 업무에 잇는 길은"
-                            + " promote_meeting_agenda 하나다."
+                            + " 400 이다(제목은 그 운영 건의 제목이다). 드래프트를 업무·하위 업무에 잇는 길은"
+                            + " 승격(promote_meeting_agenda · promote_meeting_agenda_to_sub_work)뿐이다."
                             + " 종료·취소된 회의의 안건은 409 다. 없는 안건은 404."
                             + " 회의 안건 작성(MEETING_AGENDA_WRITE) 권한이며 회의 관리와 다르다"
                             + "(국원도 가진다).",
@@ -173,10 +177,7 @@ public class MeetingTools {
             McpTransportContext context) {
         log.info("mcp tool update_meeting_agenda meetingId={} agendaId={}", meetingId, agendaId);
         return client.patch(
-                context,
-                "/v1/meetings/" + meetingId + "/agendas/" + agendaId,
-                request,
-                MeetingAgendaResponse.class);
+                context, agendaPath(meetingId, agendaId), request, MeetingAgendaResponse.class);
     }
 
     /*
@@ -197,7 +198,8 @@ public class MeetingTools {
                             + " 업무(work). 이미 운영 건을 가리키는 안건은 409(되돌아가지 않는다)."
                             + " 종료·취소된 회의의 드래프트 안건도 업무로 만들 수 있다(안건 추가·수정은"
                             + " 409). 업무 등록과 같은 업무 관리(WORK_MANAGE)"
-                            + " 권한이 필요하다(안건 작성 권한만으로는 안 된다).",
+                            + " 권한이 필요하다(안건 작성 권한만으로는 안 된다). 이미 있는 업무의 하위"
+                            + " 업무로 만들려면 promote_meeting_agenda_to_sub_work 를 쓴다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingAgendaPromoteResponse promoteMeetingAgenda(
             @McpToolParam(description = "회의 id") Long meetingId,
@@ -207,9 +209,47 @@ public class MeetingTools {
         log.info("mcp tool promote_meeting_agenda meetingId={} agendaId={}", meetingId, agendaId);
         return client.post(
                 context,
-                "/v1/meetings/" + meetingId + "/agendas/" + agendaId + "/promote",
+                agendaPath(meetingId, agendaId) + "/promote",
                 request,
                 MeetingAgendaPromoteResponse.class);
+    }
+
+    /*
+     * 드래프트 안건 승격 — «하위 업무로 만들기» (#644 · ssccops#580).
+     *
+     * promote_meeting_agenda 와 도구를 나눈 것은 REST 경로를 나눈 것과 같은 이유다 — 입력이
+     * create_sub_work 의 SubWorkCreateRequest 라 업무 등록과 모양이 다르다. 한 도구에 대상 구분을
+     * 넣으면 중첩 스키마의 required 가 «대상에 따라 다르다»가 되어 JSON Schema 로 말할 수 없다.
+     * 제목을 채우지 않는 것도 업무 승격과 같다.
+     */
+    @McpTool(
+            name = "promote_meeting_agenda_to_sub_work",
+            description =
+                    "드래프트 안건(draft=true)을 이미 있는 업무의 하위 업무로 만든다 — 하위 업무를"
+                            + " 등록하고 안건이 그 하위 업무를 가리키게 한다(한 트랜잭션). 입력은"
+                            + " create_sub_work 와 같다: workId(상위 업무)·title·subWorkTypeId"
+                            + "(list_sub_work_types)·ownerId 가 필수다. **제목을 서버가 채우지 않는다**"
+                            + " — 안건 제목을 쓰려면 list_meeting_agendas 로 읽어 title 에 넣는다."
+                            + " 결과는 바뀐 안건(agenda)과 새 하위 업무(subWork) — agenda 의"
+                            + " targetOperation.targetId 가 subWorkId 다. 이미 운영 건을 가리키는 안건은"
+                            + " 409. 종료·취소된 회의의 드래프트 안건도 된다. 하위 업무 등록과 같은 업무"
+                            + " 관리(WORK_MANAGE) 권한이 필요하다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public MeetingAgendaSubWorkPromoteResponse promoteMeetingAgendaToSubWork(
+            @McpToolParam(description = "회의 id") Long meetingId,
+            @McpToolParam(description = "드래프트 안건 id") Long agendaId,
+            @McpToolParam(description = "만들 하위 업무 — create_sub_work 와 같은 요청")
+                    SubWorkCreateRequest request,
+            McpTransportContext context) {
+        log.info(
+                "mcp tool promote_meeting_agenda_to_sub_work meetingId={} agendaId={}",
+                meetingId,
+                agendaId);
+        return client.post(
+                context,
+                agendaPath(meetingId, agendaId) + "/promote-sub-work",
+                request,
+                MeetingAgendaSubWorkPromoteResponse.class);
     }
 
     @McpTool(
@@ -251,5 +291,13 @@ public class MeetingTools {
         log.info("mcp tool list_sub_work_types");
         return client.getList(context, "/v1/sub-work-types", null, SubWorkTypeResponse.class)
                 .items();
+    }
+
+    /*
+     * 안건 단건 경로 — 수정·두 승격 도구가 같은 REST 경로를 부른다. 상수가 아니라 메서드인 것은
+     * WorkTools.workPath 와 같은 이유다(Sonar S1075 — 같은 서버의 API라 설정이 아니다).
+     */
+    private static String agendaPath(Long meetingId, Long agendaId) {
+        return "/v1/meetings/" + meetingId + "/agendas/" + agendaId;
     }
 }

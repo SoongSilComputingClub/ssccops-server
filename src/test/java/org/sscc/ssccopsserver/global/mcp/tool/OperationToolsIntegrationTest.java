@@ -84,7 +84,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 72종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 73종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -154,6 +154,8 @@ class OperationToolsIntegrationTest {
                             "update_meeting_agenda",
                             // 드래프트 안건 → 업무 (#625 · ADR-0059)
                             "promote_meeting_agenda",
+                            // 드래프트 안건 → 하위 업무 (#644 · ssccops#580)
+                            "promote_meeting_agenda_to_sub_work",
                             "list_approvals",
                             "get_dashboard",
                             "list_sub_work_types",
@@ -284,6 +286,72 @@ class OperationToolsIntegrationTest {
             // 상세를 여는 값은 운영 ID가 아니라 업무 ID다(#635) — 모델도 get_work 에 이 값을 넘긴다
             assertThat(JsonPath.parse(text).read("$.agenda.targetOperation.targetId", Long.class))
                     .isEqualTo(JsonPath.parse(text).read("$.work.workId", Long.class));
+        }
+    }
+
+    /*
+     * 드래프트 안건 → 하위 업무 (#644 · ssccops#580). promote_meeting_agenda_to_sub_work 한 번에
+     * 안건이 새 하위 업무를 가리키고, targetId 가 get_sub_work 에 넘길 subWorkId 인지 REST 왕복으로 본다.
+     */
+    @Test
+    @DisplayName(
+            "add_meeting_agenda(제목만) → promote_meeting_agenda_to_sub_work — 드래프트가 하위 업무를 가리키게 된다")
+    void draftAgendaIsPromotedToSubWork() throws Exception {
+        Long workId = createWorkWithReview();
+        Long typeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult meeting =
+                    call(
+                            client,
+                            "create_meeting",
+                            Map.of(
+                                    "request",
+                                    Map.of(
+                                            "title", "10월 2차 정기회의",
+                                            "meetingCategory", "REGULAR",
+                                            "personInChargeId", founderId,
+                                            "startAt", "2026-10-10T19:00:00+09:00")));
+            assertThat(meeting.isError()).as(text(meeting)).isNotEqualTo(Boolean.TRUE);
+            Long meetingId = JsonPath.parse(text(meeting)).read("$.meetingId", Long.class);
+
+            McpSchema.CallToolResult draft =
+                    call(
+                            client,
+                            "add_meeting_agenda",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "request",
+                                    Map.of("agendaName", "부스 배치도 확정")));
+            assertThat(draft.isError()).as(text(draft)).isNotEqualTo(Boolean.TRUE);
+            Long agendaId = JsonPath.parse(text(draft)).read("$.agendaId", Long.class);
+
+            McpSchema.CallToolResult promoted =
+                    call(
+                            client,
+                            "promote_meeting_agenda_to_sub_work",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "agendaId",
+                                    agendaId,
+                                    "request",
+                                    Map.of(
+                                            "workId", workId,
+                                            "title", "부스 배치도 확정",
+                                            "subWorkTypeId", typeId,
+                                            "ownerId", founderId)));
+            assertThat(promoted.isError()).as(text(promoted)).isNotEqualTo(Boolean.TRUE);
+            String text = text(promoted);
+            assertThat(JsonPath.parse(text).read("$.agenda.draft", Boolean.class)).isFalse();
+            assertThat(JsonPath.parse(text).read("$.subWork.workId", Long.class)).isEqualTo(workId);
+            assertThat(
+                            JsonPath.parse(text)
+                                    .read("$.agenda.targetOperation.operationType", String.class))
+                    .isEqualTo("SUB_WORK");
+            assertThat(JsonPath.parse(text).read("$.agenda.targetOperation.targetId", Long.class))
+                    .isEqualTo(JsonPath.parse(text).read("$.subWork.subWorkId", Long.class));
         }
     }
 

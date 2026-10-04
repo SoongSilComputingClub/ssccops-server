@@ -564,6 +564,23 @@ jar들을 스캔하지 않고 우리가 Tika의 `ServiceLoader`(= `AutoDetectPar
   배포 환경변수 한 줄(`SSCCOPS_ASSISTANT_RATE_LIMIT_GLOBAL_PER_MINUTE`)이다. 낮게 잡힌 채로
   두는 쪽이 안전한 실패라 그 값으로 배포해 둔다.
 
+## 도메인 담당 — CODEOWNERS (ssccops#582)
+
+`domain/` 패키지마다 담당자가 있고 [`.github/CODEOWNERS`](.github/CODEOWNERS)가 그 표다. PR을 열면 바뀐 경로의
+담당자에게 **리뷰 요청이 자동으로 간다** — 머지 조건으로 강제하지는 않는다(브랜치 보호의 «Require review from
+Code Owners»를 켜지 않았다).
+
+| 담당 | 도메인 |
+|---|---|
+| `@bell-person-ii` | `academicprogram` · `operation` · `file` · `assistant` · `auth` |
+| `@swthewhite` | `content` · `event` · `form` · `member` · `notification` · `share` |
+| 둘 다 | 도메인 밖 — `global/`(MCP 도구·보안·공통) · `db/migration` · 워크플로 · 빌드 설정 · 문서 · `example` |
+
+- **다른 담당의 도메인을 건드리면 그 담당자에게 알리고 한다.** 자동 리뷰 요청이 그 알림이지만, 계약(응답 필드 ·
+  오류 코드 · 권한)이 바뀌면 PR 본문 «리뷰어에게»에 한 줄로 적는다.
+- 공통 영역은 두 사람 모두에게 요청이 간다 — 마이그레이션·`global/`은 양쪽 도메인에 함께 영향을 준다.
+- 담당이 바뀌면 이 표와 `CODEOWNERS`를 함께 고친다. 담당자는 레포 쓰기 권한이 있어야 한다(없으면 그 줄이 무시된다).
+
 ## 커밋 · 브랜치 · PR 컨벤션
 
 `.github/workflows/`가 강제하는 것과 사람이 지켜야 하는 규칙이 나뉜다 (자세한 배경은 로컬 전용 `private-workspace/CONTRIBUTING.md` 참고 — git에는 포함되지 않음):

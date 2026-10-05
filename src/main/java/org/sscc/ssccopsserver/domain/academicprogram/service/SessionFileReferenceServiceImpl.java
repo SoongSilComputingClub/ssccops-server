@@ -98,7 +98,11 @@ public class SessionFileReferenceServiceImpl implements SessionFileReferenceServ
         FileReferenceEntity fileReference = upsert(session, objectKey);
         // 서명에 넘기는 크기는 위 413이 본 값 그대로다 — 안내와 강제가 같은 숫자를 봐야 한다
         String uploadUrl =
-                filePresigner.presignPut(objectKey, imageType.getContentType(), request.fileSize());
+                filePresigner.presignPut(
+                        objectKey,
+                        imageType.getContentType(),
+                        request.fileSize(),
+                        filePresigner.maxUploadSizeBytes());
 
         return new FileReferenceUploadResponse(
                 fileReference.getId(),

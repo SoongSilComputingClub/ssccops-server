@@ -40,6 +40,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
@@ -49,6 +51,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkTypeEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTransitionAction;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
@@ -130,7 +133,8 @@ class WorkServiceImplTest {
                         subWorkChecklistItemRepository,
                         memberService,
                         Clock.systemDefaultZone(),
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        new AuditLog());
 
         // 등록자와 담당자를 다른 회원으로 둬 둘이 뒤바뀌면 테스트가 깨지게 한다
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
@@ -423,10 +427,10 @@ class WorkServiceImplTest {
 
     /*
      * 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13). 업무 1 + 하위 업무 목록 1 +
-     * 체크리스트 집계 1로 끝나는지 못 박아 둔다 — 하위 업무가 몇 건이든 이 수는 그대로다.
+     * 체크리스트 집계 1 + 태그 1(#637)로 끝나는지 못 박아 둔다 — 하위 업무가 몇 건이든 이 수는 그대로다.
      */
     @Test
-    void getWorkRunsThreeQueries() {
+    void getWorkRunsFourQueries() {
         Long workId = createWork("쿼리 수 확인용 업무", null);
         addSubWork(workId, "하위 업무 1", END.toInstant(), 5, 3);
         addSubWork(workId, "하위 업무 2", END.plusHours(1).toInstant(), 5, 4);
@@ -444,7 +448,7 @@ class WorkServiceImplTest {
 
         workService.getWork(workId);
 
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(3);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
     }
 
     private Long createWork(String title, String review) {
@@ -722,5 +726,97 @@ class WorkServiceImplTest {
                 .isInstanceOf(GeneralException.class)
                 .extracting(ex -> ((GeneralException) ex).getErrorCode())
                 .isEqualTo(OperationErrorCode.ALREADY_DELETED);
+    }
+
+    // ---------------------------------------------------------------- #622 상태 전이
+
+    // 표의 정방향 셋과 되돌리기 둘을 한 업무로 끝까지 밟는다 — 응답이 전후 상태를 함께 싣는다
+    @Test
+    void transitionWorkWalksTheWholeTable() {
+        Long workId = createWork("전이 확인용 업무", null);
+
+        WorkTransitionResponse started = transition(workId, WorkTransitionAction.START);
+        assertThat(started.workId()).isEqualTo(workId);
+        assertThat(started.previousWorkStatus()).isEqualTo(WorkStatus.PLANNING);
+        assertThat(started.workStatus()).isEqualTo(WorkStatus.IN_PROGRESS);
+        assertThat(started.changedAt()).isNotNull();
+
+        assertThat(transition(workId, WorkTransitionAction.REQUEST_REVIEW).workStatus())
+                .isEqualTo(WorkStatus.REVIEW);
+        assertThat(transition(workId, WorkTransitionAction.REVERT_REVIEW).workStatus())
+                .isEqualTo(WorkStatus.IN_PROGRESS);
+        transition(workId, WorkTransitionAction.REQUEST_REVIEW);
+        // 하위 업무가 하나도 없으면 완료는 통과한다
+        assertThat(transition(workId, WorkTransitionAction.COMPLETE).workStatus())
+                .isEqualTo(WorkStatus.DONE);
+        assertThat(transition(workId, WorkTransitionAction.REOPEN).workStatus())
+                .isEqualTo(WorkStatus.IN_PROGRESS);
+
+        assertThat(detailOf(workId).workStatus()).isEqualTo(WorkStatus.IN_PROGRESS);
+    }
+
+    /*
+     * 남은 하위 업무 = 완료가 아니고 지우지 않은 것. 지운 미완료 건까지 세면 되살릴 길이 없는
+     * 하위 업무가 상위 업무의 완료를 영영 막는다 — 그래서 3건 중 셋째(지운 것)는 세지 않는다.
+     */
+    @Test
+    void completeIsBlockedByAliveUnfinishedSubWorksOnly() {
+        Long workId = createWork("하위 업무가 남은 업무", null);
+        addSubWork(workId, "아직 진행 중 1", END.toInstant(), 0, 0);
+        addSubWork(workId, "아직 진행 중 2", END.toInstant(), 0, 0);
+        markDone(addSubWork(workId, "끝난 하위 업무", END.toInstant(), 0, 0));
+        softDeleteSubWork(addSubWork(workId, "지운 하위 업무", END.toInstant(), 0, 0));
+        moveToReview(workId);
+
+        assertThatThrownBy(() -> transition(workId, WorkTransitionAction.COMPLETE))
+                .isInstanceOf(GeneralException.class)
+                .hasMessage("완료되지 않은 하위 업무가 2건 남아 있습니다.")
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.SUB_WORK_UNFINISHED);
+    }
+
+    @Test
+    void completeSucceedsWhenEverySubWorkIsDone() {
+        Long workId = createWork("하위 업무를 다 끝낸 업무", null);
+        markDone(addSubWork(workId, "끝난 하위 업무 1", END.toInstant(), 0, 0));
+        markDone(addSubWork(workId, "끝난 하위 업무 2", END.toInstant(), 0, 0));
+        moveToReview(workId);
+
+        assertThat(transition(workId, WorkTransitionAction.COMPLETE).workStatus())
+                .isEqualTo(WorkStatus.DONE);
+    }
+
+    // 표에 없는 순서(기획 → 완료)는 409이고 상태는 그대로다
+    @Test
+    void transitionOutOfOrderIsRejected() {
+        Long workId = createWork("순서를 건너뛴 업무", null);
+
+        assertThatThrownBy(() -> transition(workId, WorkTransitionAction.COMPLETE))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.TRANSITION_NOT_ALLOWED);
+        assertThat(detailOf(workId).workStatus()).isEqualTo(WorkStatus.PLANNING);
+    }
+
+    @Test
+    void transitionDeletedWorkThrowsNotFound() {
+        Long workId = createWork("지운 업무", null);
+        workService.deleteWork(workId);
+
+        assertThatThrownBy(() -> transition(workId, WorkTransitionAction.START))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.WORK_NOT_FOUND);
+    }
+
+    private WorkTransitionResponse transition(Long workId, WorkTransitionAction action) {
+        return workService.transitionWork(workId, new WorkTransitionRequest(action));
+    }
+
+    private void moveToReview(Long workId) {
+        transition(workId, WorkTransitionAction.START);
+        transition(workId, WorkTransitionAction.REQUEST_REVIEW);
+        entityManager.flush();
+        entityManager.clear();
     }
 }

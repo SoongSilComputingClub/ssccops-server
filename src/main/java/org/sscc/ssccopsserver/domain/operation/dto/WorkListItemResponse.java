@@ -23,6 +23,8 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
  * operationId·priority·generalReview는 담지 않는다. 카드가 쓰지 않는 값이고 목록에는 요약만
  * 둔다 (AP-14) — 필요해지면 상세(OPS-003)가 이미 전부 내린다.
  *
+ * tags는 카드의 태그 칩이다 (#637 · 운영 건에 달린 태그). 태그가 없으면 빈 배열이다 — null이 아니다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record WorkListItemResponse(
@@ -34,7 +36,8 @@ public record WorkListItemResponse(
         OffsetDateTime startAt,
         OffsetDateTime endAt,
         BigDecimal progressRate,
-        int subWorkCount) {
+        int subWorkCount,
+        List<OperationTagSummaryResponse> tags) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -46,7 +49,10 @@ public record WorkListItemResponse(
      * 하위 업무 건수와 진행률을 같은 목록에서 뽑는 것은 둘의 분모를 하나로 묶기 위해서다.
      * 소프트 삭제된 하위 업무를 거르는 일은 이 목록을 만드는 쪽이 이미 끝냈다 (AGG-03).
      */
-    public static WorkListItemResponse of(WorkEntity work, List<BigDecimal> subWorkRates) {
+    public static WorkListItemResponse of(
+            WorkEntity work,
+            List<BigDecimal> subWorkRates,
+            List<OperationTagSummaryResponse> tags) {
         OperationEntity operation = work.getOperation();
         return new WorkListItemResponse(
                 work.getId(),
@@ -57,7 +63,8 @@ public record WorkListItemResponse(
                 toOffsetDateTime(operation.getBeginAt()),
                 toOffsetDateTime(operation.getEndAt()),
                 ProgressRate.average(subWorkRates),
-                subWorkRates.size());
+                subWorkRates.size(),
+                tags);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

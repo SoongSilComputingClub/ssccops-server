@@ -191,7 +191,8 @@ class SubWorkServiceImplTest {
                         subWorkChecklistItemRepository,
                         memberService,
                         FIXED_CLOCK,
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        new AuditLog());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -651,7 +652,7 @@ class SubWorkServiceImplTest {
      * 맡기면 응답을 조립하는 동안 쿼리가 하나씩 더 나간다 (DB-13). 연관이 늘어도 EntityGraph에
      * 넣으면 이 수가 유지되는지 못 박아 둔다.
      *
-     * 승인이 필요 없는 유형은 6회다: 하위 업무 1 + 체크리스트 1 + 최근 반려 1(#58) +
+     * 승인이 필요 없는 유형은 7회다: 하위 업무 1 + 체크리스트 1 + 최근 반려 1(#58) + 태그 칩 1(#637) +
      * 담당자 판정 3(#101) — canApprove·canReject를 승인자 판정이 아니라 담당자 판정
      * (SubWorkOwnershipPolicy.isOwnerOrManager)으로 계산하기 때문이다. 조회자(registrant)가
      * 이 건의 담당자가 아니라서(위 request()의 ownerId와 다른 회원) 담당자 여부만으로는
@@ -660,25 +661,25 @@ class SubWorkServiceImplTest {
      * 먼저 보고 사실이면 hasAuthority를 부르지 않는다(SubWorkOwnershipPolicy 주석).
      */
     @Test
-    void getSubWorkRunsSixQueriesForApprovalFreeType() {
+    void getSubWorkRunsSevenQueriesForApprovalFreeType() {
         Long subWorkId =
                 subWorkService.createSubWork(request(approvalFreeTypeId), registrant).subWorkId();
 
-        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(6);
+        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(7);
     }
 
     /*
-     * 승인이 필요한 유형은 7회다: 기본 3(하위 업무·체크리스트·최근 반려) + 승인자 판정의
+     * 승인이 필요한 유형은 8회다: 기본 4(하위 업무·체크리스트·최근 반려·태그 칩 #637) + 승인자 판정의
      * 권한 펼침 3(#123 — capabilitiesOf: 유효 역할 1 + 부여된 권한 1 + 트리 간선 1) +
      * 승인자 결재 권한 표시명 1. 정족수 유형이 아니면 회차·찬성 수·내 표는 세지 않는다 —
      * 투표 자체가 없는 유형이다.
      */
     @Test
-    void getSubWorkRunsSevenQueriesForApprovalNeededType() {
+    void getSubWorkRunsEightQueriesForApprovalNeededType() {
         Long subWorkId =
                 subWorkService.createSubWork(request(approvalNeededTypeId), registrant).subWorkId();
 
-        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(7);
+        assertThat(queryCountOfDetail(subWorkId)).isEqualTo(8);
     }
 
     private long queryCountOfDetail(Long subWorkId) {

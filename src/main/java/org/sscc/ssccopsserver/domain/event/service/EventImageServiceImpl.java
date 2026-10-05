@@ -128,7 +128,11 @@ public class EventImageServiceImpl implements EventImageService {
          * 되고, 그 어긋남은 발급까지 성공한 뒤 R2의 403으로만 드러난다.
          */
         String uploadUrl =
-                filePresigner.presignPut(objectKey, imageType.getContentType(), request.fileSize());
+                filePresigner.presignPut(
+                        objectKey,
+                        imageType.getContentType(),
+                        request.fileSize(),
+                        filePresigner.maxUploadSizeBytes());
 
         /*
          * 서명에 쓴 contentType을 그대로 돌려준다 (#210). 웹이 파일에서 다시 읽으면

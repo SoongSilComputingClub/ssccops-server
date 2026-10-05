@@ -205,7 +205,8 @@ class DashboardServiceImplTest {
                         subWorkChecklistItemRepository,
                         memberService,
                         FIXED_CLOCK,
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        new AuditLog());
         parentWorkId =
                 workService
                         .createWork(

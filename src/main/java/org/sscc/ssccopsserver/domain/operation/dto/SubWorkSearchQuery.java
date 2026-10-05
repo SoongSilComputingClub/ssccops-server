@@ -33,6 +33,7 @@ public record SubWorkSearchQuery(
         Instant reviewStaleBefore,
         String keyword,
         Long personInChargeId,
+        Long tagId,
         int size,
         SubWorkSortOrder sort,
         SubWorkCursor cursor) {
@@ -64,6 +65,11 @@ public record SubWorkSearchQuery(
      */
     public boolean hasPersonInChargeFilter() {
         return personInChargeId != null;
+    }
+
+    // 태그 필터 (#637). 하위 업무 자신의 운영 건에 달린 태그다 — 상위 업무의 태그가 아니다
+    public boolean hasTagFilter() {
+        return tagId != null;
     }
 
     public boolean hasCursor() {

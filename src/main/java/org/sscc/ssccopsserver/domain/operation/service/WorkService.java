@@ -9,6 +9,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 
 public interface WorkService {
@@ -33,6 +35,13 @@ public interface WorkService {
     WorkDetailResponse updateWork(Long workId, WorkUpdateRequest request);
 
     /*
+     * 상태를 전이표대로 옮긴다 (#622 · ssccops#563). 완료는 완료가 아닌 하위 업무가 남아 있으면
+     * SUB_WORK_UNFINISHED(409), 표에 없는 순서는 TRANSITION_NOT_ALLOWED(409)다. 소프트 삭제된
+     * 업무는 없는 것으로 보고 WORK_NOT_FOUND를 던진다.
+     */
+    WorkTransitionResponse transitionWork(Long workId, WorkTransitionRequest request);
+
+    /*
      * 상위 업무 목록을 조건에 따라 조회한다 (OPS-020). '운영 통합 › 업무' 화면의 카드 그리드가
      * 이 결과로 채워지며, 소프트 삭제된 업무는 목록에도 건수에도 없다 (AGG-03).
      */
@@ -41,9 +50,10 @@ public interface WorkService {
     /*
      * 운영 통합(OPS-001)의 업무 전량 목록. 목록 조회(OPS-020)와 같은 카드 요약이지만
      * 화면이 목록과 트리를 한 번에 그리므로 커서 페이징 없이 전량을 돌려준다.
-     * 정렬은 OPS-020의 기본값과 같은 등록 최신순이다.
+     * 정렬은 OPS-020의 기본값과 같은 등록 최신순이다. tagId가 있으면 그 태그가 달린 업무만이다
+     * (#637 · null이면 전체).
      */
-    List<WorkListItemResponse> listWorks();
+    List<WorkListItemResponse> listWorks(Long tagId);
 
     /*
      * 업무를 소프트 삭제한다 (#125). 자기 operation뿐 아니라 그 아래 살아있는 sub-work

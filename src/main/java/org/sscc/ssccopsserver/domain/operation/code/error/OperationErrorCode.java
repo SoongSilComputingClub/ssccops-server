@@ -48,6 +48,15 @@ public enum OperationErrorCode implements ErrorCode {
     SUB_WORK_TYPE_INACTIVE(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "사용하지 않는 하위 업무 유형입니다."),
 
     /*
+     * 400 — 안건이 운영 건과 제목(agendaName)을 둘 다 갖거나 둘 다 갖지 않을 때, 그리고 운영 건을
+     * 가리키는 안건에 제목을 주려 할 때 (#625 · ADR-0059). 요청 DTO의 @AssertTrue가 먼저 막지만
+     * 서비스를 직접 부르는 경로와 «연결 안건 수정»(요청만 봐서는 알 수 없다)은 엔티티가 이 코드로
+     * 던진다. 화면이 보기에 입력 검증 실패와 같은 거절이라 코드 문자열은 VALIDATION_FAILED다.
+     */
+    AGENDA_TARGET_INVALID(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "연결할 운영 건 또는 안건 제목 중 하나만 입력해야 합니다."),
+
+    /*
      * 403 — 승인자 역할이 아닌 회원의 승인·반려(TR-03·TR-04), 운영진이 아닌 회원의 투표(OPS-015).
      * 판정은 ApprovalAuthorityPolicy가 한 곳에서 한다.
      *
@@ -66,6 +75,20 @@ public enum OperationErrorCode implements ErrorCode {
     ATTACHMENT_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "ATTACHMENT_TOO_LARGE", "첨부 파일이 너무 큽니다."),
     WORK_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "업무를 찾을 수 없습니다."),
 
+    /*
+     * 404 — 없는 운영 태그 (#637 · 처음 #624). 지정 교체에 없는 태그 id가 섞여도 여기다. 코드 문자열을
+     * NOT_FOUND로 묶지 않고 따로 둔 것은 폼 라벨(FORM_LABEL_NOT_FOUND)과 같은 이유다 — 지정 교체에서는
+     * 운영 건이 없는 것(OPERATION_NOT_FOUND)과 태그가 없는 것을 화면이 갈라 안내해야 한다.
+     */
+    OPERATION_TAG_NOT_FOUND(HttpStatus.NOT_FOUND, "OPERATION_TAG_NOT_FOUND", "태그를 찾을 수 없습니다."),
+
+    /*
+     * 409 — 이미 있는 태그 이름으로 만들거나 바꿀 때 (#637). 선조회를 통과한 동시 요청이
+     * uk_oper_tag_name에 걸린 것도 같은 코드로 옮긴다.
+     */
+    OPERATION_TAG_NAME_DUPLICATED(
+            HttpStatus.CONFLICT, "OPERATION_TAG_NAME_DUPLICATED", "이미 등록된 태그 이름입니다."),
+
     // 404 — 선택한 하위 업무 유형이 없을 때. 유형은 기준 데이터라 삭제·변경될 수 있다
     SUB_WORK_TYPE_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "하위 업무 유형을 찾을 수 없습니다."),
 
@@ -83,7 +106,8 @@ public enum OperationErrorCode implements ErrorCode {
 
     // 409 — 전이표(TR-01~TR-04)에 없는 상태 전환. 완료 → 진행 되돌리기도 여기에 걸린다.
     // 회의 전이표(TR-M1~TR-M4)에 없는 조합과 시작 전(SCHEDULED)이 아닌 회의의 안건 상정
-    // 철회(OPS-029)도 전용 코드를 새로 만들지 않고 이 코드를 재사용한다 (#47 선례 준용)
+    // 철회(OPS-029), 상위 업무 전이표(#622)에 없는 조합도 전용 코드를 새로 만들지 않고 이 코드를
+    // 재사용한다 (#47 선례 준용)
     TRANSITION_NOT_ALLOWED(HttpStatus.CONFLICT, "TRANSITION_NOT_ALLOWED", "현재 상태에서 할 수 없는 작업입니다."),
 
     /*
@@ -92,8 +116,25 @@ public enum OperationErrorCode implements ErrorCode {
      */
     AGENDA_UNRESOLVED(HttpStatus.CONFLICT, "AGENDA_UNRESOLVED", "처리하지 않은 안건이 있습니다."),
 
+    /*
+     * 409 — 완료가 아닌 하위 업무가 남은 채 상위 업무를 완료하려 할 때 (#622 · ssccops#563).
+     * 남은 수는 코드가 아니라 값이라 메시지(GeneralException detail)에 싣는다 — 예: «완료되지 않은
+     * 하위 업무가 2건 남아 있습니다.» TRANSITION_NOT_ALLOWED를 재사용하지 않은 것은 해소 방법이
+     * 달라서다(CHECKLIST_ITEM_COMPLETED와 같은 판단) — 순서 위반은 다른 전이를 눌러야 풀리고,
+     * 이쪽은 하위 업무를 마무리하면 같은 버튼이 통과한다.
+     */
+    SUB_WORK_UNFINISHED(HttpStatus.CONFLICT, "SUB_WORK_UNFINISHED", "완료되지 않은 하위 업무가 남아 있습니다."),
+
     // 409 — 종료·취소된 회의에 안건을 상정하거나 수정하려 할 때 (OPS-027·OPS-028)
     MEETING_CLOSED(HttpStatus.CONFLICT, "MEETING_CLOSED", "이미 종료된 회의입니다."),
+
+    /*
+     * 409 — 이미 운영 건을 가리키는 안건을 업무로 승격하려 할 때 (#625 · ADR-0059). 승격은
+     * 드래프트 안건에서 한 번뿐이고 되돌아가지 않는다. 전이 거절(TRANSITION_NOT_ALLOWED)을
+     * 재사용하지 않은 것은 해소 방법이 달라서다 — 이 안건은 이미 업무가 있으니 그 업무를 열면 된다.
+     */
+    MEETING_AGENDA_ALREADY_LINKED(
+            HttpStatus.CONFLICT, "MEETING_AGENDA_ALREADY_LINKED", "이미 운영 건에 연결된 안건입니다."),
 
     /*
      * 409 — 이미 있는 유형명으로 등록·수정할 때(OPS-019). 선조회만으로는 동시 요청을 막지 못하므로

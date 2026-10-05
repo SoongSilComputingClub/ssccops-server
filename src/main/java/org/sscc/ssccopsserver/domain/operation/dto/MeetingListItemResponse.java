@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.domain.operation.dto;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.List;
 
 import org.sscc.ssccopsserver.domain.operation.entity.AttendeeScope;
 import org.sscc.ssccopsserver.domain.operation.entity.MeetingCategory;
@@ -18,6 +19,8 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
  * 안건 건수(agendaCount)만 싣고 목록 자체는 싣지 않는다 — 카드는 "안건 N건"만 그리고,
  * 펼친 안건은 상세(OPS-025) 진입 후에나 필요하다. 페이지 봉투가 없는 것은 이 목록이
  * 커서 페이징을 쓰지 않기 때문이다(MeetingRepository 주석 참고).
+ *
+ * tags는 회의의 운영 건에 달린 태그 칩이다 (#637 · 이름 오름차순 · 없으면 빈 배열).
  */
 public record MeetingListItemResponse(
         Long meetingId,
@@ -31,11 +34,13 @@ public record MeetingListItemResponse(
         int agendaCount,
         OffsetDateTime startAt,
         OffsetDateTime endAt,
-        OffsetDateTime createdAt) {
+        OffsetDateTime createdAt,
+        List<OperationTagSummaryResponse> tags) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
-    public static MeetingListItemResponse of(MeetingEntity meeting, int agendaCount) {
+    public static MeetingListItemResponse of(
+            MeetingEntity meeting, int agendaCount, List<OperationTagSummaryResponse> tags) {
         OperationEntity operation = meeting.getOperation();
         return new MeetingListItemResponse(
                 meeting.getId(),
@@ -49,7 +54,8 @@ public record MeetingListItemResponse(
                 agendaCount,
                 toOffsetDateTime(operation.getBeginAt()),
                 toOffsetDateTime(operation.getEndAt()),
-                toOffsetDateTime(operation.getCreatedAt()));
+                toOffsetDateTime(operation.getCreatedAt()),
+                tags);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

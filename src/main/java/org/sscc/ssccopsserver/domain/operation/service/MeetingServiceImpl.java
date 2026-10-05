@@ -6,6 +6,9 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
@@ -14,13 +17,20 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaItemRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaSubWorkPromoteResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingAgendaUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingDetailResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingListItemResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.MeetingTransitionResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.SubWorkCreateResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.entity.AgendaProcessStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.MeetingAgendaEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.MeetingEntity;
@@ -30,6 +40,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.repository.MeetingAgendaCount;
 import org.sscc.ssccopsserver.domain.operation.repository.MeetingAgendaRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.MeetingRepository;
+import org.sscc.ssccopsserver.domain.operation.repository.OperationDetailIds;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 
@@ -44,6 +55,12 @@ public class MeetingServiceImpl implements MeetingService {
     private final MeetingRepository meetingRepository;
     private final MeetingAgendaRepository meetingAgendaRepository;
     private final MemberService memberService;
+
+    // 드래프트 안건 승격(#625)이 업무 등록을 그대로 부른다 — 업무를 만드는 규칙을 두 곳에 두지 않는다
+    private final WorkService workService;
+
+    // 하위 업무 승격(#644)도 같은 이유로 하위 업무 등록을 그대로 부른다
+    private final SubWorkService subWorkService;
 
     // 전이 일시의 기준 시각. 테스트에서 고정할 수 있도록 주입받는다 (ClockConfig)
     private final Clock clock;
@@ -90,7 +107,8 @@ public class MeetingServiceImpl implements MeetingService {
                                 request.location()));
 
         List<MeetingAgendaResponse> agendas = createAgendas(meeting, request.agendas(), registrant);
-        return MeetingDetailResponse.of(meeting, agendas);
+        // 방금 만든 운영 건에 달린 태그는 있을 수 없다 — 태그는 지정 교체(#637)로만 붙는다
+        return MeetingDetailResponse.of(meeting, agendas, List.of());
     }
 
     private List<MeetingAgendaResponse> createAgendas(
@@ -98,57 +116,115 @@ public class MeetingServiceImpl implements MeetingService {
         if (items == null || items.isEmpty()) {
             return List.of();
         }
-        List<MeetingAgendaResponse> agendas = new ArrayList<>();
+        List<MeetingAgendaEntity> agendas = new ArrayList<>();
         int order = 1;
         for (MeetingAgendaItemRequest item : items) {
             OperationEntity targetOperation = resolveTargetOperation(item.targetOperationId());
-            MeetingAgendaEntity agenda =
+            agendas.add(
                     meetingAgendaRepository.save(
                             MeetingAgendaEntity.create(
                                     meeting,
+                                    item.agendaName(),
                                     item.processStatus(),
                                     order++,
                                     targetOperation,
                                     item.content(),
-                                    submitter));
-            agendas.add(MeetingAgendaResponse.from(agenda));
+                                    submitter)));
         }
-        return agendas;
+        return toAgendaResponses(agendas);
     }
 
     /*
-     * 안건이 가리키는 운영 건. **널 분기를 두지 않는다**(#593 · ADR-0055) — 요청 DTO 가 @NotNull 로
-     * 막고 엔티티도 nullable = false 라, 여기서 널을 돌려주면 그 어긋남이 persist 시점의 제약 위반
-     * 으로 미뤄져 원인이 흐려진다.
+     * 안건 응답 묶음. 연결 안건의 targetOperation.targetId(업무·하위 업무·회의의 상세 ID · #635)를
+     * 운영 건 묶음으로 한 번에 읽는다 — 안건이 몇 건이든 쿼리 1회다(DB-13). 드래프트만 있으면
+     * 쿼리하지 않는다.
+     */
+    private List<MeetingAgendaResponse> toAgendaResponses(List<MeetingAgendaEntity> agendas) {
+        List<Long> operationIds =
+                agendas.stream()
+                        .map(MeetingAgendaEntity::getOperation)
+                        .filter(Objects::nonNull)
+                        .map(OperationEntity::getId)
+                        .distinct()
+                        .toList();
+        Map<Long, OperationDetailIds> detailIdsByOperationId =
+                operationIds.isEmpty()
+                        ? Map.of()
+                        : operationRepository.findDetailIdsByOperationIds(operationIds).stream()
+                                .collect(
+                                        Collectors.toMap(
+                                                OperationDetailIds::getOperationId,
+                                                Function.identity(),
+                                                (first, second) -> first));
+        return agendas.stream()
+                .map(
+                        agenda -> {
+                            OperationEntity operation = agenda.getOperation();
+                            OperationDetailIds detailIds =
+                                    operation == null
+                                            ? null
+                                            : detailIdsByOperationId.get(operation.getId());
+                            Long targetId =
+                                    detailIds == null
+                                            ? null
+                                            : detailIds.idFor(operation.getOperationType());
+                            return MeetingAgendaResponse.from(agenda, targetId);
+                        })
+                .toList();
+    }
+
+    private MeetingAgendaResponse toAgendaResponse(MeetingAgendaEntity agenda) {
+        return toAgendaResponses(List.of(agenda)).get(0);
+    }
+
+    /*
+     * 안건이 가리키는 운영 건. 드래프트 안건(제목만 있는 안건 · ADR-0059)은 운영 건이 없으므로
+     * 널을 돌려준다 — «둘 중 하나»는 요청 DTO와 MeetingAgendaEntity.create가 판정한다.
      */
     private OperationEntity resolveTargetOperation(Long targetOperationId) {
+        if (targetOperationId == null) {
+            return null;
+        }
         return operationRepository
                 .findByIdAndDeletedAtIsNull(targetOperationId)
                 .orElseThrow(() -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
     }
 
     /*
-     * 상세 조회(OPS-025). 쿼리는 회의 1 + 안건 목록 1로 2회다 — 안건마다 연결 운영 건·제출자를
-     * 다시 조회하면 그대로 N+1이 된다(MeetingAgendaRepository의 EntityGraph가 막는다).
+     * 상세 조회(OPS-025). 쿼리는 회의 1 + 안건 목록 1 + 안건이 가리키는 상세 ID 1 + 태그 1(#637)로
+     * 4회다 — 안건마다 연결 운영 건·제출자를 다시 조회하면 그대로 N+1이 된다
+     * (MeetingAgendaRepository의 EntityGraph와 toAgendaResponses가 막는다).
      */
     @Override
     public MeetingDetailResponse getMeeting(Long meetingId) {
         MeetingEntity meeting = findMeeting(meetingId);
         List<MeetingAgendaResponse> agendas =
-                meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting).stream()
-                        .map(MeetingAgendaResponse::from)
-                        .toList();
-        return MeetingDetailResponse.of(meeting, agendas);
+                toAgendaResponses(
+                        meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting));
+        return MeetingDetailResponse.of(
+                meeting,
+                agendas,
+                tagsOf(List.of(meeting)).getOrDefault(meeting.getOperation().getId(), List.of()));
     }
 
     /*
-     * 목록 조회(신규). 쿼리는 목록 1 + 안건 건수 집계 1로 2회이며, 회의가 몇 건이든 안건이
-     * 몇 건이든 이 수는 변하지 않는다(DB-13, WorkServiceImpl.searchWorks와 같은 판단).
+     * 목록 조회(신규). 쿼리는 목록 1 + 안건 건수 집계 1 + 태그 1(#637)로 3회이며, 회의가 몇 건이든
+     * 안건이 몇 건이든 이 수는 변하지 않는다(DB-13, WorkServiceImpl.searchWorks와 같은 판단).
+     *
+     * 태그 필터(#637)는 그 태그의 운영 건 id를 한 번 더 읽어 메모리에서 거른다 — 페이징이 없는 전량
+     * 목록이라 어차피 전부 읽고, 집계는 거른 행에 대해서만 돈다(업무·하위 업무의 전량 목록과 같다).
      */
     @Override
-    public List<MeetingListItemResponse> listMeetings() {
+    public List<MeetingListItemResponse> listMeetings(Long tagId) {
         List<MeetingEntity> meetings =
                 meetingRepository.findAllByOperationDeletedAtIsNullOrderByOperationCreatedAtDesc();
+        if (tagId != null) {
+            Set<Long> tagged = Set.copyOf(operationRepository.findOperationIdsByTagId(tagId));
+            meetings =
+                    meetings.stream()
+                            .filter(meeting -> tagged.contains(meeting.getOperation().getId()))
+                            .toList();
+        }
         if (meetings.isEmpty()) {
             return List.of();
         }
@@ -162,6 +238,7 @@ public class MeetingServiceImpl implements MeetingService {
                                 Collectors.toMap(
                                         MeetingAgendaCount::getMeetingId,
                                         MeetingAgendaCount::getAgendaCount));
+        Map<Long, List<OperationTagSummaryResponse>> tagsByOperationId = tagsOf(meetings);
 
         return meetings.stream()
                 .map(
@@ -170,8 +247,20 @@ public class MeetingServiceImpl implements MeetingService {
                                         meeting,
                                         agendaCountByMeetingId
                                                 .getOrDefault(meeting.getId(), 0L)
-                                                .intValue()))
+                                                .intValue(),
+                                        tagsByOperationId.getOrDefault(
+                                                meeting.getOperation().getId(), List.of())))
                 .toList();
+    }
+
+    /*
+     * 회의별 태그 칩 (#637). 태그는 회의의 운영 건(oper)에 달리므로 키가 oper_id다. 목록 전부를 한
+     * 번에 읽어 나눈다 — 회의마다 읽으면 N+1이다 (DB-13). 비었으면 부르는 쪽이 먼저 돌려보낸다.
+     */
+    private Map<Long, List<OperationTagSummaryResponse>> tagsOf(List<MeetingEntity> meetings) {
+        return OperationTagSummaryResponse.groupByOperationId(
+                operationRepository.findTagRelationsByOperationIds(
+                        meetings.stream().map(meeting -> meeting.getOperation().getId()).toList()));
     }
 
     /*
@@ -203,9 +292,8 @@ public class MeetingServiceImpl implements MeetingService {
     @Override
     public List<MeetingAgendaResponse> getAgendas(Long meetingId) {
         MeetingEntity meeting = findMeeting(meetingId);
-        return meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting).stream()
-                .map(MeetingAgendaResponse::from)
-                .toList();
+        return toAgendaResponses(
+                meetingAgendaRepository.findAllByMeetingOrderByAgendaOrderAsc(meeting));
     }
 
     // 안건 상정(OPS-027)
@@ -227,12 +315,13 @@ public class MeetingServiceImpl implements MeetingService {
                 meetingAgendaRepository.save(
                         MeetingAgendaEntity.create(
                                 meeting,
+                                request.agendaName(),
                                 request.processStatus(),
                                 nextOrder,
                                 targetOperation,
                                 request.content(),
                                 submitter));
-        return MeetingAgendaResponse.from(agenda);
+        return toAgendaResponse(agenda);
     }
 
     // 안건 수정(OPS-028)
@@ -244,8 +333,75 @@ public class MeetingServiceImpl implements MeetingService {
         meeting.requireAgendaEditable();
 
         MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
-        agenda.update(request.content(), request.resultContent(), request.processStatus());
-        return MeetingAgendaResponse.from(agenda);
+        agenda.update(
+                request.agendaName(),
+                request.content(),
+                request.resultContent(),
+                request.processStatus());
+        return toAgendaResponse(agenda);
+    }
+
+    /*
+     * 드래프트 안건을 업무로 승격한다 (#625 · ADR-0059). 업무 등록(WorkService.createWork)을 그대로
+     * 부르고, 만든 업무의 운영 건을 안건에 잇는다 — 이 메서드의 트랜잭션에 createWork가 합류하므로
+     * 업무 생성과 안건 연결은 **한 트랜잭션**이다. 연결이 실패하면 업무도 남지 않는다.
+     *
+     * 업무의 필수 값(제목·유형·담당자)은 요청이 준다. 서버가 안건 제목을 업무 제목으로 채우거나
+     * 유형·담당자를 정하지 않는 것은 결정이다(ADR-0059 «승격의 필수 값») — 화면은 업무 등록 시트를
+     * 안건 제목으로 미리 채워 열고, 사람이 고른 값이 그대로 온다.
+     *
+     * 종료·취소된 회의에서도 승격한다(#634 · ssccops#573) — 승격은 안건 내용을 고치는 게 아니라
+     * 업무를 만드는 일이라, 회의가 끝난 뒤 «그때 나온 얘기를 업무로» 옮기는 길을 막지 않는다. 기각:
+     * 안건 수정과 같이 requireAgendaEditable로 409(MEETING_CLOSED) — #625가 그렇게 시작했으나
+     * 운영진 결정(2026-10-03)으로 뺐다. 안건 추가·수정·철회는 그대로 막는다.
+     * 순서는 회의 → 안건 → «이미 연결됨»을 업무 INSERT 전에 본다(MeetingAgendaEntity.requireDraft).
+     */
+    @Override
+    @Transactional
+    public MeetingAgendaPromoteResponse promoteAgendaToWork(
+            Long meetingId, Long agendaId, WorkCreateRequest request, MemberEntity registrant) {
+        MeetingEntity meeting = findMeeting(meetingId);
+        MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
+        agenda.requireDraft();
+
+        WorkCreateResponse work = workService.createWork(request, registrant);
+        linkDraftAgenda(agenda, work.operationId());
+        return new MeetingAgendaPromoteResponse(toAgendaResponse(agenda), work);
+    }
+
+    /*
+     * 드래프트 안건을 하위 업무로 승격한다 (#644 · ssccops#580). 업무 승격과 같은 모양이다 — 하위
+     * 업무 등록(SubWorkService.createSubWork)을 그대로 불러 그 규칙(상위 업무 존재·유형 사용 여부·
+     * 담당자·체크리스트 복사·진행률 재집계)을 한 곳에 두고, 이 메서드의 트랜잭션에 합류시켜 생성과
+     * 안건 연결을 한 트랜잭션으로 묶는다.
+     *
+     * 상위 업무의 상태는 따로 보지 않는다 — 하위 업무 등록이 보지 않기 때문이다. 승격 경로만 더
+     * 엄격하면 «회의에서 만들면 막히고 하위 업무 화면에서 만들면 되는» 일이 생긴다. 기각: 기존
+     * /promote 본문에 대상 구분을 넣기 — 업무·하위 업무 본문이 달라 한 요청이 두 모양이 되고 기존
+     * 계약이 깨진다(#644). 종료·취소된 회의 허용과 «이미 연결됨»을 INSERT 전에 보는 순서는 업무
+     * 승격과 같다.
+     */
+    @Override
+    @Transactional
+    public MeetingAgendaSubWorkPromoteResponse promoteAgendaToSubWork(
+            Long meetingId, Long agendaId, SubWorkCreateRequest request, MemberEntity registrant) {
+        MeetingEntity meeting = findMeeting(meetingId);
+        MeetingAgendaEntity agenda = findAgenda(meeting, agendaId);
+        agenda.requireDraft();
+
+        SubWorkCreateResponse subWork = subWorkService.createSubWork(request, registrant);
+        linkDraftAgenda(agenda, subWork.operationId());
+        return new MeetingAgendaSubWorkPromoteResponse(toAgendaResponse(agenda), subWork);
+    }
+
+    // 승격이 방금 만든 운영 건을 안건에 잇는다 — 업무·하위 업무 승격이 같이 쓴다
+    private void linkDraftAgenda(MeetingAgendaEntity agenda, Long operationId) {
+        OperationEntity operation =
+                operationRepository
+                        .findById(operationId)
+                        .orElseThrow(
+                                () -> new GeneralException(OperationErrorCode.OPERATION_NOT_FOUND));
+        agenda.promoteTo(operation);
     }
 
     // 안건 상정 철회(OPS-029)

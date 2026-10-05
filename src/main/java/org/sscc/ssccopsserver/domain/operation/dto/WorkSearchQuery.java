@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.operation.dto;
 
+import java.util.Set;
+
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
 
@@ -15,15 +17,22 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkType;
  */
 public record WorkSearchQuery(
         WorkStatus workStatus,
+        Set<WorkStatus> excludedWorkStatuses,
         WorkType workType,
         String keyword,
         Long personInChargeId,
+        Long tagId,
         int size,
         WorkSortOrder sort,
         WorkCursor cursor) {
 
     public boolean hasWorkStatusFilter() {
         return workStatus != null;
+    }
+
+    // «완료 제외» (#623). 비어 있으면 요청 단계에서 이미 빈 집합이다 — null이 아니다
+    public boolean hasExcludedWorkStatusFilter() {
+        return !excludedWorkStatuses.isEmpty();
     }
 
     public boolean hasWorkTypeFilter() {
@@ -46,6 +55,11 @@ public record WorkSearchQuery(
      */
     public boolean hasPersonInChargeFilter() {
         return personInChargeId != null;
+    }
+
+    // 태그 필터 (#637 · 업무의 운영 건에 달린 태그). 값이 없으면 조건 자체를 붙이지 않는다
+    public boolean hasTagFilter() {
+        return tagId != null;
     }
 
     public boolean hasCursor() {

@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import jakarta.persistence.EntityManager;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
+import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCursor;
@@ -26,6 +28,8 @@ import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchCondition;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchQuery;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSearchResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkSubWorkSummaryResponse;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionRequest;
+import org.sscc.ssccopsserver.domain.operation.dto.WorkTransitionResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkUpdateRequest;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.OperationPriority;
@@ -33,6 +37,7 @@ import org.sscc.ssccopsserver.domain.operation.entity.ProgressRate;
 import org.sscc.ssccopsserver.domain.operation.entity.SubWorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkEntity;
 import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
+import org.sscc.ssccopsserver.domain.operation.entity.WorkTransitionAction;
 import org.sscc.ssccopsserver.domain.operation.repository.OperationRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistItemRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.SubWorkChecklistProgress;
@@ -41,6 +46,9 @@ import org.sscc.ssccopsserver.domain.operation.repository.WorkRepository;
 import org.sscc.ssccopsserver.domain.operation.repository.WorkSubWorkAggregate;
 import org.sscc.ssccopsserver.global.apipayload.PageResponse;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -64,6 +72,9 @@ public class WorkServiceImpl implements WorkService {
      * WorkDetailResponse를 만들면 방금 바꾼 값인데도 updatedAt이 직전 값 그대로 나간다.
      */
     private final EntityManager entityManager;
+
+    // 상태 전이의 기록 자리 (#622). 상태 이력 표를 두지 않기로 해서(ssccops#563) 이것이 유일하다
+    private final AuditLog auditLog;
 
     /*
      * oper(공통)와 work(확장)를 한 트랜잭션에서 INSERT 한다. 둘 중 하나만 남으면
@@ -103,8 +114,8 @@ public class WorkServiceImpl implements WorkService {
     }
 
     /*
-     * 상세 조회(OPS-003). 쿼리는 업무 1 + 하위 업무 목록 1 + 체크리스트 집계 1로 3회다 —
-     * 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13).
+     * 상세 조회(OPS-003). 쿼리는 업무 1 + 하위 업무 목록 1 + 체크리스트 집계 1 + 태그 1(#637)로
+     * 4회다 — 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13).
      *
      * 조회는 어떤 상태도 바꾸지 않는다 (AP-07). 진행률은 저장하지 않고 계산만 한다.
      */
@@ -153,6 +164,43 @@ public class WorkServiceImpl implements WorkService {
         return buildDetail(work);
     }
 
+    /*
+     * 상태 전이 (#622 · ssccops#563). 전이 판단은 엔티티가 하고(WorkEntity.applyTransition) 여기서는
+     * 조회·집계·기록만 맡는다 (LY-09 — SubWorkServiceImpl.transitionSubWork와 같은 경계).
+     *
+     * 남은 하위 업무 수는 완료 전이에서만 센다 — 다른 전이에서는 쓰지 않는 값이라 쿼리를 더하지
+     * 않는다(회의 종료가 미처리 안건을 CLOSE에서만 보는 것과 같다).
+     *
+     * 인가는 컨트롤러의 WORK_MANAGE 하나다. 하위 업무처럼 담당자 본인에게 열지 않은 것은 상위
+     * 업무의 담당자가 운영 건 수준이라 등록·수정 권한과 맞췄기 때문이다(ssccops#563 판단 표).
+     *
+     * 기록은 감사 로그뿐이다 — 상태 이력 표(work_stts_hstry)는 운영진이 «감사 로그로 충분»이라
+     * 두지 않았다. 그래서 «누가 언제 완료했나»를 화면이 읽어 올 API는 없다.
+     */
+    @Override
+    @Transactional
+    public WorkTransitionResponse transitionWork(Long workId, WorkTransitionRequest request) {
+        WorkEntity work = findWork(workId);
+        WorkTransitionAction action = request.transition();
+        WorkStatus previousStatus = work.getWorkStatus();
+
+        long unfinishedSubWorkCount =
+                action == WorkTransitionAction.COMPLETE
+                        ? subWorkRepository.countAliveByWorkExcludingStatus(work, WorkStatus.DONE)
+                        : 0L;
+        Instant changedAt = clock.instant();
+        work.applyTransition(action, unfinishedSubWorkCount);
+
+        auditLog.record(
+                AuditEvent.success(AuditAction.WORK_TRANSITION)
+                        .target(workId)
+                        .decision(action)
+                        .change(previousStatus, work.getWorkStatus())
+                        .build());
+
+        return WorkTransitionResponse.of(work, action, previousStatus, changedAt);
+    }
+
     private WorkEntity findWork(Long workId) {
         return workRepository
                 .findByIdAndOperationDeletedAtIsNull(workId)
@@ -198,7 +246,10 @@ public class WorkServiceImpl implements WorkService {
         List<WorkSubWorkSummaryResponse> summaries =
                 subWorks.stream().map(subWork -> summarize(subWork, progressBySubWorkId)).toList();
 
-        return WorkDetailResponse.of(work, summaries);
+        return WorkDetailResponse.of(
+                work,
+                summaries,
+                tagsOf(List.of(work)).getOrDefault(work.getOperation().getId(), List.of()));
     }
 
     private OperationPriority orNormalPriority(OperationPriority priority) {
@@ -208,8 +259,8 @@ public class WorkServiceImpl implements WorkService {
     /*
      * 목록 조회(OPS-020). 카드 그리드 한 장이 이 호출 하나다.
      *
-     * 쿼리는 다섯 번이다 — 목록 · 하위 업무 집계 · 체크리스트 진행률 집계 · 필터 건수 ·
-     * 전체 건수. 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 변하지 않는다
+     * 쿼리는 여섯 번이다 — 목록 · 하위 업무 집계 · 체크리스트 진행률 집계 · 태그(#637) ·
+     * 필터 건수 · 전체 건수. 업무가 몇 건이든, 그 아래 하위 업무가 몇 건이든 이 수는 변하지 않는다
      * (DB-13). 집계는 이번 페이지에 실린 업무에 대해서만 돌리며, 목록이 비거나 하위 업무가
      * 하나도 없으면 그 쿼리는 아예 부르지 않는다 — 빈 컬렉션을 IN에 넘기면 DB에 따라
      * 문법 오류다.
@@ -223,16 +274,7 @@ public class WorkServiceImpl implements WorkService {
         boolean hasNext = fetched.size() > query.size();
         List<WorkEntity> rows = hasNext ? fetched.subList(0, query.size()) : fetched;
 
-        Map<Long, List<BigDecimal>> ratesByWorkId = subWorkRatesOf(rows);
-        List<WorkListItemResponse> works =
-                rows.stream()
-                        .map(
-                                work ->
-                                        WorkListItemResponse.of(
-                                                work,
-                                                ratesByWorkId.getOrDefault(
-                                                        work.getId(), List.of())))
-                        .toList();
+        List<WorkListItemResponse> works = toListItems(rows);
 
         PageResponse page =
                 new PageResponse(
@@ -250,21 +292,53 @@ public class WorkServiceImpl implements WorkService {
      * 조회(OPS-020)와 같아야 하므로, 집계(subWorkRatesOf)와 DTO 조립을 그대로 공유한다 —
      * 여기서 산식을 다시 적으면 통합 화면과 업무 화면이 같은 업무를 다른 %로 그린다.
      *
-     * 쿼리는 목록 1 + 하위 업무 집계 1 + 체크리스트 진행률 집계 1로 3회이며, 업무·하위
-     * 업무가 몇 건이든 이 수는 변하지 않는다 (DB-13).
+     * 쿼리는 목록 1 + 하위 업무 집계 1 + 체크리스트 진행률 집계 1 + 태그 1로 4회이며,
+     * 업무·하위 업무가 몇 건이든 이 수는 변하지 않는다 (DB-13). 태그 필터(#637)를 걸면 그 태그의
+     * 운영 건 id를 한 번 더 읽어 메모리에서 거른다 — 전량 목록이라 어차피 전부 읽고, 집계는 거른
+     * 행에 대해서만 돈다(OperationRepository.findOperationIdsByTagId 주석).
      */
     @Override
-    public List<WorkListItemResponse> listWorks() {
+    public List<WorkListItemResponse> listWorks(Long tagId) {
         List<WorkEntity> rows =
                 workRepository
                         .findAllByOperationDeletedAtIsNullOrderByOperationCreatedAtDescIdDesc();
+        if (tagId != null) {
+            Set<Long> tagged = Set.copyOf(operationRepository.findOperationIdsByTagId(tagId));
+            rows =
+                    rows.stream()
+                            .filter(work -> tagged.contains(work.getOperation().getId()))
+                            .toList();
+        }
+        return toListItems(rows);
+    }
+
+    // 목록(OPS-020)과 운영 통합(OPS-001)이 카드 한 장을 같은 재료로 만든다 — 한쪽만 태그를 싣지 않게
+    private List<WorkListItemResponse> toListItems(List<WorkEntity> rows) {
         Map<Long, List<BigDecimal>> ratesByWorkId = subWorkRatesOf(rows);
+        Map<Long, List<OperationTagSummaryResponse>> tagsByOperationId = tagsOf(rows);
         return rows.stream()
                 .map(
                         work ->
                                 WorkListItemResponse.of(
-                                        work, ratesByWorkId.getOrDefault(work.getId(), List.of())))
+                                        work,
+                                        ratesByWorkId.getOrDefault(work.getId(), List.of()),
+                                        tagsByOperationId.getOrDefault(
+                                                work.getOperation().getId(), List.of())))
                 .toList();
+    }
+
+    /*
+     * 업무별 태그 칩 (#637). 태그는 운영 건(oper)에 달리므로 키가 업무 id가 아니라 oper_id다. 이번
+     * 페이지의 업무 전부를 한 번에 읽어 나눈다 — 업무마다 읽으면 N+1이다.
+     */
+    private Map<Long, List<OperationTagSummaryResponse>> tagsOf(List<WorkEntity> rows) {
+        if (rows.isEmpty()) {
+            // IN () 은 DB에 따라 문법 오류이므로 애초에 쿼리를 보내지 않는다
+            return Map.of();
+        }
+        return OperationTagSummaryResponse.groupByOperationId(
+                operationRepository.findTagRelationsByOperationIds(
+                        rows.stream().map(work -> work.getOperation().getId()).toList()));
     }
 
     // 다음 커서는 이번 페이지의 마지막 행을 가리킨다. 마지막 페이지면 커서가 없다

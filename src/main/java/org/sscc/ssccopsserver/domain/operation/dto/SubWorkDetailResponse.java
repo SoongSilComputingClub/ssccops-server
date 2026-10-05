@@ -56,6 +56,9 @@ import org.sscc.ssccopsserver.domain.operation.entity.WorkStatus;
  * 승인·반려를 누르므로, 같은 판단 근거가 여기에도 있어야 한다. 정족수 유형이 아니면 quorum.needed가
  * false이고 나머지는 NULL이다.
  *
+ * tags는 이 하위 업무의 운영 건(operationId)에 달린 태그 칩이다 (#637 · 이름 오름차순 · 없으면 빈
+ * 배열). 지정 교체는 PUT /v1/operations/{operationId}/tags가 맡는다 — 수정 본문에 태그를 받지 않는다.
+ *
  * 일시는 AP-12에 따라 Asia/Seoul 오프셋을 포함해 내려준다.
  */
 public record SubWorkDetailResponse(
@@ -95,7 +98,8 @@ public record SubWorkDetailResponse(
         boolean canApprove,
         boolean canReject,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        List<OperationTagSummaryResponse> tags) {
 
     private static final ZoneId SERVICE_ZONE = ZoneId.of("Asia/Seoul");
 
@@ -127,7 +131,8 @@ public record SubWorkDetailResponse(
             VoteChoice myVote,
             SubWorkRejectionResponse latestRejection,
             boolean canDecide,
-            String authorizerAuthorityName) {
+            String authorizerAuthorityName,
+            List<OperationTagSummaryResponse> tags) {
         OperationEntity operation = subWork.getOperation();
         SubWorkTypeEntity subWorkType = subWork.getSubWorkType();
         boolean checklistItemEditable = subWork.isChecklistItemEditable();
@@ -175,7 +180,8 @@ public record SubWorkDetailResponse(
                 canDecide,
                 canDecide,
                 toOffsetDateTime(operation.getCreatedAt()),
-                toOffsetDateTime(operation.getUpdatedAt()));
+                toOffsetDateTime(operation.getUpdatedAt()),
+                tags);
     }
 
     private static OffsetDateTime toOffsetDateTime(Instant instant) {

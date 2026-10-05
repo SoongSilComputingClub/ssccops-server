@@ -1,0 +1,36 @@
+# 도메인 담당 (ssccops#582 · 2026-10-04)
+#
+# PR을 열면 바뀐 경로의 담당자에게 리뷰 요청이 자동으로 간다. 머지 조건으로 강제하지는 않는다 —
+# 브랜치 보호에 «Require review from Code Owners»를 켜지 않았다. 다른 담당의 도메인을 건드리면
+# 이 요청이 곧 «알리기»다(AGENTS.md «도메인 담당»).
+#
+# 아래로 갈수록 우선한다(마지막으로 맞은 줄이 이긴다). 그래서 기본값을 맨 위에 둔다.
+
+# 도메인 밖 — global/(MCP·보안·공통) · db/migration · 워크플로 · 빌드 설정 · 문서 · example — 는 둘 다
+*                                                          @swthewhite @bell-person-ii
+
+# ── @bell-person-ii — 학술 · 운영 · 파일 · 규정 도우미 · 인증
+/src/main/java/org/sscc/ssccopsserver/domain/academicprogram/  @bell-person-ii
+/src/test/java/org/sscc/ssccopsserver/domain/academicprogram/  @bell-person-ii
+/src/main/java/org/sscc/ssccopsserver/domain/operation/        @bell-person-ii
+/src/test/java/org/sscc/ssccopsserver/domain/operation/        @bell-person-ii
+/src/main/java/org/sscc/ssccopsserver/domain/file/             @bell-person-ii
+/src/test/java/org/sscc/ssccopsserver/domain/file/             @bell-person-ii
+/src/main/java/org/sscc/ssccopsserver/domain/assistant/        @bell-person-ii
+/src/test/java/org/sscc/ssccopsserver/domain/assistant/        @bell-person-ii
+/src/main/java/org/sscc/ssccopsserver/domain/auth/             @bell-person-ii
+/src/test/java/org/sscc/ssccopsserver/domain/auth/             @bell-person-ii
+
+# ── @swthewhite — 콘텐츠 · 행사 · 폼 · 회원 · 알림 · 공유
+/src/main/java/org/sscc/ssccopsserver/domain/content/          @swthewhite
+/src/test/java/org/sscc/ssccopsserver/domain/content/          @swthewhite
+/src/main/java/org/sscc/ssccopsserver/domain/event/            @swthewhite
+/src/test/java/org/sscc/ssccopsserver/domain/event/            @swthewhite
+/src/main/java/org/sscc/ssccopsserver/domain/form/             @swthewhite
+/src/test/java/org/sscc/ssccopsserver/domain/form/             @swthewhite
+/src/main/java/org/sscc/ssccopsserver/domain/member/           @swthewhite
+/src/test/java/org/sscc/ssccopsserver/domain/member/           @swthewhite
+/src/main/java/org/sscc/ssccopsserver/domain/notification/     @swthewhite
+/src/test/java/org/sscc/ssccopsserver/domain/notification/     @swthewhite
+/src/main/java/org/sscc/ssccopsserver/domain/share/            @swthewhite
+/src/test/java/org/sscc/ssccopsserver/domain/share/            @swthewhite

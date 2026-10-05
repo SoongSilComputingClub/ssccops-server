@@ -161,9 +161,10 @@ public interface SubWorkService {
     /*
      * 운영 통합(OPS-001)의 하위 업무 전량 목록. 목록 조회(OPS-008)와 같은 행 요약이지만
      * 좌측 목록과 우측 트리를 한 화면이 함께 그리므로 커서 페이징 없이 전량을 돌려준다.
-     * 정렬은 OPS-008 기본값과 같다(마감 오름차순, 마감 없는 건은 뒤).
+     * 정렬은 OPS-008 기본값과 같다(마감 오름차순, 마감 없는 건은 뒤). tagId가 있으면 그 태그가
+     * 달린 하위 업무만이다(#637 · null이면 전체).
      */
-    List<SubWorkSummaryResponse> listSubWorks();
+    List<SubWorkSummaryResponse> listSubWorks(Long tagId);
 
     /*
      * 담당 중인 하위 업무 건수(#78)는 **이 인터페이스에 없다** (ssccops#242).

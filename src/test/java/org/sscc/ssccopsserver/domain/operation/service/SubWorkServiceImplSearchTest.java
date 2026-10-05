@@ -178,7 +178,8 @@ class SubWorkServiceImplSearchTest {
                         subWorkChecklistItemRepository,
                         memberService,
                         FIXED_CLOCK,
-                        entityManager.getEntityManager());
+                        entityManager.getEntityManager(),
+                        new AuditLog());
         subWorkService =
                 new SubWorkServiceImpl(
                         operationRepository,
@@ -794,11 +795,11 @@ class SubWorkServiceImplSearchTest {
     }
 
     /*
-     * 검토 중인 건이 섞인 페이지는 검토요청 시각 집계가 하나 더 붙어 다섯 번이다
-     * (ssccops#196). 행이 몇 건이든 이 수는 그대로다 — 카드마다 이력을 물으면 N+1이다.
+     * 검토 중인 건이 섞인 페이지는 검토요청 시각 집계가 하나 더 붙어 여섯 번이다
+     * (ssccops#196 · 태그 칩 1 포함 #637). 행이 몇 건이든 이 수는 그대로다 — 카드마다 이력을 물으면 N+1이다.
      */
     @Test
-    void searchRunsFiveQueriesWhenRowsIncludeReviewRegardlessOfRowCount() {
+    void searchRunsSixQueriesWhenRowsIncludeReviewRegardlessOfRowCount() {
         for (int index = 0; index < 5; index++) {
             subWorkRequestedAt(THREE_DAYS_AGO, "검토 중인 건 " + index);
         }
@@ -816,7 +817,7 @@ class SubWorkServiceImplSearchTest {
         SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build(), owner);
 
         assertThat(response.subWorks()).hasSize(5);
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(5);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(6);
     }
 
     // 건수는 두 갈래다 — 걸러진 건수(화면 '8건')와 필터를 뗀 전체 건수(화면 '전체 8건')
@@ -933,10 +934,11 @@ class SubWorkServiceImplSearchTest {
 
     /*
      * 하위 업무마다 체크리스트를 세면 그대로 N+1이 된다 (DB-13). 목록 1 + 진행률 집계 1 +
-     * 걸러진 건수 1 + 전체 건수 1로 끝나는지 못 박아 둔다 — 행이 몇 건이든 이 수는 그대로다.
+     * 태그 칩 1(#637) + 걸러진 건수 1 + 전체 건수 1로 끝나는지 못 박아 둔다 — 행이 몇 건이든 이
+     * 수는 그대로다.
      */
     @Test
-    void searchRunsFourQueriesRegardlessOfRowCount() {
+    void searchRunsFiveQueriesRegardlessOfRowCount() {
         for (int index = 0; index < 5; index++) {
             createSubWork(springMtWorkId, "하위 업무 " + index, SOON.plusDays(index));
         }
@@ -954,7 +956,7 @@ class SubWorkServiceImplSearchTest {
         SubWorkSearchResponse response = subWorkService.searchSubWorks(condition().build(), owner);
 
         assertThat(response.subWorks()).hasSize(5);
-        assertThat(statistics.getPrepareStatementCount()).isEqualTo(4);
+        assertThat(statistics.getPrepareStatementCount()).isEqualTo(5);
     }
 
     /*
@@ -1180,6 +1182,7 @@ class SubWorkServiceImplSearchTest {
         private Boolean isReviewStale;
         private String keyword;
         private Boolean mine;
+        private Long tagId;
         private Integer size;
         private String cursor;
         private String sort;
@@ -1249,6 +1252,7 @@ class SubWorkServiceImplSearchTest {
                     isReviewStale,
                     keyword,
                     mine,
+                    tagId,
                     size,
                     cursor,
                     sort);

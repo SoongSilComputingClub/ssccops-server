@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.global.mcp.tool;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -83,7 +84,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 68종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 73종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -139,6 +140,11 @@ class OperationToolsIntegrationTest {
                             "vote_sub_work_approval",
                             "add_sub_work_checklist_item",
                             "update_sub_work_checklist_item_article",
+                            // 운영 태그 (#637 · 폼 라벨과 같은 모양 — 만들기·지우기 도구는 없다)
+                            "list_operation_tags",
+                            "assign_operation_tags",
+                            // 상위 업무 전이 (#622 · ssccops#563)
+                            "transition_work",
                             // W1 — 회의·승인함·대시보드·유형
                             "create_meeting",
                             "transition_meeting",
@@ -146,6 +152,10 @@ class OperationToolsIntegrationTest {
                             "add_meeting_agenda",
                             // 회의의 내용을 적는 유일한 자리 (#599 — V25가 회의 단위 본문을 걷었다)
                             "update_meeting_agenda",
+                            // 드래프트 안건 → 업무 (#625 · ADR-0059)
+                            "promote_meeting_agenda",
+                            // 드래프트 안건 → 하위 업무 (#644 · ssccops#580)
+                            "promote_meeting_agenda_to_sub_work",
                             "list_approvals",
                             "get_dashboard",
                             "list_sub_work_types",
@@ -212,6 +222,284 @@ class OperationToolsIntegrationTest {
             assertThat(text).contains("\"priority\":\"HIGH\"");
             // 주지 않은 값이 살아 있다
             assertThat(text).contains("2026 동아리 박람회").contains("총평을 미리 적어 둔다");
+        }
+    }
+
+    /*
+     * 드래프트 안건 → 업무 (#625 · ADR-0059). 제목만으로 올린 안건이 promote_meeting_agenda 한 번에
+     * 업무를 가리키게 되는지 REST 왕복으로 본다 — 도구가 안건 제목을 업무 제목으로 채우지 않으므로
+     * title 은 호출이 준다.
+     */
+    @Test
+    @DisplayName("add_meeting_agenda(제목만) → promote_meeting_agenda — 드래프트가 업무를 가리키게 된다")
+    void draftAgendaIsPromotedToWork() {
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult meeting =
+                    call(
+                            client,
+                            "create_meeting",
+                            Map.of(
+                                    "request",
+                                    Map.of(
+                                            "title", "10월 정기회의",
+                                            "meetingCategory", "REGULAR",
+                                            "personInChargeId", founderId,
+                                            "startAt", "2026-10-03T19:00:00+09:00")));
+            assertThat(meeting.isError()).as(text(meeting)).isNotEqualTo(Boolean.TRUE);
+            Long meetingId = JsonPath.parse(text(meeting)).read("$.meetingId", Long.class);
+
+            McpSchema.CallToolResult draft =
+                    call(
+                            client,
+                            "add_meeting_agenda",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "request",
+                                    Map.of("agendaName", "동아리방 정리 당번")));
+            assertThat(draft.isError()).as(text(draft)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(draft)).contains("\"draft\":true").contains("동아리방 정리 당번");
+            Long agendaId = JsonPath.parse(text(draft)).read("$.agendaId", Long.class);
+
+            McpSchema.CallToolResult promoted =
+                    call(
+                            client,
+                            "promote_meeting_agenda",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "agendaId",
+                                    agendaId,
+                                    "request",
+                                    Map.of(
+                                            "title", "동아리방 정리 당번",
+                                            "itemType", "ROUTINE",
+                                            "ownerId", founderId)));
+            assertThat(promoted.isError()).as(text(promoted)).isNotEqualTo(Boolean.TRUE);
+            String text = text(promoted);
+            assertThat(JsonPath.parse(text).read("$.agenda.draft", Boolean.class)).isFalse();
+            Long operationId = JsonPath.parse(text).read("$.work.operationId", Long.class);
+            assertThat(
+                            JsonPath.parse(text)
+                                    .read("$.agenda.targetOperation.operationId", Long.class))
+                    .isEqualTo(operationId);
+            // 상세를 여는 값은 운영 ID가 아니라 업무 ID다(#635) — 모델도 get_work 에 이 값을 넘긴다
+            assertThat(JsonPath.parse(text).read("$.agenda.targetOperation.targetId", Long.class))
+                    .isEqualTo(JsonPath.parse(text).read("$.work.workId", Long.class));
+        }
+    }
+
+    /*
+     * 드래프트 안건 → 하위 업무 (#644 · ssccops#580). promote_meeting_agenda_to_sub_work 한 번에
+     * 안건이 새 하위 업무를 가리키고, targetId 가 get_sub_work 에 넘길 subWorkId 인지 REST 왕복으로 본다.
+     */
+    @Test
+    @DisplayName(
+            "add_meeting_agenda(제목만) → promote_meeting_agenda_to_sub_work — 드래프트가 하위 업무를 가리키게 된다")
+    void draftAgendaIsPromotedToSubWork() throws Exception {
+        Long workId = createWorkWithReview();
+        Long typeId =
+                SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult meeting =
+                    call(
+                            client,
+                            "create_meeting",
+                            Map.of(
+                                    "request",
+                                    Map.of(
+                                            "title", "10월 2차 정기회의",
+                                            "meetingCategory", "REGULAR",
+                                            "personInChargeId", founderId,
+                                            "startAt", "2026-10-10T19:00:00+09:00")));
+            assertThat(meeting.isError()).as(text(meeting)).isNotEqualTo(Boolean.TRUE);
+            Long meetingId = JsonPath.parse(text(meeting)).read("$.meetingId", Long.class);
+
+            McpSchema.CallToolResult draft =
+                    call(
+                            client,
+                            "add_meeting_agenda",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "request",
+                                    Map.of("agendaName", "부스 배치도 확정")));
+            assertThat(draft.isError()).as(text(draft)).isNotEqualTo(Boolean.TRUE);
+            Long agendaId = JsonPath.parse(text(draft)).read("$.agendaId", Long.class);
+
+            McpSchema.CallToolResult promoted =
+                    call(
+                            client,
+                            "promote_meeting_agenda_to_sub_work",
+                            Map.of(
+                                    "meetingId",
+                                    meetingId,
+                                    "agendaId",
+                                    agendaId,
+                                    "request",
+                                    Map.of(
+                                            "workId", workId,
+                                            "title", "부스 배치도 확정",
+                                            "subWorkTypeId", typeId,
+                                            "ownerId", founderId)));
+            assertThat(promoted.isError()).as(text(promoted)).isNotEqualTo(Boolean.TRUE);
+            String text = text(promoted);
+            assertThat(JsonPath.parse(text).read("$.agenda.draft", Boolean.class)).isFalse();
+            assertThat(JsonPath.parse(text).read("$.subWork.workId", Long.class)).isEqualTo(workId);
+            assertThat(
+                            JsonPath.parse(text)
+                                    .read("$.agenda.targetOperation.operationType", String.class))
+                    .isEqualTo("SUB_WORK");
+            assertThat(JsonPath.parse(text).read("$.agenda.targetOperation.targetId", Long.class))
+                    .isEqualTo(JsonPath.parse(text).read("$.subWork.subWorkId", Long.class));
+        }
+    }
+
+    /*
+     * 운영 태그 (#637) — 목록에서 id를 얻고, 지정은 운영 건(operationId) 단위 전체 교체이며, 업무·회의·
+     * 운영 통합 목록의 tagId가 그 결과로 거른다. 태그는 화면이 만드는 기준정보라(도구가 없다) 여기서도
+     * REST로 만든다.
+     */
+    @Test
+    @DisplayName("list_operation_tags · assign_operation_tags · 목록 tagId — 지정이 필터로 이어진다")
+    void operationTagToolsRoundTrip() throws Exception {
+        Long workId = createWorkWithReview();
+        String detail =
+                mockMvc.perform(
+                                get("/v1/works/" + workId)
+                                        .header("Authorization", "Bearer " + FOUNDER))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long operationId = JsonPath.parse(detail).read("$.data.operationId", Long.class);
+        String created =
+                mockMvc.perform(
+                                post("/v1/operation-tags")
+                                        .header("Authorization", "Bearer " + FOUNDER)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"tagNm\": \"MCP 학술국\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long tagId = JsonPath.parse(created).read("$.data.operationTagId", Long.class);
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            assertThat(text(call(client, "list_operation_tags", Map.of()))).contains("MCP 학술국");
+
+            McpSchema.CallToolResult assigned =
+                    call(
+                            client,
+                            "assign_operation_tags",
+                            Map.of(
+                                    "operationId",
+                                    operationId,
+                                    "request",
+                                    Map.of("tagIds", List.of(tagId))));
+            assertThat(assigned.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(assigned)).contains("\"operationTagId\":" + tagId);
+
+            String filtered =
+                    text(call(client, "list_works", Map.of("condition", Map.of("tagId", tagId))));
+            assertThat(filtered).contains("\"workId\":" + workId).contains("MCP 학술국");
+            assertThat(filtered).contains("\"totalCount\":1");
+
+            // 운영 통합은 세 배열을 같은 태그로 거른다 — 업무 하나만 남고 하위 업무·회의는 비었다
+            String hub =
+                    text(
+                            call(
+                                    client,
+                                    "list_operations",
+                                    Map.of("condition", Map.of("tagId", tagId))));
+            assertThat(JsonPath.parse(hub).read("$.works.length()", Integer.class)).isEqualTo(1);
+            assertThat(JsonPath.parse(hub).read("$.meetings.length()", Integer.class)).isZero();
+
+            // 조건 없이도 부를 수 있다 — 조건은 선택이다
+            McpSchema.CallToolResult meetings = call(client, "list_meetings", Map.of());
+            assertThat(meetings.isError()).isNotEqualTo(Boolean.TRUE);
+            McpSchema.CallToolResult taggedMeetings =
+                    call(client, "list_meetings", Map.of("condition", Map.of("tagId", tagId)));
+            assertThat(taggedMeetings.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(taggedMeetings)).doesNotContain("meetingId");
+        }
+    }
+
+    /*
+     * #622 — 업무 전이는 REST를 그대로 지난다. 완료가 막히는 409의 코드와 «남은 수»가 도구 오류
+     * 문장으로 와야 모델이 «하위 업무를 먼저 마무리하라»고 사용자에게 말할 수 있다.
+     */
+    @Test
+    @DisplayName("transition_work — 착수는 진행이 되고, 하위 업무가 남은 완료는 남은 수와 함께 409로 끝난다")
+    void transitionWorkCarriesRemainingSubWorks() throws Exception {
+        Long subWorkId = createSubWork();
+        String detail =
+                mockMvc.perform(
+                                get("/v1/sub-works/" + subWorkId)
+                                        .header("Authorization", "Bearer " + FOUNDER))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        Long workId = JsonPath.parse(detail).read("$.data.workId", Long.class);
+
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult started =
+                    call(
+                            client,
+                            "transition_work",
+                            Map.of("workId", workId, "request", Map.of("transition", "START")));
+            assertThat(started.isError()).as(text(started)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(started)).contains("\"workStatus\":\"IN_PROGRESS\"");
+
+            call(
+                    client,
+                    "transition_work",
+                    Map.of("workId", workId, "request", Map.of("transition", "REQUEST_REVIEW")));
+            McpSchema.CallToolResult completed =
+                    call(
+                            client,
+                            "transition_work",
+                            Map.of("workId", workId, "request", Map.of("transition", "COMPLETE")));
+
+            assertThat(completed.isError()).isTrue();
+            assertThat(text(completed)).contains("SUB_WORK_UNFINISHED").contains("1건");
+        }
+    }
+
+    /*
+     * #623 — 검색 조건 record의 목록 필드는 같은 이름의 반복 파라미터로 실린다(McpRestClient).
+     * 그 길로 «완료 제외»가 서버까지 닿는지 본다 — 닿지 않으면 완료 업무가 섞여 나온다.
+     */
+    @Test
+    @DisplayName("list_works — excludeWorkStatus로 완료 업무를 빼고 받는다")
+    void listWorksExcludesDoneWorks() throws Exception {
+        Long workId = createWorkWithReview();
+        try (McpSyncClient client = connect(FOUNDER)) {
+            for (String action : new String[] {"START", "REQUEST_REVIEW", "COMPLETE"}) {
+                McpSchema.CallToolResult moved =
+                        call(
+                                client,
+                                "transition_work",
+                                Map.of("workId", workId, "request", Map.of("transition", action)));
+                assertThat(moved.isError()).as(text(moved)).isNotEqualTo(Boolean.TRUE);
+            }
+
+            McpSchema.CallToolResult withDone =
+                    call(client, "list_works", Map.of("condition", Map.of("size", 100)));
+            McpSchema.CallToolResult withoutDone =
+                    call(
+                            client,
+                            "list_works",
+                            Map.of(
+                                    "condition",
+                                    Map.of("size", 100, "excludeWorkStatus", List.of("DONE"))));
+
+            assertThat(text(withDone)).contains("\"workId\":" + workId + ",");
+            assertThat(withoutDone.isError()).as(text(withoutDone)).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(withoutDone))
+                    .doesNotContain("\"workId\":" + workId + ",")
+                    .doesNotContain("\"workStatus\":\"DONE\"");
         }
     }
 

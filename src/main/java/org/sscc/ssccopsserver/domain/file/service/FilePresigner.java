@@ -1,5 +1,7 @@
 package org.sscc.ssccopsserver.domain.file.service;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -41,9 +43,13 @@ public class FilePresigner {
     private static final Duration UPLOAD_URL_TTL = Duration.ofMinutes(10);
 
     /*
-     * 업로드 크기 상한 (ssccops#188). **서명하는 쪽이 갖는다** — 상한을 강제하는 유일한 지점이
-     * presignPut이기 때문이다. 그전에는 이 숫자가 EventImageServiceImpl에만 있었고 학술 쪽에는
-     * 아예 없어, 인증사진은 안내조차 없이 아무 크기나 올라갔다.
+     * 이미지 업로드 크기 상한 (ssccops#188). 행사 본문 이미지 · 학술 인증사진 · 콘텐츠 갤러리가
+     * 함께 쓴다. **서명하는 쪽이 갖는다** — 그전에는 이 숫자가 EventImageServiceImpl에만 있었고
+     * 학술 쪽에는 아예 없어, 인증사진은 안내조차 없이 아무 크기나 올라갔다.
+     *
+     * **모든 업로드의 상한은 아니다** (#638). 운영 건 첨부는 발표 자료·압축이 흔해 25MB이고
+     * (#493 · OperationAttachmentServiceImpl) 상한은 용도마다 다르다 — 그래서 presignPut이 상한을
+     * 인자로 받는다. 이 상수 하나로 모든 서명을 막으면 첨부가 깨진다.
      *
      * 판정을 두 곳에서 하는 것은 뜻이 달라서다: 부르는 쪽의 413은 **올리기 전에 알려 주는
      * 안내**이고(요청이 신고한 크기라 거짓일 수 있다), 여기 서명은 **강제**다.
@@ -95,8 +101,8 @@ public class FilePresigner {
     }
 
     /**
-     * 업로드 크기 상한(바이트). 부르는 쪽이 발급 전에 안내용 413을 던지는 데 쓴다 — 실제 강제는 {@link #presignPut}이 서명에 넣는
-     * Content-Length다.
+     * 이미지 업로드 크기 상한(바이트). 부르는 쪽이 발급 전에 안내용 413을 던지고 같은 값을 {@link #presignPut}에 상한으로 넘긴다 — 실제 강제는 그
+     * 메서드의 거절과 서명에 넣는 Content-Length다.
      */
     public long maxUploadSizeBytes() {
         return MAX_UPLOAD_SIZE_BYTES;
@@ -118,11 +124,23 @@ public class FilePresigner {
      * 직접 설정할 수 없고 본문 크기에서 자동으로 채우므로, **신고한 크기와 실제 파일이 다르면
      * 서명이 맞지 않아 R2가 거절한다.** 그것이 이 서명이 노리는 것이다.
      *
+     * **상한은 여기서 거절한다** (#638). 서명은 «신고한 크기 = 실제 크기»만 보장할 뿐 그 크기가
+     * 상한 안인지는 묻지 않으므로, 그전에는 강제가 부르는 쪽 넷의 413에 달려 있었다 — 하나가
+     * 판정을 빠뜨리면 그 경로로는 아무 크기나 정직하게 신고해 올릴 수 있었다. 상한을 인자로 받는
+     * 것은 그 값이 용도마다 다르기 때문이다(이미지 maxUploadSizeBytes · 운영 첨부 25MB). 넘으면
+     * 서명하지 않고 IllegalArgumentException(→ 400)이다 — 정상 경로는 부르는 쪽의 413이 먼저
+     * 끊으므로 여기 닿았다면 그 판정이 빠진 것이고, 로그의 WARN이 그 자리를 알려 준다.
+     *
      * `isBrowserExecutable`이 false로 내려오지만 그것은 **contentLength를 넣기 전에도 마찬가지**
      * 였다(content-type 하나만으로도 false다). host 밖의 서명 헤더가 있으면 붙는 표시일 뿐이라
      * 업로드 가능 여부의 신호가 아니다 — 그 상태로 dev 업로드가 계속 돌고 있었다.
      */
-    public String presignPut(String objectKey, String contentType, long contentLength) {
+    public String presignPut(
+            String objectKey, String contentType, long contentLength, long maxSizeBytes) {
+        if (contentLength > maxSizeBytes) {
+            throw new IllegalArgumentException(
+                    "업로드 크기가 상한을 넘었다: %d > %d 바이트".formatted(contentLength, maxSizeBytes));
+        }
         PutObjectRequest putObjectRequest =
                 PutObjectRequest.builder()
                         .bucket(bucketName)
@@ -159,11 +177,8 @@ public class FilePresigner {
         GetObjectRequest.Builder builder =
                 GetObjectRequest.builder().bucket(bucketName).key(objectKey);
         if (downloadFileName != null && !downloadFileName.isBlank()) {
-            String encoded =
-                    java.net.URLEncoder.encode(
-                                    downloadFileName, java.nio.charset.StandardCharsets.UTF_8)
-                            .replace("+", "%20");
-            builder.responseContentDisposition("attachment; filename*=UTF-8''" + encoded);
+            builder.responseContentDisposition(
+                    "attachment; filename*=UTF-8''" + rfc5987Encode(downloadFileName));
         }
         GetObjectRequest getObjectRequest = builder.build();
 
@@ -175,5 +190,18 @@ public class FilePresigner {
                                 .build())
                 .url()
                 .toString();
+    }
+
+    /*
+     * RFC 5987 ext-value의 값 부분. URLEncoder는 폼 인코딩이라 그대로 쓰면 두 군데가 어긋난다 (#638):
+     * 공백을 `+`로 적고(attr-char에서 `+`는 글자 그대로라 받는 쪽이 공백으로 읽지 않는다),
+     * `*`를 인코딩하지 않고 남긴다(attr-char에 `*`가 없어 문법을 벗어난 값이 되고, 그런 값을
+     * 어떻게 읽을지는 받는 쪽마다 다르다). 원래 `+`인 글자는 URLEncoder가 이미 `%2B`로 바꿨으므로
+     * 뒤의 치환이 건드리는 `+`는 공백뿐이다.
+     */
+    private static String rfc5987Encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8)
+                .replace("+", "%20")
+                .replace("*", "%2A");
     }
 }

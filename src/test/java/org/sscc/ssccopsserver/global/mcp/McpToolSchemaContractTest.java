@@ -47,23 +47,52 @@ class McpToolSchemaContractTest {
 
     /*
      * 신고된 자리 (#591). 그때는 안건명과 연결 운영 건이 «둘 중 하나»인데 스키마가 둘 다 요구해
-     * **부를 수 있는 방법이 없었다.** 그 뒤 ADR-0055 로 **안건은 언제나 운영 건을 가리키게** 바뀌어
-     * (#593) 이제 필수는 `targetOperationId` 하나다.
+     * **부를 수 있는 방법이 없었다.** 그 뒤 ADR-0055 로 필수가 `targetOperationId` 하나가 됐다가
+     * (#593), ADR-0059 로 드래프트 안건이 돌아와(#625) 다시 «둘 중 하나»다 — 그래서 스키마의
+     * 필수는 **비어 있어야** 한다. 둘 중 하나는 JSON Schema 의 `required` 로 말할 수 없고 서버의
+     * `@AssertTrue` 가 400 으로 판정한다. 하나라도 required 로 굳으면 #591 이 그대로 돌아온다.
      *
-     * 이 단정이 두 번 바뀐 것이 이 테스트의 값을 말한다 — 스키마가 **서버 계약에서 파생**되므로
-     * 계약이 바뀌면 여기가 먼저 깨진다. `@NotNull` 을 떼면 optional 로 따라 내려간다.
+     * 이 단정이 세 번 바뀐 것이 이 테스트의 값을 말한다 — 스키마가 **서버 계약에서 파생**되므로
+     * 계약이 바뀌면 여기가 먼저 깨진다.
      */
     @Test
-    @DisplayName("add_meeting_agenda — 필수는 targetOperationId 하나다 (ADR-0055)")
-    void agendaItemRequiresItsOperation() {
-        assertThat(nestedRequired("add_meeting_agenda", "request"))
-                .containsExactly("targetOperationId");
+    @DisplayName("add_meeting_agenda — 필수가 없다: 운영 건과 제목 중 하나 (ADR-0059)")
+    void agendaItemRequiresNeitherFieldOnItsOwn() {
+        assertThat(nestedRequired("add_meeting_agenda", "request")).isEmpty();
+    }
+
+    /*
+     * 승격은 업무 등록과 같은 입력이다 (#625). 필수는 업무 등록의 셋이고, 서버가 안건 제목으로
+     * title 을 채우지 않으므로(ADR-0059) title 도 필수로 남아야 한다.
+     */
+    @Test
+    @DisplayName("promote_meeting_agenda — 필수는 업무 등록과 같은 title·itemType·ownerId")
+    void agendaPromotionRequiresWhatWorkCreationRequires() {
+        assertThat(nestedRequired("promote_meeting_agenda", "request"))
+                .containsExactlyInAnyOrder("title", "itemType", "ownerId");
+        assertThat(tool("promote_meeting_agenda").inputSchema().required())
+                .containsExactlyInAnyOrder("meetingId", "agendaId", "request");
+    }
+
+    /*
+     * 하위 업무 승격은 하위 업무 등록과 같은 입력이다 (#644). 필수는 등록의 넷(상위 업무·제목·유형·
+     * 담당자)이고 업무 승격과 마찬가지로 title 을 서버가 채우지 않는다. 업무 승격과 도구를 나눈
+     * 이유가 이 단정이다 — 한 도구였다면 required 가 «대상에 따라 다르다»가 된다.
+     */
+    @Test
+    @DisplayName("promote_meeting_agenda_to_sub_work — 필수는 하위 업무 등록과 같은 넷")
+    void agendaSubWorkPromotionRequiresWhatSubWorkCreationRequires() {
+        assertThat(nestedRequired("promote_meeting_agenda_to_sub_work", "request"))
+                .containsExactlyInAnyOrder("workId", "title", "subWorkTypeId", "ownerId");
+        assertThat(tool("promote_meeting_agenda_to_sub_work").inputSchema().required())
+                .containsExactlyInAnyOrder("meetingId", "agendaId", "request");
     }
 
     /*
      * 안건 수정은 «전체 교체»라 읽고-합치기 도구와 다르다 (#599). 내용 둘은 생략하면 비우는 것이
      * **뜻이 있는 값**이므로 optional 이 맞고, 처리 구분만 `@NotNull` 이다 — 화면이 칩 중 하나를
-     * 늘 골라 두기 때문이다(MeetingAgendaUpdateRequest 주석). 셋 다 필수로 굳으면 «결과만 적는다»가
+     * 늘 골라 두기 때문이다(MeetingAgendaUpdateRequest 주석). 드래프트 제목(agendaName · #625)도
+     * 생략하면 그대로 두는 선택 필드라 required 가 아니다. 셋 다 필수로 굳으면 «결과만 적는다»가
      * 안 되고, 셋 다 optional 이 되면 서버가 400 을 내는 호출이 스키마를 통과한다.
      */
     @Test
@@ -92,6 +121,11 @@ class McpToolSchemaContractTest {
         assertThat(nestedRequired("list_forms", "condition")).isEmpty();
         assertThat(nestedRequired("list_events", "condition")).isEmpty();
         assertThat(nestedRequired("list_academic_programs", "condition")).isEmpty();
+        // 태그 필터만 받는 전량 목록 둘 (#637) — 조건 자체도 선택이라 비워 부를 수 있어야 한다
+        assertThat(nestedRequired("list_meetings", "condition")).isEmpty();
+        assertThat(nestedRequired("list_operations", "condition")).isEmpty();
+        assertThat(tool("list_meetings").inputSchema().required()).isNullOrEmpty();
+        assertThat(tool("list_operations").inputSchema().required()).isNullOrEmpty();
     }
 
     /*
@@ -106,7 +140,13 @@ class McpToolSchemaContractTest {
         assertThat(nestedRequired("create_page", "request"))
                 .containsExactlyInAnyOrder("slug", "ttl", "mtxt");
         assertThat(nestedRequired("transition_sub_work", "request")).contains("transition");
+        assertThat(nestedRequired("transition_work", "request")).containsExactly("transition");
         assertThat(nestedRequired("change_member_grade", "request")).contains("aftrMbrGrdCd");
+        // 지정은 전체 교체라 빈 배열은 «전부 해제»이고 필드 누락은 서버가 400이다 (#637)
+        assertThat(nestedRequired("assign_operation_tags", "request")).containsExactly("tagIds");
+        assertThat(tool("assign_operation_tags").inputSchema().required())
+                .containsExactlyInAnyOrder("operationId", "request");
+        assertThat(nestedRequired("assign_form_labels", "request")).containsExactly("labelIds");
     }
 
     /** 배열 요소의 record 도 같은 규칙을 받는다 — 거기까지 내려가지 않으면 목록 도구가 그대로 막힌다. */

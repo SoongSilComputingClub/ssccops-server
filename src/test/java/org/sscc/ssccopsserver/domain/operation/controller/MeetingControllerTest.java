@@ -88,7 +88,7 @@ class MeetingControllerTest {
     private Long linkedWorkId;
 
     @BeforeEach
-    void setUp() throws Exception {
+    void setUp() {
         otherMemberId = saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org").getId();
         // 토큰의 sub(AUTH_USER_ID)와 연결된 회원. 회의 책임자로도 쓰여 전이 권한 테스트가 이 회원을 의장으로 삼는다
         registrant = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org");

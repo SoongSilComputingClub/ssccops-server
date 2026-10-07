@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        제목 앞 `[FIX]`를 **지우지 마세요.** 이 접두사로 브랜치(`fix/#번호-...`)와 라벨이 자동 생성됩니다.
+        제목 앞 `[FIX]`를 **지우지 마세요.** 이 접두사로 브랜치(`fix/#번호`)와 라벨이 자동 생성됩니다.
         원인 분석이 `ssccops`의 Bug 이슈에 있으면 상단 **Parent issue**로 연결하세요.
 
   - type: textarea
@@ -69,11 +69,14 @@ body:
     attributes:
       label: 🗄 배포 전 수동 DDL
       description: |
-        **`dev`·`prod`는 `ddl-auto: update`라 컬럼 삭제·이름 변경·타입 변경·제약 변경을 반영하지 않습니다.**
-        그런 변경이 있으면 배포 전에 실행할 SQL을 여기 적으세요. 해당 없으면 비워 둡니다.
+        **스키마 변경은 Flyway 마이그레이션 파일로 간다**(`db/migration/V{다음번호}__설명.sql` · AGENTS.md «스키마 변경»).
+        `dev`·`prod`는 `ddl-auto: validate`라 파일을 빠뜨리면 배포가 부팅에서 막힌다 — 그래서 DDL은 여기 적지 않는다.
+        이 칸에는 **마이그레이션으로 표현되지 않는 것**만 적는다: 사람이 배포 전후에 한 번 돌려야 하는 데이터 정정·백필 같은 것.
+        해당 없으면 비워 둡니다 — 비어 있다는 것이 "확인했고 필요 없다"는 뜻이 되도록 씁니다.
       render: sql
       placeholder: |
-        ALTER TABLE mbr ALTER COLUMN stdnt_no DROP NOT NULL;
+        -- 예: 결함이 남긴 잘못된 행을 바로잡는 일회성 정정
+        UPDATE sub_work SET work_stts_cd = 'IN_PROGRESS' WHERE sub_work_id = 123;
     validations:
       required: false
 

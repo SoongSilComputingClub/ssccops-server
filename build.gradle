@@ -157,8 +157,9 @@ dependencies {
     // 리네임을 '조용한 컬럼 추가'로 처리하는 경로를 없앤다 — prod에서 승인이 통째로 막혔던
     // ssccops#209가 그 경로였다.
     //
-    // **아직 켜져 있지 않다.** spring.flyway.enabled가 모든 프로필에서 false다. baseline
-    // (V1__baseline.sql)이 prod pg_dump 결과로 교체되기 전에 켜면 부팅이 깨진다.
+    // dev·prod·local에서 켜져 있고 dev·prod는 ddl-auto: validate다 — 엔티티와 스키마가 어긋나면
+    // 부팅이 실패한다. test 프로필만 꺼져 있다(H2라 pg_dump baseline이 돌지 않는다 — 마이그레이션은
+    // FlywayMigrationValidateTest가 Testcontainers에서 본다). 규칙은 AGENTS.md «스키마 변경».
     // Flyway 10부터 PostgreSQL 지원이 별도 모듈이라 두 개를 함께 넣는다.
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'

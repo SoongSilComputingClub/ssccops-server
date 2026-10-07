@@ -68,12 +68,16 @@ body:
     attributes:
       label: 🗄 배포 전 수동 DDL
       description: |
-        **테이블·컬럼 리네임은 `ddl-auto: update`가 반영하지 않습니다** — 한쪽만 바뀌면 부팅이 깨집니다.
-        `data.sql`도 `@Table`·`@Column`을 따라오지 않으니 함께 보세요. 해당 없으면 비워 둡니다.
+        테이블·컬럼 리네임도 **엔티티와 마이그레이션 파일을 함께** 바꾼다 — 한쪽만 바뀌면 `validate`에서 부팅이 깨진다.
+        시드(`V3__seed_reference_data.sql` 등)는 이미 적용돼 고칠 수 없으니 test 프로필 영향도 본다(AGENTS.md «시드»).
+        **스키마 변경은 Flyway 마이그레이션 파일로 간다**(`db/migration/V{다음번호}__설명.sql` · AGENTS.md «스키마 변경»).
+        `dev`·`prod`는 `ddl-auto: validate`라 파일을 빠뜨리면 배포가 부팅에서 막힌다 — 그래서 DDL은 여기 적지 않는다.
+        이 칸에는 **마이그레이션으로 표현되지 않는 것**만 적는다: 사람이 배포 전후에 한 번 돌려야 하는 데이터 정정·백필 같은 것.
+        해당 없으면 비워 둡니다 — 비어 있다는 것이 "확인했고 필요 없다"는 뜻이 되도록 씁니다.
       render: sql
       placeholder: |
-        ALTER TABLE academic_program RENAME TO acdm_actv;
-        ALTER TABLE mbr RENAME COLUMN spb_user_id TO auth_user_id;
+        -- 예: 리네임 뒤 옛 이름을 가리키던 운영 데이터를 바로잡는 일회성 정정
+        UPDATE noti_type_rcpn SET noti_type_cd = 'NEW_CODE' WHERE noti_type_cd = 'OLD_CODE';
     validations:
       required: false
 

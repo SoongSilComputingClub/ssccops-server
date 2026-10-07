@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        제목 앞 `[FEAT]`을 **지우지 마세요.** 이 접두사로 브랜치(`feat/#번호-...`)와 라벨이 자동 생성됩니다.
+        제목 앞 `[FEAT]`을 **지우지 마세요.** 이 접두사로 브랜치(`feat/#번호`)와 라벨이 자동 생성됩니다.
         생성 후 상단 **Parent issue**에서 `ssccops`의 Story·Task를 연결하세요 (cross-repo 가능).
 
   - type: textarea
@@ -18,9 +18,8 @@ body:
         **무엇을 만드는가**보다 **왜 필요한가**를 먼저 적습니다.
         지금 무엇이 안 되고 있는지, 이것이 생기면 무엇이 달라지는지.
       placeholder: |
-        기획안 시스템 폼 시드가 기동 때만 돌아, 회원이 없는 환경은 다음 기동까지 폼이 없다.
-        로컬은 `ddl-auto: create-drop`이라 그 '다음 기동'이 방금 만든 회원을 함께 지워
-        어떤 순서로도 폼이 서지 못한다.
+        기획안 시스템 폼 시드가 기동 때만 돌아, 회원이 없는 환경(새로 만든 DB)은
+        첫 가입 뒤 다음 기동까지 폼이 없다.
     validations:
       required: true
 
@@ -75,14 +74,14 @@ body:
     attributes:
       label: 🗄 배포 전 수동 DDL
       description: |
-        **`dev`·`prod`는 `ddl-auto: update`라 컬럼 삭제·이름 변경·타입 변경·제약 변경을 반영하지 않습니다.**
-        (새 테이블·컬럼·인덱스 추가는 자동입니다.) 그런 변경이 있으면 배포 전에 실행할 SQL을 여기 적으세요.
+        **스키마 변경은 Flyway 마이그레이션 파일로 간다**(`db/migration/V{다음번호}__설명.sql` · AGENTS.md «스키마 변경»).
+        `dev`·`prod`는 `ddl-auto: validate`라 파일을 빠뜨리면 배포가 부팅에서 막힌다 — 그래서 DDL은 여기 적지 않는다.
+        이 칸에는 **마이그레이션으로 표현되지 않는 것**만 적는다: 사람이 배포 전후에 한 번 돌려야 하는 데이터 정정·백필 같은 것.
         해당 없으면 비워 둡니다 — 비어 있다는 것이 "확인했고 필요 없다"는 뜻이 되도록 씁니다.
       render: sql
       placeholder: |
-        ALTER TABLE form_rspns_hstry DROP CONSTRAINT uk_form_rspns_hstry_form_member;
-        ALTER TABLE form_rspns_hstry ADD CONSTRAINT uk_form_rspns_hstry_form_member_seq
-            UNIQUE (form_id, mbr_id, rspns_seq);
+        -- 예: 옛 데이터를 새 규칙에 맞추는 일회성 정정 (마이그레이션에 넣지 못한 이유를 함께)
+        UPDATE form SET form_key = gen_random_uuid() WHERE form_key IS NULL;
     validations:
       required: false
 

@@ -35,7 +35,7 @@ SSCC(숭실컴퓨팅클럽) 운영관리 시스템의 백엔드 — Spring Boot 
 
 ## 스키마 변경 — Flyway가 한다 (ssccops#213)
 
-**그 전에 데이터사전이 먼저다**(ssccops#593 · 2026-10-08). 테이블ID·컬럼ID·도메인(타입·길이)·코드는 메타 레포
+**그 전에 데이터사전이 먼저다**([ADR-0062](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0062-data-dictionary-lives-in-meta-repo-and-comes-before-schema-work.md) · ssccops#593). 테이블ID·컬럼ID·도메인(타입·길이)·코드는 메타 레포
 `docs/project/데이터사전+테이블컬럼정의서.xlsx`에서 정해지고 — 국문명을 표준단어 영문약어로 잇는 수식이 ID를 만든다 —
 엔티티의 `@Table`·`@Column`과 마이그레이션은 **그 이름 그대로** 쓴다. 구현하며 이름을 새로 짓지 않고, 달라야 하면
 사전부터 고친다. 절차는 메타 레포 `.claude/skills/ssccops-data-dictionary`. 사전이 개발 뒤를 따라가던 동안 V30·V31이

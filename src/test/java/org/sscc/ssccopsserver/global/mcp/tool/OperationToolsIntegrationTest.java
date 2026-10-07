@@ -84,7 +84,7 @@ class OperationToolsIntegrationTest {
     }
 
     @Test
-    @DisplayName("운영 도구 73종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
+    @DisplayName("운영 도구 76종이 전부 광고되고 되살릴 수 없는 삭제 도구는 없다")
     void advertisesEveryOperationTool() {
         try (McpSyncClient client = connect(FOUNDER)) {
             List<String> names =
@@ -209,6 +209,22 @@ class OperationToolsIntegrationTest {
      * 도구가 상세를 먼저 읽어 빈 필드를 채운다(`WorkPatch.merge`) — 이 테스트가 그 성질을
      * REST 왕복으로 못 박는다. 깨지면 «마감일만 바꿔»가 총평을 지운다.
      */
+    @Test
+    @DisplayName("list_sub_work_types — condition.useYn=true면 사용 중인 유형만 온다 (#662)")
+    void subWorkTypesCanBeFilteredByUseYn() {
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult all = call(client, "list_sub_work_types", Map.of());
+            assertThat(all.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(all)).contains("\"subWorkTypeId\"");
+
+            McpSchema.CallToolResult active =
+                    call(client, "list_sub_work_types", Map.of("condition", Map.of("useYn", true)));
+            assertThat(active.isError()).isNotEqualTo(Boolean.TRUE);
+            List<Boolean> useYn = JsonPath.parse(text(active)).read("$[*].useYn");
+            assertThat(useYn).isNotEmpty().containsOnly(true);
+        }
+    }
+
     @Test
     @DisplayName("update_work — 준 필드만 바뀌고 나머지는 그대로 남는다")
     void updateWorkKeepsFieldsThatWereNotGiven() throws Exception {

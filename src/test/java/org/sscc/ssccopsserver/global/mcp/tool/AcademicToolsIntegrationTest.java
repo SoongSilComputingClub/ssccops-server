@@ -319,6 +319,53 @@ class AcademicToolsIntegrationTest {
     }
 
     @Test
+    @DisplayName("팀원 도구 셋이 팀원 경로를 지난다 — 모집 전이면 추가·변경은 409, 이력은 빈 목록")
+    void teamMemberToolsGoThroughTheMembersPath() {
+        try (McpSyncClient client = connect()) {
+            /*
+             * 픽스처의 활동은 승인됨(APPROVED · 모집 전)이다. 모집을 시작하면 다른 테스트가 보는 상태가
+             * 바뀌므로 여기서는 **서버가 그 경로의 규칙으로 답했는지**만 본다 — 경로가 틀리면 404·405가
+             * 오지 RECRUITMENT_NOT_STARTED가 오지 않는다. 성공 갈래는 #612의 서비스·컨트롤러 테스트가 본다.
+             */
+            McpSchema.CallToolResult add =
+                    call(
+                            client,
+                            "add_academic_program_member",
+                            Map.of(
+                                    "academicProgramId",
+                                    programId,
+                                    "request",
+                                    Map.of("mbrId", 999_999)));
+            assertThat(add.isError()).isEqualTo(Boolean.TRUE);
+            assertThat(text(add)).contains("RECRUITMENT_NOT_STARTED").doesNotContain("stackTrace");
+
+            McpSchema.CallToolResult change =
+                    call(
+                            client,
+                            "change_academic_program_member_status",
+                            Map.of(
+                                    "academicProgramId",
+                                    programId,
+                                    "eventPtcpId",
+                                    999_999,
+                                    "request",
+                                    Map.of("ptcpSttsCd", "CANCELLED")));
+            assertThat(change.isError()).isEqualTo(Boolean.TRUE);
+            assertThat(text(change))
+                    .contains("RECRUITMENT_NOT_STARTED")
+                    .doesNotContain("stackTrace");
+
+            McpSchema.CallToolResult history =
+                    call(
+                            client,
+                            "list_academic_program_member_history",
+                            Map.of("academicProgramId", programId));
+            assertThat(history.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(history)).doesNotContain("\"success\"");
+        }
+    }
+
+    @Test
     @DisplayName("모델이 인자를 빼먹어도 NPE 가 아니라 도구 오류다")
     void missingRequestArgumentFailsCleanly() {
         try (McpSyncClient client = connect()) {

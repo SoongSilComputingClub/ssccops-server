@@ -170,6 +170,10 @@ class OperationToolsIntegrationTest {
                             "list_academic_programs",
                             "get_academic_program",
                             "list_academic_program_members",
+                            // 팀원 관리 (#654 · REST는 #612)
+                            "add_academic_program_member",
+                            "change_academic_program_member_status",
+                            "list_academic_program_member_history",
                             "list_academic_sessions",
                             "get_academic_session",
                             "list_academic_sessions_to_review",

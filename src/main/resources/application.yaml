@@ -540,9 +540,18 @@ ssccops:
       # 손잡이는 이 상한이 아니라 `query.top-k`와 대화 이력(`memory.max-turns`)이다.
       #
       # **임베딩에는 걸리지 않는다** — 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`로 따로
-      # 연결한다. 색인이 임베딩을 수백 번 부르는 자리(#400)의 성질(느려도 끝나기만 하면 된다)과
-      # 맞지 않으므로 마침 맞는 분리다.
+      # 연결한다. 질문 임베딩의 상한은 바로 아래 `query-embedding-timeout`이고(#656), 색인
+      # 임베딩에는 여전히 상한이 없다 — 수백 번 부르는 배치(#400)라 «느려도 끝나기만 하면 된다».
       call-timeout: ${SSCCOPS_ASSISTANT_GEMINI_CALL_TIMEOUT:PT40S}
+
+      # **질문 임베딩**의 전체 왕복 상한 (#656 · ssccops#586). 질문 한 건을 벡터로 바꾸는 호출이
+      # 스트림이 열리기 **전** 요청 스레드에서 도는데, 그전에는 SDK 기본값(타임아웃 없음 · 429 포함
+      # 5회 재시도)이라 공급자가 멈추면 요청이 무기한 붙들리고 끝내 500이 났다.
+      #
+      # **생성(`call-timeout`)과 나눈 것은 크기가 달라서다** — 짧은 문장 하나의 임베딩은 1초 안에
+      # 오고, 40초를 기다릴 일이 아니다. 재시도는 채팅과 같은 `spring.ai.retry`(2회 · 5xx만)이므로
+      # 최악의 대기는 «이 값 + 지연 한 번»이다. 넘으면 503 `ASSISTANT_UPSTREAM_FAILED`.
+      query-embedding-timeout: ${SSCCOPS_ASSISTANT_GEMINI_QUERY_EMBEDDING_TIMEOUT:PT10S}
 
     query:
       # 한 번에 프롬프트에 넣는 발췌 수(기획안 §4). 답변 3~5문장 규칙과 함께 프롬프트 길이를

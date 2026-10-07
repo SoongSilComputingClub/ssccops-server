@@ -541,14 +541,14 @@ public class AssistantServiceImpl implements AssistantService {
          */
         for (ArticleReference article : articles) {
             collect(
-                    chunkStore.search(pinnedArticle(question, documentIds, article)),
+                    search(chunkStore, pinnedArticle(question, documentIds, article)),
                     searchable,
                     chunks,
                     seen,
                     false);
         }
 
-        List<Document> found = chunkStore.search(bySimilarity(question, documentIds));
+        List<Document> found = search(chunkStore, bySimilarity(question, documentIds));
         collect(found, searchable, chunks, seen, true);
         if (chunks.isEmpty()) {
             /*
@@ -564,6 +564,23 @@ public class AssistantServiceImpl implements AssistantService {
                     articles);
         }
         return chunks;
+    }
+
+    /*
+     * 검색 한 번 — **실패를 503으로 옮긴다** (#656).
+     *
+     * 검색은 질문 임베딩(Gemini)과 pgvector 조회를 함께 부른다. 그전에는 여기서 난 예외를 아무도
+     * 잡지 않아 `GlobalExceptionHandler.handleAll`의 500 `INTERNAL_SERVER_ERROR`로 나갔다 —
+     * 생성 실패(`generate`)가 503 `ASSISTANT_UPSTREAM_FAILED`인 것과 같은 실패가 다른 코드였고,
+     * 화면은 «잠시 뒤 다시»를 그리지 못했다. 원문을 응답에 싣지 않는 것도 생성 실패와 같다(§11).
+     */
+    private List<Document> search(RagChunkStore chunkStore, SearchRequest request) {
+        try {
+            return chunkStore.search(request);
+        } catch (RuntimeException exception) {
+            log.error("규정 도우미 검색(질문 임베딩 · 벡터 조회)이 실패했다", exception);
+            throw new GeneralException(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
+        }
     }
 
     /**

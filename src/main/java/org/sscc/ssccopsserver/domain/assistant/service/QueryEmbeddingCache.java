@@ -50,6 +50,20 @@ import lombok.extern.slf4j.Slf4j;
  * 박는 자리는 `spring.ai.vectorstore.pgvector.dimensions`이고 그것은 `V10`의 `vector(768)`과
  * 짝을 이룬다.
  *
+ * ══ 질문은 질의 전용 모델이 임베딩한다 (#656) ═══════════════════
+ *
+ * 감싸는 모델이 **둘**이다 — `queryDelegate`는 `embed(String)`(질의 한 건) 하나만 받고, 나머지는
+ * 전부 `delegate`(스타터가 만든 모델 · 색인 배치가 지나는 길)로 간다. 둘은 같은 모델 ID·차원을
+ * 쓰고 **연결만 다르다**: 질의 쪽 연결에는 호출 상한과 좁힌 재시도가 걸려 있다(`AssistantConfig`).
+ *
+ * 그전에는 하나였고, 그 연결이 SDK 기본값(타임아웃 없음 · 429 포함 5회 재시도)이라 질문 임베딩이
+ * 스트림이 열리기 **전** 요청 스레드를 무기한 붙들 수 있었다 — 채팅의 상한(#448)이 임베딩에는
+ * 걸리지 않았다. 색인을 같은 상한에 묶지 않는 것은 그쪽이 «느려도 끝나기만 하면 되는» 배치이고
+ * 429를 기다려 넘기는 SDK 재시도에 기대고 있기 때문이다.
+ *
+ * ⚠️ 적재 함수 안에서 원격 호출을 하므로 그 호출이 끝날 때까지 같은 해시 버킷의 다른 키도
+ * 기다린다(Caffeine의 `compute` 계약). 그래서 상한이 여기서 더 중요하다 — 묶이는 시간이 곧 상한이다.
+ *
  * ══ 키가 질문 원문이 아니다 ═════════════════════════════════════
  *
  * **SHA-256 다이제스트를 키로 쓴다.** 값이 7일을 사는 캐시라 원문을 키로 두면 **그 기간 동안
@@ -68,12 +82,22 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class QueryEmbeddingCache implements EmbeddingModel {
 
+    /** 색인 배치와 그 밖의 모든 메서드가 지나는 길 — 스타터가 만든 모델 */
     private final EmbeddingModel delegate;
+
+    /** 질문 한 건만 지나는 길 — 호출 상한이 걸린 연결(클래스 주석 «질문은 질의 전용 모델이») */
+    private final EmbeddingModel queryDelegate;
 
     private final Cache<String, float[]> embeddings;
 
-    public QueryEmbeddingCache(EmbeddingModel delegate, long maxSize, Duration ttl, Clock clock) {
+    public QueryEmbeddingCache(
+            EmbeddingModel delegate,
+            EmbeddingModel queryDelegate,
+            long maxSize,
+            Duration ttl,
+            Clock clock) {
         this.delegate = delegate;
+        this.queryDelegate = queryDelegate;
         this.embeddings =
                 Caffeine.newBuilder()
                         .maximumSize(maxSize)
@@ -95,7 +119,7 @@ public class QueryEmbeddingCache implements EmbeddingModel {
      */
     @Override
     public float[] embed(String text) {
-        return embeddings.get(digest(text), key -> delegate.embed(text).clone()).clone();
+        return embeddings.get(digest(text), key -> queryDelegate.embed(text).clone()).clone();
     }
 
     @Override

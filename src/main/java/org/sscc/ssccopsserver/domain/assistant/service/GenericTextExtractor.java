@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.tika.exception.EncryptedDocumentException;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.ParseContext;
@@ -67,6 +68,23 @@ import lombok.extern.slf4j.Slf4j;
  * **인식 오류가 규정 조문을 조용히 바꾸는데 그 답을 근거로 사람의 자격을 판단하므로** 명시적으로
  * 끈다 — 환경에 따라 코퍼스의 내용이 달라지는 것은 그 자체로 고장이다. 스캔본은 400으로 거절하고
  * 운영진이 텍스트 PDF를 구해 오는 것이 경로다.
+ *
+ * ── 본문의 상한 — 10MB는 파일의 상한이지 본문의 상한이 아니다 (#656) ──
+ *
+ * `.docx`·`.xlsx`·`.pptx`는 zip이라 업로드 상한 10MB(#399)를 지켜도 수백 MB 텍스트로 풀릴 수 있고,
+ * 이 추출은 업로드 **요청 스레드**에서 돈다. 그래서 두 겹을 건다.
+ *
+ *   - **추출한 글자 수** — {@link #MAX_EXTRACTED_CHARS}를 넘으면 파싱을 멈추고 400으로 거절한다.
+ *     **잘라서 색인하지 않는다**(`PageContentHandler` 주석 — 뒷부분 조항이 조용히 사라진다).
+ *     값은 «코퍼스가 담을 수 있는 청크 × 청크 길이»라 새 숫자가 아니다 — 그보다 긴 문서는 어차피
+ *     청크 상한(`RagIndexingWorker.MAX_ACTIVE_CHUNKS`)에 걸려 색인되지 않는다.
+ *   - **zip 엔트리 하나의 크기** — {@link #MAX_ZIP_ENTRY_BYTES}. POI 기본값은 4GB라 사실상 없다.
+ *     `.docx`는 본문 XML을 DOM으로 통째로 읽으므로 글자 수 상한이 닿기 **전에** 메모리가 차는
+ *     자리이고, 그것을 막는 것이 이 값이다. 압축비 하한(POI 기본 0.01 = 최대 100배)은 건드리지
+ *     않는다 — 희소한 스프레드시트가 정상적으로 그 근처까지 압축된다.
+ *
+ * ⚠️ 파싱 **시간**의 상한은 아직 없다. 상한 넘는 문서는 위 둘이 먼저 끊지만, 작은데 느린 PDF는
+ * 여전히 요청 스레드를 붙들 수 있다(권한자만 올린다 · `RAG_DOCUMENT_MANAGE`).
  */
 @Slf4j
 @Component
@@ -74,6 +92,26 @@ public class GenericTextExtractor {
 
     /** 오류 문구에 본문을 싣지 않는다 — 예외 메시지·스택은 내부 구조가 응답으로 새는 길이다(`GeneralException.detail` 주석) */
     private static final String CORRUPTED = "파일을 열지 못했습니다. 다른 프로그램에서 열리는지 확인하고 다시 올려 주세요.";
+
+    /**
+     * 한 문서에서 건질 수 있는 글자 수 (#656) — <b>코퍼스가 담을 수 있는 청크 × 청크 길이</b>(3,000 × 600 = 180만 자).
+     *
+     * <p>새 숫자를 두지 않은 것은 이보다 긴 문서가 어차피 색인되지 않기 때문이다(겹침 100자 때문에 실제로는 이보다 짧아도 청크 상한에 걸린다 — 그 판정은 워커의
+     * 몫이다). 여기서 막는 것은 «색인되지 않을 문서를 끝까지 풀어 힙에 쌓는 것»이다.
+     */
+    static final int MAX_EXTRACTED_CHARS =
+            RagIndexingWorker.MAX_ACTIVE_CHUNKS * DocumentChunker.TARGET_CHUNK_CHARS;
+
+    /** zip 엔트리 하나의 상한 (#656) — 이보다 큰 XML은 글자 수 상한을 어차피 넘는다(클래스 주석) */
+    static final long MAX_ZIP_ENTRY_BYTES = 100L * 1024 * 1024;
+
+    /*
+     * POI의 zip 상한은 **JVM 전역의 정적 값**이다. 이 서버에서 POI를 쓰는 곳이 이 클래스 하나라
+     * 여기서 건다 — 다른 기능이 POI를 들이면 그때 이 자리를 설정 클래스로 옮긴다.
+     */
+    static {
+        ZipSecureFile.setMaxEntrySize(MAX_ZIP_ENTRY_BYTES);
+    }
 
     public ExtractedDocument extract(byte[] content, String fileName) {
         RagDocumentFormat format = RagDocumentFormat.fromFileName(fileName);
@@ -109,7 +147,7 @@ public class GenericTextExtractor {
      * 나머지는 «파일이 깨졌는지 보세요»다. 어느 쪽이든 본문·스택은 응답에 싣지 않는다.
      */
     private List<ExtractedPage> parsed(byte[] content, RagDocumentFormat format) {
-        PageContentHandler handler = new PageContentHandler();
+        PageContentHandler handler = new PageContentHandler(MAX_EXTRACTED_CHARS);
         try (InputStream input = new ByteArrayInputStream(content)) {
             parserFor(format).parse(input, handler, new Metadata(), parseContext());
         } catch (EncryptedDocumentException exception) {
@@ -117,10 +155,42 @@ public class GenericTextExtractor {
                     AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED,
                     "암호가 걸린 문서입니다. 암호를 푼 파일로 다시 올려 주세요.");
         } catch (Exception exception) {
+            if (exceedsTextLimit(exception)) {
+                log.info("규정 문서 추출 중단 — format={} 글자 상한 {}자를 넘었다", format, MAX_EXTRACTED_CHARS);
+                throw tooLong();
+            }
             log.warn("규정 문서 추출 실패 — format={}", format, exception);
             throw new GeneralException(AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED, CORRUPTED);
         }
         return handler.pages();
+    }
+
+    /*
+     * 파서마다 핸들러의 예외를 다르게 감싸 올린다 — 그대로 던지기도 하고(OOXML) `IOException`·
+     * `TikaException`의 원인으로 감싸기도 한다(PDF). 그래서 타입이 아니라 원인 사슬로 찾는다.
+     */
+    private static boolean exceedsTextLimit(Throwable failure) {
+        for (Throwable at = failure; at != null; at = at.getCause()) {
+            if (at instanceof PageContentHandler.TextLimitExceededException) {
+                return true;
+            }
+            if (at.getCause() == at) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /*
+     * **400 `RAG_DOCUMENT_PARSE_FAILED`이고 413 `RAG_DOCUMENT_TOO_LARGE`가 아니다.** 파일 크기는
+     * 상한 안이라 «10MB 이하로 줄이라»는 안내가 틀린 말이 되고(웹이 그 코드에 그 문구를 붙인다),
+     * 웹은 파싱 실패에만 서버 문장을 그대로 싣는다 — 운영진에게 필요한 것이 «나눠 올리라»는 이 문장이다.
+     */
+    private static GeneralException tooLong() {
+        return new GeneralException(
+                AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED,
+                "본문이 너무 깁니다. 추출한 글자가 %,d자를 넘어 색인할 수 없으니 문서를 나눠 올려 주세요."
+                        .formatted(MAX_EXTRACTED_CHARS));
     }
 
     /*
@@ -138,6 +208,10 @@ public class GenericTextExtractor {
         String text = new String(content, StandardCharsets.UTF_8);
         if (text.startsWith("\uFEFF")) {
             text = text.substring(1);
+        }
+        // 평문은 풀리지 않으므로 힙의 문제는 아니지만, 같은 문서가 형식에 따라 다른 판정을 받지 않게 한다
+        if (text.length() > MAX_EXTRACTED_CHARS) {
+            throw tooLong();
         }
         return List.of(new ExtractedPage(null, text));
     }

@@ -91,6 +91,10 @@ import lombok.extern.slf4j.Slf4j;
  * `SearchableDocument`로 옮겨 담는다. **스트리밍에서는 더 그렇다** — 그 구간이 요청 스레드조차
  * 아니다.
  *
+ * ⚠️ **이 규칙은 OSIV가 꺼져 있어야 성립한다**(`spring.jpa.open-in-view: false` · #656). 켜져
+ * 있던 동안에는 트랜잭션을 아무리 좁혀도 요청 안에서 처음 잡은 커넥션을 OSIV의 EntityManager가
+ * 응답 끝까지(SSE면 스트림이 닫힐 때까지) 쥐고 있었다 — 실측으로 확인했다(활성 커넥션 1).
+ *
  * ══ 대화는 생성의 맥락이고 검색의 재료가 아니다 (#406) ═════════
  *
  * 앞선 턴들이 프롬프트의 가운데에 들어가고(시스템 → 이력 → 이번 발췌·질문) **검색어는 언제나
@@ -537,14 +541,14 @@ public class AssistantServiceImpl implements AssistantService {
          */
         for (ArticleReference article : articles) {
             collect(
-                    chunkStore.search(pinnedArticle(question, documentIds, article)),
+                    search(chunkStore, pinnedArticle(question, documentIds, article)),
                     searchable,
                     chunks,
                     seen,
                     false);
         }
 
-        List<Document> found = chunkStore.search(bySimilarity(question, documentIds));
+        List<Document> found = search(chunkStore, bySimilarity(question, documentIds));
         collect(found, searchable, chunks, seen, true);
         if (chunks.isEmpty()) {
             /*
@@ -560,6 +564,23 @@ public class AssistantServiceImpl implements AssistantService {
                     articles);
         }
         return chunks;
+    }
+
+    /*
+     * 검색 한 번 — **실패를 503으로 옮긴다** (#656).
+     *
+     * 검색은 질문 임베딩(Gemini)과 pgvector 조회를 함께 부른다. 그전에는 여기서 난 예외를 아무도
+     * 잡지 않아 `GlobalExceptionHandler.handleAll`의 500 `INTERNAL_SERVER_ERROR`로 나갔다 —
+     * 생성 실패(`generate`)가 503 `ASSISTANT_UPSTREAM_FAILED`인 것과 같은 실패가 다른 코드였고,
+     * 화면은 «잠시 뒤 다시»를 그리지 못했다. 원문을 응답에 싣지 않는 것도 생성 실패와 같다(§11).
+     */
+    private List<Document> search(RagChunkStore chunkStore, SearchRequest request) {
+        try {
+            return chunkStore.search(request);
+        } catch (RuntimeException exception) {
+            log.error("규정 도우미 검색(질문 임베딩 · 벡터 조회)이 실패했다", exception);
+            throw new GeneralException(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED);
+        }
     }
 
     /**

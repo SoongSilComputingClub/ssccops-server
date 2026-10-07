@@ -4,6 +4,16 @@ spring:
 
   jpa:
     show-sql: false
+    # **OSIV를 끈다** (#656 · ssccops#586). 켜 두면(스프링 부트 기본값) 요청 안에서 처음 잡은
+    # 커넥션을 트랜잭션이 끝나도 놓지 않고 응답이 다 나갈 때까지 든다 — spring-orm이 Hibernate에
+    # `DELAYED_ACQUISITION_AND_HOLD`를 걸기 때문이다. 그래서 규정 도우미 질의가 Gemini 왕복 내내
+    # (SSE면 답이 다 흘러나올 때까지) 커넥션을 쥐었고, 업로드가 Tika 파싱을 트랜잭션 밖으로 뺀
+    # 것(#563)도 효과가 없었다(실측: 리포지토리 호출이 끝난 뒤에도 활성 커넥션 1).
+    #
+    # 끄면 트랜잭션 밖에서 지연 로딩이 터진다 — 그것이 맞는 실패다. 이 서비스는 서비스 계층이
+    # 트랜잭션 안에서 DTO로 굳혀 내보내고 `@CurrentMember`의 회원은 이미 준영속으로 다룬다.
+    # **이 줄을 되살리고 싶어지면** 지연 로딩이 터진 자리를 서비스 안으로 옮기는 것이 먼저다.
+    open-in-view: false
     properties:
       hibernate:
         format_sql: true
@@ -530,9 +540,18 @@ ssccops:
       # 손잡이는 이 상한이 아니라 `query.top-k`와 대화 이력(`memory.max-turns`)이다.
       #
       # **임베딩에는 걸리지 않는다** — 그쪽은 `GoogleGenAiEmbeddingConnectionDetails`로 따로
-      # 연결한다. 색인이 임베딩을 수백 번 부르는 자리(#400)의 성질(느려도 끝나기만 하면 된다)과
-      # 맞지 않으므로 마침 맞는 분리다.
+      # 연결한다. 질문 임베딩의 상한은 바로 아래 `query-embedding-timeout`이고(#656), 색인
+      # 임베딩에는 여전히 상한이 없다 — 수백 번 부르는 배치(#400)라 «느려도 끝나기만 하면 된다».
       call-timeout: ${SSCCOPS_ASSISTANT_GEMINI_CALL_TIMEOUT:PT40S}
+
+      # **질문 임베딩**의 전체 왕복 상한 (#656 · ssccops#586). 질문 한 건을 벡터로 바꾸는 호출이
+      # 스트림이 열리기 **전** 요청 스레드에서 도는데, 그전에는 SDK 기본값(타임아웃 없음 · 429 포함
+      # 5회 재시도)이라 공급자가 멈추면 요청이 무기한 붙들리고 끝내 500이 났다.
+      #
+      # **생성(`call-timeout`)과 나눈 것은 크기가 달라서다** — 짧은 문장 하나의 임베딩은 1초 안에
+      # 오고, 40초를 기다릴 일이 아니다. 재시도는 채팅과 같은 `spring.ai.retry`(2회 · 5xx만)이므로
+      # 최악의 대기는 «이 값 + 지연 한 번»이다. 넘으면 503 `ASSISTANT_UPSTREAM_FAILED`.
+      query-embedding-timeout: ${SSCCOPS_ASSISTANT_GEMINI_QUERY_EMBEDDING_TIMEOUT:PT10S}
 
     query:
       # 한 번에 프롬프트에 넣는 발췌 수(기획안 §4). 답변 3~5문장 규칙과 함께 프롬프트 길이를

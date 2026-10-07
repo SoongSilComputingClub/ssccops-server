@@ -11,12 +11,16 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.google.genai.GoogleGenAiEmbeddingConnectionDetails;
 import org.springframework.ai.google.genai.text.GoogleGenAiTextEmbeddingModel;
+import org.springframework.ai.model.google.genai.autoconfigure.embedding.GoogleGenAiTextEmbeddingProperties;
+import org.springframework.ai.retry.autoconfigure.SpringAiRetryProperties;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
+import org.springframework.retry.support.RetryTemplate;
 import org.sscc.ssccopsserver.domain.assistant.service.AssistantMemoryStore;
 import org.sscc.ssccopsserver.domain.assistant.service.PgVectorRagChunkStore;
 import org.sscc.ssccopsserver.domain.assistant.service.QueryEmbeddingCache;
@@ -60,6 +64,8 @@ class AssistantConfigTest {
                     .withPropertyValues(
                             "ssccops.assistant.query.embedding-cache-size=7",
                             "ssccops.assistant.query.embedding-cache-ttl=PT3M",
+                            "ssccops.assistant.gemini.query-embedding-timeout=PT2S",
+                            "spring.ai.google.genai.embedding.api-key=test-key",
                             "ssccops.assistant.memory.max-turns=3")
                     .withUserConfiguration(AssistantConfig.class, StubModels.class);
 
@@ -86,6 +92,24 @@ class AssistantConfigTest {
                 context ->
                         assertThat(context.getBean(EmbeddingModel.class))
                                 .isInstanceOf(QueryEmbeddingCache.class));
+    }
+
+    /*
+     * ⚠️ **질문 전용 임베딩 모델은 빈이 아니다** (#656).
+     *
+     * 스타터의 임베딩 모델·연결 자동 구성이 둘 다 `@ConditionalOnMissingBean`이라, 질문용 모델을
+     * 빈으로 세우는 순간 스타터가 물러나고 **색인 배치까지 질문용 상한(기본 10초)에 묶인다.**
+     * 그 실수는 컴파일도 부팅도 통과하고 색인이 «가끔 실패한다»로만 드러나므로 여기서 막는다 —
+     * `GoogleGenAiTextEmbeddingModel` 타입의 빈은 스타터 자리 하나뿐이어야 한다.
+     */
+    @Test
+    void doesNotRegisterTheQueryOnlyModelAsABean() {
+        runner.run(
+                context -> {
+                    assertThat(context).hasSingleBean(GoogleGenAiTextEmbeddingModel.class);
+                    assertThat(context)
+                            .doesNotHaveBean(GoogleGenAiEmbeddingConnectionDetails.class);
+                });
     }
 
     /*
@@ -146,6 +170,25 @@ class AssistantConfigTest {
         @Bean
         GoogleGenAiTextEmbeddingModel googleGenAiTextEmbedding() {
             return mock(GoogleGenAiTextEmbeddingModel.class);
+        }
+
+        /*
+         * 질문 전용 임베딩 모델(#656)의 재료 — 스타터가 만드는 옵션과 `spring.ai.retry`의 두 빈.
+         * 그 모델은 진짜로 만들어지지만 만드는 것만으로는 Gemini를 부르지 않는다.
+         */
+        @Bean
+        GoogleGenAiTextEmbeddingProperties googleGenAiTextEmbeddingProperties() {
+            return new GoogleGenAiTextEmbeddingProperties();
+        }
+
+        @Bean
+        RetryTemplate retryTemplate() {
+            return new RetryTemplate();
+        }
+
+        @Bean
+        SpringAiRetryProperties springAiRetryProperties() {
+            return new SpringAiRetryProperties();
         }
 
         /** 대화 메모리 빈이 받는 저장소와 시계. 둘 다 우리 것이라 진짜를 쓴다 */

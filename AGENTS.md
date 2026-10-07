@@ -23,6 +23,8 @@ SSCC(숭실컴퓨팅클럽) 지원서 관리 백엔드 — Spring Boot 3.5 / Jav
 
 **주의**: JPA 프로필 설정에 `database-platform`(Hibernate `dialect`)을 명시하지 않는다. Hibernate가 커넥션에서 자동 감지하며, 명시하면 `HHH90000025` 경고가 뜨고 DB 엔진을 바꿀 때 드라이버와 방언이 어긋나 깨진다.
 
+**주의**: **OSIV는 꺼져 있다**(`spring.jpa.open-in-view: false` · #656 · ssccops#586). 스프링 부트 기본값(켜짐)에서는 요청 안에서 처음 잡은 커넥션을 트랜잭션이 끝나도 응답이 다 나갈 때까지 쥐어(spring-orm이 Hibernate에 `DELAYED_ACQUISITION_AND_HOLD`를 건다), 규정 도우미 질의가 Gemini 왕복 내내 · SSE가 닫힐 때까지 커넥션을 묶었다 — 서비스가 트랜잭션을 아무리 좁혀도 소용이 없었다. 그래서 **컨트롤러·응답 직렬화에서 엔티티의 지연 로딩 필드를 건드리면 `LazyInitializationException`이다** — 서비스가 트랜잭션 안에서 DTO로 굳혀 내보내는 지금의 모양을 따른다. 되살리고 싶어지면 그 자리를 서비스 안으로 옮기는 것이 먼저이고, `AssistantConnectionHoldTest`가 되살아난 OSIV를 잡는다.
+
 **주의**: checkstyle의 `ImportOrder`는 `java, javax, jakarta, org, net, com, *, lombok` 그룹 순서를 엄격히 검사한다. import를 추가/이동한 뒤 checkstyle이 실패하면 순서를 수동으로 고치지 말고 `./gradlew spotlessApply`로 자동 정렬할 것 (Spotless의 `importOrder` 설정이 checkstyle 규칙과 동일하게 맞춰져 있음).
 
 **주의**: `dev`·`prod`는 이제 **`ddl-auto: validate`**이며 스키마는 Flyway가 만든다(ssccops#213 · 아래 절). `validate`인 것은 엔티티와 실제 스키마가 어긋나면 **부팅을 실패시키기 위해서**다 — ssccops#209는 값이 든 옛 컬럼 옆에서 빈 새 컬럼을 읽으며 정상 부팅했고 그래서 아무도 몰랐다. 그전의 `update`는 "추가만 자동, 삭제·리네임·타입 변경은 수동 `ALTER`"였는데 그 수동 단계를 아무도 강제하지 않아 세 번 터졌다(ssccops#209 승인 마비 · ssccops#212 공유 링크 · #224 회의 안건 — 셋 다 리네임이 '새 컬럼 추가'로 처리된 경우다).
@@ -430,7 +432,11 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   «connect 3s / read 20s»는 전체 왕복 하나로 합쳤다 — **본문을 다 읽는 시간까지 포함**하므로
   스트리밍(#447)도 같은 상한에 걸린다(실측: 상한 1,500ms에 조각 넷이 나간 뒤 1,863ms에 끊긴다).
   **임베딩은 이 빈을 쓰지 않는다**(`GoogleGenAiEmbeddingConnectionDetails`로 따로 연결한다) —
-  상한이 질의 경로에만 걸린다.
+  그래서 **질문 임베딩**은 `AssistantConfig`가 따로 만든 질문 전용 임베딩 모델이 상한
+  `ssccops.assistant.gemini.query-embedding-timeout`(**기본 10초**)으로 부른다(#656 · 그전에는
+  질문 임베딩도 상한 없이 돌아 스트림이 열리기 전 요청 스레드를 붙들 수 있었다). 그 모델은
+  **빈이 아니다** — 스타터의 연결·모델 자동 구성이 `@ConditionalOnMissingBean`이라 빈으로
+  세우면 색인까지 그 상한에 묶인다. 색인 임베딩에는 여전히 상한이 없다.
 - ⚠️ **`spring.ai.retry`는 그 자체로는 Gemini 경로에 닿지 않는다 — 재시도의 정본은 SDK다**
   (#448). 스타터의 `RetryTemplate`은 세 예외만 다시 부르는 **화이트리스트**이고
   (`TransientAiException`·`ResourceAccessException`·`WebClientRequestException`) google-genai가
@@ -444,8 +450,8 @@ H2에서 아예 실행되지 않기 때문이다(IDENTITY 시퀀스 · `timestam
   지금은 `GeminiClientConfig`가 `spring.ai.retry`의 값을 그 인터셉터로 옮겨 담아 **2회 · 1s ·
   2배 · 최대 5s · 5xx만**이며, `on-client-errors`(기본 false)가 408·429를 가른다 — 쿼터로
   거절당한 요청을 다시 부르는 것은 쿼터 소진을 가속할 뿐이다(#400). `GeminiClientConfigTest`가
-  가짜 서버를 물려 횟수와 대기 시간을 본다. **색인 임베딩에는 아직 닿지 않는다**(따로 연결한다
-  — SDK 기본 재시도 그대로다).
+  가짜 서버를 물려 횟수와 대기 시간을 본다. 질문 임베딩도 같은 값을 쓰고(#656), **색인
+  임베딩에는 아직 닿지 않는다**(따로 연결한다 — SDK 기본 재시도 그대로다).
 - **모델 ID는 설정값 한 줄이다** — `GEMINI_CHAT_MODEL`(기본 `gemini-3.5-flash-lite` · #461) ·
   `GEMINI_EMBEDDING_MODEL`(기본 `gemini-embedding-2`). 교체가 환경변수 하나가 되게 한다.
 - ⚠️ **사고 수준을 명시한다 — `GEMINI_CHAT_THINKING_LEVEL`(기본 `MEDIUM`)** (#453 · #463).

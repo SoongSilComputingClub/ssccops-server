@@ -38,7 +38,11 @@ class QueryEmbeddingCacheTest {
     private final MovableClock clock =
             new MovableClock(ZonedDateTime.of(2026, 9, 15, 10, 30, 0, 0, SEOUL).toInstant());
 
+    /** 스타터가 만든 모델 — 색인 배치와 그 밖의 모든 메서드가 간다 */
     private final CountingEmbeddingModel delegate = new CountingEmbeddingModel();
+
+    /** 질문 전용 모델(#656) — 상한이 걸린 연결. 질문 한 건만 간다 */
+    private final CountingEmbeddingModel queryDelegate = new CountingEmbeddingModel();
 
     // ------------------------------------------------------------------ 캐시가 걸리는 자리
 
@@ -50,7 +54,7 @@ class QueryEmbeddingCacheTest {
         float[] first = cache.embed("정회원 승격 조건은?");
         float[] second = cache.embed("정회원 승격 조건은?");
 
-        assertThat(delegate.calls).isOne();
+        assertThat(queryDelegate.calls).isOne();
         assertThat(second).isEqualTo(first);
     }
 
@@ -62,7 +66,30 @@ class QueryEmbeddingCacheTest {
         cache.embed("정회원 승격 조건은?");
         cache.embed("총회는 언제 열리나요?");
 
-        assertThat(delegate.calls).isEqualTo(2);
+        assertThat(queryDelegate.calls).isEqualTo(2);
+    }
+
+    /*
+     * **질문은 질문 전용 모델로, 나머지는 스타터 모델로 간다** (#656).
+     *
+     * 질문 임베딩은 요청 스레드에서 도므로 상한이 걸린 연결을 써야 하고, 색인 배치는 «느려도
+     * 끝나기만 하면 되는» 스타터 연결에 남아야 한다. 갈리면 질문이 다시 무기한 대기로 돌아가거나
+     * 색인이 질문용 상한에 잘린다.
+     */
+    @Test
+    void routesQuestionsToTheQueryModelAndEverythingElseToTheStarterModel() {
+        QueryEmbeddingCache cache = cache(1_000, WEEK);
+
+        cache.embed("정회원 승격 조건은?");
+        cache.embed(
+                List.of(new Document("제7조 (회원의 구분)")),
+                EmbeddingOptions.builder().build(),
+                new StubBatchingStrategy());
+
+        assertThat(queryDelegate.calls).isOne();
+        assertThat(queryDelegate.batchCalls).isZero();
+        assertThat(delegate.calls).isZero();
+        assertThat(delegate.batchCalls).isOne();
     }
 
     /*
@@ -77,7 +104,7 @@ class QueryEmbeddingCacheTest {
         handed[0] = 42.0f;
 
         assertThat(cache.embed("정회원 승격 조건은?")[0]).isEqualTo(0.5f);
-        assertThat(delegate.calls).isOne();
+        assertThat(queryDelegate.calls).isOne();
     }
 
     /*
@@ -92,11 +119,11 @@ class QueryEmbeddingCacheTest {
         cache.embed("정회원 승격 조건은?");
         clock.advance(Duration.ofDays(6));
         cache.embed("정회원 승격 조건은?");
-        assertThat(delegate.calls).as("읽었다고 수명이 늘지 않는다").isOne();
+        assertThat(queryDelegate.calls).as("읽었다고 수명이 늘지 않는다").isOne();
 
         clock.advance(Duration.ofDays(2));
         cache.embed("정회원 승격 조건은?");
-        assertThat(delegate.calls).isEqualTo(2);
+        assertThat(queryDelegate.calls).isEqualTo(2);
     }
 
     // ------------------------------------------------------------------ 그냥 넘기는 자리
@@ -133,7 +160,7 @@ class QueryEmbeddingCacheTest {
     // ------------------------------------------------------------------ 픽스처
 
     private QueryEmbeddingCache cache(long maxSize, Duration ttl) {
-        return new QueryEmbeddingCache(delegate, maxSize, ttl, clock);
+        return new QueryEmbeddingCache(delegate, queryDelegate, maxSize, ttl, clock);
     }
 
     /** 부른 횟수가 이 테스트의 관측값이다 — 캐시의 값어치가 그 수의 차이다 */

@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -482,6 +483,10 @@ class AssistantControllerTest {
      * ⚠️ **첫 바이트 전의 거절은 종전 그대로 상태 코드다** — SSE 로 바꾸면서 거절의 계단이
      * 흐려지지 않았다는 것이 이 테스트다. 흐려지면 «화면에 글자가 나오다가 사실은 한도
      * 초과였다»가 성립한다.
+     *
+     * **봉투가 JSON으로 나가는지까지 본다** (#656). 요청은 `Accept: text/event-stream` 하나뿐인데
+     * 그 형식으로 `ApiResponse`를 쓸 수 없어 예전에는 이 넷이 전부 봉투 없는 500이었다 — 화면이
+     * 오류 코드로 문구를 가르고 403에서 새 대화로 다시 보내므로 `code`가 곧 계약이다.
      */
     @Test
     void keepsTheRejectionLadderOnStatusCodesEvenOnTheStreamPath() throws Exception {
@@ -492,17 +497,36 @@ class AssistantControllerTest {
         mockMvc.perform(
                         post(STREAM)
                                 .contentType(MediaType.APPLICATION_JSON)
+                                .accept(MediaType.TEXT_EVENT_STREAM)
                                 .content("{\"question\":\"정회원 승격 조건은?\"}"))
                 .andExpect(status().isUnauthorized());
 
         mockMvc.perform(
-                        authorized(post(STREAM))
-                                .contentType(MediaType.APPLICATION_JSON)
+                        streamRequest()
                                 .content(
                                         "{\"question\":\"정회원 승격 조건은?\",\"conversationId\":\"%d:not-a-uuid\"}"
                                                 .formatted(member.getId())))
                 .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.code").value("ASSISTANT_CONVERSATION_FORBIDDEN"));
+
+        // `@Valid`의 400도 같은 핸들러를 지난다
+        mockMvc.perform(streamRequest().content("{\"question\":\"  \"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    /* 한도(429)도 첫 바이트 전에 끊기므로 상태 코드 + 봉투다 — 화면은 이 코드로 «잠시 뒤»를 그린다 */
+    @Test
+    void refusesWithTooManyRequestsOnTheStreamPathToo() throws Exception {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            awaitStream(stream("정회원 승격 조건은?"));
+        }
+
+        mockMvc.perform(streamRequest("정회원 승격 조건은?"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("ASSISTANT_RATE_LIMITED"));
     }
 
     /*
@@ -643,8 +667,7 @@ class AssistantControllerTest {
 
     private MvcResult stream(String question, String conversationId) throws Exception {
         return mockMvc.perform(
-                        authorized(post(STREAM))
-                                .contentType(MediaType.APPLICATION_JSON)
+                        streamRequest()
                                 .content(
                                         "{\"question\":\"%s\",\"conversationId\":\"%s\"}"
                                                 .formatted(question, conversationId)))
@@ -653,9 +676,18 @@ class AssistantControllerTest {
     }
 
     private MockHttpServletRequestBuilder streamRequest(String question) {
+        return streamRequest().content("{\"question\":\"%s\"}".formatted(question));
+    }
+
+    /*
+     * ⚠️ **웹과 같은 `Accept: text/event-stream`을 싣는다** (#656). 웹 `apiFetchStream`은 이
+     * 헤더 하나만 보내는데, 예전 픽스처는 `Accept`를 비워 두어 «무엇이든 받는다»로 읽혔다 — 그래서
+     * 첫 바이트 전의 거절이 봉투로 나가지 못하고 500이 되던 것을 테스트가 보지 못했다.
+     */
+    private MockHttpServletRequestBuilder streamRequest() {
         return authorized(post(STREAM))
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"question\":\"%s\"}".formatted(question));
+                .accept(MediaType.TEXT_EVENT_STREAM);
     }
 
     /*

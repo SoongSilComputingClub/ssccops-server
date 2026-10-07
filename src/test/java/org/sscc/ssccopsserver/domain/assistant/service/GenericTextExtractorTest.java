@@ -8,8 +8,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
 import org.apache.poi.xslf.usermodel.XSLFTextBox;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
@@ -196,6 +198,96 @@ class GenericTextExtractorTest {
             assertThat(extractor.extract(bytes.toByteArray(), "옛명부.xls").pages().get(0).text())
                     .contains("옛 명부 항목");
         }
+    }
+
+    // ------------------------------------------------------------------ 본문 상한 (#656)
+
+    /*
+     * **압축 형식은 10MB 안에서도 본문이 커진다** — 그래서 추출한 글자 수로 끊는다.
+     *
+     * 상한을 넘는 `.xlsx`를 실제로 만든다. 셀 값이 **무작위**인 것은 반복 문자열이면 POI의 압축비
+     * 검사(최대 100배)에 먼저 걸려 «파일을 열지 못했습니다»가 되기 때문이다 — 확인하려는 것은 그
+     * 자리가 아니라 글자 수 상한이다. 거절은 413이 아니라 **400 + 나눠 올리라는 문장**이다(웹이
+     * 파싱 실패에만 서버 문장을 그대로 싣는다).
+     */
+    @Test
+    void stopsExtractingOnceTheTextOutgrowsWhatTheCorpusCouldIndex() throws Exception {
+        byte[] spreadsheet;
+        try (XSSFWorkbook workbook = new XSSFWorkbook();
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+            var sheet = workbook.createSheet("명부");
+            int rows = GenericTextExtractor.MAX_EXTRACTED_CHARS / 900 + 10;
+            for (int row = 0; row < rows; row++) {
+                StringBuilder cell = new StringBuilder();
+                while (cell.length() < 900) {
+                    cell.append(UUID.randomUUID());
+                }
+                sheet.createRow(row).createCell(0).setCellValue(cell.toString());
+            }
+            workbook.write(bytes);
+            spreadsheet = bytes.toByteArray();
+        }
+        assertThat(spreadsheet.length).as("파일 상한(10MB) 안이다").isLessThan(10 * 1024 * 1024);
+
+        assertThatThrownBy(() -> extractor.extract(spreadsheet, "긴명부.xlsx"))
+                .isInstanceOf(GeneralException.class)
+                .hasFieldOrPropertyWithValue(
+                        "errorCode", AssistantErrorCode.RAG_DOCUMENT_PARSE_FAILED)
+                .hasMessageContaining("본문이 너무 깁니다");
+    }
+
+    /* 평문도 같은 상한이다 — 같은 내용이 형식에 따라 다른 판정을 받지 않는다 */
+    @Test
+    void appliesTheSameLimitToPlainText() {
+        byte[] tooLong =
+                "가"
+                        .repeat(GenericTextExtractor.MAX_EXTRACTED_CHARS + 1)
+                        .getBytes(StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> extractor.extract(tooLong, "긴메모.txt"))
+                .isInstanceOf(GeneralException.class)
+                .hasMessageContaining("본문이 너무 깁니다");
+    }
+
+    /* 상한은 «청크 상한 × 청크 길이»다 — 새 숫자가 아니라 그보다 긴 문서는 어차피 색인되지 않는다 */
+    @Test
+    void derivesTheTextLimitFromTheChunkBudget() {
+        assertThat(GenericTextExtractor.MAX_EXTRACTED_CHARS)
+                .isEqualTo(
+                        RagIndexingWorker.MAX_ACTIVE_CHUNKS * DocumentChunker.TARGET_CHUNK_CHARS);
+    }
+
+    /*
+     * POI의 zip 엔트리 상한은 기본 4GB라 사실상 없다 — `.docx`가 본문 XML을 DOM으로 통째로 읽는
+     * 자리를 이것이 막는다. JVM 전역 값이라 추출기가 실린 뒤의 값을 본다.
+     */
+    @Test
+    void capsASingleZipEntry() {
+        assertThat(extractor).isNotNull();
+        assertThat(ZipSecureFile.getMaxEntrySize())
+                .isEqualTo(GenericTextExtractor.MAX_ZIP_ENTRY_BYTES);
+    }
+
+    /*
+     * 핸들러는 **자르지 않고 멈춘다** — 닫힌 문단의 합이든, 닫히지 않은 문단 하나든.
+     * 잘라서 돌려주면 뒷부분 조항이 조용히 검색되지 않는다(`PageContentHandler` 주석).
+     */
+    @Test
+    void handlerStopsInsteadOfTruncating() throws Exception {
+        PageContentHandler closedBlocks = new PageContentHandler(10);
+        char[] six = "여섯글자이다".toCharArray();
+        closedBlocks.characters(six, 0, six.length);
+        closedBlocks.endElement("", "p", "p");
+
+        closedBlocks.characters(six, 0, six.length);
+        assertThatThrownBy(() -> closedBlocks.endElement("", "p", "p"))
+                .isInstanceOf(PageContentHandler.TextLimitExceededException.class);
+
+        PageContentHandler openBlock = new PageContentHandler(10);
+        char[] eleven = "열한글자로된문단이다".toCharArray();
+        openBlock.characters(eleven, 0, 5);
+        assertThatThrownBy(() -> openBlock.characters(eleven, 0, eleven.length))
+                .isInstanceOf(PageContentHandler.TextLimitExceededException.class);
     }
 
     private ExtractedDocument extract(String fixture) {

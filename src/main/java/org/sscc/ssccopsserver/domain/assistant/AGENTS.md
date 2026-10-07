@@ -826,7 +826,14 @@ read·write도 같다(0 = 제한 없음). 그대로 두면 질의 한 건이 **�
   배로 넓힌다. 이력이 길어질수록 생성이 느려지므로(0턴 9.3s → 2턴 12.2s) 이 값을 다시 볼 때
   함께 보는 손잡이는 `query.top-k`와 `memory.max-turns`다.
 - **임베딩은 이 빈을 쓰지 않는다**(`GoogleGenAiEmbeddingConnectionDetails`로 따로 연결한다) —
-  상한이 질의 경로에만 걸리는 것이 마침 맞다. 색인 워커는 느려도 끝나기만 하면 된다.
+  색인 워커는 느려도 끝나기만 하면 되므로 그쪽에 상한이 없는 것은 맞다. ⚠️ **그런데 질문
+  임베딩도 그 연결을 쓰고 있었다** (#656) — 스트림이 열리기 전 요청 스레드에서 도는 호출이
+  타임아웃 없이 429까지 5회 재시도했고, 실패하면 500이었다. 지금은 `AssistantConfig`가
+  **질문 전용 임베딩 모델**(같은 옵션 · 상한을 건 `Client`)을 만들어 `QueryEmbeddingCache`의
+  `embed(String)`에만 물린다(상한 `ssccops.assistant.gemini.query-embedding-timeout` 기본
+  10초 · 재시도는 위와 같은 `spring.ai.retry`). **그 모델을 빈으로 등록하지 않는다** — 스타터의
+  연결·모델 자동 구성이 `@ConditionalOnMissingBean`이라 빈으로 세우면 색인까지 그 상한에 묶인다.
+  검색 실패는 `AssistantServiceImpl.search`가 503 `ASSISTANT_UPSTREAM_FAILED`로 옮긴다.
 - ⚠️ **재시도의 정본은 `RetryTemplate`이 아니라 SDK다** (#448). `spring.ai.retry`가 만드는
   템플릿은 세 예외만 다시 부르는 화이트리스트라(`TransientAiException` ·
   `ResourceAccessException` · `WebClientRequestException`) google-genai가 던지는 것

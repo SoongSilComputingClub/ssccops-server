@@ -408,6 +408,29 @@ class AssistantServiceImplTest {
                 .hasMessage("지금은 답변을 만들 수 없습니다.");
     }
 
+    /*
+     * **검색 실패도 503이다** (#656) — 질문 임베딩(Gemini)이 검색 안에서 돌기 때문이다.
+     *
+     * 그전에는 아무도 잡지 않아 500 `INTERNAL_SERVER_ERROR`로 나갔다. 생성 실패와 같은 실패가 다른
+     * 코드였고, 원문(질문이 섞인 SDK 문장)도 그대로 `handleAll`의 로그 경로로 갔다.
+     */
+    @Test
+    void translatesASearchFailureIntoTheSameUpstreamCode() {
+        searchable(regulation());
+        when(ragChunkStore.search(any()))
+                .thenThrow(new IllegalStateException("429 quota exceeded for 정회원 승격 조건은?"));
+
+        assertThatThrownBy(() -> service.query(ask("정회원 승격 조건은?"), member))
+                .isInstanceOfSatisfying(
+                        GeneralException.class,
+                        exception ->
+                                assertThat(exception.getErrorCode())
+                                        .isEqualTo(AssistantErrorCode.ASSISTANT_UPSTREAM_FAILED))
+                .hasMessage("지금은 답변을 만들 수 없습니다.");
+
+        assertThat(chatModel.calls).as("근거를 찾지 못했으니 생성으로 가지 않는다").isZero();
+    }
+
     /* 기능 플래그가 꺼져 있으면 404다 — 아무것도 묻지 않는다 */
     @Test
     void isNotFoundWhileTheAssistantIsDisabled() {

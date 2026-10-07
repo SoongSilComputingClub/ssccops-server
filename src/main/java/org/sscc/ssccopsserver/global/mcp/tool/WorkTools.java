@@ -219,9 +219,11 @@ public class WorkTools {
             name = "vote_sub_work_approval",
             description =
                     "정족수 투표에 찬성(AGREE)·반대(DISAGREE)를 던진다. 찬반 투표(APPROVAL_VOTE) 권한이"
-                            + " 필요하고 한 사람이 한 번만 던질 수 있다. **정족수가 채워져도 완료는"
-                            + " 승인자가 누른다** — 투표는 승인을 대체하지 않는다. 승인 대기 목록은"
-                            + " list_approvals가 답한다.",
+                            + " 필요하다. 한 사람당 한 표이며 **다시 부르면 기존 표가 새 값으로 바뀐다**(409 아님)."
+                            + " 정족수 유형의 하위 업무가 검토·승인 대기일 때만 되고 아니면 409"
+                            + " TRANSITION_NOT_ALLOWED. **정족수가 채워져도 완료는 승인자가 누른다** — 투표는"
+                            + " 승인을 대체하지 않는다. 승인 대기 목록은 list_approvals가 답한다(그 도구는 업무"
+                            + " 관리(WORK_MANAGE) 권한이 필요하다).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SubWorkVoteResponse voteSubWorkApproval(
             @McpToolParam(description = "하위 업무 id") Long subWorkId,
@@ -259,7 +261,9 @@ public class WorkTools {
             name = "update_sub_work_checklist_item_article",
             description =
                     "완료 점검 항목의 문구를 고친다. 체크 여부는 바뀌지 않는다(그것은"
-                            + " check_sub_work_item이다). 항목을 지우는 도구는 없다 — 화면에서 한다.",
+                            + " check_sub_work_item이다). 담당자이거나 업무 관리(WORK_MANAGE) 권한이 있어야 하고,"
+                            + " 기획·진행 단계에서만 된다 — 검토 이후는 409 TRANSITION_NOT_ALLOWED."
+                            + " 항목을 지우는 도구는 없다 — 화면에서 한다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SubWorkChecklistMutationResponse updateSubWorkChecklistItemArticle(
             @McpToolParam(description = "하위 업무 id") Long subWorkId,

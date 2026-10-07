@@ -100,8 +100,9 @@ public class EventTools {
     @McpTool(
             name = "change_event_status",
             description =
-                    "행사 상태를 바꾼다 — action에 PUBLISH(초안→공개)·RETRACT(공개→초안)·ARCHIVE(보관)·"
-                            + "REPUBLISH(보관→공개) 중 하나. 허용되지 않는 전이는 409. **공개는 익명 사이트에"
+                    "행사 상태를 바꾼다 — action에 PUBLISH(초안→공개)·RETRACT(공개→초안)·ARCHIVE(초안·공개→보관)·"
+                            + "REPUBLISH(보관→공개) 중 하나. 허용되지 않는 전이는 400"
+                            + " INVALID_EVENT_STATUS_TRANSITION. **공개는 익명 사이트에"
                             + " 바로 나온다**(CDN 캐시로 최대 5분).",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public EventDetailResponse changeEventStatus(

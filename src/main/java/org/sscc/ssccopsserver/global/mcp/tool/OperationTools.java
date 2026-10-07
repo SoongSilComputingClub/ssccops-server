@@ -169,10 +169,10 @@ public class OperationTools {
             name = "transition_sub_work",
             description =
                     "하위 업무 상태 전이. transition은 START(기획→진행) · REQUEST_REVIEW(진행→검토) ·"
-                            + " APPROVE_COMPLETE(검토→완료, 승인과 완료가 한 단계) · REJECT(검토→진행, reason"
-                            + " 필수) 중 하나. 담당자·결재 권한 판정은 서버가 하며 403이면 재시도하지"
-                            + " 말고 사용자에게 알린다. 전이 전에 get_sub_work로 현재 상태를 확인한다."
-                            + " 되돌릴 수 없으므로 사용자가 명시적으로 요청한 경우에만 부른다.",
+                        + " APPROVE_COMPLETE(검토→완료, 승인과 완료가 한 단계) · REJECT(검토→진행, reason 필수 — 없으면"
+                        + " 422 REASON_REQUIRED) 중 하나. 담당자·결재 권한 판정은 서버가 하며 403이면 재시도하지 말고 사용자에게"
+                        + " 알린다. 전이 전에 get_sub_work로 현재 상태를 확인한다. 되돌릴 수 없으므로 사용자가 명시적으로 요청한 경우에만"
+                        + " 부른다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SubWorkTransitionResponse transitionSubWork(
             @McpToolParam(description = "하위 업무 id") Long subWorkId,
@@ -195,7 +195,8 @@ public class OperationTools {
             name = "check_sub_work_item",
             description =
                     "하위 업무 체크리스트 항목의 완료 여부를 바꾼다(isCompleted true/false). 항목 id는"
-                            + " get_sub_work의 checklist에서 얻는다. 담당자만 가능하며 완료된 하위 업무의"
+                            + " get_sub_work의 checklist에서 얻는다. 담당자이거나 업무 관리(WORK_MANAGE) 권한이"
+                            + " 있어야 하며 완료된 하위 업무의"
                             + " 항목은 바꿀 수 없다(409). 사용자가 명시적으로 요청한 경우에만 부른다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public SubWorkChecklistItemUpdateResponse checkSubWorkItem(

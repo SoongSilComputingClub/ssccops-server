@@ -71,12 +71,15 @@ public class MeetingTools {
     @McpTool(
             name = "transition_meeting",
             description =
-                    "회의 상태를 넘긴다 — transition에 OPEN(개회)·WRITE_MINUTES(회의록 작성)·CLOSE(종료)·CANCEL(취소) 중"
-                        + " 하나. CANCEL은 reason이 필수다. 회의록은 회의 단위 본문이 아니라 안건마다 update_meeting_agenda"
-                        + " 로 적는다(논의·결과·처리 구분) — WRITE_MINUTES 는 그 단계 표시다. **처리 구분이 PENDING(미처리)인"
-                        + " 안건이 하나라도 남으면 종료가 409 AGENDA_UNRESOLVED 다** — 드래프트 안건도 센다."
-                        + " list_meeting_agendas 로 PENDING 을 찾아 HOLD(보류)나 CLOSED(처리 완료)로 바꾼 뒤 다시"
-                        + " 부른다. 종료 뒤에는 안건을 고칠 수 없다(드래프트를 업무로 만드는 승격만 된다). 회의 책임자만 할 수 있다.",
+                    "회의 상태를 넘긴다 — transition에 OPEN(예정→진행)·WRITE_MINUTES(진행→회의록 작성)·CLOSE(회의록"
+                        + " 작성→종료)·CANCEL(예정→취소) 중 하나. 그 밖의 전이는 409 TRANSITION_NOT_ALLOWED. CANCEL은"
+                        + " reason이 필수다(없으면 422 REASON_REQUIRED). 회의록은 회의 단위 본문이 아니라 안건마다"
+                        + " update_meeting_agenda 로 적는다(논의·결과·처리 구분) — WRITE_MINUTES 는 그 단계 표시다."
+                        + " **처리 구분이 PENDING(미처리)인 안건이 하나라도 남으면 종료가 409 AGENDA_UNRESOLVED 다** —"
+                        + " 드래프트 안건도 센다. list_meeting_agendas 로 PENDING 을 찾아 HOLD(보류)나 CLOSED(처리"
+                        + " 완료)로 바꾼 뒤 다시 부른다. 종료 뒤에는 안건을 고칠 수 없다(드래프트를 업무로 만드는 승격만 된다). 회의"
+                        + " 관리(MEETING_MANAGE) 권한이 필요하고, 개회·회의록 작성·종료는 그 회의의 책임자 본인만 할 수 있다(아니면"
+                        + " 403). 취소는 책임자가 아니어도 된다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingTransitionResponse transitionMeeting(
             @McpToolParam(description = "회의 id") Long meetingId,
@@ -263,8 +266,10 @@ public class MeetingTools {
     @McpTool(
             name = "list_approvals",
             description =
-                    "승인함 — 내가 처리할 수 있는 하위 업무 승인 건. status로 대기·정족수·반려를"
-                            + " 거른다(비우면 전체). **정족수가 모여도 완료는 승인자가 누른다** —"
+                    "승인함 — 업무 관리 운영진이 함께 보는 하위 업무 승인 목록(마감 오름차순). status는"
+                            + " PENDING(대기·재승인 필요 · 비우면 이것)·APPROVED·REJECTED 중 하나이고 그 밖은 400"
+                            + " INVALID_CODE_VALUE. 내가 승인·반려할 수 있는지는 항목의 canApprove·canReject로"
+                            + " 본다. **정족수가 모여도 완료는 승인자가 누른다** —"
                             + " 투표는 vote_sub_work_approval, 승인·반려는 transition_sub_work다."
                             + " 업무 관리(WORK_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
@@ -292,7 +297,8 @@ public class MeetingTools {
             description =
                     "하위 업무 유형 목록 — create_sub_work에 넣을 subWorkTypeId를 여기서 얻는다."
                             + " 유형이 승인 필요 여부·승인자 권한·정족수·완료 점검 항목을 정하며"
-                            + " **꺼진 유형(useYn=false)은 새 하위 업무에 쓸 수 없다**."
+                            + " **꺼진 유형도 함께 나오지만(useYn=false) 새 하위 업무에는 쓸 수 없다** —"
+                            + " 고르지 않는다."
                             + " 하위 업무 유형 조회(SUB_WORK_TYPE_READ) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<SubWorkTypeResponse> listSubWorkTypes(McpTransportContext context) {

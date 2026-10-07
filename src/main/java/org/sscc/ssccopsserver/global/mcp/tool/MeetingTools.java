@@ -56,7 +56,9 @@ public class MeetingTools {
             description =
                     "회의를 등록한다. title·meetingCategory·personInChargeId·startAt이 필수다."
                             + " agendas에 안건을 함께 넣을 수 있고 비워도 된다 — 나중에"
-                            + " add_meeting_agenda로 더한다. **회의 책임자는 담당자와 같은 회원이며"
+                            + " add_meeting_agenda로 더한다. 안건 한 건은 add_meeting_agenda 와 같다:"
+                            + " targetOperationId(연결 안건)와 agendaName(드래프트 안건) 중 정확히 하나,"
+                            + " processStatus 를 비우면 PENDING. **회의 책임자는 담당자와 같은 회원이며"
                             + " 따로 받지 않는다.** 회의 관리(MEETING_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingDetailResponse createMeeting(
@@ -69,10 +71,12 @@ public class MeetingTools {
     @McpTool(
             name = "transition_meeting",
             description =
-                    "회의 상태를 넘긴다 — transition에 OPEN(개회)·WRITE_MINUTES(회의록 작성)·"
-                            + "CLOSE(종료)·CANCEL(취소) 중 하나. CANCEL은 reason이 필수다."
-                            + " **처리하지 않은 안건이 남아 있으면 종료가 거절된다**(409) — 그때는"
-                            + " 안건을 보류로 표시하거나 처리한 뒤 다시 부른다. 회의 책임자만 할 수 있다.",
+                    "회의 상태를 넘긴다 — transition에 OPEN(개회)·WRITE_MINUTES(회의록 작성)·CLOSE(종료)·CANCEL(취소) 중"
+                        + " 하나. CANCEL은 reason이 필수다. 회의록은 회의 단위 본문이 아니라 안건마다 update_meeting_agenda"
+                        + " 로 적는다(논의·결과·처리 구분) — WRITE_MINUTES 는 그 단계 표시다. **처리 구분이 PENDING(미처리)인"
+                        + " 안건이 하나라도 남으면 종료가 409 AGENDA_UNRESOLVED 다** — 드래프트 안건도 센다."
+                        + " list_meeting_agendas 로 PENDING 을 찾아 HOLD(보류)나 CLOSED(처리 완료)로 바꾼 뒤 다시"
+                        + " 부른다. 종료 뒤에는 안건을 고칠 수 없다(드래프트를 업무로 만드는 승격만 된다). 회의 책임자만 할 수 있다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingTransitionResponse transitionMeeting(
             @McpToolParam(description = "회의 id") Long meetingId,
@@ -90,7 +94,10 @@ public class MeetingTools {
     @McpTool(
             name = "list_meeting_agendas",
             description =
-                    "회의의 안건 목록. 연결 안건의 targetOperation.targetId 는 운영 유형(operationType)의"
+                    "회의의 안건 목록. 드래프트 안건은 draft=true · targetOperation=null 이고 제목이"
+                            + " agendaName 이다(업무·하위 업무로 만들려면 promote_meeting_agenda ·"
+                            + " promote_meeting_agenda_to_sub_work)."
+                            + " 연결 안건의 targetOperation.targetId 는 운영 유형(operationType)의"
                             + " 상세 id 다 — WORK 면 get_work, SUB_WORK 면 get_sub_work, MEETING 이면"
                             + " get_meeting 에 넘긴다(operationId 는 운영 id 라 그 자리에 쓰면 다른 건이"
                             + " 열린다). 회의 조회(MEETING_READ) 권한이 필요하다.",
@@ -156,7 +163,8 @@ public class MeetingTools {
                             + " **전체 교체다** — content·resultContent 를 생략하면 지운 것으로 본다."
                             + " 한 칸만 바꾸려면 list_meeting_agendas 로 지금 값을 읽어 함께 보낸다"
                             + "(update_work 같은 읽고-합치기 도구와 다르다)."
-                            + " processStatus 는 필수다."
+                            + " processStatus 는 필수다 — PENDING(미처리) · HOLD(보류) · CLOSED(처리 완료)이며"
+                            + " PENDING 이 남으면 회의를 종료할 수 없다."
                             + " 바꿀 수 없는 것: 연결 운영 건·제출자 — 다시 상정하는 것과 같아"
                             + " 이 API 의 범위 밖이다. 운영 건을 가리키는 안건에 agendaName 을 주면"
                             + " 400 이다(제목은 그 운영 건의 제목이다). 드래프트를 업무·하위 업무에 잇는 길은"

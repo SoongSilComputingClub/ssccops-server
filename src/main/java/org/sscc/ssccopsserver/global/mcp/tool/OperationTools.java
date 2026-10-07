@@ -140,7 +140,11 @@ public class OperationTools {
 
     @McpTool(
             name = "get_meeting",
-            description = "회의 상세 — 목록 항목에 더해 내부 상세·외부 요약·안건 목록(처리 상태·결과 포함)." + " 권한 MEETING_READ.",
+            description =
+                    "회의 상세 — 목록 항목에 더해 안건 목록(논의 content·결과 resultContent·처리 구분"
+                            + " processStatus)과 태그. 회의 단위 본문은 없다 — 회의록은 안건마다 적힌다(V25)."
+                            + " 드래프트 안건은 draft=true · targetOperation=null 이고 제목이 agendaName 이다."
+                            + " 권한 MEETING_READ.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public MeetingDetailResponse getMeeting(
             @McpToolParam(description = "회의 id") Long meetingId, McpTransportContext context) {

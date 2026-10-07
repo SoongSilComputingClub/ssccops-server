@@ -10,7 +10,10 @@ import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCondition;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramDetailResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAddRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSummaryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
@@ -48,6 +51,8 @@ import lombok.RequiredArgsConstructor;
  * 활동은 **기획안 승인 이관으로만 생긴다**(`domain/academicprogram/AGENTS.md`) — 「활동을 만들어줘」에
  * 해당하는 엔드포인트가 아예 없고, 회차 작성·재제출은 활동 구성원이 화면에서 하는 일이다. 그래서 이
  * 파도는 **읽기와 검토**로 이루어진다. 도구가 없는 것이 빠뜨린 것이 아니라 그 모양이다.
+ * 예외는 **팀원 명단**이다(#654) — v1.1.0의 팀원 관리(#612)가 스터디장·학술국장에게 추가·상태 변경
+ * 경로를 열어 그 둘과 변경 이력을 도구로 옮겼다. 회원을 만들지도 활동을 고치지도 않고 명단 행만 바꾼다.
  *
  * ── ② 전이는 셋이고, 무엇이 가능한지는 서버가 안다 ─────────────
  *
@@ -342,6 +347,91 @@ public class AcademicTools {
                         request,
                         AcademicProgramMemberResponse[].class);
         return members == null ? List.of() : Arrays.asList(members);
+    }
+
+    // ══ 팀원 관리 (#654 · REST는 #612) ══════════════════════════
+
+    /*
+     * 추가와 상태 변경을 한 도구로 합치지 않는다 — 추가는 회원 id를, 상태 변경은 명단 행 id(eventPtcpId)와
+     * 다음 상태를 받아 입력 모양이 다르다. 대상에 따라 required가 갈리면 JSON Schema로 말할 수 없다
+     * (promote_meeting_agenda를 둘로 나눈 것과 같은 이유). 삭제 도구는 없다 — REST에 삭제가 없고, 제외
+     * (CANCELLED)가 행을 남겨 지난 출석이 가리키게 하는 것이 결정이다.
+     */
+    @McpTool(
+            name = "add_academic_program_member",
+            description =
+                    "학술 활동에 팀원을 넣는다 — 신청서 없이 바로 확정(CONFIRMED)이고 변경 이력이 남는다. mbrId는 회원"
+                        + " 식별자다(list_members로 찾는다). 예전에 제외된(CANCELLED) 회원이면 재합류가 된다. 탈퇴·제명 회원은 400"
+                        + " MEMBER_NOT_ADDABLE, 이미 확정·대기면 409 EVENT_PARTICIPANT_DUPLICATED, 모집 시작"
+                        + " 전이면 409 RECRUITMENT_NOT_STARTED, 종료·폐지된 활동이면 409"
+                        + " ACADEMIC_PROGRAM_COMPLETED·ACADEMIC_PROGRAM_DISCONTINUED다. 그 활동의 스터디장"
+                        + " 본인이나 학술국장만 부를 수 있다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public AcademicProgramMemberResponse addAcademicProgramMember(
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = "mbrId — 넣을 회원") AcademicProgramMemberAddRequest request,
+            McpTransportContext context) {
+        log.info("mcp tool add_academic_program_member academicProgramId={}", academicProgramId);
+        return client.post(
+                context,
+                memberPath(academicProgramId),
+                request,
+                AcademicProgramMemberResponse.class);
+    }
+
+    @McpTool(
+            name = "change_academic_program_member_status",
+            description =
+                    "팀원 명단 한 줄의 상태를 바꾼다. 갈 수 있는 길은 넷이다 — 승격(WAITLISTED→CONFIRMED) ·"
+                        + " 강등(CONFIRMED→WAITLISTED) · 제외(CONFIRMED→CANCELLED) ·"
+                        + " 재합류(CANCELLED→CONFIRMED). 그 밖은 400"
+                        + " INVALID_PARTICIPANT_STATUS_TRANSITION이다. eventPtcpId는 명단 행의 식별자이지 회원"
+                        + " id가 아니다 — list_academic_program_members로 먼저 읽는다. 제외해도 행은 지우지 않는다 — 지난"
+                        + " 회차 출석은 남고 다음 회차 출석 대상에서만 빠진다. 이 활동의 명단 행이 아니면 404"
+                        + " EVENT_PARTICIPANT_NOT_FOUND, 그 밖의 409는 add_academic_program_member와 같다."
+                        + " 스터디장 본인이나 학술국장만 부를 수 있다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public AcademicProgramMemberResponse changeAcademicProgramMemberStatus(
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = "명단 행 식별자(eventPtcpId)") Long eventPtcpId,
+            @McpToolParam(description = "ptcpSttsCd — 다음 상태")
+                    AcademicProgramMemberStatusChangeRequest request,
+            McpTransportContext context) {
+        log.info(
+                "mcp tool change_academic_program_member_status academicProgramId={}"
+                        + " eventPtcpId={}",
+                academicProgramId,
+                eventPtcpId);
+        return client.patch(
+                context,
+                memberPath(academicProgramId) + "/" + eventPtcpId,
+                request,
+                AcademicProgramMemberResponse.class);
+    }
+
+    @McpTool(
+            name = "list_academic_program_member_history",
+            description =
+                    "팀원 명단 변경 이력(최신순). 모집 선발 · 행사 참가자 · 팀원 관리 세 경로(chgPathSeCd)가 남긴"
+                            + " 줄이 전부 나온다. bfrPtcpSttsCd가 null이면 처음 명단에 오른 줄이다. 종료·폐지된"
+                            + " 활동도 볼 수 있다. 스터디장 본인이나 학술국장만 볼 수 있다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = true))
+    public List<AcademicProgramMemberHistoryResponse> listAcademicProgramMemberHistory(
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            McpTransportContext context) {
+        log.info(
+                "mcp tool list_academic_program_member_history academicProgramId={}",
+                academicProgramId);
+        AcademicProgramMemberHistoryResponse[] rows =
+                client.get(
+                        context,
+                        memberPath(academicProgramId) + "/history",
+                        AcademicProgramMemberHistoryResponse[].class);
+        return rows == null ? List.of() : Arrays.asList(rows);
+    }
+
+    private static String memberPath(Long academicProgramId) {
+        return PROGRAMS + "/" + academicProgramId + "/members";
     }
 
     // ══ 출석 ═══════════════════════════════════════════════════

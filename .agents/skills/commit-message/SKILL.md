@@ -26,7 +26,6 @@ description: Draft and create a git commit message following this repo's CONTRIB
    - `rename` 파일/폴더명 수정 또는 이동
    - `remove` 파일 삭제
    - `cicd` CI/CD 관련
-   - `hotfix` 긴급 수정
 
    브랜치 타입(feat/fix/refactor)과 커밋 타입이 항상 같을 필요는 없다 — 실제 diff 성격에 맞춘다.
 4. scope는 변경된 도메인/모듈명(예: `member`, `auth`, `common`)으로 짧게 잡는다. 여러 모듈에 걸친 전역적인 변경이면 생략 가능.

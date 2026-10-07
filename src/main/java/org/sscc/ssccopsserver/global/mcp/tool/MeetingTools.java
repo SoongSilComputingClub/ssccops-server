@@ -297,15 +297,25 @@ public class MeetingTools {
             description =
                     "하위 업무 유형 목록 — create_sub_work에 넣을 subWorkTypeId를 여기서 얻는다."
                             + " 유형이 승인 필요 여부·승인자 권한·정족수·완료 점검 항목을 정하며"
-                            + " **꺼진 유형도 함께 나오지만(useYn=false) 새 하위 업무에는 쓸 수 없다** —"
-                            + " 고르지 않는다."
+                            + " **꺼진 유형(useYn=false)은 새 하위 업무에 쓸 수 없다** — 고를 목록이면"
+                            + " condition.useYn=true로 사용 중인 것만 받는다(비우면 꺼진 것까지 전부)."
                             + " 하위 업무 유형 조회(SUB_WORK_TYPE_READ) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<SubWorkTypeResponse> listSubWorkTypes(McpTransportContext context) {
+    public List<SubWorkTypeResponse> listSubWorkTypes(
+            @McpToolParam(description = "useYn — true면 사용 중인 유형만. 선택이며 비우면 전부", required = false)
+                    SubWorkTypeCondition condition,
+            McpTransportContext context) {
         log.info("mcp tool list_sub_work_types");
-        return client.getList(context, "/v1/sub-work-types", null, SubWorkTypeResponse.class)
+        return client.getList(context, "/v1/sub-work-types", condition, SubWorkTypeResponse.class)
                 .items();
     }
+
+    /*
+     * 하위 업무 유형 목록의 조건 (#662) — 컨트롤러가 받는 `@RequestParam Boolean useYn` 하나. 도구가
+     * 기본으로 true를 보내지 않는 것은 서버 기본값(전부)과 다른 필터를 몰래 걸면 화면(유형 관리는
+     * 전부 본다)과 목록이 갈리기 때문이다 — 인자로 드러내고 설명에서 권한다.
+     */
+    public record SubWorkTypeCondition(Boolean useYn) {}
 
     /*
      * 안건 단건 경로 — 수정·두 승격 도구가 같은 REST 경로를 부른다. 상수가 아니라 메서드인 것은

@@ -98,8 +98,9 @@ public class ContentTools {
             name = "update_post",
             description =
                     "포스트의 값을 바꾼다. **바꿀 필드만 준다** — 나머지는 현재 값이 유지된다."
-                            + " coverFileId는 이 포스트의 갤러리 파일 id여야 한다. 요약·행사·표지를 비우는"
-                            + " 것은 이 도구로 할 수 없다(어드민 화면에서). 덮어쓰기 경합은 update_page와 같다.",
+                            + " coverFileId는 이 포스트의 갤러리 파일 id여야 한다. 요약을 비우려면 smry에 빈"
+                            + " 문자열을 준다. 행사·표지를 비우는 것은 이 도구로 할 수 없다(어드민 화면에서)."
+                            + " 덮어쓰기 경합은 update_page와 같다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public ContentPostResponse updatePost(
             @McpToolParam(description = "포스트 id") Long postId,

@@ -135,6 +135,26 @@ public interface MemberRepository
     Optional<MemberEntity> findWithGradeAndStatusById(Long id);
 
     /*
+     * 회원명부 내보내기의 일반 회원 (#674 · ssccops#598) — 고른 상태 중 하나이면서 제외할 등급이
+     * 아닌 회원 전부. 회장·부회장은 상태·등급과 무관하게 들어가므로 이 질의가 아니라 역할 배정
+     * 쪽(MemberRoleAssignmentRepository.findValidByRoleNames)에서 온다.
+     *
+     * 상태가 **포함 목록**인 것은 기준 코드에 새 상태가 생겨도 고르지 않은 한 명부에 들어가지 않게
+     * 하기 위해서고(담당자 후보의 findAllAssignable은 반대로 제외 목록이다 — 그쪽은 «떠난 사람만
+     * 뺀다»가 규칙이다), 제외할 등급(임시회원)을 파라미터로 받는 것은 findAssignableById와 같은
+     * 이유다 — 무엇을 뺄지는 서비스의 정책이다.
+     *
+     * 등급·상태 엔티티는 끌어오지 않는다. 명부에 싣는 값은 mbr의 컬럼뿐이고 두 코드는 FK 값이라
+     * 조인 없이 거른다. 정렬은 서비스가 한다(학번이 없는 졸업 회원을 뒤로 보내는 규칙이 거기 있다).
+     */
+    @Query(
+            "select m from MemberEntity m where m.membershipStatus.code in :statusCodes"
+                    + " and m.membershipGrade.code <> :excludedGradeCode")
+    List<MemberEntity> findRosterMembers(
+            @Param("statusCodes") Collection<String> statusCodes,
+            @Param("excludedGradeCode") String excludedGradeCode);
+
+    /*
      * 가장 먼저 등록된 회원 (#173 기획안 시스템 폼 시드).
      *
      * form.creatr_mbr_id가 NOT NULL이라 코드가 세우는 폼에도 생성자가 필요한데, 시드에는

@@ -413,7 +413,20 @@ public enum MemberErrorCode implements ErrorCode {
      * 운영진이 무엇을 정리해야 하는지 알 수 없다. 삭제 전에 무엇이 막을지는
      * GET /v1/members/{memberId}/deletion-preview의 blockedBy가 같은 표로 답한다.
      */
-    MEMBER_REFERENCED(HttpStatus.CONFLICT, "MEMBER_REFERENCED", "다른 기록이 이 회원을 가리키고 있어 삭제할 수 없습니다.");
+    MEMBER_REFERENCED(HttpStatus.CONFLICT, "MEMBER_REFERENCED", "다른 기록이 이 회원을 가리키고 있어 삭제할 수 없습니다."),
+
+    /*
+     * 409 — 회원명부를 내려받으려는데 오늘 유효한 회장이 없을 때 (#674 · ssccops#598).
+     *
+     * 옵션(포함할 상태 · 직책 표기법)과 무관하게 거절한다(운영진 결정 2026-10-09). 회장은 역할
+     * 이름(«회장»)으로 찾는데 role_nm은 UNIQUE가 아니고 화면에서 바뀔 수 있어, 빈 행으로 내면
+     * 제출본에서 대표자가 조용히 빠진다. 파일이 아니라 상태 코드로 거절해야 화면이 파일을 저장하지
+     * 않고 이 문장을 띄운다. 부회장은 없어도 거절하지 않는다.
+     */
+    ROSTER_PRESIDENT_MISSING(
+            HttpStatus.CONFLICT,
+            "ROSTER_PRESIDENT_MISSING",
+            "오늘 기준으로 회장 역할이 배정된 회원이 없습니다. 역할 관리에서 회장을 배정한 뒤 다시 내려받으세요.");
 
     private final HttpStatus httpStatus;
     private final String code;

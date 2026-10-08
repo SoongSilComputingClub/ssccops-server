@@ -8,6 +8,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpHeaders;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -105,7 +106,13 @@ public class SecurityConfig {
                 List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
-        // 토큰은 Supabase가 발급하고 서버는 되돌려주지 않으므로 노출할 응답 헤더가 없다
+        /*
+         * 노출하는 응답 헤더는 Content-Disposition 하나다 (#674). 회원명부 내려받기가 한글 파일 이름을
+         * 그 헤더에 싣는데, 교차 출처 fetch는 노출 목록에 없는 헤더를 읽지 못해 웹이 이름을 따로
+         * 지어야 했다 — 그러면 제목·파일 이름 규칙이 두 벌이 된다. 토큰은 Supabase가 발급하고 서버는
+         * 되돌려주지 않으므로 인증 쪽에는 노출할 헤더가 없다.
+         */
+        configuration.setExposedHeaders(List.of(HttpHeaders.CONTENT_DISPOSITION));
         configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();

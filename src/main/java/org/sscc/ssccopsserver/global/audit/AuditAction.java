@@ -27,6 +27,12 @@ public enum AuditAction {
     /** 하드 삭제(ADR-0021). 409로 막힌 시도도 failure로 남긴다 */
     MEMBER_DELETE("member.delete", "member"),
     MEMBER_IMPORT("member.import", "member_import"),
+    /*
+     * 회원명부 내려받기 (#674 · ssccops#598). 연락처·학번이 담긴 명부 한 벌이 파일로 서버 밖에
+     * 나가는 사건이다 — 나간 뒤에는 서버가 통제하지 못하므로 «누가 언제 어떤 옵션으로 몇 명»이
+     * 남아야 한다. 대상은 연도-학기, decision은 건수와 옵션(코드값)뿐이고 회원 값은 싣지 않는다.
+     */
+    MEMBER_ROSTER_EXPORT("member.roster.export", "member_roster"),
     SUBWORK_TRANSITION("subwork.transition", "sub_work"),
     /*
      * 상위 업무 전이 (#622 · ssccops#563). 상태 이력 표를 두지 않기로 해서(운영진 «감사 로그로 충분»)

@@ -42,6 +42,7 @@ import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepo
 import org.sscc.ssccopsserver.global.logging.EcsJsonEncoder;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -228,6 +229,42 @@ class AuditPointsTest {
                                 .header("Authorization", "Bearer " + MANAGER))
                 .andExpect(status().isOk());
         assertThat(captured.list).isEmpty();
+    }
+
+    /*
+     * 회원명부 내려받기(#674)는 연도-학기·건수·옵션(코드값)만 남는다 — 파일에 실린 회원의 이름·학번·
+     * 연락처는 어느 필드에도 없다. 회장이 있어야 파일이 나가므로 대상 회원에게 회장을 배정한다.
+     */
+    @Test
+    void rosterExportIsAuditedWithoutMemberValues() throws Exception {
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                memberRepository.findById(targetId).orElseThrow(),
+                MemberRoleFixture.PRESIDENT);
+
+        mockMvc.perform(
+                        get("/v1/members/roster-export")
+                                .param("year", "2026")
+                                .param("semester", "2")
+                                .param("mbrSttsCd", "ENROLLED", "LEAVE")
+                                .header("Authorization", "Bearer " + MANAGER))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("member.roster.export");
+        assertThat(section(line, "event")).containsEntry("outcome", "success");
+        assertThat(section(line, "user")).containsEntry("id", String.valueOf(managerId));
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target")).containsEntry("id", "2026-2");
+        assertThat(String.valueOf(audit.get("decision")))
+                .contains("rows=")
+                .contains("positionNotation=FEDERATION")
+                .contains("mbrSttsCd=ENROLLED,LEAVE");
+        assertThat(line.toString())
+                .doesNotContain("박준호")
+                .doesNotContain("20200003")
+                .doesNotContain("target@sscc.org");
     }
 
     /*

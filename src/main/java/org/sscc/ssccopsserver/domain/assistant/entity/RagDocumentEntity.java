@@ -206,8 +206,9 @@ public class RagDocumentEntity {
      * 다시 줄을 세운다. 화면의 «재색인»({@code INDEXED}·{@code FAILED} → {@code PENDING})과 기동 복구({@code
      * INDEXING} → {@code PENDING}, 기획안 §12.4)가 같은 메서드다 — 결과가 같고, 나누면 복구 경로만 흔적을 남기지 않는 규칙이 생긴다.
      *
-     * <p>청크는 여기서 지우지 않는다. <b>재색인은 새 청크를 넣기 <i>직전에</i> 옛 청크를 지운다</b>(#400) — 순서를 뒤집으면 중간에 실패했을 때 그
-     * 문서가 통째로 검색에서 사라진다.
+     * <p>청크는 여기서 지우지 않는다 — 지우는 자리는 워커의 적재 직전 한 곳이다(#400 · {@code RagIndexingWorker}). <b>그래도 이 메서드가
+     * 불리는 순간 문서는 검색에서 빠진다</b>: 검색 조건이 {@code INDEXED AND EFFECTIVE}라 {@code PENDING}은 옛 청크가 남아 있어도
+     * 답에 쓰이지 않는다. 시행 중인 규정도 색인이 끝날 때까지 답에서 빠지며, ADR-0063이 그것을 감수했다.
      */
     public void requeueIndexing() {
         requireIndexTransition(RagIndexStatus.PENDING);

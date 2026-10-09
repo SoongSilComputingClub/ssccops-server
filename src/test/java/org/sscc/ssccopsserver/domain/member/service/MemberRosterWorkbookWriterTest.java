@@ -105,7 +105,7 @@ class MemberRosterWorkbookWriterTest {
         }
     }
 
-    /* 직책이 null이면 빈칸이다 — SSCC 표기법에서 대표 역할이 없는 회원 */
+    /* 직책이 null이면 빈칸이다 — 쓰기기는 직책의 출처를 모르는 형식 층이라 null도 받는다 */
     @Test
     void leavesPositionBlankWhenAbsent() throws IOException {
         List<MemberRosterRow> rows =

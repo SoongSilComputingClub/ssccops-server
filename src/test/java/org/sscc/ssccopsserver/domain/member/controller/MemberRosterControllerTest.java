@@ -63,8 +63,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * 회원명부 내려받기 (#674 · 상위 ssccops#598).
  *
  * 확인의 중심은 **누가 들어가고 직책이 무엇으로 적히는가**다 — 회장·부회장은 상태·등급과 무관하게
- * 항상 · 나머지는 고른 상태(기본 재학)이면서 임시회원이 아닌 회원 · 직책은 표기법에 따라 «정회원» 또는
- * 대표 역할. 그리고 거절은 파일이 아니라 상태 코드 + 봉투로 나가야 한다(회장 없음 409).
+ * 항상 · 나머지는 고른 상태(기본 재학)이면서 임시회원이 아닌 회원 · 직책은 회장·부회장 외 전원
+ * «정회원»(역할이 있어도 — #678). 그리고 거절은 파일이 아니라 상태 코드 + 봉투로 나가야 한다(회장 없음 409).
  *
  * 응답 파일을 POI로 다시 열어 행을 읽는다. 공용 testdb에는 다른 클래스가 커밋한 회원이 있을 수 있어
  * 행 수를 세지 않고 **이 클래스가 만든 회원끼리의 포함·순서**만 본다.
@@ -125,7 +125,7 @@ class MemberRosterControllerTest {
                         member("김회장", "20259101", MemberGradeCode.TEMP, MemberStatusCode.LEAVE),
                         "회장",
                         true);
-        // 부회장의 대표 역할은 국장이다 — SSCC 표기법에서도 부회장으로 적혀야 한다
+        // 부회장의 대표 역할은 국장이다 — 대표 역할이 아니라 부회장으로 적혀야 한다
         MemberEntity vice =
                 member("이부회", "20259102", MemberGradeCode.ACTIVE, MemberStatusCode.ENROLLED);
         assign(vice, "부회장", false);
@@ -230,9 +230,12 @@ class MemberRosterControllerTest {
                         Map.entry("마휴학", "정회원"));
     }
 
-    /* SSCC 표기법 — 대표 역할을 적고, 대표가 아닌 역할만 있으면 빈칸이며, 회장·부회장은 그대로다 */
+    /*
+     * 직책 표기법 옵션은 걷어냈다(#678). 웹이 따라오기 전의 옛 화면이 SSCC 표기법을 실어 보내도
+     * 거절하지 않고 무시한다 — 대표 역할이 국장인 가정회도 «정회원»이다.
+     */
     @Test
-    void ssccNotationWritesRepresentativeRoles() throws Exception {
+    void ignoresTheRemovedPositionNotation() throws Exception {
         Map<String, String> positions =
                 export(
                         get(EXPORT)
@@ -244,9 +247,9 @@ class MemberRosterControllerTest {
                 .containsExactly(
                         Map.entry("김회장", "회장"),
                         Map.entry("이부회", "부회장"),
-                        Map.entry("다활동", ""),
-                        Map.entry("나준회", ""),
-                        Map.entry("가정회", "국장"));
+                        Map.entry("다활동", "정회원"),
+                        Map.entry("나준회", "정회원"),
+                        Map.entry("가정회", "정회원"));
     }
 
     // ------------------------------------------------------------------ 제목의 괄호 = 고른 상태
@@ -407,7 +410,7 @@ class MemberRosterControllerTest {
                                 get(EXPORT)
                                         .param("year", "2026")
                                         .param("semester", "2")
-                                        .param("positionNotation", "SSCC")))
+                                        .param("mbrSttsCd", "ENROLLED", "LEAVE")))
                 .andExpect(status().isConflict())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.success").value(false))
@@ -437,18 +440,6 @@ class MemberRosterControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"))
                 .andExpect(jsonPath("$.message").value(containsString("SABBATICAL")));
-    }
-
-    @Test
-    void rejectsUnknownPositionNotation() throws Exception {
-        mockMvc.perform(
-                        authorized(
-                                get(EXPORT)
-                                        .param("year", "2026")
-                                        .param("semester", "2")
-                                        .param("positionNotation", "GRADE")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
     }
 
     @Test

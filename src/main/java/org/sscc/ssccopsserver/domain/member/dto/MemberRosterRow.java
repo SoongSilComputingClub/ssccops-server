@@ -5,7 +5,8 @@ package org.sscc.ssccopsserver.domain.member.dto;
  * 칸에 어떤 모양으로 적을지(단대 추정 · 학번 숫자 셀 · 연락처 표기)는 MemberRosterWorkbookWriter가
  * 정한다 — 양식이 바뀌어도 대상 판정은 그대로여야 해서 둘을 나눴다.
  *
- * 값은 mbr에 저장된 그대로다. position이 null이면 빈칸이다(SSCC 표기법에서 대표 역할이 없는 회원).
+ * 값은 mbr에 저장된 그대로다. position이 null이면 빈칸이다 — 지금 서비스는 언제나 채우지만(#678 전의
+ * SSCC 표기법은 대표 역할이 없는 회원을 비웠다), 직책의 출처를 모르는 쓰기기가 그 모양을 정해 둔다.
  */
 public record MemberRosterRow(
         String position,

@@ -4,7 +4,6 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -17,7 +16,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
-import org.sscc.ssccopsserver.domain.member.code.RosterPositionNotation;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRosterExportCondition;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRosterFile;
@@ -40,8 +38,8 @@ import lombok.RequiredArgsConstructor;
 /*
  * 회원명부 내보내기 (#674 · 상위 ssccops#598 · Epic ssccops#599).
  *
- * 동아리연합회에 학기마다 내는 회원명부를 연합회 양식(xlsx) 그대로 만든다. 같은 양식을 옵션 둘로
- * 동아리 내부용으로도 쓴다 — 포함할 회원 상태와 직책 표기법은 서로 독립이다.
+ * 동아리연합회에 학기마다 내는 회원명부를 연합회 양식(xlsx) 그대로 만든다. 옵션은 포함할 회원 상태
+ * 하나다 — 상태를 넓혀 동아리 내부용으로도 받는다.
  *
  * ── 누가 들어가는가 ────────────────────────────────────────────
  * 오늘(주입된 Clock) 기준으로
@@ -53,13 +51,13 @@ import lombok.RequiredArgsConstructor;
  * MemberRepository.findRosterMembers 주석에 있다.
  *
  * ── 직책은 무엇으로 적는가 ──────────────────────────────────────
- * 회장·부회장은 언제나 «회장»·«부회장»(한 사람이 둘 다면 회장). 나머지는 RosterPositionNotation —
- * 동아리연합회 표기법이면 «정회원», SSCC 표기법이면 대표 역할 이름(없으면 빈칸). **등급은 직책에
- * 쓰지 않는다** — 등급을 읽는 자리는 위 ②의 임시회원 제외 하나뿐이다.
+ * 동아리연합회 표기법 하나다 — 회장·부회장은 «회장»·«부회장»(한 사람이 둘 다면 회장), 나머지는
+ * 역할·등급과 무관하게 전원 «정회원». **등급은 직책에 쓰지 않는다** — 등급 FULL(정회원)과 이름만
+ * 같고, 등급을 읽는 자리는 위 ②의 임시회원 제외 하나뿐이다.
  *
- * 대표 역할은 담당자 후보 응답의 representativeRoleName과 같은 기준이다(BR-M26 · 유효한 배정 중
- * rprs_role_yn = true, 여럿이면 역할 표시 순번의 첫 번째). 대표가 없으면 다른 역할을 골라 채우지
- * 않는다 — 고르는 규칙이 하나 더 생기면 화면의 대표 역할 표시와 명부가 갈린다.
+ * 처음(#674)에는 SSCC 표기법(대표 역할 이름 · 없으면 빈칸)도 골랐으나, 연합회 제출용만 필요하다는
+ * 회장 확인(2026-10-09)으로 옵션을 걷어냈다(#678 · ssccops#600). 옛 화면이 positionNotation을 실어
+ * 보내도 조건 레코드에 그 필드가 없어 바인딩이 버린다 — 거절하지 않는다.
  *
  * ── 제목의 괄호는 고른 상태를 말한다 ────────────────────────────
  * 양식 원문은 «회원명부(재학생)»이고, 재학만 고르면(= 연합회 제출용 기본값) 그대로 둔다. 상태를
@@ -96,7 +94,7 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
 
     static final String VICE_PRESIDENT = "부회장";
 
-    /* 동아리연합회 표기법에서 회장·부회장이 아닌 회원의 직책 */
+    /* 회장·부회장이 아닌 회원의 직책 — 동아리연합회 표기법 */
     static final String FEDERATION_MEMBER_POSITION = "정회원";
 
     /*
@@ -129,12 +127,9 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
         if (!selection.hasPresident()) {
             throw new GeneralException(MemberErrorCode.ROSTER_PRESIDENT_MISSING);
         }
-        Map<Long, String> positions =
-                positionsOf(selection.others(), selection.notation(), selection.today());
-
         List<MemberRosterRow> rows = new ArrayList<>(selection.officers().values());
         for (MemberEntity member : selection.others()) {
-            rows.add(rowOf(member, positions.get(member.getId())));
+            rows.add(rowOf(member, FEDERATION_MEMBER_POSITION));
         }
 
         int year = condition.year();
@@ -148,8 +143,6 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
                         .decision(
                                 "rows="
                                         + rows.size()
-                                        + " positionNotation="
-                                        + selection.notation()
                                         + " mbrSttsCd="
                                         + String.join(",", selection.statusCodes()))
                         .build());
@@ -187,11 +180,10 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
     }
 
     /*
-     * 내려받기와 미리보기가 같이 쓰는 판정 — 누가 들어가는가와 제목까지. 직책(대표 역할 조회)은
-     * 내려받기만 필요해 여기서 하지 않는다. 회장이 없을 때 거절할지는 부르는 쪽이 정한다.
+     * 내려받기와 미리보기가 같이 쓰는 판정 — 누가 들어가는가와 제목까지. 회장이 없을 때 거절할지는
+     * 부르는 쪽이 정한다.
      */
     private Selection select(MemberRosterExportCondition condition) {
-        RosterPositionNotation notation = RosterPositionNotation.from(condition.positionNotation());
         IncludedStatuses statuses = includedStatusesOf(condition.mbrSttsCd());
         LocalDate today = LocalDate.now(clock);
 
@@ -206,7 +198,7 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
         String title =
                 MemberRosterWorkbookWriter.titleOf(
                         condition.year(), condition.semester(), statuses.label());
-        return new Selection(notation, statuses.codes(), today, officers, others, title);
+        return new Selection(statuses.codes(), today, officers, others, title);
     }
 
     /*
@@ -287,33 +279,6 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
         return officers;
     }
 
-    /*
-     * 회장·부회장이 아닌 회원의 직책. 동아리연합회 표기법은 전원 «정회원»이고, SSCC 표기법은 대표
-     * 역할 이름이다(없으면 null → 빈칸). 대표 역할은 회원 수와 무관하게 한 번에 모아 온다 — 회원마다
-     * 부르면 그대로 N+1이다(findValidByMemberIds 주석).
-     */
-    private Map<Long, String> positionsOf(
-            List<MemberEntity> members, RosterPositionNotation notation, LocalDate today) {
-        Map<Long, String> positions = new HashMap<>();
-        if (notation == RosterPositionNotation.FEDERATION) {
-            members.forEach(member -> positions.put(member.getId(), FEDERATION_MEMBER_POSITION));
-            return positions;
-        }
-        if (members.isEmpty()) {
-            return positions;
-        }
-        List<Long> memberIds = members.stream().map(MemberEntity::getId).toList();
-        // 질의가 회원 → 역할 표시 순번 순이라 putIfAbsent가 «여럿이면 첫 번째»가 된다
-        for (MemberRoleAssignmentEntity assignment :
-                memberRoleAssignmentRepository.findValidByMemberIds(memberIds, today)) {
-            if (Boolean.TRUE.equals(assignment.getRepresentative())) {
-                positions.putIfAbsent(
-                        assignment.getMember().getId(), assignment.getRole().getName());
-            }
-        }
-        return positions;
-    }
-
     private static MemberRosterRow rowOf(MemberEntity member, String position) {
         return new MemberRosterRow(
                 position,
@@ -329,7 +294,6 @@ public class MemberRosterExportServiceImpl implements MemberRosterExportService 
 
     /* select의 결과 — officers는 회장 → 부회장 순, others는 명부 순서다 */
     private record Selection(
-            RosterPositionNotation notation,
             List<String> statusCodes,
             LocalDate today,
             Map<Long, MemberRosterRow> officers,

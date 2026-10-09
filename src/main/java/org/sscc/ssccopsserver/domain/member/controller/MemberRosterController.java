@@ -69,12 +69,11 @@ public class MemberRosterController {
                     "동아리연합회 회원명부 양식을 채운 xlsx를 내려준다. 오늘 기준으로 회장·부회장 역할이"
                             + " 유효한 회원은 상태·등급과 무관하게 항상 들어가고, 그 밖에는 mbrSttsCd로"
                             + " 고른 상태(생략하면 ENROLLED) 중 하나이면서 임시회원(TEMP)이 아닌 회원이"
-                            + " 들어간다. 순서는 회장 → 부회장 → 나머지(학번 오름차순). 직책은"
-                            + " positionNotation이 FEDERATION(기본)이면 회장·부회장 외 전원 «정회원»,"
-                            + " SSCC면 대표 역할 이름(없으면 빈칸)이다. year·semester는 제목과 파일"
-                            + " 이름에만 쓴다. 단대는 학과명이 양식의 학과 목록과 정확히 같을 때만 채운다."
-                            + " 유효한 회장이 없으면 옵션과 무관하게 409 ROSTER_PRESIDENT_MISSING,"
-                            + " mbr_stts에 없는 상태 코드·모르는 positionNotation은 400"
+                            + " 들어간다. 순서는 회장 → 부회장 → 나머지(학번 오름차순). 직책은 동아리연합회"
+                            + " 표기법이다 — 회장·부회장 외에는 역할·등급과 무관하게 전원 «정회원»."
+                            + " year·semester는 제목과 파일 이름에만 쓴다. 단대는 학과명이 양식의 학과"
+                            + " 목록과 정확히 같을 때만 채운다. 유효한 회장이 없으면 옵션과 무관하게 409"
+                            + " ROSTER_PRESIDENT_MISSING, mbr_stts에 없는 상태 코드는 400"
                             + " INVALID_CODE_VALUE, year·semester 누락·범위 밖은 400 VALIDATION_FAILED다."
                             + " **성공 응답은 ApiResponse 봉투가 아니라 파일**이고 거절은 봉투다. 제목의 괄호는"
                             + " 재학만 고르면 «(재학생)», 상태를 넓히면 고른 상태 이름(«(재학·일반휴학)»),"
@@ -113,7 +112,7 @@ public class MemberRosterController {
                             + " 않은 상태라서(excludedByStatusCount)로 나뉘고, 셋의 합이 전체 회원"
                             + " 수(totalMemberCount)다. 유효한 회장이 없으면 409가 아니라 presidentMissing ="
                             + " true로 알린다(내려받기는 409다). 조건 검증은 내려받기와 같다 — 모르는 상태"
-                            + " 코드·표기법은 400 INVALID_CODE_VALUE, year·semester 누락·범위 밖은 400"
+                            + " 코드는 400 INVALID_CODE_VALUE, year·semester 누락·범위 밖은 400"
                             + " VALIDATION_FAILED. 회원 값이 실리지 않아 감사를 남기지 않는다.")
     @GetMapping("/preview")
     public ApiResponse<MemberRosterPreviewResponse> preview(

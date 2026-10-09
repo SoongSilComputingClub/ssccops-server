@@ -56,7 +56,9 @@ public class MeetingTools {
             description =
                     "회의를 등록한다. title·meetingCategory·personInChargeId·startAt이 필수다."
                             + " agendas에 안건을 함께 넣을 수 있고 비워도 된다 — 나중에"
-                            + " add_meeting_agenda로 더한다. **회의 책임자는 담당자와 같은 회원이며"
+                            + " add_meeting_agenda로 더한다. 안건 한 건은 add_meeting_agenda 와 같다:"
+                            + " targetOperationId(연결 안건)와 agendaName(드래프트 안건) 중 정확히 하나,"
+                            + " processStatus 를 비우면 PENDING. **회의 책임자는 담당자와 같은 회원이며"
                             + " 따로 받지 않는다.** 회의 관리(MEETING_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingDetailResponse createMeeting(
@@ -69,10 +71,15 @@ public class MeetingTools {
     @McpTool(
             name = "transition_meeting",
             description =
-                    "회의 상태를 넘긴다 — transition에 OPEN(개회)·WRITE_MINUTES(회의록 작성)·"
-                            + "CLOSE(종료)·CANCEL(취소) 중 하나. CANCEL은 reason이 필수다."
-                            + " **처리하지 않은 안건이 남아 있으면 종료가 거절된다**(409) — 그때는"
-                            + " 안건을 보류로 표시하거나 처리한 뒤 다시 부른다. 회의 책임자만 할 수 있다.",
+                    "회의 상태를 넘긴다 — transition에 OPEN(예정→진행)·WRITE_MINUTES(진행→회의록 작성)·CLOSE(회의록"
+                        + " 작성→종료)·CANCEL(예정→취소) 중 하나. 그 밖의 전이는 409 TRANSITION_NOT_ALLOWED. CANCEL은"
+                        + " reason이 필수다(없으면 422 REASON_REQUIRED). 회의록은 회의 단위 본문이 아니라 안건마다"
+                        + " update_meeting_agenda 로 적는다(논의·결과·처리 구분) — WRITE_MINUTES 는 그 단계 표시다."
+                        + " **처리 구분이 PENDING(미처리)인 안건이 하나라도 남으면 종료가 409 AGENDA_UNRESOLVED 다** —"
+                        + " 드래프트 안건도 센다. list_meeting_agendas 로 PENDING 을 찾아 HOLD(보류)나 CLOSED(처리"
+                        + " 완료)로 바꾼 뒤 다시 부른다. 종료 뒤에는 안건을 고칠 수 없다(드래프트를 업무로 만드는 승격만 된다). 회의"
+                        + " 관리(MEETING_MANAGE) 권한이 필요하고, 개회·회의록 작성·종료는 그 회의의 책임자 본인만 할 수 있다(아니면"
+                        + " 403). 취소는 책임자가 아니어도 된다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public MeetingTransitionResponse transitionMeeting(
             @McpToolParam(description = "회의 id") Long meetingId,
@@ -90,7 +97,10 @@ public class MeetingTools {
     @McpTool(
             name = "list_meeting_agendas",
             description =
-                    "회의의 안건 목록. 연결 안건의 targetOperation.targetId 는 운영 유형(operationType)의"
+                    "회의의 안건 목록. 드래프트 안건은 draft=true · targetOperation=null 이고 제목이"
+                            + " agendaName 이다(업무·하위 업무로 만들려면 promote_meeting_agenda ·"
+                            + " promote_meeting_agenda_to_sub_work)."
+                            + " 연결 안건의 targetOperation.targetId 는 운영 유형(operationType)의"
                             + " 상세 id 다 — WORK 면 get_work, SUB_WORK 면 get_sub_work, MEETING 이면"
                             + " get_meeting 에 넘긴다(operationId 는 운영 id 라 그 자리에 쓰면 다른 건이"
                             + " 열린다). 회의 조회(MEETING_READ) 권한이 필요하다.",
@@ -156,7 +166,8 @@ public class MeetingTools {
                             + " **전체 교체다** — content·resultContent 를 생략하면 지운 것으로 본다."
                             + " 한 칸만 바꾸려면 list_meeting_agendas 로 지금 값을 읽어 함께 보낸다"
                             + "(update_work 같은 읽고-합치기 도구와 다르다)."
-                            + " processStatus 는 필수다."
+                            + " processStatus 는 필수다 — PENDING(미처리) · HOLD(보류) · CLOSED(처리 완료)이며"
+                            + " PENDING 이 남으면 회의를 종료할 수 없다."
                             + " 바꿀 수 없는 것: 연결 운영 건·제출자 — 다시 상정하는 것과 같아"
                             + " 이 API 의 범위 밖이다. 운영 건을 가리키는 안건에 agendaName 을 주면"
                             + " 400 이다(제목은 그 운영 건의 제목이다). 드래프트를 업무·하위 업무에 잇는 길은"
@@ -255,8 +266,10 @@ public class MeetingTools {
     @McpTool(
             name = "list_approvals",
             description =
-                    "승인함 — 내가 처리할 수 있는 하위 업무 승인 건. status로 대기·정족수·반려를"
-                            + " 거른다(비우면 전체). **정족수가 모여도 완료는 승인자가 누른다** —"
+                    "승인함 — 업무 관리 운영진이 함께 보는 하위 업무 승인 목록(마감 오름차순). status는"
+                            + " PENDING(대기·재승인 필요 · 비우면 이것)·APPROVED·REJECTED 중 하나이고 그 밖은 400"
+                            + " INVALID_CODE_VALUE. 내가 승인·반려할 수 있는지는 항목의 canApprove·canReject로"
+                            + " 본다. **정족수가 모여도 완료는 승인자가 누른다** —"
                             + " 투표는 vote_sub_work_approval, 승인·반려는 transition_sub_work다."
                             + " 업무 관리(WORK_MANAGE) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
@@ -284,14 +297,25 @@ public class MeetingTools {
             description =
                     "하위 업무 유형 목록 — create_sub_work에 넣을 subWorkTypeId를 여기서 얻는다."
                             + " 유형이 승인 필요 여부·승인자 권한·정족수·완료 점검 항목을 정하며"
-                            + " **꺼진 유형(useYn=false)은 새 하위 업무에 쓸 수 없다**."
+                            + " **꺼진 유형(useYn=false)은 새 하위 업무에 쓸 수 없다** — 고를 목록이면"
+                            + " condition.useYn=true로 사용 중인 것만 받는다(비우면 꺼진 것까지 전부)."
                             + " 하위 업무 유형 조회(SUB_WORK_TYPE_READ) 권한이 필요하다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<SubWorkTypeResponse> listSubWorkTypes(McpTransportContext context) {
+    public List<SubWorkTypeResponse> listSubWorkTypes(
+            @McpToolParam(description = "useYn — true면 사용 중인 유형만. 선택이며 비우면 전부", required = false)
+                    SubWorkTypeCondition condition,
+            McpTransportContext context) {
         log.info("mcp tool list_sub_work_types");
-        return client.getList(context, "/v1/sub-work-types", null, SubWorkTypeResponse.class)
+        return client.getList(context, "/v1/sub-work-types", condition, SubWorkTypeResponse.class)
                 .items();
     }
+
+    /*
+     * 하위 업무 유형 목록의 조건 (#662) — 컨트롤러가 받는 `@RequestParam Boolean useYn` 하나. 도구가
+     * 기본으로 true를 보내지 않는 것은 서버 기본값(전부)과 다른 필터를 몰래 걸면 화면(유형 관리는
+     * 전부 본다)과 목록이 갈리기 때문이다 — 인자로 드러내고 설명에서 권한다.
+     */
+    public record SubWorkTypeCondition(Boolean useYn) {}
 
     /*
      * 안건 단건 경로 — 수정·두 승격 도구가 같은 REST 경로를 부른다. 상수가 아니라 메서드인 것은

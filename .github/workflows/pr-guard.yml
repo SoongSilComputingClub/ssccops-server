@@ -16,7 +16,7 @@ name: PR Guard
 # issue-labeler.yml·issue-branch-creator.yml·pr-labeler.yml의 표와도 같아야 한다 —
 # 네 곳 중 하나만 고치면 이슈에는 없고 PR에만 붙는 라벨이 생긴다. 실제로 그래 왔다.
 #
-# **커밋 메시지의 타입은 이것과 다른 어휘다.** 그쪽은 docs·test·cicd를 포함해 열셋이며
+# **커밋 메시지의 타입은 이것과 다른 어휘다.** 그쪽은 docs·test·cicd를 포함해 열둘이며
 # AGENTS.md에 있다. 커밋에 `docs(agents):`라고 적으면서 이슈는 `[CHORE]`인 것이 정상이다.
 
 on:

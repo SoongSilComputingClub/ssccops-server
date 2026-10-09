@@ -204,4 +204,25 @@ public interface MemberRoleAssignmentRepository
                     + " and (a.roleEndDate is null or a.roleEndDate >= :today)")
     List<MemberRoleAssignmentEntity> findValidRepresentatives(
             @Param("memberId") Long memberId, @Param("today") LocalDate today);
+
+    /*
+     * 오늘 유효한 «이 이름의 역할» 배정 — 회원명부 내보내기의 회장·부회장 (#674 · ssccops#598).
+     *
+     * **권한이 아니라 역할 이름으로 찾는다.** 권한(SUB_WORK_APPROVE_PRESIDENT 등)으로 찾으면 SUPER가
+     * 펼침으로 모든 권한을 가져 최고관리자가 회장으로 잡힌다. 분류까지 함께 보는 것은 role_nm이
+     * UNIQUE가 아니어서다 — 직책(POSITION) 분류의 «회장»만 회장이다. 대가는 이름이 바뀌면 조용히
+     * 못 찾는다는 것이고, 그래서 서비스가 회장을 못 찾으면 빈 행으로 내지 않고 409로 거절한다.
+     *
+     * 유효 판정은 다른 '유효 역할' 질의들과 같은 BR-M25다. 명부에 이름·학번·연락처를 실으므로
+     * 회원을, 직책을 정하려고 역할을 join fetch로 함께 가져온다.
+     */
+    @Query(
+            "select a from MemberRoleAssignmentEntity a join fetch a.member join fetch a.role r"
+                    + " where r.roleClassification.code = :classificationCode"
+                    + " and r.name in :roleNames and a.roleStartDate <= :today"
+                    + " and (a.roleEndDate is null or a.roleEndDate >= :today)")
+    List<MemberRoleAssignmentEntity> findValidByRoleNames(
+            @Param("classificationCode") String classificationCode,
+            @Param("roleNames") Collection<String> roleNames,
+            @Param("today") LocalDate today);
 }

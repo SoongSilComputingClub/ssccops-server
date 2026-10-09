@@ -44,10 +44,17 @@ public class StubChatModel implements ChatModel {
 
     private Prompt lastPrompt;
 
+    /**
+     * 모델이 불리는 <b>그 순간</b>에 돈다 (#656) — 생성이 도는 동안 바깥 상태(예: DB 커넥션을 쥐고 있는가)를 재는 자리다. 스트리밍이면 구독하는
+     * 스레드에서 돈다.
+     */
+    private Runnable onCall;
+
     @Override
     public ChatResponse call(Prompt prompt) {
         this.lastPrompt = prompt;
         this.calls++;
+        observe();
         if (failure != null) {
             throw failure;
         }
@@ -58,6 +65,7 @@ public class StubChatModel implements ChatModel {
     public Flux<ChatResponse> stream(Prompt prompt) {
         this.lastPrompt = prompt;
         this.calls++;
+        observe();
         if (failure != null) {
             return Flux.error(failure);
         }
@@ -66,6 +74,10 @@ public class StubChatModel implements ChatModel {
             return pieces;
         }
         return Flux.concat(pieces.take(1), Flux.error(failureAfterFirstDelta));
+    }
+
+    public void observeCalls(Runnable observer) {
+        this.onCall = observer;
     }
 
     public void answerWith(String answer) {
@@ -97,6 +109,13 @@ public class StubChatModel implements ChatModel {
         failureAfterFirstDelta = null;
         calls = 0;
         lastPrompt = null;
+        onCall = null;
+    }
+
+    private void observe() {
+        if (onCall != null) {
+            onCall.run();
+        }
     }
 
     private static List<String> pieces(String text) {

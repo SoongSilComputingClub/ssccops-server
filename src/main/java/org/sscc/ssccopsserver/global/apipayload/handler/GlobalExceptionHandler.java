@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.global.apipayload.handler;
 
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.ObjectError;
@@ -148,13 +149,30 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return message.toString().trim();
     }
 
+    /*
+     * ══ 오류 봉투는 요청의 Accept와 무관하게 JSON이다 (#656) ═══════════
+     *
+     * Content-Type을 **여기서 박는다.** 비워 두면 Spring이 요청의 Accept로 형식을 고르는데,
+     * 규정 도우미 SSE(`POST /v1/assistant/queries/stream`)를 부르는 웹은 `Accept:
+     * text/event-stream` 하나만 싣고 `ApiResponse`를 그 형식으로 쓸 컨버터는 없다 — 그래서 첫
+     * 바이트 전의 거절(429·413·403·404·503·400)이 `HttpMediaTypeNotAcceptableException`으로
+     * 핸들러 밖으로 빠져 **봉투 없는 500**이 됐다. 화면은 오류 코드를 받지 못해 한도·꺼짐을
+     * 가르지 못했고 403 `ASSISTANT_CONVERSATION_FORBIDDEN`의 새 대화 재시도도 돌지 않았다.
+     *
+     * 응답 헤더에 Content-Type이 이미 있으면 `AbstractMessageConverterMethodProcessor`가 협상을
+     * 건너뛰고 그 형식으로 쓴다. 오류의 형식을 클라이언트가 고르게 둘 이유가 없다 — 이 서비스의
+     * 오류는 언제나 봉투 하나다.
+     */
     private ResponseEntity<Object> handleExceptionInternal(final ErrorCode errorCode) {
-        return ResponseEntity.status(errorCode.getHttpStatus()).body(ApiResponse.fail(errorCode));
+        return ResponseEntity.status(errorCode.getHttpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.fail(errorCode));
     }
 
     private ResponseEntity<Object> handleExceptionInternal(
             final ErrorCode errorCode, final String message) {
         return ResponseEntity.status(errorCode.getHttpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(ApiResponse.fail(errorCode, message));
     }
 }

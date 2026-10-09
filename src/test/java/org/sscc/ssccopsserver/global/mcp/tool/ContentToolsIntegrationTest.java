@@ -112,6 +112,44 @@ class ContentToolsIntegrationTest {
     }
 
     @Test
+    @DisplayName("update_post의 빈 요약은 «비움»이다 — null로 저장되고 다른 필드는 그대로 (#662)")
+    void blankSummaryClearsIt() {
+        try (McpSyncClient client = connect(FOUNDER)) {
+            McpSchema.CallToolResult created =
+                    call(
+                            client,
+                            "create_post",
+                            Map.of(
+                                    "request",
+                                    Map.of(
+                                            "slug", "summary-clear",
+                                            "cntntClsfCd", "NEWS",
+                                            "ttl", "요약 비우기",
+                                            "smry", "지울 요약",
+                                            "mtxt", "# 본문",
+                                            "actvYmd", "2026-10-07")));
+            assertThat(created.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(created)).contains("\"smry\":\"지울 요약\"");
+            Long postId = JsonPath.parse(text(created)).read("$.postId", Long.class);
+
+            /*
+             * 어드민 화면은 비운 요약을 null로 저장한다(smry.trim() || null). 도구가 ""를 그대로
+             * 보내면 같은 «요약 없음»이 DB에 두 모양으로 남는다 — 공백뿐인 값도 같은 비움이다.
+             */
+            McpSchema.CallToolResult cleared =
+                    call(
+                            client,
+                            "update_post",
+                            Map.of("postId", postId, "patch", Map.of("smry", "  ")));
+            assertThat(cleared.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(text(cleared))
+                    .contains("\"smry\":null")
+                    .contains("\"ttl\":\"요약 비우기\"")
+                    .contains("\"mtxt\":\"# 본문\"");
+        }
+    }
+
+    @Test
     @DisplayName("publish_content의 kind가 page·post가 아니면 REST를 부르지 않고 거절한다")
     void publishContentRejectsUnknownKind() {
         try (McpSyncClient client = connect(FOUNDER)) {

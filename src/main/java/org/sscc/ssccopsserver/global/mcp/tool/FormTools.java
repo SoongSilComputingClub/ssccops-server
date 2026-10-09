@@ -99,7 +99,8 @@ public class FormTools {
             name = "change_form_status",
             description =
                     "폼의 접수를 열거나 닫는다 — action에 OPEN(작성 중·마감 → 접수) 또는 CLOSE(접수 → 마감)."
-                            + " 허용되지 않는 전이는 409. 접수 기간이 정해져 있으면 OPEN 해도 그 기간 밖에서는"
+                            + " 허용되지 않는 전이는 400 INVALID_FORM_STATUS_TRANSITION이고, 문항이 없는 폼을 열면"
+                            + " 400 FORM_HAS_NO_QUESTION이다. 접수 기간이 정해져 있으면 OPEN 해도 그 기간 밖에서는"
                             + " «접수 예정»·«기간 종료»로 보인다(파생값). 폼 상태 변경(FORM_STATUS_CHANGE) 권한.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
     public FormStatusChangeResponse changeFormStatus(
@@ -202,8 +203,8 @@ public class FormTools {
                             + " **승인·반려는 종결이라 되돌릴 수 없다** — 이미 ACCEPTED·REJECTED인 응답에 다시"
                             + " 걸면 400 INVALID_RESPONSE_STATUS_TRANSITION이고 **재시도해도 같다.** 같은 상태로"
                             + " 다시 지정하는 것, SUBMITTED로 되돌리는 것, DRAFT가 얽힌 전이도 같은 400이다 —"
-                            + " 미심사로 돌아가는 길은 응답자의 재제출뿐이다. 아직 결론이 나지 않은 SUBMITTED ·"
-                            + " CHANGES_REQUESTED에서는 셋 중 무엇이든 고를 수 있다."
+                            + " 미심사로 돌아가는 길은 응답자의 재제출뿐이다. SUBMITTED에서는 셋 중 무엇이든,"
+                            + " CHANGES_REQUESTED에서는 ACCEPTED·REJECTED만 고를 수 있다."
                             + " 다른 폼의 응답 id는 없는 응답과 같은 404 FORM_RESPONSE_NOT_FOUND다."
                             + " 처리자는 인증 주체에서 오므로 요청에 담지 않는다."
                             + " 응답 심사(RESPONSE_REVIEW) 권한.",

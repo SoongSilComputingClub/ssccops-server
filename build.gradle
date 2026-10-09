@@ -19,7 +19,7 @@ group = 'org.sscc'
 // **-SNAPSHOT을 붙이지 않는다.** 이 저장소는 스냅숏을 배포하고 나중에 릴리스로 굳히는
 // 사이클을 돌리지 않는다 — develop이 dev로, main이 prod로 그대로 나가고 릴리스는 태그다.
 // 붙여 두면 어느 산출물도 릴리스가 아니게 되고, 지금 고치는 문제가 이름만 바뀌어 남는다.
-version = '1.2.0'
+version = '1.3.0'
 description = 'SSCC 운영관리 백엔드'
 
 // ============================================================================
@@ -157,8 +157,9 @@ dependencies {
     // 리네임을 '조용한 컬럼 추가'로 처리하는 경로를 없앤다 — prod에서 승인이 통째로 막혔던
     // ssccops#209가 그 경로였다.
     //
-    // **아직 켜져 있지 않다.** spring.flyway.enabled가 모든 프로필에서 false다. baseline
-    // (V1__baseline.sql)이 prod pg_dump 결과로 교체되기 전에 켜면 부팅이 깨진다.
+    // dev·prod·local에서 켜져 있고 dev·prod는 ddl-auto: validate다 — 엔티티와 스키마가 어긋나면
+    // 부팅이 실패한다. test 프로필만 꺼져 있다(H2라 pg_dump baseline이 돌지 않는다 — 마이그레이션은
+    // FlywayMigrationValidateTest가 Testcontainers에서 본다). 규칙은 AGENTS.md «스키마 변경».
     // Flyway 10부터 PostgreSQL 지원이 별도 모듈이라 두 개를 함께 넣는다.
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
@@ -226,6 +227,14 @@ dependencies {
     implementation 'org.apache.tika:tika-core:3.3.1'
     implementation 'org.apache.tika:tika-parser-pdf-module:3.3.1'
     implementation 'org.apache.tika:tika-parser-microsoft-module:3.3.1'
+
+    // Apache POI — 회원명부 내보내기(xlsx · #674)가 연합회 원본 양식을 열어 값을 채운다.
+    //
+    // **새 무게가 아니다** — 위 Tika 마이크로소프트 모듈이 이미 같은 버전(5.5.1)을 끌고 온다.
+    // 그래도 적는 것은 이 기능이 그 전이 의존성에 기대고 있으면 Tika를 바꾸거나 빼는 날 회원명부가
+    // 조용히 컴파일 오류가 되기 때문이다. 버전은 Tika가 가져오는 값과 맞춘다(어느 BOM도 POI를
+    // 관리하지 않는다) — 갈리면 Gradle이 높은 쪽을 고르고, Tika의 파서가 모르는 POI 위에서 돈다.
+    implementation 'org.apache.poi:poi-ooxml:5.5.1'
 
     // Caffeine — 규정 도우미의 레이트 리밋 카운터 (#404 · 기획안 §7 · §11).
     //

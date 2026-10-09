@@ -8,17 +8,25 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.google.genai.GoogleGenAiEmbeddingConnectionDetails;
 import org.springframework.ai.google.genai.text.GoogleGenAiTextEmbeddingModel;
+import org.springframework.ai.model.google.genai.autoconfigure.embedding.GoogleGenAiTextEmbeddingProperties;
+import org.springframework.ai.retry.autoconfigure.SpringAiRetryProperties;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.retry.support.RetryTemplate;
 import org.sscc.ssccopsserver.domain.assistant.service.AssistantMemoryStore;
 import org.sscc.ssccopsserver.domain.assistant.service.PgVectorRagChunkStore;
 import org.sscc.ssccopsserver.domain.assistant.service.QueryEmbeddingCache;
 import org.sscc.ssccopsserver.domain.assistant.service.RagChunkStore;
+
+import com.google.genai.Client;
+
+import lombok.extern.slf4j.Slf4j;
 
 /*
  * 규정 도우미(RAG)의 빈 배선 — 채팅 클라이언트 · 청크 저장소 · 대화 메모리 (#396 · #406 · ADR-0028).
@@ -40,6 +48,7 @@ import org.sscc.ssccopsserver.domain.assistant.service.RagChunkStore;
  * 규정 도우미 서비스는 `ObjectProvider`로 받거나 아예 플래그(`AssistantFeature`) 뒤에 있으므로
  * 그 상태가 다른 기능을 막지 않는다. 부르는 쪽에 알리는 코드는 503 `ASSISTANT_UNAVAILABLE`이다.
  */
+@Slf4j
 @Configuration
 public class AssistantConfig {
 
@@ -75,17 +84,51 @@ public class AssistantConfig {
      * 단계에서** 걸린다 — 빈 이름 문자열로 묶으면 그 실패가 부팅 때로 미뤄진다.
      *
      * 조건은 청크 저장소와 같다 — 키가 없으면 감쌀 모델 자체가 없다.
+     *
+     * ══ 질문만 다른 연결로 임베딩한다 (#656) ═══════════════════════
+     *
+     * 스타터의 임베딩 연결(`GoogleGenAiEmbeddingConnectionDetails`)은 SDK 기본값이라 **타임아웃이
+     * 없고 429까지 5회 재시도한다.** 색인 배치에는 그것이 맞지만(느려도 끝나면 된다) 질문 임베딩은
+     * 스트림이 열리기 전 요청 스레드에서 돌므로 채팅과 같은 규칙이어야 한다. 그래서 **질문 전용
+     * 모델을 하나 더 만들어** 캐시에 넘긴다 — 같은 옵션(모델 ID·차원)에 상한을 건 `Client`만 다르다.
+     *
+     * ⚠️ **그 모델과 연결을 빈으로 등록하지 않는다.** 스타터의 두 자동 구성(연결 · 모델)이 둘 다
+     * `@ConditionalOnMissingBean`이라, 빈으로 세우는 순간 스타터가 물러나 **색인까지 그 상한에
+     * 묶인다** — 여기서 만들어 캐시 안에만 둔다.
+     *
+     * 상한·재시도 값은 `GeminiClientConfig.httpOptions`가 채팅과 같은 식으로 만든다(재시도는
+     * `spring.ai.retry` 그대로 · 상한만 `query-embedding-timeout`).
      */
     @Bean
     @Primary
     @ConditionalOnExpression("'${spring.ai.model.embedding.text:}' != 'none'")
     EmbeddingModel assistantQueryEmbeddingModel(
             GoogleGenAiTextEmbeddingModel embeddingModel,
+            GoogleGenAiTextEmbeddingProperties embeddingProperties,
+            RetryTemplate retryTemplate,
+            SpringAiRetryProperties retry,
+            @Value("${spring.ai.google.genai.embedding.api-key:}") String apiKey,
+            @Value("${ssccops.assistant.gemini.query-embedding-timeout}") Duration timeout,
             @Value("${ssccops.assistant.query.embedding-cache-size}") long maxSize,
             @Value("${ssccops.assistant.query.embedding-cache-ttl}") Duration ttl,
             Clock clock) {
 
-        return new QueryEmbeddingCache(embeddingModel, maxSize, ttl, clock);
+        Client client =
+                Client.builder()
+                        .apiKey(apiKey)
+                        .httpOptions(GeminiClientConfig.httpOptions(timeout, retry))
+                        .build();
+        GoogleGenAiTextEmbeddingModel queryModel =
+                new GoogleGenAiTextEmbeddingModel(
+                        GoogleGenAiEmbeddingConnectionDetails.builder()
+                                .apiKey(apiKey)
+                                .genAiClient(client)
+                                .build(),
+                        embeddingProperties.getOptions(),
+                        retryTemplate);
+
+        log.info("Gemini 질의 임베딩 — 호출 상한 {}ms", timeout.toMillis());
+        return new QueryEmbeddingCache(embeddingModel, queryModel, maxSize, ttl, clock);
     }
 
     /*

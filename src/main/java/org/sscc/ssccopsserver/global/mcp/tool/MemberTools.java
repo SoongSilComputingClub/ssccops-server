@@ -19,6 +19,7 @@ import org.sscc.ssccopsserver.domain.member.dto.MemberStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.member.dto.MemberStatusChangeResponse;
 import org.sscc.ssccopsserver.domain.member.dto.MemberSummaryResponse;
 import org.sscc.ssccopsserver.domain.member.dto.RoleResponse;
+import org.sscc.ssccopsserver.global.mcp.client.McpListResult;
 import org.sscc.ssccopsserver.global.mcp.client.McpRestClient;
 
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -71,6 +72,11 @@ public class MemberTools {
     private static final String MEMBERS = "/v1/members";
     private static final String MEMBER_ID = "회원 id";
 
+    /** 커서 페이징 목록의 공통 안내 — list_sub_works·list_works와 같은 모양으로 돌려준다 */
+    private static final String PAGING_NOTE =
+            " 커서 페이징을 최대 3페이지까지만 따라가 items로 합치며, hasMore면 nextCursor를 조건의"
+                    + " cursor에 넣어 이어 부른다(totalCount는 전체 건수).";
+
     private final McpRestClient client;
 
     /** list_member_histories의 조건 — type 복수. 생략하면 전부 */
@@ -87,20 +93,22 @@ public class MemberTools {
             description =
                     "회원 목록 — 이름·학번 부분일치 q, 등급 mbrGrdCd·상태 mbrSttsCd 필터(둘 다 복수),"
                             + " 정렬 sort(mbrNm·genNo·sysJoinYmd·mdfcnDt, 앞에 '-'를 붙이면 내림차순),"
-                            + " 커서 페이징(size 기본 20 · 최대 100, 넘기면 400). 등급·상태는 코드와"
+                            + " size 기본 20 · 최대 100(넘기면 400)."
+                            + PAGING_NOTE
+                            + " 등급·상태는 코드와"
                             + " 표시명을 함께 내리고 현재 역할도 실린다."
                             + " **연락처·이메일·학번은 도구 출력에서 지워진다**(ADR-0037) — 그 값이 필요하면"
                             + " 어드민 화면에서 본다. 기준 코드 밖의 필터 값은 400 INVALID_CODE_VALUE."
                             + " 회원 관리(MEMBER_MANAGE) 권한.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<MemberSummaryResponse> listMembers(
+    public McpListResult<MemberSummaryResponse> listMembers(
             @McpToolParam(
                             description = "검색 조건 — q·mbrGrdCd·mbrSttsCd·sort·size·cursor. 전부 선택",
                             required = false)
                     MemberSearchCondition condition,
             McpTransportContext context) {
         log.info("mcp tool list_members");
-        return client.getList(context, MEMBERS, condition, MemberSummaryResponse.class).items();
+        return client.getList(context, MEMBERS, condition, MemberSummaryResponse.class);
     }
 
     @McpTool(
@@ -148,7 +156,8 @@ public class MemberTools {
                             + " **탈퇴·제명으로 바꿔도 역할과 담당 업무를 자동으로 정리하지 않는다** —"
                             + " 남아 있는 현재 역할·담당 하위 업무 건수가 응답의 warnings로 오므로 그것을"
                             + " 사용자에게 알릴 것(정리는 역할 종료·담당자 변경으로 따로 한다)."
-                            + " 적용 일자 생략은 오늘, 미래 일자는 400, 같은 상태는 400 NO_CHANGE,"
+                            + " 적용 일자 생략은 오늘, 미래 일자는 400, 종료 예정일이 적용 일자보다 이르면 400,"
+                            + " 같은 상태는 400 NO_CHANGE,"
                             + " 기준 코드 밖은 400 INVALID_CODE_VALUE, 없는 회원은 404다."
                             + " 회원 관리(MEMBER_MANAGE) 권한.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
@@ -171,11 +180,10 @@ public class MemberTools {
     @McpTool(
             name = "list_member_histories",
             description =
-                    "회원의 등급·상태·역할·정보 변경 이력을 한 타임라인으로(발생 시각 역순). type으로"
-                            + " 출처를 고른다 — GRADE·STATUS·ROLE·PROFILE, 복수 허용, 생략하면 전부."
-                            + " 역할은 한 배정이 부여·종료 두 줄로 나오고 **역할 줄의 changedBy는 항상"
-                            + " null이다**(그 표에 변경자 컬럼이 없다). 없는 회원은 404, 알 수 없는 type은"
-                            + " 400이다. 회원 관리(MEMBER_MANAGE) 권한.",
+                    "회원의 등급·상태·역할·정보 변경 이력을 한 타임라인으로(발생 시각 역순). type으로 출처를 고른다 —"
+                        + " GRADE·STATUS·ROLE·PROFILE, 복수 허용, 생략하면 전부. 역할은 한 배정이 부여·종료 두 줄로 나오고"
+                        + " **역할 줄의 changedByMemberId·changedByName은 항상 null이다**(그 표에 변경자 컬럼이 없다)."
+                        + " 없는 회원은 404, 알 수 없는 type은 400이다. 회원 관리(MEMBER_MANAGE) 권한.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<MemberChangeHistoryResponse> listMemberHistories(
             @McpToolParam(description = MEMBER_ID) Long memberId,
@@ -239,7 +247,8 @@ public class MemberTools {
                     "회원에게 역할을 부여한다(roleId는 list_roles에서). roleBgngYmd를 생략하면 오늘이고"
                             + " **종료일은 받지 않는다** — 부여는 언제나 무기한으로 시작하고 끝내는 것은"
                             + " update_member_role_assignment다. rprsRoleYn=true로 대표를 지정하면 그"
-                            + " 회원의 기존 대표 역할이 같은 트랜잭션에서 내려간다."
+                            + " 회원의 기존 대표 역할이 같은 트랜잭션에서 내려간다 — 새 배정이 오늘부터"
+                            + " 유효할 때만이고, 시작일이 미래면 기존 대표가 그대로 남는다."
                             + " 같은 역할이 기간을 겹쳐 이미 부여돼 있으면 409 ROLE_ALREADY_ASSIGNED이고"
                             + " **재시도해도 같다**(기간이 겹치지 않는 재임은 허용한다)."
                             + " 없는 회원은 404, 없는 역할은 404 ROLE_NOT_FOUND다."

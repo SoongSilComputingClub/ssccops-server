@@ -10,7 +10,10 @@ import org.springaicommunity.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramCondition;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramDetailResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAddRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramSummaryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramTransitionResponse;
@@ -28,6 +31,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionTransitionReques
 import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionTransitionResponse;
 import org.sscc.ssccopsserver.domain.event.code.EventParticipantStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
+import org.sscc.ssccopsserver.global.mcp.client.McpListResult;
 import org.sscc.ssccopsserver.global.mcp.client.McpRestClient;
 
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -48,6 +52,8 @@ import lombok.RequiredArgsConstructor;
  * 활동은 **기획안 승인 이관으로만 생긴다**(`domain/academicprogram/AGENTS.md`) — 「활동을 만들어줘」에
  * 해당하는 엔드포인트가 아예 없고, 회차 작성·재제출은 활동 구성원이 화면에서 하는 일이다. 그래서 이
  * 파도는 **읽기와 검토**로 이루어진다. 도구가 없는 것이 빠뜨린 것이 아니라 그 모양이다.
+ * 예외는 **팀원 명단**이다(#654) — v1.1.0의 팀원 관리(#612)가 스터디장·학술국장에게 추가·상태 변경
+ * 경로를 열어 그 둘과 변경 이력을 도구로 옮겼다. 회원을 만들지도 활동을 고치지도 않고 명단 행만 바꾼다.
  *
  * ── ② 전이는 셋이고, 무엇이 가능한지는 서버가 안다 ─────────────
  *
@@ -85,6 +91,11 @@ public class AcademicTools {
 
     private static final String SESSION_ID = "회차 식별자";
 
+    /** 커서 페이징 목록의 공통 안내 — list_sub_works·list_works와 같은 모양으로 돌려준다 */
+    private static final String PAGING_NOTE =
+            " 커서 페이징을 최대 3페이지까지만 따라가 items로 합치며, hasMore면 nextCursor를 조건의"
+                    + " cursor에 넣어 이어 부른다(totalCount는 전체 건수).";
+
     private final McpRestClient client;
 
     /** 팀원 목록의 조건 — 참가 상태 하나. 비우면 전체 */
@@ -100,14 +111,15 @@ public class AcademicTools {
             description =
                     "학술 활동(스터디·프로젝트·트랙) 목록. typeCd(유형 코드)·sttsCd(상태)·keyword(제목)로 거르고, mine으로 내 것만"
                         + " 본다 — leader(내가 스터디장/팀장) · proposer(내가 기획안 제출자) · true(둘 중 하나). 팀원으로 참여한"
-                        + " 활동을 고르는 값은 없다. 그 밖의 값은 400이다. 전부 비우면 전체. 상태는 APPROVED(승인됨 · 모집"
-                        + " 전)·ONGOING(진행 중)·COMPLETED(종료)·DISCONTINUED(폐지) 넷이다. isDelayed는 «진행 중인데"
-                        + " 예정된 운영 기간이 끝났고 진행률(승인 회차 ÷ 계획 항목)이 100% 미만»이며, delayed=true면 그것만"
-                        + " 본다(sttsCd와 함께 주면 AND). 목록에는 기획 내용(목표·준비·일정)이 없다 —"
-                        + " get_academic_program으로. 팀원은 list_academic_program_members, 회차는"
-                        + " list_academic_sessions로 본다.",
+                        + " 활동을 고르는 값은 없다. false·빈 값은 거르지 않고, 그 밖의 값은 400 INVALID_CODE_VALUE다. 전부"
+                        + " 비우면 전체. 상태는 APPROVED(승인됨 · 모집 전)·ONGOING(진행"
+                        + " 중)·COMPLETED(종료)·DISCONTINUED(폐지) 넷이다. isDelayed는 «진행 중인데 예정된 운영 기간이"
+                        + " 끝났고 진행률(승인 회차 ÷ 계획 항목)이 100% 미만»이며, delayed=true면 그것만 본다(sttsCd와 함께 주면"
+                        + " AND). 목록에는 기획 내용(목표·준비·일정)이 없다 — get_academic_program으로. 팀원은"
+                        + " list_academic_program_members, 회차는 list_academic_sessions로 본다."
+                            + PAGING_NOTE,
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<AcademicProgramSummaryResponse> listAcademicPrograms(
+    public McpListResult<AcademicProgramSummaryResponse> listAcademicPrograms(
             @McpToolParam(
                             description =
                                     "검색 조건 — typeCd·sttsCd·keyword·mine·delayed·size·cursor·sort."
@@ -116,13 +128,14 @@ public class AcademicTools {
                     AcademicProgramCondition condition,
             McpTransportContext context) {
         log.info("mcp tool list_academic_programs");
-        return client.getList(context, PROGRAMS, condition, AcademicProgramSummaryResponse.class)
-                .items();
+        return client.getList(context, PROGRAMS, condition, AcademicProgramSummaryResponse.class);
     }
 
     @McpTool(
             name = "get_academic_program",
-            description = "학술 활동 하나 — 기획 내용·기간·정원·리더·연결된 폼과 진행률. 없거나 볼 권한이 없으면 404·403.",
+            description =
+                    "학술 활동 하나 — 기획 내용·기간·정원·리더·연결된 폼과 진행률. 없으면 404"
+                            + " ACADEMIC_PROGRAM_NOT_FOUND.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public AcademicProgramDetailResponse getAcademicProgram(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -161,25 +174,28 @@ public class AcademicTools {
                             + " 아직 기록하지 않은 회차(NOT_SUBMITTED)는 이 목록에 행이 없다 —"
                             + " 그 값으로 거르면 언제나 빈 목록이다. 계획된 회차 수는"
                             + " get_academic_program의 curriculumItemCount다."
-                            + " 여러 활동에 걸쳐 검토할 것을 찾을 때는 list_academic_sessions_to_review를 쓴다.",
+                            + " 여러 활동에 걸쳐 검토할 것을 찾을 때는 list_academic_sessions_to_review를 쓴다."
+                            + PAGING_NOTE,
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<SessionSummaryResponse> listAcademicSessions(
+    public McpListResult<SessionSummaryResponse> listAcademicSessions(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
             @McpToolParam(description = "검색 조건 — sttsCd·size·cursor·sort. 전부 선택", required = false)
                     SessionCondition condition,
             McpTransportContext context) {
         log.info("mcp tool list_academic_sessions academicProgramId={}", academicProgramId);
         return client.getList(
-                        context,
-                        PROGRAMS + "/" + academicProgramId + "/sessions",
-                        condition,
-                        SessionSummaryResponse.class)
-                .items();
+                context,
+                PROGRAMS + "/" + academicProgramId + "/sessions",
+                condition,
+                SessionSummaryResponse.class);
     }
 
     @McpTool(
             name = "get_academic_session",
-            description = "회차 하나 — 일시·장소·내용·출석 요약과 승인 이력. 회차 번호가 아니라 회차 식별자(sessionId)다.",
+            description =
+                    "회차 하나 — 계획일(planYmd)·실제일(actlYmd), 진행 내용·공지, 출석 명단과 출석 수,"
+                            + " 인증사진, 가장 최근 검토 의견(latestOpinion). 승인 이력 전체는 오지 않는다."
+                            + " 회차 번호가 아니라 회차 식별자(sessionId)다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public SessionDetailResponse getAcademicSession(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -197,21 +213,18 @@ public class AcademicTools {
             description =
                     "검토를 기다리는 회차 — 활동에 관계없이 제출된(SUBMITTED) 것만 모은다."
                             + " «승인할 게 뭐 있어»의 답이며, 여기서 고른 뒤 transition_academic_session으로 처리한다."
-                            + " 종료(COMPLETED)된 활동의 회차는 빠진다 — 처리할 수 없는 줄이라서다."
-                            + " 재시작(REOPEN)하면 다시 나온다."
-                            + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다.",
+                            + " 종료(COMPLETED)·폐지(DISCONTINUED)된 활동의 회차는 빠진다 — 처리할 수 없는"
+                            + " 줄이라서다. 재시작(REOPEN)·복원(REINSTATE)하면 다시 나온다."
+                            + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다."
+                            + PAGING_NOTE,
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
-    public List<SessionCrossListResponse> listAcademicSessionsToReview(
+    public McpListResult<SessionCrossListResponse> listAcademicSessionsToReview(
             @McpToolParam(description = "검색 조건 — size·cursor·sort. 전부 선택", required = false)
                     SessionReviewCondition condition,
             McpTransportContext context) {
         log.info("mcp tool list_academic_sessions_to_review");
         return client.getList(
-                        context,
-                        PROGRAMS + "/reviews/sessions",
-                        condition,
-                        SessionCrossListResponse.class)
-                .items();
+                context, PROGRAMS + "/reviews/sessions", condition, SessionCrossListResponse.class);
     }
 
     // ══ 검토 ═══════════════════════════════════════════════════
@@ -298,7 +311,9 @@ public class AcademicTools {
                     "모집 지원 목록 — 지원서(폼 응답)와 지금 참가 상태가 함께 온다."
                             + " statusCode로 응답 상태를 거른다, 비우면 전체."
                             + " **select_academic_recruitment에 넘길 formRspnsId가 여기서 나온다.**"
-                            + " 지원자의 연락처·학번은 도구 출력에서 지워진다(ADR-0037).",
+                            + " 지원자의 연락처·학번은 도구 출력에서 지워진다(ADR-0037)."
+                            + " 그 활동의 스터디장 본인이나 학술국장만 볼 수 있고(아니면 403), 모집 시작 전"
+                            + "(APPROVED)이면 409 RECRUITMENT_NOT_STARTED다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<RecruitmentApplicationResponse> listAcademicRecruitmentApplications(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -342,6 +357,91 @@ public class AcademicTools {
                         request,
                         AcademicProgramMemberResponse[].class);
         return members == null ? List.of() : Arrays.asList(members);
+    }
+
+    // ══ 팀원 관리 (#654 · REST는 #612) ══════════════════════════
+
+    /*
+     * 추가와 상태 변경을 한 도구로 합치지 않는다 — 추가는 회원 id를, 상태 변경은 명단 행 id(eventPtcpId)와
+     * 다음 상태를 받아 입력 모양이 다르다. 대상에 따라 required가 갈리면 JSON Schema로 말할 수 없다
+     * (promote_meeting_agenda를 둘로 나눈 것과 같은 이유). 삭제 도구는 없다 — REST에 삭제가 없고, 제외
+     * (CANCELLED)가 행을 남겨 지난 출석이 가리키게 하는 것이 결정이다.
+     */
+    @McpTool(
+            name = "add_academic_program_member",
+            description =
+                    "학술 활동에 팀원을 넣는다 — 신청서 없이 바로 확정(CONFIRMED)이고 변경 이력이 남는다. mbrId는 회원"
+                        + " 식별자다(list_members로 찾는다). 예전에 제외된(CANCELLED) 회원이면 재합류가 된다. 탈퇴·제명 회원은 400"
+                        + " MEMBER_NOT_ADDABLE, 이미 확정·대기면 409 EVENT_PARTICIPANT_DUPLICATED, 모집 시작"
+                        + " 전이면 409 RECRUITMENT_NOT_STARTED, 종료·폐지된 활동이면 409"
+                        + " ACADEMIC_PROGRAM_COMPLETED·ACADEMIC_PROGRAM_DISCONTINUED다. 그 활동의 스터디장"
+                        + " 본인이나 학술국장만 부를 수 있다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public AcademicProgramMemberResponse addAcademicProgramMember(
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = "mbrId — 넣을 회원") AcademicProgramMemberAddRequest request,
+            McpTransportContext context) {
+        log.info("mcp tool add_academic_program_member academicProgramId={}", academicProgramId);
+        return client.post(
+                context,
+                memberPath(academicProgramId),
+                request,
+                AcademicProgramMemberResponse.class);
+    }
+
+    @McpTool(
+            name = "change_academic_program_member_status",
+            description =
+                    "팀원 명단 한 줄의 상태를 바꾼다. 갈 수 있는 길은 넷이다 — 승격(WAITLISTED→CONFIRMED) ·"
+                        + " 강등(CONFIRMED→WAITLISTED) · 제외(CONFIRMED→CANCELLED) ·"
+                        + " 재합류(CANCELLED→CONFIRMED). 그 밖은 400"
+                        + " INVALID_PARTICIPANT_STATUS_TRANSITION이다. eventPtcpId는 명단 행의 식별자이지 회원"
+                        + " id가 아니다 — list_academic_program_members로 먼저 읽는다. 제외해도 행은 지우지 않는다 — 지난"
+                        + " 회차 출석은 남고 다음 회차 출석 대상에서만 빠진다. 이 활동의 명단 행이 아니면 404"
+                        + " EVENT_PARTICIPANT_NOT_FOUND, 그 밖의 409는 add_academic_program_member와 같다."
+                        + " 스터디장 본인이나 학술국장만 부를 수 있다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = false, destructiveHint = false))
+    public AcademicProgramMemberResponse changeAcademicProgramMemberStatus(
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            @McpToolParam(description = "명단 행 식별자(eventPtcpId)") Long eventPtcpId,
+            @McpToolParam(description = "ptcpSttsCd — 다음 상태")
+                    AcademicProgramMemberStatusChangeRequest request,
+            McpTransportContext context) {
+        log.info(
+                "mcp tool change_academic_program_member_status academicProgramId={}"
+                        + " eventPtcpId={}",
+                academicProgramId,
+                eventPtcpId);
+        return client.patch(
+                context,
+                memberPath(academicProgramId) + "/" + eventPtcpId,
+                request,
+                AcademicProgramMemberResponse.class);
+    }
+
+    @McpTool(
+            name = "list_academic_program_member_history",
+            description =
+                    "팀원 명단 변경 이력(최신순). 모집 선발 · 행사 참가자 · 팀원 관리 세 경로(chgPathSeCd)가 남긴"
+                            + " 줄이 전부 나온다. bfrPtcpSttsCd가 null이면 처음 명단에 오른 줄이다. 종료·폐지된"
+                            + " 활동도 볼 수 있다. 스터디장 본인이나 학술국장만 볼 수 있다.",
+            annotations = @McpTool.McpAnnotations(readOnlyHint = true))
+    public List<AcademicProgramMemberHistoryResponse> listAcademicProgramMemberHistory(
+            @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
+            McpTransportContext context) {
+        log.info(
+                "mcp tool list_academic_program_member_history academicProgramId={}",
+                academicProgramId);
+        AcademicProgramMemberHistoryResponse[] rows =
+                client.get(
+                        context,
+                        memberPath(academicProgramId) + "/history",
+                        AcademicProgramMemberHistoryResponse[].class);
+        return rows == null ? List.of() : Arrays.asList(rows);
+    }
+
+    private static String memberPath(Long academicProgramId) {
+        return PROGRAMS + "/" + academicProgramId + "/members";
     }
 
     // ══ 출석 ═══════════════════════════════════════════════════

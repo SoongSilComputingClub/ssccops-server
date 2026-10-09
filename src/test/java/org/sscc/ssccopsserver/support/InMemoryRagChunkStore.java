@@ -21,7 +21,7 @@ import org.sscc.ssccopsserver.domain.assistant.service.RagChunkStore;
  *
  * <p><b>«언제 무엇이 불렸나»를 함께 적는다</b>(#405 · 기획안 §14.3). {@link #operations()}가 적재·삭제의 순서를 들고 있어 두 가지를
  * 같은 자리에서 본다 — <b>업로드는 저장소를 건드리지 않는다</b>(임베딩을 부르는 자리가 {@link #add}뿐이라 빈 목록이 곧 「임베딩 호출 0」이다)와
- * <b>재색인은 넣기 전에 지운다</b>(순서를 뒤집으면 중간에 실패했을 때 같은 조가 두 번 검색된다).
+ * <b>재색인은 넣기 전에 지운다</b>(한 문서의 청크를 세대 표시 없이 한 벌로 지키는 순서다 · ADR-0063).
  */
 public class InMemoryRagChunkStore implements RagChunkStore {
 

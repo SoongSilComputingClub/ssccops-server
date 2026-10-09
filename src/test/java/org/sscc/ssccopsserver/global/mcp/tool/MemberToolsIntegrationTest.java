@@ -87,6 +87,8 @@ class MemberToolsIntegrationTest {
             McpSchema.CallToolResult listed = call(client, "list_members", Map.of());
             assertThat(listed.isError()).isNotEqualTo(Boolean.TRUE);
             String listText = text(listed);
+            // 커서 페이징 목록은 잘림 신호를 함께 준다 (#660 — 그전에는 items만 나가 hasMore가 버려졌다)
+            assertThat(listText).contains("\"hasMore\"").contains("\"items\"");
             assertThat(listText).contains("\"name\":\"김도현\"").contains("\"name\":\"이서연\"");
             assertThat(listText)
                     .doesNotContain("010-1111-2222")

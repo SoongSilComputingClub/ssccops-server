@@ -17,7 +17,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRosterExportCondition;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRosterFile;
+import org.sscc.ssccopsserver.domain.member.dto.MemberRosterPreviewResponse;
 import org.sscc.ssccopsserver.domain.member.service.MemberRosterExportService;
+import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 
 import io.swagger.v3.oas.annotations.Operation;
@@ -42,6 +44,10 @@ import lombok.RequiredArgsConstructor;
  *
  * 파일 이름은 서버가 정한다 — Content-Disposition의 filename*(UTF-8)이며 CORS가 그 헤더를
  * 노출한다(SecurityConfig). 화면이 따로 지으면 제목·파일 이름 규칙이 두 벌이 된다.
+ *
+ * ── 미리보기는 봉투다 ──────────────────────────────────────────
+ * GET …/preview는 같은 조건으로 줄 수·빠진 인원·제목·파일 이름을 ApiResponse로 낸다(#676).
+ * 파일이 아니므로 예외가 아니다. 회장이 없어도 409가 아니라 presidentMissing으로 알린다.
  */
 @RestController
 @RequestMapping("/v1/members/roster-export")
@@ -70,7 +76,9 @@ public class MemberRosterController {
                             + " 유효한 회장이 없으면 옵션과 무관하게 409 ROSTER_PRESIDENT_MISSING,"
                             + " mbr_stts에 없는 상태 코드·모르는 positionNotation은 400"
                             + " INVALID_CODE_VALUE, year·semester 누락·범위 밖은 400 VALIDATION_FAILED다."
-                            + " **성공 응답은 ApiResponse 봉투가 아니라 파일**이고 거절은 봉투다.")
+                            + " **성공 응답은 ApiResponse 봉투가 아니라 파일**이고 거절은 봉투다. 제목의 괄호는"
+                            + " 재학만 고르면 «(재학생)», 상태를 넓히면 고른 상태 이름(«(재학·일반휴학)»),"
+                            + " 전부 고르면 괄호가 없다. 같은 조건의 미리보기는 GET …/preview다.")
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
             responseCode = "200",
             description = "회원명부 xlsx. 파일 이름은 Content-Disposition의 filename*(UTF-8)이다.",
@@ -93,5 +101,23 @@ public class MemberRosterController {
                 // 연락처·학번이 담긴 파일이다 — 브라우저·프록시 어디에도 남기지 않는다
                 .cacheControl(CacheControl.noStore())
                 .body(file.content());
+    }
+
+    @Operation(
+            summary = "회원명부 미리보기",
+            description =
+                    "회원명부 내려받기와 같은 조건으로, 명단 기준일(baseDate · 서버의 오늘 — 연도·학기와"
+                            + " 무관), 내려받을 파일의 제목(title)·이름(fileName)과 명부에"
+                            + " 오를 줄 수(rowCount · 회장·부회장 officerCount 포함), 빠지는 인원을 내린다."
+                            + " 빠지는 인원은 임시회원이라서(excludedTemporaryCount · 고른 상태와 무관)와 고르지"
+                            + " 않은 상태라서(excludedByStatusCount)로 나뉘고, 셋의 합이 전체 회원"
+                            + " 수(totalMemberCount)다. 유효한 회장이 없으면 409가 아니라 presidentMissing ="
+                            + " true로 알린다(내려받기는 409다). 조건 검증은 내려받기와 같다 — 모르는 상태"
+                            + " 코드·표기법은 400 INVALID_CODE_VALUE, year·semester 누락·범위 밖은 400"
+                            + " VALIDATION_FAILED. 회원 값이 실리지 않아 감사를 남기지 않는다.")
+    @GetMapping("/preview")
+    public ApiResponse<MemberRosterPreviewResponse> preview(
+            @Valid @ModelAttribute MemberRosterExportCondition condition) {
+        return ApiResponse.success(memberRosterExportService.preview(condition));
     }
 }

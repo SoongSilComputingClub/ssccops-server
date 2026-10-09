@@ -44,6 +44,7 @@ import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberStatusEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -54,6 +55,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 /*
  * 회원명부 내려받기 (#674 · 상위 ssccops#598).
@@ -67,6 +71,9 @@ import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
  *
  * 서비스가 예외를 던지면 참여 중인 테스트 트랜잭션이 rollback-only로 표시되므로, 400·403·409를 보는
  * 테스트는 실패하는 요청 하나로 끝낸다 (MemberImportControllerTest와 같은 이유).
+ *
+ * 미리보기(#676)도 같은 이유로 인원을 절대값으로 보지 않는다 — 같은 조건으로 내려받은 파일과
+ * 맞는지, 그리고 회원을 더하거나 회장 배정을 끝낸 **전후의 차이**가 맞는 이유로 잡히는지를 본다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -76,10 +83,12 @@ import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 class MemberRosterControllerTest {
 
     private static final String EXPORT = "/v1/members/roster-export";
+    private static final String PREVIEW = EXPORT + "/preview";
     private static final String XLSX =
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
     @Autowired private MockMvc mockMvc;
+    @Autowired private ObjectMapper objectMapper;
     @Autowired private EntityManager entityManager;
     @Autowired private Clock clock;
     @Autowired private MemberRepository memberRepository;
@@ -240,6 +249,151 @@ class MemberRosterControllerTest {
                         Map.entry("가정회", "국장"));
     }
 
+    // ------------------------------------------------------------------ 제목의 괄호 = 고른 상태
+
+    /*
+     * 상태를 넓히면 괄호가 고른 상태 이름이 된다 — 휴학·졸업을 넣은 명부가 «(재학생)»으로 나가지 않게.
+     * 요청 순서를 뒤집어 보내도 표시 순번(mbr_stts.indct_seqno)대로 적힌다.
+     */
+    @Test
+    void titleNamesTheChosenStatuses() throws Exception {
+        assertThat(
+                        title(
+                                get(EXPORT)
+                                        .param("year", "2026")
+                                        .param("semester", "2")
+                                        .param("mbrSttsCd", "LEAVE", "ENROLLED")))
+                .isEqualTo("2026년도 2학기 SSCC 회원명부(재학·일반휴학)");
+    }
+
+    /* 상태를 전부 고르면 괄호를 뺀다 — 여섯 이름을 늘어놓는 것보다 «거르지 않았다»가 정확하다 */
+    @Test
+    void titleDropsTheLabelWhenEveryStatusIsChosen() throws Exception {
+        String[] every =
+                memberStatusRepository.findAll().stream()
+                        .map(MemberStatusEntity::getCode)
+                        .toArray(String[]::new);
+
+        assertThat(
+                        title(
+                                get(EXPORT)
+                                        .param("year", "2026")
+                                        .param("semester", "1")
+                                        .param("mbrSttsCd", every)))
+                .isEqualTo("2026년도 1학기 SSCC 회원명부");
+    }
+
+    // ------------------------------------------------------------------ 미리보기
+
+    /* 미리보기의 제목·파일 이름·줄 수는 같은 조건으로 내려받은 파일 그대로다 */
+    @Test
+    void previewMatchesTheExportedFile() throws Exception {
+        JsonNode preview =
+                preview(
+                        get(PREVIEW)
+                                .param("year", "2026")
+                                .param("semester", "2")
+                                .param("mbrSttsCd", "ENROLLED", "LEAVE"));
+
+        byte[] file =
+                mockMvc.perform(
+                                authorized(
+                                        get(EXPORT)
+                                                .param("year", "2026")
+                                                .param("semester", "2")
+                                                .param("mbrSttsCd", "ENROLLED", "LEAVE")))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsByteArray();
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(file))) {
+            XSSFSheet sheet = workbook.getSheetAt(0);
+            List<String> positions = positionColumn(sheet);
+
+            assertThat(preview.get("title").asText())
+                    .isEqualTo(sheet.getRow(0).getCell(0).getStringCellValue())
+                    .isEqualTo("2026년도 2학기 SSCC 회원명부(재학·일반휴학)");
+            // 명단은 연도·학기와 무관하게 오늘 기준이다 — 화면이 이 날짜를 그대로 보인다
+            assertThat(preview.get("baseDate").asText()).isEqualTo(LocalDate.now(clock).toString());
+            assertThat(preview.get("fileName").asText())
+                    .isEqualTo("2026년도_학술분과_SSCC_2학기_동아리회원명부.xlsx");
+            assertThat(preview.get("rowCount").asLong()).isEqualTo(positions.size());
+            assertThat(preview.get("officerCount").asLong())
+                    .isEqualTo(
+                            positions.stream()
+                                    .filter(position -> List.of("회장", "부회장").contains(position))
+                                    .count());
+        }
+        assertThat(preview.get("totalMemberCount").asLong()).isEqualTo(memberRepository.count());
+        assertThat(preview.get("excludedByStatusCount").asLong()).isNotNegative();
+        assertThat(preview.get("presidentMissing").asBoolean()).isFalse();
+    }
+
+    /*
+     * 빠진 회원은 이유별로 센다. 임시회원은 상태와 무관하게 «임시회원» 쪽이고(고르지 않은 상태여도),
+     * 임시회원이 아닌데 고르지 않은 상태면 «상태» 쪽이다. 명부 줄 수는 그대로다.
+     */
+    @Test
+    void previewCountsExcludedMembersByReason() throws Exception {
+        JsonNode before = preview(get(PREVIEW).param("year", "2026").param("semester", "2"));
+
+        member("아임시", "20259401", MemberGradeCode.TEMP, MemberStatusCode.ENROLLED);
+        member("자임졸", "20259402", MemberGradeCode.TEMP, MemberStatusCode.GRADUATED);
+        member("차군휴", "20259403", MemberGradeCode.FULL, MemberStatusCode.MIL_LEAVE);
+        entityManager.flush();
+        JsonNode after = preview(get(PREVIEW).param("year", "2026").param("semester", "2"));
+
+        assertThat(delta(before, after, "excludedTemporaryCount")).isEqualTo(2);
+        assertThat(delta(before, after, "excludedByStatusCount")).isEqualTo(1);
+        assertThat(delta(before, after, "rowCount")).isZero();
+        assertThat(delta(before, after, "totalMemberCount")).isEqualTo(3);
+        assertThat(after.get("title").asText()).isEqualTo("2026년도 2학기 SSCC 회원명부(재학생)");
+    }
+
+    /*
+     * 회장이 없으면 내려받기는 409지만 미리보기는 200으로 숫자를 내고 presidentMissing으로 알린다.
+     * 회장이던 김회장은 휴학 중인 임시회원이라, 배정이 끝나면 명부에서 빠져 «임시회원» 쪽으로 옮겨 간다 —
+     * 회장일 때는 임시회원이어도 빠진 사람으로 세지 않았다는 뜻이다.
+     */
+    @Test
+    void previewReportsAMissingPresidentInsteadOfRejecting() throws Exception {
+        JsonNode before = preview(get(PREVIEW).param("year", "2026").param("semester", "2"));
+
+        presidentAssignment.end(LocalDate.now(clock).minusDays(1));
+        entityManager.flush();
+        JsonNode after = preview(get(PREVIEW).param("year", "2026").param("semester", "2"));
+
+        assertThat(before.get("presidentMissing").asBoolean()).isFalse();
+        assertThat(after.get("presidentMissing").asBoolean()).isTrue();
+        assertThat(delta(before, after, "officerCount")).isEqualTo(-1);
+        assertThat(delta(before, after, "rowCount")).isEqualTo(-1);
+        assertThat(delta(before, after, "excludedTemporaryCount")).isEqualTo(1);
+    }
+
+    /* 조건 검증은 내려받기와 같다 — 응답은 봉투다 */
+    @Test
+    void previewRejectsUnknownStatusCode() throws Exception {
+        mockMvc.perform(
+                        authorized(
+                                get(PREVIEW)
+                                        .param("year", "2026")
+                                        .param("semester", "2")
+                                        .param("mbrSttsCd", "SABBATICAL")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CODE_VALUE"));
+    }
+
+    @Test
+    void previewRequiresMemberManage() throws Exception {
+        mockMvc.perform(
+                        get(PREVIEW)
+                                .param("year", "2026")
+                                .param("semester", "2")
+                                .header("Authorization", "Bearer " + outsiderToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
     // ------------------------------------------------------------------ 거절 — 상태 코드 + 봉투
 
     /* 회장 배정이 끝났으면 옵션과 무관하게 409이고, 응답은 파일이 아니라 봉투다 */
@@ -312,6 +466,50 @@ class MemberRosterControllerTest {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    private String title(MockHttpServletRequestBuilder request) throws Exception {
+        byte[] file =
+                mockMvc.perform(authorized(request))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsByteArray();
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(file))) {
+            return workbook.getSheetAt(0).getRow(0).getCell(0).getStringCellValue();
+        }
+    }
+
+    /* 미리보기 응답의 data */
+    private JsonNode preview(MockHttpServletRequestBuilder request) throws Exception {
+        String body =
+                mockMvc.perform(authorized(request))
+                        .andExpect(status().isOk())
+                        .andExpect(jsonPath("$.success").value(true))
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString(StandardCharsets.UTF_8);
+        return objectMapper.readTree(body).get("data");
+    }
+
+    private static long delta(JsonNode before, JsonNode after, String field) {
+        return after.get(field).asLong() - before.get(field).asLong();
+    }
+
+    /*
+     * 3행부터 이름이 빌 때까지의 직책 열. positionsByName과 달리 이름으로 접지 않는다 — 줄 수를 세는
+     * 자리라 공용 testdb에 같은 이름의 회원이 있어도 한 줄씩 센다.
+     */
+    private static List<String> positionColumn(XSSFSheet sheet) {
+        List<String> positions = new ArrayList<>();
+        for (int r = 2; r <= sheet.getLastRowNum(); r++) {
+            Row row = sheet.getRow(r);
+            if (row == null || text(row.getCell(1)).isEmpty()) {
+                break;
+            }
+            positions.add(text(row.getCell(0)));
+        }
+        return positions;
+    }
 
     private Map<String, String> export(MockHttpServletRequestBuilder request) throws Exception {
         byte[] file =

@@ -15,7 +15,9 @@ import jakarta.validation.constraints.NotNull;
  *   같다. 비어 있으면 재학 하나다. 기준 코드 검사는 서비스가 mbr_stts를 보고 한다 — 화면의
  *   선택지가 GET /v1/member-statuses(테이블)에서 오므로 enum으로 검사하면 테이블에 더한 상태가
  *   화면에는 보이는데 내려받기는 400이 된다.
- * - positionNotation — FEDERATION(기본) | SSCC. 해석은 RosterPositionNotation.from이 한다.
+ *
+ * 직책 표기법(positionNotation)은 없다 — 언제나 동아리연합회 표기법이다(#678 · ssccops#600). 옛 화면이
+ * 실어 보내도 이 레코드에 필드가 없어 바인딩이 버린다.
  */
 public record MemberRosterExportCondition(
         @NotNull(message = "year는 필수입니다.")
@@ -26,5 +28,4 @@ public record MemberRosterExportCondition(
                 @Min(value = 1, message = "semester는 1 또는 2여야 합니다.")
                 @Max(value = 2, message = "semester는 1 또는 2여야 합니다.")
                 Integer semester,
-        List<String> mbrSttsCd,
-        String positionNotation) {}
+        List<String> mbrSttsCd) {}

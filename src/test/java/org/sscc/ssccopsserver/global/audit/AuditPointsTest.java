@@ -259,8 +259,9 @@ class AuditPointsTest {
         assertThat(section(audit, "target")).containsEntry("id", "2026-2");
         assertThat(String.valueOf(audit.get("decision")))
                 .contains("rows=")
-                .contains("positionNotation=FEDERATION")
-                .contains("mbrSttsCd=ENROLLED,LEAVE");
+                .contains("mbrSttsCd=ENROLLED,LEAVE")
+                // 직책 표기법 옵션은 걷어냈다(#678) — 옵션은 포함할 상태 하나다
+                .doesNotContain("positionNotation");
         assertThat(line.toString())
                 .doesNotContain("박준호")
                 .doesNotContain("20200003")

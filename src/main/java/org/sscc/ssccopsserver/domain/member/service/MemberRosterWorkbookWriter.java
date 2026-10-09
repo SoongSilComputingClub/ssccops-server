@@ -71,8 +71,13 @@ public class MemberRosterWorkbookWriter {
     private static final Pattern DIGITS = Pattern.compile("\\d+");
     private static final Pattern NON_DIGIT = Pattern.compile("\\D");
 
-    public static String titleOf(int year, int semester) {
-        return year + "년도 " + semester + "학기 " + CLUB + " 회원명부(재학생)";
+    /*
+     * 제목의 괄호(양식 원문은 «(재학생)»)에는 statusLabel을 적고, null이면 괄호째 뺀다. 무엇을 적을지는
+     * 고른 상태로 서비스가 정한다(MemberRosterExportServiceImpl.statusLabelOf).
+     */
+    public static String titleOf(int year, int semester, String statusLabel) {
+        String title = year + "년도 " + semester + "학기 " + CLUB + " 회원명부";
+        return statusLabel == null ? title : title + "(" + statusLabel + ")";
     }
 
     public static String fileNameOf(int year, int semester) {

@@ -31,8 +31,11 @@ class MemberRosterWorkbookWriterTest {
 
     @Test
     void namesTitleAndFileLikeTheFederationForm() {
-        assertThat(MemberRosterWorkbookWriter.titleOf(2026, 2))
+        assertThat(MemberRosterWorkbookWriter.titleOf(2026, 2, "재학생"))
                 .isEqualTo("2026년도 2학기 SSCC 회원명부(재학생)");
+        // 괄호에 적을 말이 없으면(상태를 전부 골랐다) 괄호째 뺀다
+        assertThat(MemberRosterWorkbookWriter.titleOf(2026, 1, null))
+                .isEqualTo("2026년도 1학기 SSCC 회원명부");
         assertThat(MemberRosterWorkbookWriter.fileNameOf(2026, 2))
                 .isEqualTo("2026년도_학술분과_SSCC_2학기_동아리회원명부.xlsx");
     }

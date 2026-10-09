@@ -155,6 +155,13 @@ public interface MemberRepository
             @Param("excludedGradeCode") String excludedGradeCode);
 
     /*
+     * 그 등급인 회원의 식별자 (회원명부 미리보기 · #676). 미리보기가 «임시회원이라 빠지는 사람»을
+     * 세는 데 쓴다 — 회장·부회장은 등급과 무관하게 들어가므로 수가 아니라 식별자를 받아 서비스가 뺀다.
+     */
+    @Query("select m.id from MemberEntity m where m.membershipGrade.code = :gradeCode")
+    List<Long> findIdsByGradeCode(@Param("gradeCode") String gradeCode);
+
+    /*
      * 가장 먼저 등록된 회원 (#173 기획안 시스템 폼 시드).
      *
      * form.creatr_mbr_id가 NOT NULL이라 코드가 세우는 폼에도 생성자가 필요한데, 시드에는

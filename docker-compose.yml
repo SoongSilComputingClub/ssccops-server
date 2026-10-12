@@ -29,7 +29,9 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:17
+    # pgvector 확장이 든 이미지. V10이 CREATE EXTENSION vector를 하므로 공식 postgres:17로는 빈 DB 첫 기동이 멈춘다.
+    # 테스트(Testcontainers)와 같은 이미지다(ssccops-server#683).
+    image: pgvector/pgvector:pg17
     # 호스트에 게시하는 포트를 DB_PORT 로 맞춘다 — `./gradlew bootRun` 이 이 포트로 접속한다
     ports:
       - "${DB_PORT:-15432}:5432"

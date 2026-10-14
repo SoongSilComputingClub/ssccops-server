@@ -414,7 +414,67 @@ public enum FormErrorCode implements ErrorCode {
      * 고친 뒤 다시 켜는 것이 정상 경로다). 막는 것은 '여기서 새 폼을 시작하는 것' 하나다.
      */
     FORM_TEMPLATE_NOT_USABLE(
-            HttpStatus.BAD_REQUEST, "FORM_TEMPLATE_NOT_USABLE", "비활성 템플릿으로는 새 폼을 만들 수 없습니다.");
+            HttpStatus.BAD_REQUEST, "FORM_TEMPLATE_NOT_USABLE", "비활성 템플릿으로는 새 폼을 만들 수 없습니다."),
+
+    /*
+     * ── 기획안 첨부 자료 (server#685 · ssccops#607) ─────────────────────────────
+     * 화면은 코드로 가른다. 상한(20MB·5개·형식)을 문장에 박지 않는 것은 그 값이
+     * ProposalAttachmentServiceImpl의 상수라서다 — 메시지가 값을 말해야 하는 거절(총량·개수)은
+     * 서비스가 상수로 조립한 문장을 detail로 싣고, 여기 문장은 그 detail이 빠졌을 때의 대체다.
+     */
+
+    /*
+     * 400 — pdf·txt·md가 아닌 파일. 판정은 확장자다(AttachmentFileType.ofFileName → 허용 셋).
+     * 운영 건 첨부(UNSUPPORTED_ATTACHMENT_TYPE)와 코드를 나눈 것은 허용 목록이 다르고(이쪽은
+     * 승인 뒤 회원 전체가 받는다) 화면이 고를 안내 문구도 다르기 때문이다.
+     */
+    PROPOSAL_ATTACHMENT_UNSUPPORTED_TYPE(
+            HttpStatus.BAD_REQUEST,
+            "PROPOSAL_ATTACHMENT_UNSUPPORTED_TYPE",
+            "pdf·txt·md 파일만 올릴 수 있습니다."),
+
+    /*
+     * 413 — 이 파일을 더하면 응답당 합계 상한을 넘는다. 운영 건 첨부(ATTACHMENT_TOO_LARGE)와 같은
+     * 413이며, 메시지에 **남은 용량**을 싣는다(«… 남은 용량은 7.7MB입니다.») — 그 값이 있어야
+     * 작성자가 무엇을 지울지 고를 수 있다.
+     */
+    PROPOSAL_ATTACHMENT_TOO_LARGE(
+            HttpStatus.PAYLOAD_TOO_LARGE, "PROPOSAL_ATTACHMENT_TOO_LARGE", "첨부 자료의 합계 용량을 넘었습니다."),
+
+    /*
+     * 409 — 개수 상한(응답당 5개)에 이미 닿았다. 크기가 아니라 상태(이미 몇 개 있는가)에 대한
+     * 거절이라 409다. PUT에 실패한 참조도 지울 때까지 한 자리를 차지한다(웹이 실패하면 DELETE한다).
+     */
+    PROPOSAL_ATTACHMENT_LIMIT_EXCEEDED(
+            HttpStatus.CONFLICT, "PROPOSAL_ATTACHMENT_LIMIT_EXCEEDED", "첨부 자료 개수 상한을 넘었습니다."),
+
+    /*
+     * 409 — 지금 응답 상태로는 첨부를 바꿀 수 없다. 열리는 것은 DRAFT(폼이 접수 중)와
+     * CHANGES_REQUESTED 둘뿐이고 판정은 FormResponseHistoryEntity.requireAttachmentsEditable이
+     * 갖는다. 검토 중(SUBMITTED)에 바뀌면 검토자가 본 것과 승인한 것이 갈리고, 승인·반려는
+     * 종결이다(ADR-0003). 접수가 끝난 폼의 초안도 같은 코드다 — 화면이 할 일(바꿀 수 없다고
+     * 알린다)이 같아서이며, 그 경우의 문장은 엔티티가 detail로 따로 싣는다.
+     */
+    PROPOSAL_ATTACHMENT_LOCKED(
+            HttpStatus.CONFLICT,
+            "PROPOSAL_ATTACHMENT_LOCKED",
+            "제출한 기획안의 첨부 자료는 수정요청을 받았을 때만 바꿀 수 있습니다."),
+
+    /*
+     * 400 — 기획안 시스템 폼(sys_form_cd = PROPOSAL)의 응답이 아니다. 모든 폼에 열면 접수 중인
+     * 아무 폼의 초안에나 회원이 파일을 올릴 수 있게 되고, 그 첨부를 누가 보는지 규칙이 폼마다
+     * 따로 필요해진다. 쓰기(올리기·지우기)만 이 코드로 끊는다 — 읽기는 빈 목록이다(서비스 주석).
+     */
+    PROPOSAL_ATTACHMENT_NOT_SUPPORTED(
+            HttpStatus.BAD_REQUEST, "PROPOSAL_ATTACHMENT_NOT_SUPPORTED", "첨부 자료는 기획안에만 올릴 수 있습니다."),
+
+    /*
+     * 404 — 그 파일이 경로의 응답(학술 경로면 활동의 원 응답)에 붙어 있지 않다. 없는 파일과 남의
+     * 응답의 파일을 나누지 않는다 — 나누면 파일 id를 훑어 다른 기획안에 첨부가 있는지를 알아낼
+     * 수 있다(IDOR · findOneOfTarget이 대상까지 함께 건다).
+     */
+    PROPOSAL_ATTACHMENT_NOT_FOUND(
+            HttpStatus.NOT_FOUND, "PROPOSAL_ATTACHMENT_NOT_FOUND", "첨부 파일이 없습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

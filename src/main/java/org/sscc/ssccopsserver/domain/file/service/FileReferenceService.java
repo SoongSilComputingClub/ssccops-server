@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.file.service;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -130,6 +131,28 @@ public class FileReferenceService {
     @Transactional
     public void deleteByTarget(FileTargetType targetType, Long targetId) {
         List<FileReferenceEntity> references = findAllByTarget(targetType, targetId);
+        if (references.isEmpty()) {
+            return;
+        }
+        fileReferenceRepository.deleteAll(references);
+        fileEraser.eraseAfterCommit(
+                references.stream().map(FileReferenceEntity::objectKey).toList());
+    }
+
+    /*
+     * 여러 대상이 한꺼번에 사라질 때 그 참조와 오브젝트를 함께 지운다 (server#685). deleteByTarget의
+     * 여러 대상판이며 규칙이 같다 — 행은 지금, 오브젝트는 커밋 뒤(FileEraser). 첫 사용처는 접수가 끝난
+     * 폼의 초안 일괄 삭제다: 초안은 하드 삭제라 되살아나지 않으므로 오브젝트를 남길 이유가 없다.
+     *
+     * 대상이 비어 있으면 질의 없이 끝난다 — 빈 IN 절을 DB에 보내지 않는다.
+     */
+    @Transactional
+    public void deleteAllOfTargets(FileTargetType targetType, Collection<Long> targetIds) {
+        if (targetIds == null || targetIds.isEmpty()) {
+            return;
+        }
+        List<FileReferenceEntity> references =
+                fileReferenceRepository.findAllByTargetTypeAndTargetIdIn(targetType, targetIds);
         if (references.isEmpty()) {
             return;
         }

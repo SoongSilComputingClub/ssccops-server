@@ -1,5 +1,6 @@
 package org.sscc.ssccopsserver.domain.file.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,6 +30,14 @@ public interface FileReferenceRepository extends JpaRepository<FileReferenceEnti
      */
     List<FileReferenceEntity> findAllByTargetTypeAndTargetIdOrderByIdAsc(
             FileTargetType targetType, Long targetId);
+
+    /*
+     * 여러 대상에 붙은 참조 전부 (server#685). 대상이 한꺼번에 사라지는 자리 — 접수가 끝난 폼의
+     * 초안 일괄 삭제(FormDraftRetentionService)가 그 응답들의 첨부를 함께 지울 때 쓴다. 대상마다
+     * 위 목록 질의를 부르면 초안 수만큼 질의가 나간다.
+     */
+    List<FileReferenceEntity> findAllByTargetTypeAndTargetIdIn(
+            FileTargetType targetType, Collection<Long> targetIds);
 
     /*
      * 대상 안의 한 건. 대상 조건을 함께 거는 것은 남의 포스트의 파일 id로 이 포스트의 갤러리를

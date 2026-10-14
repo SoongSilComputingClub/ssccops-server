@@ -43,6 +43,13 @@ public enum AuditAction {
     OPERATION_ATTACHMENT_DELETE("operation.attachment.delete", "file_rfrnc"),
     SUBWORK_APPROVAL_VOTE("subwork.approval.vote", "sub_work"),
     FORM_RESPONSE_REVIEW("form.response.review", "form_response"),
+    /*
+     * 기획안 첨부 삭제 (server#685 · ssccops#607). 운영 건 첨부와 같이 지운 것만 남긴다 — 추가는 파일이 곧
+     * 증거다(ADR-0042 «추가»는 이력 대상 아님). 대상은 file_rfrnc id, decision은 응답 id·형식·크기
+     * (`formRspnsId=… type=PDF size=…`). **원본 파일 이름은 싣지 않는다** — 이름에 실명이 들어갈 수
+     * 있다(ADR-0024). 형식은 이름이 아니라 오브젝트 키의 확장자에서 읽는다.
+     */
+    FORM_RESPONSE_ATTACHMENT_DELETE("form.response.attachment.delete", "file_rfrnc"),
     ACADEMIC_PROGRAM_TRANSITION("academic.program.transition", "academic_program"),
     ACADEMIC_SESSION_TRANSITION("academic.session.transition", "session"),
     EVENT_STATUS_CHANGE("event.status.change", "event"),

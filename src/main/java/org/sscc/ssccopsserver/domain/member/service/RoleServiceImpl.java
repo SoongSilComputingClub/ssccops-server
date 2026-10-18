@@ -22,6 +22,9 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleMemberCount;
 import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
+import org.sscc.ssccopsserver.global.audit.AuditAction;
+import org.sscc.ssccopsserver.global.audit.AuditEvent;
+import org.sscc.ssccopsserver.global.audit.AuditLog;
 
 import lombok.RequiredArgsConstructor;
 
@@ -64,6 +67,8 @@ public class RoleServiceImpl implements RoleService {
     private final MemberRoleClassificationRepository memberRoleClassificationRepository;
     private final MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     private final RoleAuthorityRelationRepository roleAuthorityRelationRepository;
+    private final LeaderRoleGuard leaderRoleGuard;
+    private final AuditLog auditLog;
     private final Clock clock;
 
     /*
@@ -140,8 +145,11 @@ public class RoleServiceImpl implements RoleService {
     @Transactional
     public RoleResponse updateRole(Long roleId, RoleUpdateRequest request) {
         MemberRoleEntity role = findRole(roleId);
+        String nameBefore = role.getName();
 
         String name = request.roleNm() == null ? role.getName() : request.roleNm().trim();
+        // 리더 역할은 승인이 이름으로 찾는다 — 이름을 바꾸면 승인이 멈추거나 다른 역할을 내준다 (#687)
+        leaderRoleGuard.verifyRenamable(role, name);
         if (!Objects.equals(name, role.getName())
                 && memberRoleRepository.existsByNameAndIdNot(name, roleId)) {
             throw new GeneralException(MemberErrorCode.ROLE_NAME_DUPLICATED);
@@ -166,6 +174,15 @@ public class RoleServiceImpl implements RoleService {
         role.update(displayOrder, name, classification);
         memberRoleRepository.flush();
 
+        // 이름이 곧 인가의 열쇠인 자리가 있어(승인의 리더 역할 조회) 이름 변경만 남긴다 (#687)
+        if (!Objects.equals(nameBefore, name)) {
+            auditLog.record(
+                    AuditEvent.success(AuditAction.ROLE_RENAME)
+                            .target(roleId)
+                            .change(nameBefore, name)
+                            .build());
+        }
+
         return RoleResponse.of(role, currentMemberCounts(List.of(roleId)).getOrDefault(roleId, 0L));
     }
 
@@ -183,6 +200,8 @@ public class RoleServiceImpl implements RoleService {
     public void deleteRole(Long roleId) {
         MemberRoleEntity role = findRole(roleId);
 
+        // 아직 아무도 받지 않은 리더 역할은 아래 ROLE_IN_USE에 걸리지 않는다 — 지우면 그 유형의 승인이 멈춘다 (#687)
+        leaderRoleGuard.verifyDeletable(role);
         if (memberRoleAssignmentRepository.existsByRoleId(roleId)
                 || roleAuthorityRelationRepository.existsByRoleId(roleId)) {
             throw new GeneralException(MemberErrorCode.ROLE_IN_USE);

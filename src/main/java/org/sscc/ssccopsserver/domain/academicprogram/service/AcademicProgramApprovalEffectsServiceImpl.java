@@ -2,6 +2,7 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.stereotype.Service;
@@ -10,11 +11,13 @@ import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntit
 import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.service.FormService;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.dto.MemberRoleAssignRequest;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
+import org.sscc.ssccopsserver.domain.member.service.LeaderRoleGuard;
 import org.sscc.ssccopsserver.domain.member.service.MemberRoleAssignmentService;
 
 import lombok.RequiredArgsConstructor;
@@ -66,16 +69,22 @@ public class AcademicProgramApprovalEffectsServiceImpl
      * 배포가 필요하다. 그래서 유형만 넣으면 승인이 400에서 **500**으로 바뀔 뿐 여전히 막힌다 —
      * 아래 missingSeed는 IllegalStateException이라 GlobalExceptionHandler의 최후 핸들러가 받는다.
      * 유형 행 · role 시드 · 이 한 줄 셋이 같은 배포에 있어야 한다.
+     *
+     * **이름은 회원 도메인의 LeaderRole이 갖는다** (#687 · ssccops#611). 리더 역할은 운영진이 아니라
+     * 권한을 붙일 수도, 이름을 바꾸거나 지울 수도 없는데(LeaderRoleGuard) 그 가드가 아는 이름과 여기서
+     * 찾는 이름이 두 벌이면 한쪽만 고쳐진 날 가드가 모르는 역할을 승인이 내준다. 그래서 문자열을
+     * 다시 적지 않고 상수를 가리킨다 — 유형이 늘면 LeaderRole에 먼저 한 줄을 더한다.
      */
     private static final Map<String, String> LEADER_ROLE_NAME_BY_TYPE_CODE =
             Map.of(
-                    "STUDY", "스터디장",
-                    "PROJECT", "프로젝트장",
-                    "TRACK", "트랙장");
+                    "STUDY", LeaderRole.STUDY_LEADER.roleName(),
+                    "PROJECT", LeaderRole.PROJECT_LEADER.roleName(),
+                    "TRACK", LeaderRole.TRACK_LEADER.roleName());
 
     private final MemberRoleRepository memberRoleRepository;
     private final MemberRoleAssignmentService memberRoleAssignmentService;
     private final MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    private final LeaderRoleGuard leaderRoleGuard;
     private final FormService formService;
 
     /* 겹침 판정의 기준일. assign(#81)과 같은 Clock을 봐야 두 판정이 어긋나지 않는다 */
@@ -94,9 +103,16 @@ public class AcademicProgramApprovalEffectsServiceImpl
      * (existsOverlappingAssignment) — 두 벌이 되면 "겹친다"의 뜻이 갈려, 이쪽은 건너뛰었는데
      * 저쪽은 거부하는(또는 그 반대의) 구간이 생긴다. 기준일도 assign()과 같은 '오늘'이다:
      * 새 배정은 언제나 [오늘, 무기한)이므로 종료일이 없거나 오늘 이후인 배정이 곧 겹치는 배정이다.
+     *
+     * **권한이 붙은 리더 역할은 내주지 않는다** (#687 · ssccops#611). 이 자리는 ROLE_MANAGE 없이
+     * (승인자는 RESPONSE_REVIEW면 된다) 역할을 붙이는 유일한 길이라, 역할에 권한이 붙어 있으면 승인
+     * 한 번이 운영진 권한을 나눠 준다 — prod에서 실제로 그렇게 됐다. 409로 승인 전체를 되돌린다.
+     * 이미 그 역할을 가진 리더라도 먼저 묻는다: 권한이 붙은 리더 역할이 있다는 것 자체가 고쳐야 할
+     * 상태이고, 승인이 그것을 알리는 가장 이른 자리다.
      */
     private void assignLeaderRole(AcademicProgramEntity academicProgram) {
         MemberRoleEntity role = findLeaderRole(academicProgram.getType().getCode());
+        leaderRoleGuard.requireAuthorityFree(role);
         MemberEntity leader = academicProgram.getLeader();
 
         if (memberRoleAssignmentRepository.existsOverlappingAssignment(
@@ -127,9 +143,21 @@ public class AcademicProgramApprovalEffectsServiceImpl
         if (roleName == null) {
             throw missingSeed("리더 역할 매핑", academicProgramTypeCode);
         }
-        return memberRoleRepository.findAllByNameOrderByIdAsc(roleName).stream()
-                .findFirst()
-                .orElseThrow(() -> missingSeed("리더 역할", roleName));
+        /*
+         * 정확히 하나여야 한다 (#687). role_nm은 DB UNIQUE가 아니고 앱의 중복 검사에는 좁은 창이 있다
+         * (RoleServiceImpl 주석) — 같은 이름이 둘이면 그중 어느 것을 내줄지 이 자리가 판단할 근거가 없다.
+         * 예전처럼 첫 행을 고르면 «먼저 만든 쪽»이라는 우연이 인가를 정한다.
+         */
+        List<MemberRoleEntity> roles = memberRoleRepository.findAllByNameOrderByIdAsc(roleName);
+        if (roles.isEmpty()) {
+            throw missingSeed("리더 역할", roleName);
+        }
+        if (roles.size() > 1) {
+            throw new IllegalStateException(
+                    "리더 역할이 %d개입니다 — 이름이 같은 역할을 하나만 남겨야 승인할 수 있습니다: %s"
+                            .formatted(roles.size(), roleName));
+        }
+        return roles.get(0);
     }
 
     private static IllegalStateException missingSeed(String seedName, String code) {

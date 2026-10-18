@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.entity.MemberGradeEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleClassificationEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
@@ -189,8 +190,10 @@ class CodeSeedDataTest {
         assertThat(grantedCodesOf("총무")).contains("APPROVAL_VOTE", "SUB_WORK_APPROVE_TREASURER");
         assertThat(grantedCodesOf("국장")).contains("APPROVAL_VOTE", "SUB_WORK_APPROVE_DIRECTOR");
         assertThat(grantedCodesOf("국원")).contains("APPROVAL_VOTE");
-        assertThat(grantedCodesOf("프로젝트장")).isEmpty();
-        assertThat(grantedCodesOf("스터디장")).isEmpty();
+        // 리더 역할은 운영진이 아니다 — 시드도 셋 모두 비어 있다(트랙장은 V19 · #687에서 빠진 것을 더했다)
+        for (LeaderRole leaderRole : LeaderRole.values()) {
+            assertThat(grantedCodesOf(leaderRole.roleName())).as(leaderRole.roleName()).isEmpty();
+        }
     }
 
     /*

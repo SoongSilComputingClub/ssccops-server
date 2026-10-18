@@ -23,7 +23,21 @@ public enum AuditAction {
     MEMBER_STATUS_CHANGE("member.status.change", "member"),
     MEMBER_ROLE_GRANT("member.role.grant", "member"),
     MEMBER_ROLE_REVOKE("member.role.revoke", "member"),
+    /** 리더 역할에 권한을 붙이려다 막힌 시도(409 LEADER_ROLE_AUTHORITY_FORBIDDEN)도 failure로 남긴다 (#687) */
     ROLE_AUTHORITY_CHANGE("role.authority.change", "role"),
+    /*
+     * 역할 이름 변경 (#687 · ssccops#611). 기획안 승인이 리더 역할을 **이름으로** 찾으므로 이름이 곧
+     * 인가의 열쇠인데, 그전에는 흔적이 없었다 — 이름을 맞바꿔 승인이 다른 역할을 내주게 만들어도
+     * Kibana로 되짚을 수 없었다. change는 이름 전후(역할명은 조직의 직책이지 개인정보가 아니다).
+     * 분류·순번만 바뀐 수정은 남기지 않는다.
+     */
+    ROLE_RENAME("role.rename", "role"),
+    /*
+     * 권한 트리의 부모 이동 (#687). 부모를 옮기면 그 아래가 통째로 다른 묶음 권한에 펼쳐진다 — 역할
+     * 하나 바꾸지 않고 여러 역할의 인가 범위가 바뀌는 사건인데 남는 것이 없었다. 대상은 권한 코드,
+     * change는 옛 부모 코드 → 새 부모 코드. 이름·설명만 바뀐 수정은 남기지 않는다.
+     */
+    AUTHORITY_PARENT_CHANGE("authority.parent.change", "authority"),
     /** 하드 삭제(ADR-0021). 409로 막힌 시도도 failure로 남긴다 */
     MEMBER_DELETE("member.delete", "member"),
     MEMBER_IMPORT("member.import", "member_import"),

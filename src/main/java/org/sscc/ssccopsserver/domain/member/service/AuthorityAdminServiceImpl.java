@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -55,6 +56,7 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
     private final MemberRoleRepository memberRoleRepository;
     private final AuthorityPolicy authorityPolicy;
     private final RoleManageSelfLockGuard roleManageSelfLockGuard;
+    private final LeaderRoleGuard leaderRoleGuard;
     private final EntityManager entityManager;
     private final AuditLog auditLog;
 
@@ -141,6 +143,7 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
     public AuthorityResponse updateAuthority(String authrtCd, AuthorityUpdateRequest request) {
         AuthorityEntity authority = findAuthority(authrtCd);
         rejectCodeChange(authority, request.authrtCd());
+        String parentBefore = parentCodeOf(authority);
 
         // 순환 검사는 여기서 다시 하지 않는다 — AuthorityEntity가 조상을 거슬러 올라가며 막는다 (#9)
         authority.changeParent(findParentOrNull(request.upAuthrtCd()));
@@ -148,6 +151,16 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
                 request.authrtNm().trim(),
                 trimToNull(request.authrtExpln()),
                 displayOrderOf(request.indctSeqno(), authority.getDisplayOrder()));
+
+        // 부모가 바뀌면 그 아래 전체의 펼침이 바뀐다 — 역할을 하나도 안 건드리고 인가 범위가 바뀌는 사건 (#687)
+        String parentAfter = parentCodeOf(authority);
+        if (!Objects.equals(parentBefore, parentAfter)) {
+            auditLog.record(
+                    AuditEvent.success(AuditAction.AUTHORITY_PARENT_CHANGE)
+                            .target(authority.getCode())
+                            .change(parentBefore, parentAfter)
+                            .build());
+        }
 
         return AuthorityResponse.from(authority);
     }
@@ -210,6 +223,24 @@ public class AuthorityAdminServiceImpl implements AuthorityAdminService {
                                 .map(AuthorityAdminServiceImpl::trimToNull)
                                 .filter(code -> code != null)
                                 .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        /*
+         * 리더 역할(스터디장·프로젝트장·트랙장)에는 권한을 붙이지 못한다 — 판정은 LeaderRoleGuard 한 곳이다
+         * (#687 · ssccops#611). 막힌 시도도 감사에 남긴다: «누가 리더 역할에 무엇을 붙이려 했나».
+         * 예외로 나가는 롤백 경로라 즉시 쓰인다(MemberDeletionServiceImpl과 같은 모양).
+         */
+        try {
+            leaderRoleGuard.verifyGrantable(role, requested);
+        } catch (GeneralException ex) {
+            auditLog.record(
+                    AuditEvent.failure(
+                                    AuditAction.ROLE_AUTHORITY_CHANGE,
+                                    MemberErrorCode.LEADER_ROLE_AUTHORITY_FORBIDDEN.getCode())
+                            .target(roleId)
+                            .after(requested.stream().sorted().collect(Collectors.joining(",")))
+                            .build());
+            throw ex;
+        }
 
         List<RoleAuthorityRelationEntity> existing =
                 roleAuthorityRelationRepository.findAllByRoleId(roleId);

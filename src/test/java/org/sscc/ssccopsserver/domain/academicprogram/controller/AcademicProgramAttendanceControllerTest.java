@@ -205,14 +205,29 @@ class AcademicProgramAttendanceControllerTest {
                 .andExpect(jsonPath("$.data[1].atndYn").value(false));
     }
 
-    // 조회는 인증만 요구한다 — 팀원도 일반 회원도 자기 활동의 출석부를 본다
+    /*
+     * 팀원은 자기 활동의 출석부를 본다 — 소유권(스터디장 한 사람)을 걸지 않는 이유다. ⚠️ 2026-10-18
+     * 정정(#688): 이 시험은 «다른 회원 → 200»이었다 — 그 동작이 동아리 전원에게 남의 출석(이름·출결)을
+     * 열었다. 이제 팀원은 200, 무관한 회원은 아래 시험에서 403이다.
+     */
     @Test
-    void getAttendancesAsOtherMemberReturns200() throws Exception {
+    void getAttendancesAsTeamMemberReturns200() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05");
+
+        mockMvc.perform(
+                        authorized(
+                                get(attendancesPath(academicProgram, sessionId)), participantToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", Matchers.hasSize(2)));
+    }
+
+    @Test
+    void getAttendancesAsOutsiderReturns403() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05");
 
         mockMvc.perform(authorized(get(attendancesPath(academicProgram, sessionId)), otherToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data", Matchers.hasSize(2)));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     // 승인된 회차의 출석부는 고칠 수 없을 뿐 볼 수는 있다
@@ -583,20 +598,23 @@ class AcademicProgramAttendanceControllerTest {
     }
 
     /*
-     * 관계자가 아니면 사진 블록을 아예 내리지 않는다 (#200) — 인증사진은 얼굴이 찍힌 사진이라
-     * 발급이 곧 읽기 권한이다. 상세의 나머지 필드는 종전대로 내려간다(조회 자체는 인증만이다).
+     * 관계자가 아니면 사진이 나가지 않는다 (#200) — 인증사진은 얼굴이 찍힌 사진이라 발급이 곧 읽기
+     * 권한이다.
      *
-     * 사진이 없는 회차와 **같은 응답**이다 — 사진 유무도 관계자가 아닌 사람에게 알릴 값이 아니다.
+     * ⚠️ 2026-10-18 정정(#688 · ssccops#611): 여기는 «사진 블록만 null, 상세의 나머지는 종전대로
+     * (조회 자체는 인증만)»을 못 박고 있었다. 이제 **상세 자체가 관계자만**이라 무관한 회원은 403이고,
+     * 사진은 서명이 만들어지기 전에 막힌다. 사진 판정(SessionFileReferenceViewer)은 같은
+     * OwnershipPolicy.isRelated를 그대로 쓴다.
      */
     @Test
-    void sessionDetailHidesFileReferenceFromOutsider() throws Exception {
+    void sessionDetailWithPhotoIsForbiddenToOutsider() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05");
         issueUpload(sessionId, "png");
 
         mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.sessionId").value(sessionId))
-                .andExpect(jsonPath("$.data.fileReference").value(Matchers.nullValue()));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.data.fileReference").doesNotExist());
     }
 
     /*

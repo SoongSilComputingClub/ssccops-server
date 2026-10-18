@@ -39,8 +39,12 @@ public interface SessionService {
      * 회차 상세. 인증만 요구한다 — 팀원도 자기 활동의 회차를 본다.
      *
      * **주체를 받는 것은 출석 인증사진 때문이다** (#200). 사진은 그 활동의 관계자에게만 서명된
-     * URL로 내려주므로(팀원·스터디장·학술국장) 상세 조립에 요청자가 필요하다. 조회 자체는 여전히
-     * 인증만이며 관계자가 아니어도 나머지 필드는 그대로 내려간다 — 좁히는 것은 사진 하나다.
+     * URL로 내려주므로(팀원·스터디장·학술국장) 상세 조립에 요청자가 필요하다.
+     *
+     * ⚠️ 2026-10-18 정정(#688 · ssccops#611): 여기는 «조회 자체는 인증만이며 좁히는 것은 사진
+     * 하나다»라고 적혀 있었다. **이제 조회 자체가 관계자만이다**(AcademicProgramOwnershipPolicy
+     * .requireRelated · 아니면 403) — «팀원도 봐야 한다»가 근거였는데 코드는 동아리 전원에게 열어
+     * 남의 프로그램 출석부·진행 내용이 읽혔다. 수정요청 사유(latestOpinion)는 리더·학술국장만이다.
      */
     SessionDetailResponse getSession(
             Long academicProgramId, Long sessionId, MemberEntity requester);
@@ -53,14 +57,20 @@ public interface SessionService {
      * 착지 화면은 그 하나로 활동 id를 얻어 사람이 갈 lms 주소를 조립한다 — 활동 id를 함께
      * 요구하면 애초에 부를 수 없는 조회다.
      *
-     * **자격을 넓히는 것이 아니다.** 활동 문맥의 조회도 인증만 요구하고 상태로 감추지 않으므로
-     * (SessionSharePreviewProvider의 "404로 감출 상태가 없다"와 같은 판단), 회차 하나로 읽어도
-     * 인증된 회원이 볼 수 있는 것의 범위는 그대로다. 중첩 경로의 활동 검사는 인가 경계가 아니라
-     * **경로가 가리키는 대상을 못 박는 장치**다 — 그 경로는 화면이 이미 활동을 알고 들어오므로
-     * 어긋난 조합을 404로 끊는 것이 맞고, 이 경로는 활동을 모르는 것이 전제라 끊을 것이 없다.
+     * **자격을 넓히는 것이 아니다.** 중첩 경로와 같은 «관계자만»(#688)이라 회차 하나로 읽어도
+     * 볼 수 있는 사람의 범위는 그대로다. 중첩 경로의 활동 검사는 인가 경계가 아니라 **경로가
+     * 가리키는 대상을 못 박는 장치**다 — 그 경로는 화면이 이미 활동을 알고 들어오므로 어긋난 조합을
+     * 404로 끊는 것이 맞고, 이 경로는 활동을 모르는 것이 전제라 끊을 것이 없다.
+     *
+     * 공유 링크를 받은 사람이 관계자가 아니면 여기서 403이다 — 토큰이 주는 것은 미리보기까지다
+     * (ADR-0016 · 익명 미리보기는 SessionSharePreviewProvider가 따로 그린다).
      */
     SessionDetailResponse getSessionById(Long sessionId, MemberEntity requester);
 
-    /* 회차 목록. 활동 상세 화면 안에서 그 활동의 회차만 보는 용도다 */
-    SessionSearchResponse searchSessions(Long academicProgramId, SessionCondition condition);
+    /* 회차 공유 중지의 자격 — 리더·학술국장 (#688 · 프로그램 쪽 requireShareRevocable과 같다) */
+    void requireShareRevocable(Long sessionId, MemberEntity requester);
+
+    /* 회차 목록. 활동 상세 화면 안에서 그 활동의 회차만 보는 용도다 — 관계자만 (#688) */
+    SessionSearchResponse searchSessions(
+            Long academicProgramId, SessionCondition condition, MemberEntity requester);
 }

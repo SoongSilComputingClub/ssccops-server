@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,9 +28,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.result.JsonPathResultMatchers;
 import org.springframework.transaction.annotation.Transactional;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramApprovalEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.CurriculumItemEntity;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionStatus;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.SessionTransition;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramApprovalRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
 import org.sscc.ssccopsserver.domain.academicprogram.repository.AttendanceRepository;
@@ -89,10 +93,13 @@ class AcademicProgramSessionControllerTest {
     @Autowired private FormRepository formRepository;
     @Autowired private SessionRepository sessionRepository;
     @Autowired private AttendanceRepository attendanceRepository;
+    @Autowired private AcademicProgramApprovalRepository academicProgramApprovalRepository;
 
     private UUID leaderToken;
     private MemberEntity leader;
     private UUID otherToken;
+    /* 확정 팀원의 토큰 — 회차 조회는 관계자(팀원·리더·학술국장)만이라(#688) 조회 시험은 이 토큰으로 부른다 */
+    private UUID memberToken;
 
     private AcademicProgramEntity academicProgram;
     private CurriculumItemEntity firstItem;
@@ -111,9 +118,9 @@ class AcademicProgramSessionControllerTest {
         firstItem = items.get(0);
         secondItem = items.get(1);
 
+        memberToken = UUID.randomUUID();
         confirmedMember =
-                confirmParticipant(
-                        academicProgram, saveMember(UUID.randomUUID(), "20260403", "팀원"));
+                confirmParticipant(academicProgram, saveMember(memberToken, "20260403", "팀원"));
     }
 
     // ------------------------------------------------------------------ 제출 (POST)
@@ -591,12 +598,16 @@ class AcademicProgramSessionControllerTest {
 
     // ------------------------------------------------------------------ 상세 조회 (GET)
 
-    // 조회는 인증만 요구한다 — 팀원도 일반 회원도 자기 활동의 회차를 본다
+    /*
+     * 팀원은 자기 활동의 회차를 본다 — 소유권(스터디장 한 사람)을 걸지 않는 이유다. ⚠️ 2026-10-18
+     * 정정(#688): 이 시험은 «다른 회원 → 200»을 못 박고 있었다 — 그것이 동아리 전원에게 남의 출석·진행
+     * 내용을 열던 바로 그 동작이다. 이제 팀원은 200, 무관한 회원은 아래 시험에서 403이다.
+     */
     @Test
-    void getSessionAsOtherMemberReturns200() throws Exception {
+    void getSessionAsTeamMemberReturns200() throws Exception {
         Long sessionId = submitSession(firstItem, "2026-09-05", "1회차 내용", confirmedMember, true);
 
-        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), memberToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sessionId").value(sessionId))
                 // 활동 id는 경로에 이미 있지만 응답에도 실린다 (#316) — 회차 하나만 아는
@@ -606,6 +617,41 @@ class AcademicProgramSessionControllerTest {
                 .andExpect(jsonPath("$.data.sttsCd").value("SUBMITTED"))
                 .andExpect(jsonPath("$.data.attendances", Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data.presentCount").value(1));
+    }
+
+    // 그 활동의 관계자가 아니면 403이다 (#688) — 404로 감추지 않는다(서버 AGENTS.md «인가는 403»)
+    @Test
+    void getSessionAsOutsiderReturns403() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05", "1회차 내용", confirmedMember, true);
+
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), otherToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    /*
+     * 수정요청 사유(latestOpinion)는 리더·학술국장에게만 실린다 (#688). 승인 이력 API는 의견 본문을
+     * 팀원에게도 숨기는데 회차 상세는 같은 문장을 상세를 연 누구에게나 실었다 — 같은 값이 경로에
+     * 따라 다르게 보호됐다. 팀원에게는 아직 검토되지 않은 회차와 같은 null이다.
+     */
+    @Test
+    void latestOpinionIsShownToTheLeaderButNotToTeamMembers() throws Exception {
+        Long sessionId = submitSession(firstItem, "2026-09-05", "1회차 내용", confirmedMember, true);
+        academicProgramApprovalRepository.saveAndFlush(
+                AcademicProgramApprovalEntity.forSession(
+                        academicProgram,
+                        sessionRepository.findById(sessionId).orElseThrow(),
+                        SessionTransition.REQUEST_REVISION,
+                        leader,
+                        "출석 명단이 맞지 않습니다.",
+                        Instant.now()));
+
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), leaderToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.latestOpinion").value("출석 명단이 맞지 않습니다."));
+        mockMvc.perform(authorized(get(sessionPath(academicProgram, sessionId)), memberToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.latestOpinion").value(Matchers.nullValue()));
     }
 
     @Test
@@ -638,7 +684,7 @@ class AcademicProgramSessionControllerTest {
         submitSession(secondItem, "2026-09-12", "2회차", confirmedMember, false);
         submitSession(firstItem, "2026-09-05", "1회차", confirmedMember, true);
 
-        mockMvc.perform(authorized(get(sessionsPath(academicProgram)), otherToken))
+        mockMvc.perform(authorized(get(sessionsPath(academicProgram)), memberToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
                 // 등록 순서가 아니라 회차 번호가 줄 순서다
@@ -660,6 +706,44 @@ class AcademicProgramSessionControllerTest {
     }
 
     // 다른 활동의 회차는 섞이지 않는다 — 질의가 애초에 경로의 활동 것만 읽는다
+
+    /*
+     * **다른 프로그램의 스터디장도 남이다** (#688 · ssccops#611). 리더 자격은 «이 활동 한정» 관계라
+     * (leadr_mbr_id) 자기 프로그램을 이끈다는 사실이 남의 프로그램을 열지 않는다 — 스터디장·프로젝트장·
+     * 트랙장은 운영진이 아니다. 판정은 무관한 회원과 같지만 요구가 이 문장이라 이름으로 못 박는다.
+     */
+    @Test
+    void leaderOfAnotherProgramCannotReadThisProgramsSessions() throws Exception {
+        submitSession(firstItem, "2026-09-05", "1회차", confirmedMember, true);
+        UUID otherLeaderToken = UUID.randomUUID();
+        AcademicProgramFixture.save(
+                eventRepository,
+                eventClassificationRepository,
+                academicProgramRepository,
+                academicProgramTypeRepository,
+                curriculumItemRepository,
+                formRepository,
+                formResponseHistoryRepository,
+                "STUDY",
+                "다른 스터디",
+                saveMember(otherLeaderToken, "20260409", "다른 스터디장"),
+                List.of("OT"));
+
+        mockMvc.perform(authorized(get(sessionsPath(academicProgram)), otherLeaderToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    // 남의 프로그램 회차 목록(등록자 이름·출석 수)도 관계자만 본다 (#688)
+    @Test
+    void searchSessionsAsOutsiderReturns403() throws Exception {
+        submitSession(firstItem, "2026-09-05", "1회차", confirmedMember, true);
+
+        mockMvc.perform(authorized(get(sessionsPath(academicProgram)), otherToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
     @Test
     void searchSessionsExcludesOtherProgramsSessions() throws Exception {
         submitSession(firstItem, "2026-09-05", "내 1회차", confirmedMember, true);

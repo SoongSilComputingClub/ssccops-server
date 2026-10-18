@@ -117,6 +117,8 @@ class AcademicProgramTeamMemberControllerTest {
     private MemberEntity leader;
     private UUID outsiderToken;
     private MemberEntity candidate;
+    /* 팀원으로 넣은 뒤 «관계자지만 명단을 고칠 수 없는 사람»으로 부른다 (#688) */
+    private UUID candidateToken;
 
     private AcademicProgramEntity program;
     private FormEntity recruitmentForm;
@@ -135,7 +137,8 @@ class AcademicProgramTeamMemberControllerTest {
         outsiderToken = UUID.randomUUID();
         grant(saveMember(outsiderToken, "국원"), AuthorityCode.WORK_MANAGE);
 
-        candidate = saveMember(UUID.randomUUID(), "늦게 합류하는 회원");
+        candidateToken = UUID.randomUUID();
+        candidate = saveMember(candidateToken, "늦게 합류하는 회원");
 
         program = createProgram("팀원 관리 스터디");
         recruitmentForm = linkForm(program);
@@ -298,14 +301,28 @@ class AcademicProgramTeamMemberControllerTest {
 
     // ------------------------------------------------------------------ isEditable
 
-    // 명단을 고칠 수 없는 사람에게는 isEditable이 거짓이다 — 명단 조회 자체는 인증만이다
+    /*
+     * 명단을 고칠 수 없는 관계자(팀원)에게는 isEditable이 거짓이다. ⚠️ 2026-10-18 정정(#688): 여기는
+     * «명단 조회 자체는 인증만이다»라며 무관한 회원(outsider)으로 200을 보고 있었다 — 이제 명단은
+     * 관계자만이라 무관한 회원은 403이고, «볼 수는 있지만 고칠 수 없는 사람»은 팀원이다. 그래서 방금
+     * 넣은 팀원 본인의 토큰으로 본다.
+     */
     @Test
-    void rosterIsNotEditableForOutsiders() throws Exception {
+    void rosterIsNotEditableForTeamMembers() throws Exception {
+        addAndGetId(candidate);
+
+        mockMvc.perform(authorized(get(membersPath(program)), candidateToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0].isEditable").value(false));
+    }
+
+    @Test
+    void rosterIsForbiddenToOutsiders() throws Exception {
         addAndGetId(candidate);
 
         mockMvc.perform(authorized(get(membersPath(program)), outsiderToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].isEditable").value(false));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     // 종료된 활동에서는 스터디장에게도 거짓이다 — 저장이 409가 될 버튼을 켜지 않는다

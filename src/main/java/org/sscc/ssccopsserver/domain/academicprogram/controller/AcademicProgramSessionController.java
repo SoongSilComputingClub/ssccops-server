@@ -25,6 +25,7 @@ import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import lombok.RequiredArgsConstructor;
 
@@ -90,9 +91,11 @@ public class AcademicProgramSessionController {
     }
 
     /*
-     * 상세·목록은 인증만 요구한다 — 팀원도 자기 활동의 회차를 봐야 하고, 여기에 소유권을 걸면
-     * 스터디장 한 사람 말고는 아무도 회차 이력을 볼 수 없다. 다른 활동의 회차 식별자로 부르면
-     * 404다(경로의 활동으로 좁혀 조회한다).
+     * 상세·목록은 **그 활동의 관계자**(팀원·스터디장/팀장·학술국장)만 본다 (#688 · ssccops#611).
+     * 소유권(스터디장 한 사람)을 걸면 팀원이 회차 이력을 못 보고, 그렇다고 «인증만»이면 동아리 전원이
+     * 남의 프로그램 출석·진행 내용을 읽는다 — ⚠️ 2026-10-18 정정: 여기는 «인증만 요구한다»였고
+     * 근거가 «팀원도 봐야 한다»였는데 코드는 팀원이 아니라 전원에게 열었다. 다른 활동의 회차
+     * 식별자로 부르면 404다(경로의 활동으로 좁혀 조회한다).
      */
     @Operation(
             summary = "회차 상세 조회",
@@ -101,8 +104,9 @@ public class AcademicProgramSessionController {
                             + " 출석 인증사진(fileReference)은 **그 활동의 관계자**(팀원·스터디장/팀장·"
                             + "ACADEMIC_PROGRAM_MANAGE)에게만 실리며, 값은 만료가 있는 서명된 URL이다"
                             + "(expiresInSeconds로 남은 시간을 함께 내린다 — 만료되면 이 조회를 다시"
-                            + " 부른다). 사진이 없는 회차와 관계자가 아닌 요청자는 같은 응답이다"
-                            + "(fileReference: null).")
+                            + " 부른다). **조회 자체가 그 활동의 관계자만**이며 아니면 403 FORBIDDEN이다."
+                            + " latestOpinion(마지막 수정요청 사유)은 스터디장/팀장·ACADEMIC_PROGRAM_MANAGE에게만"
+                            + " 실리고 팀원에게는 null이다.")
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionDetailResponse> getSession(
             @PathVariable Long academicProgramId,
@@ -117,12 +121,16 @@ public class AcademicProgramSessionController {
             description =
                     "활동 상세 화면 안에서 그 활동의 회차만 본다. 커서 페이징이며 기본 정렬은 회차 번호"
                             + " 오름차순이다. sttsCd에 NOT_SUBMITTED를 넘기면 언제나 빈 목록이다 — 그 상태는"
-                            + " 실적 행이 없다는 뜻이라 미제출 회차는 커리큘럼 조회(#134)에서 본다.")
+                            + " 실적 행이 없다는 뜻이라 미제출 회차는 커리큘럼 조회(#134)에서 본다. 그 활동의"
+                            + " 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만 부를 수 있고 아니면 403이다.")
     @GetMapping
     public ApiResponse<List<SessionSummaryResponse>> searchSessions(
             @PathVariable Long academicProgramId,
-            @Valid @ModelAttribute SessionCondition condition) {
-        SessionSearchResponse result = sessionService.searchSessions(academicProgramId, condition);
+            @Valid @ModelAttribute SessionCondition condition,
+            // springdoc이 필수 쿼리 파라미터로 실어 api-compat이 깨는 변경으로 본다 — 스펙에서 감춘다
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
+        SessionSearchResponse result =
+                sessionService.searchSessions(academicProgramId, condition, requester);
         return ApiResponse.success(result.sessions(), result.page());
     }
 }

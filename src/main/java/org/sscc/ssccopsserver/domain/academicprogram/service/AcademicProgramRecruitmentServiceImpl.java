@@ -121,6 +121,12 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     public List<AcademicProgramMemberResponse> getMembers(
             Long academicProgramId, EventParticipantStatus participantStatus, MemberEntity viewer) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        /*
+         * 명단은 그 활동의 관계자만 본다 (#688 · ssccops#611 · #124 «활동 관계자»). ⚠️ 2026-10-18
+         * 정정 — 그전에는 «인증만»이라 동아리 전원이 남의 프로그램 팀원 이름·상태(취소 포함)를 읽었다.
+         * 404(활동) 다음이 403이다.
+         */
+        academicProgramOwnershipPolicy.requireRelated(academicProgram, viewer);
         return membersOf(
                 academicProgram, participantStatus, isRosterEditable(academicProgram, viewer));
     }

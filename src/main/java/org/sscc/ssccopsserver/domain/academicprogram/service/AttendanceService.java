@@ -9,7 +9,9 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 
 public interface AttendanceService {
 
-    List<AttendanceResponse> getAttendances(Long academicProgramId, Long sessionId);
+    /* 출석부 — 그 활동의 관계자만 (#688) */
+    List<AttendanceResponse> getAttendances(
+            Long academicProgramId, Long sessionId, MemberEntity requester);
 
     AttendancePatchResponse correctAttendances(
             Long academicProgramId,

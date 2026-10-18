@@ -44,15 +44,21 @@ public class AttendanceServiceImpl implements AttendanceService {
 
     private final AttendanceRepository attendanceRepository;
     private final SessionCorrectionPolicy sessionCorrectionPolicy;
+    private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
 
     /*
-     * 출석부 조회는 인증만 요구한다 — 팀원도 자기 활동의 출석부를 봐야 하고, 여기에 소유권을
-     * 걸면 스터디장 한 사람 말고는 아무도 출석을 확인할 수 없다(회차 상세 조회와 같은 판단).
+     * 출석부 조회는 **그 활동의 관계자**만이다 (#688 · ssccops#611). 소유권(스터디장 한 사람)을 걸면
+     * 팀원이 출석을 확인할 수 없고, ⚠️ 2026-10-18 정정 — 그전에는 «인증만»이라 동아리 전원이 남의
+     * 프로그램 출석(이름·출결)을 읽었다. 판정은 회차 상세와 같은 AcademicProgramOwnershipPolicy
+     * .requireRelated다. 순서는 활동 404 → 회차 404 → 403.
      */
     @Override
-    public List<AttendanceResponse> getAttendances(Long academicProgramId, Long sessionId) {
+    public List<AttendanceResponse> getAttendances(
+            Long academicProgramId, Long sessionId, MemberEntity requester) {
         sessionCorrectionPolicy.requireAcademicProgramExists(academicProgramId);
         SessionEntity session = sessionCorrectionPolicy.findSession(academicProgramId, sessionId);
+        academicProgramOwnershipPolicy.requireRelated(
+                session.getCurriculumItem().getAcademicProgram(), requester);
         return attendanceRepository.findAllBySessionOrderByIdAsc(session).stream()
                 .map(AttendanceResponse::from)
                 .toList();

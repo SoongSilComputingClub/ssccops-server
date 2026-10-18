@@ -217,6 +217,22 @@ class AuditPointsTest {
         assertThat(section(line, "audit")).containsEntry("decision", "MEMBER_MANAGE");
     }
 
+    /*
+     * 전체 학술 프로그램 목록(mine 없음)의 거절도 같은 사건이다 (#688). 이 목록은 조건에 따라 갈려
+     * @RequireAuthority를 쓰지 못하지만, 거절의 모양(403 FORBIDDEN · authz.deny · decision=요구 권한)은
+     * 애노테이션과 같아야 Kibana에서 한 질의로 «누가 운영진 화면을 두드렸나»가 모인다.
+     */
+    @Test
+    void unfilteredAcademicProgramListDenialIsAuditedLikeRequireAuthority() throws Exception {
+        mockMvc.perform(get("/v1/academic-programs").header("Authorization", "Bearer " + PLAIN))
+                .andExpect(status().isForbidden());
+
+        Map<String, Object> line = onlyLine("authz.deny");
+        assertThat(section(line, "event")).containsEntry("outcome", "failure");
+        assertThat(section(line, "error")).containsEntry("code", "FORBIDDEN");
+        assertThat(section(line, "audit")).containsEntry("decision", "ACADEMIC_PROGRAM_MANAGE");
+    }
+
     /* 남의 상세는 남고, 본인 상세는 남지 않는다 */
     @Test
     void memberDetailReadIsAuditedExceptForSelf() throws Exception {

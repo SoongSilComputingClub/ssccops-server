@@ -50,11 +50,18 @@ import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.entity.ResponseContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
+import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.TestJwtDecoderConfig;
 
@@ -93,12 +100,24 @@ class AcademicProgramControllerTest {
     @Autowired private SessionRepository sessionRepository;
     @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
     @Autowired private FormRepository formRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private AuthorityRepository authorityRepository;
+    @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @PersistenceContext private EntityManager entityManager;
 
     private UUID proposerToken;
     private MemberEntity proposer;
     private UUID otherToken;
     private MemberEntity other;
+
+    /*
+     * 학술국장 (#688). 필터 없는 전체 목록은 ACADEMIC_PROGRAM_MANAGE만 부를 수 있게 됐다 — 목록의
+     * 필터·정렬·진행률·페이징을 보는 시험은 이 토큰으로 부른다. «누가 부를 수 있나»는
+     * unfilteredList… 두 시험이 따로 본다.
+     */
+    private UUID managerToken;
 
     @BeforeEach
     void setUp() {
@@ -107,6 +126,16 @@ class AcademicProgramControllerTest {
 
         otherToken = UUID.randomUUID();
         other = saveMember(otherToken, "20260402", "다른회원");
+
+        managerToken = UUID.randomUUID();
+        AuthorityFixture.grant(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                saveMember(managerToken, "20260403", "학술국장"),
+                AuthorityCode.ACADEMIC_PROGRAM_MANAGE);
     }
 
     // ------------------------------------------------------------------ 단건 조회
@@ -187,7 +216,7 @@ class AcademicProgramControllerTest {
                 createAcademicProgram("STUDY", "목록용 스터디", "1주차", "2주차");
         recordSessions(academicProgram, SessionStatus.APPROVED);
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.data[0].academicProgramId").value(academicProgram.getId()))
@@ -197,7 +226,9 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data[0].leadrMbrNm").value("제출자"))
                 // 계획 2개 중 1개 승인 (#609)
                 .andExpect(jsonPath("$.data[0].progressRatio").value(50))
-                .andExpect(jsonPath("$.data[0].isLeader").value(true))
+                // 전체 목록은 학술국장이 본다(#688) — isLeader는 «부른 사람이 그 리더인가»라 거짓이다.
+                // 리더 본인에게 참인 것은 mine=leader 시험이 본다
+                .andExpect(jsonPath("$.data[0].isLeader").value(false))
                 .andExpect(jsonPath("$.page.size").value(20))
                 .andExpect(jsonPath("$.page.sort").value("-createdAt"))
                 .andExpect(jsonPath("$.page.hasNext").value(false))
@@ -219,7 +250,7 @@ class AcademicProgramControllerTest {
         AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "모집 카드용 스터디", "1주차");
         FormEntity recruitmentForm = linkRecruitmentForm(academicProgram);
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].formId").value(recruitmentForm.getId()))
                 .andExpect(jsonPath("$.data[0].formReceiptStatus").value("DRAFT"))
@@ -254,7 +285,7 @@ class AcademicProgramControllerTest {
                 FormResponseHistoryEntity.createDraft(
                         recruitmentForm, drafter, ResponseContent.of(Map.of("q1", "작성 중"))));
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].applicationCount").value(1));
     }
@@ -269,7 +300,7 @@ class AcademicProgramControllerTest {
     void searchAcademicProgramsWithoutLinkedFormLeavesFormFieldsNull() throws Exception {
         createAcademicProgram("STUDY", "폼 없는 스터디", "1주차");
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data[0].formId").doesNotExist())
@@ -283,7 +314,7 @@ class AcademicProgramControllerTest {
         createAcademicProgram("STUDY", "필터용 스터디", "1주차");
         createAcademicProgram("PROJECT", "필터용 프로젝트", "1주차");
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("typeCd", "PROJECT"))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken).param("typeCd", "PROJECT"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data[0].title").value("필터용 프로젝트"));
@@ -294,7 +325,7 @@ class AcademicProgramControllerTest {
     void searchWithNonMatchingSttsCdReturnsEmptyArray() throws Exception {
         createAcademicProgram("STUDY", "상태 필터용 스터디", "1주차");
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("sttsCd", "ONGOING"))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken).param("sttsCd", "ONGOING"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isArray())
                 .andExpect(jsonPath("$.data").isEmpty())
@@ -412,12 +443,37 @@ class AcademicProgramControllerTest {
     void searchWithMineFalseAppliesNoFilter() throws Exception {
         createAcademicProgram("STUDY", "남의 스터디", "1주차");
 
-        mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "false"))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken).param("mine", "false"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)));
     }
 
     // 알 수 없는 표기는 조용히 기본값으로 떨어뜨리지 않는다(sttsCd·sort와 같은 판단)
+    /*
+     * **전체 목록은 학술국장만** (#688 · ssccops#611 · 사용자 결정 2026-10-18). 리더는 운영진이 아니다 —
+     * mine 없이 부르면 남의 프로그램(모집 전·폐지 포함)의 리더·진행률·신청 수가 전부 나온다. 거절의
+     * 모양은 @RequireAuthority와 같다(403 FORBIDDEN). 자기 것(mine)은 그대로 열려 있다 — 위의 mine
+     * 시험들이 제출자 토큰으로 그것을 본다.
+     */
+    @Test
+    void unfilteredListRequiresAcademicProgramManage() throws Exception {
+        createAcademicProgram("STUDY", "남의 스터디", "1주차");
+
+        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    // mine=false·빈 값도 «필터 없음»이라 같이 막힌다 — 원문 문자열로 가르면 이 값으로 샌다
+    @Test
+    void unfilteredListWithMineFalseAlsoRequiresAcademicProgramManage() throws Exception {
+        createAcademicProgram("STUDY", "남의 스터디", "1주차");
+
+        mockMvc.perform(authorized(get(PROGRAMS), otherToken).param("mine", "false"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
     @Test
     void searchWithUnknownMineRoleReturnsInvalidCodeValue() throws Exception {
         mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("mine", "무효"))
@@ -430,7 +486,7 @@ class AcademicProgramControllerTest {
         createAcademicProgram("STUDY", "네트워크 스터디", "1주차");
         createAcademicProgram("STUDY", "백엔드 스터디", "1주차");
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("keyword", "네트워크"))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken).param("keyword", "네트워크"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data[0].title").value("네트워크 스터디"));
@@ -448,7 +504,7 @@ class AcademicProgramControllerTest {
 
         String firstPage =
                 mockMvc.perform(
-                                authorized(get(PROGRAMS), proposerToken)
+                                authorized(get(PROGRAMS), managerToken)
                                         .param("size", "1")
                                         .param("sort", "eventBgngDt"))
                         .andExpect(status().isOk())
@@ -461,7 +517,7 @@ class AcademicProgramControllerTest {
         String cursor = JsonPath.parse(firstPage).read("$.page.nextCursor", String.class);
 
         mockMvc.perform(
-                        authorized(get(PROGRAMS), proposerToken)
+                        authorized(get(PROGRAMS), managerToken)
                                 .param("size", "1")
                                 .param("sort", "eventBgngDt")
                                 .param("cursor", cursor))
@@ -502,7 +558,7 @@ class AcademicProgramControllerTest {
                 .andExpect(jsonPath("$.data.progress.ratio").value(0))
                 .andExpect(jsonPath("$.data.curriculumItemCount").value(0));
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].progressRatio").value(0));
     }
@@ -559,7 +615,7 @@ class AcademicProgramControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.progress.ratio").value(66.67));
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data[0].progressRatio").value(66.67));
     }
@@ -578,7 +634,7 @@ class AcademicProgramControllerTest {
         recordSessions(allApproved, SessionStatus.APPROVED, SessionStatus.APPROVED);
         recordSessions(oneOfThree, SessionStatus.APPROVED, SessionStatus.SUBMITTED);
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(3)))
                 .andExpect(
@@ -614,11 +670,9 @@ class AcademicProgramControllerTest {
         }
 
         long onePage =
-                statementCountOf(
-                        authorized(get(PROGRAMS), proposerToken).param("keyword", "단독"), 1);
+                statementCountOf(authorized(get(PROGRAMS), managerToken).param("keyword", "단독"), 1);
         long threePage =
-                statementCountOf(
-                        authorized(get(PROGRAMS), proposerToken).param("keyword", "묶음"), 3);
+                statementCountOf(authorized(get(PROGRAMS), managerToken).param("keyword", "묶음"), 3);
 
         // 통계가 꺼져 있으면 둘 다 0이라 아래 단정이 거저 통과한다
         assertThat(onePage).isPositive();
@@ -730,10 +784,10 @@ class AcademicProgramControllerTest {
         seedDelayScenarios();
 
         List<String> markedDelayed =
-                JsonPath.parse(listContent(authorized(get(PROGRAMS), proposerToken)))
+                JsonPath.parse(listContent(authorized(get(PROGRAMS), managerToken)))
                         .read("$.data[?(@.isDelayed == true)].title");
         String filteredContent =
-                listContent(authorized(get(PROGRAMS), proposerToken).param("delayed", "true"));
+                listContent(authorized(get(PROGRAMS), managerToken).param("delayed", "true"));
         List<String> filtered = JsonPath.parse(filteredContent).read("$.data[*].title");
 
         assertThat(filtered)
@@ -752,14 +806,14 @@ class AcademicProgramControllerTest {
         seedDelayScenarios();
 
         mockMvc.perform(
-                        authorized(get(PROGRAMS), proposerToken)
+                        authorized(get(PROGRAMS), managerToken)
                                 .param("sttsCd", "COMPLETED")
                                 .param("delayed", "true"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isEmpty())
                 .andExpect(jsonPath("$.page.totalCount").value(0));
         mockMvc.perform(
-                        authorized(get(PROGRAMS), proposerToken)
+                        authorized(get(PROGRAMS), managerToken)
                                 .param("sttsCd", "ONGOING")
                                 .param("delayed", "true"))
                 .andExpect(status().isOk())
@@ -771,7 +825,7 @@ class AcademicProgramControllerTest {
     void delayedFalseAppliesNoFilter() throws Exception {
         seedDelayScenarios();
 
-        mockMvc.perform(authorized(get(PROGRAMS), proposerToken).param("delayed", "false"))
+        mockMvc.perform(authorized(get(PROGRAMS), managerToken).param("delayed", "false"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(8)));
     }

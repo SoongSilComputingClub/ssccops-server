@@ -148,6 +148,11 @@ class AcademicProgramRecruitmentControllerTest {
         outsiderToken = UUID.randomUUID();
         grant(saveMember(outsiderToken, "20260703", "국원"), AuthorityCode.WORK_MANAGE);
 
+        /*
+         * 이름은 «팀원»이지만 참가 행이 없는 회원이다 — 명단 조회가 «인증만»이던 때 만든 토큰이다.
+         * #688부터 명단은 관계자(팀원·리더·학술국장)만이라, 명단 내용을 보는 시험은 리더 토큰으로 부르고
+         * 이 토큰은 «관계자가 아니면 403»을 보는 데 쓴다.
+         */
         teamMemberToken = UUID.randomUUID();
         saveMember(teamMemberToken, "20260704", "팀원");
 
@@ -167,7 +172,7 @@ class AcademicProgramRecruitmentControllerTest {
         EventParticipantEntity waiting =
                 register(recruiting, applicant, EventParticipantStatus.WAITLISTED);
 
-        mockMvc.perform(authorized(get(membersPath(recruiting)), teamMemberToken))
+        mockMvc.perform(authorized(get(membersPath(recruiting)), leaderToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
                 // 정렬은 등록 순번(식별자 오름차순)이다
@@ -192,7 +197,7 @@ class AcademicProgramRecruitmentControllerTest {
         register(recruiting, leader, EventParticipantStatus.CONFIRMED);
         cancel(register(recruiting, applicant, EventParticipantStatus.CONFIRMED));
 
-        mockMvc.perform(authorized(get(membersPath(recruiting)), teamMemberToken))
+        mockMvc.perform(authorized(get(membersPath(recruiting)), leaderToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(2)))
                 .andExpect(jsonPath("$.data[1].ptcpSttsCd").value("CANCELLED"));
@@ -204,7 +209,7 @@ class AcademicProgramRecruitmentControllerTest {
         register(recruiting, applicant, EventParticipantStatus.WAITLISTED);
 
         mockMvc.perform(
-                        authorized(get(membersPath(recruiting)), teamMemberToken)
+                        authorized(get(membersPath(recruiting)), leaderToken)
                                 .param("ptcpSttsCd", "WAITLISTED"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
@@ -218,7 +223,7 @@ class AcademicProgramRecruitmentControllerTest {
         AcademicProgramEntity another = createProgram("남의 스터디");
         register(another, anotherApplicant, EventParticipantStatus.CONFIRMED);
 
-        mockMvc.perform(authorized(get(membersPath(recruiting)), teamMemberToken))
+        mockMvc.perform(authorized(get(membersPath(recruiting)), leaderToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data[0].mbrNm").value("지원자1"));
@@ -232,9 +237,20 @@ class AcademicProgramRecruitmentControllerTest {
     void getMembersBeforeRecruitmentReturnsEmptyArray() throws Exception {
         AcademicProgramEntity approved = createProgram("아직 모집 전 스터디");
 
-        mockMvc.perform(authorized(get(membersPath(approved)), teamMemberToken))
+        mockMvc.perform(authorized(get(membersPath(approved)), leaderToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").isEmpty());
+    }
+
+    /*
+     * 그 활동의 관계자가 아니면 명단을 볼 수 없다 (#688 · ssccops#611 · #124 «활동 관계자»). 그전에는
+     * «인증만»이라 동아리 전원이 남의 프로그램 팀원 이름·상태(취소 포함)를 읽었다.
+     */
+    @Test
+    void getMembersAsOutsiderReturns403() throws Exception {
+        mockMvc.perform(authorized(get(membersPath(recruiting)), teamMemberToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     @Test
@@ -526,7 +542,7 @@ class AcademicProgramRecruitmentControllerTest {
 
         selectConfirmed(responseId);
 
-        mockMvc.perform(authorized(get(membersPath(recruiting)), teamMemberToken))
+        mockMvc.perform(authorized(get(membersPath(recruiting)), leaderToken))
                 .andExpect(status().isOk())
                 // 행이 하나 더 생기지도, 상태가 바뀌지도 않는다
                 .andExpect(jsonPath("$.data", Matchers.hasSize(1)))

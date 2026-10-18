@@ -25,6 +25,7 @@ import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import lombok.RequiredArgsConstructor;
 
@@ -51,17 +52,25 @@ public class AcademicProgramAttendanceController {
     private final SessionFileReferenceService sessionFileReferenceService;
 
     /*
-     * 조회는 인증만 요구한다 — 팀원도 자기 활동의 출석부를 봐야 한다. 회차 상세(#135)도 같은
-     * 명단을 싣지만 이 경로는 출석부 화면 전용이라 줄마다 attendanceId를 함께 내린다
-     * (AttendanceResponse 주석).
+     * 조회는 **그 활동의 관계자**만이다 (#688 · ssccops#611) — 팀원도 자기 활동의 출석부를 봐야
+     * 하지만, ⚠️ 2026-10-18 정정: 여기는 «인증만»이어서 동아리 전원이 남의 프로그램 출석(이름·출결)을
+     * 읽었다. 회차 상세(#135)도 같은 명단을 싣지만 이 경로는 출석부 화면 전용이라 줄마다
+     * attendanceId를 함께 내린다(AttendanceResponse 주석).
      */
     @Operation(
             summary = "출석부 조회",
-            description = "그 회차의 출석 명단을 등록 순서로 내린다. 다른 활동의 회차 식별자로 부르면 404다.")
+            description =
+                    "그 회차의 출석 명단을 등록 순서로 내린다. 다른 활동의 회차 식별자로 부르면 404다."
+                            + " 그 활동의 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만 부를 수 있고"
+                            + " 아니면 403이다.")
     @GetMapping("/attendances")
     public ApiResponse<List<AttendanceResponse>> getAttendances(
-            @PathVariable Long academicProgramId, @PathVariable Long sessionId) {
-        return ApiResponse.success(attendanceService.getAttendances(academicProgramId, sessionId));
+            @PathVariable Long academicProgramId,
+            @PathVariable Long sessionId,
+            // springdoc이 필수 쿼리 파라미터로 실어 api-compat이 깨는 변경으로 본다 — 스펙에서 감춘다
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                attendanceService.getAttendances(academicProgramId, sessionId, requester));
     }
 
     /*

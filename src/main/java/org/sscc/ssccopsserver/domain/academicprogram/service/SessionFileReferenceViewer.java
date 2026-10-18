@@ -3,12 +3,9 @@ package org.sscc.ssccopsserver.domain.academicprogram.service;
 import org.springframework.stereotype.Component;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.SessionFileReferenceResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
-import org.sscc.ssccopsserver.domain.event.repository.EventParticipantRepository;
 import org.sscc.ssccopsserver.domain.file.entity.FileReferenceEntity;
 import org.sscc.ssccopsserver.domain.file.service.FilePresigner;
-import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
-import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
 
 /*
  * 출석 인증사진을 읽는 자리 (#200).
@@ -27,18 +24,12 @@ public class SessionFileReferenceViewer {
 
     private final FilePresigner filePresigner;
     private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
-    private final AuthorityPolicy authorityPolicy;
-    private final EventParticipantRepository eventParticipantRepository;
 
     public SessionFileReferenceViewer(
             FilePresigner filePresigner,
-            AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy,
-            AuthorityPolicy authorityPolicy,
-            EventParticipantRepository eventParticipantRepository) {
+            AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy) {
         this.filePresigner = filePresigner;
         this.academicProgramOwnershipPolicy = academicProgramOwnershipPolicy;
-        this.authorityPolicy = authorityPolicy;
-        this.eventParticipantRepository = eventParticipantRepository;
     }
 
     /*
@@ -61,31 +52,16 @@ public class SessionFileReferenceViewer {
     }
 
     /*
-     * 그 활동의 관계자인가 (#200 결정 2).
+     * 그 활동의 관계자인가 (#200 결정 2). **판정은 AcademicProgramOwnershipPolicy.isRelated 한 벌이다**
+     * (#688) — 여기 있던 구현(리더 · 팀원 · 학술국장)을 그리로 올렸다. 회차 상세·출석부·팀원 명단이
+     * 같은 판정으로 관계자에게만 열리게 되면서(그전에는 «인증만»이었다) 사진만 따로 판정하면 두 벌이
+     * 어긋나 «출석부는 막히는데 사진은 열린다»(또는 그 반대)가 생길 자리가 된다.
      *
-     * 팀원(event_ptcp) · 스터디장/팀장 · 학술국장(ACADEMIC_PROGRAM_MANAGE) 셋이다. **회차 상세
-     * 자체는 종전대로 인증만 요구한다** — 상세를 관계자로 좁히면 팀원이 회차 이력을 못 보게 되고
-     * (그래서 애초에 소유권을 걸지 않았다) 좁혀야 하는 것은 사진 하나뿐이다.
-     *
-     * 순서는 싼 것부터다: 소유권은 이미 읽어 둔 엔티티의 식별자 비교라 조회가 없고, 명단 조회는
-     * 한 번, 권한 조회는 앞의 둘이 모두 아닐 때만 돈다(requireLeaderOrManager와 같은 태도).
-     *
-     * 명단은 **상태를 가리지 않는다** — 취소(CANCELLED)된 참가자도 그 활동에 있었던 사람이고,
-     * 명단이 활동 이력으로 영구 보존되는 것(D16)과 같은 기준이다.
+     * 회차 상세가 이제 관계자에게만 열리므로 이 자리를 지나는 요청자는 대개 이미 관계자다. 그래도
+     * 판정을 남기는 것은 서명이 곧 읽기 권한이라 «판정 없이 서명하는 경로»를 만들지 않기 위해서다.
      */
     private boolean canView(AcademicProgramEntity academicProgram, MemberEntity requester) {
-        if (requester == null) {
-            return false;
-        }
-        if (academicProgramOwnershipPolicy.isLeader(academicProgram, requester)) {
-            return true;
-        }
-        if (eventParticipantRepository.existsByEventAndMember(
-                academicProgram.getEvent(), requester)) {
-            return true;
-        }
-        return authorityPolicy.hasAuthority(
-                requester.getId(), AuthorityCode.ACADEMIC_PROGRAM_MANAGE);
+        return academicProgramOwnershipPolicy.isRelated(academicProgram, requester);
     }
 
     /*

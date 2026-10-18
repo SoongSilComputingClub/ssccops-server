@@ -18,6 +18,8 @@ import jakarta.persistence.EntityManager;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,6 +30,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.entity.RoleAuthorityRelationEntity;
@@ -288,7 +291,61 @@ class RoleAuthorityControllerTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
 
+    // ------------------------------------------------------------------ 리더 역할 (#687)
+
+    /*
+     * **리더 역할(스터디장·프로젝트장·트랙장)에는 어떤 권한도 붙지 않는다** (#687 · ssccops#611).
+     *
+     * prod에서 스터디장 역할에 ACADEMIC_PROGRAM_MANAGE가 붙어, 기획안 승인이 자동으로 내주는 그 역할
+     * 하나로 승인된 리더 전원이 모든 프로그램의 학술국장이 됐다. 그래서 실제로 붙었던 그 권한으로,
+     * 시드된 리더 역할 셋 모두를 돈다 — 하나만 보면 새로 더한 리더 역할이 가드에서 빠져도 모른다.
+     *
+     * 409 뒤 상태는 여기서 보지 않는다. 클래스 트랜잭션이 rollback-only가 되고, 가드는 어떤 쓰기보다
+     * 먼저 던지므로(AuthorityAdminServiceImpl) 쓰인 것이 없다.
+     */
+    @ParameterizedTest
+    @EnumSource(LeaderRole.class)
+    void leaderRoleRejectsAnyGrant(LeaderRole leaderRole) throws Exception {
+        mockMvc.perform(replace(seededRole(leaderRole).getId(), "ACADEMIC_PROGRAM_MANAGE"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("LEADER_ROLE_AUTHORITY_FORBIDDEN"));
+    }
+
+    // 묶음 권한도 같다 — 막는 기준은 «무엇을 붙이나»가 아니라 «리더 역할에 붙이나»다
+    @Test
+    void leaderRoleRejectsAnAncestorGrantToo() throws Exception {
+        mockMvc.perform(replace(seededRole(LeaderRole.STUDY_LEADER).getId(), "OPERATOR"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("LEADER_ROLE_AUTHORITY_FORBIDDEN"));
+    }
+
+    /*
+     * 회수(빈 목록)는 막지 않는다 — 이미 붙어 있는 것을 화면에서 지우는 길이다(배포 때 V33도 지운다).
+     * 교체는 목록 전체를 보내므로 «하나만 풀기»는 409다: 리더 역할에서 남길 수 있는 권한은 없다.
+     */
+    @Test
+    void leaderRoleCanStillBeClearedWithAnEmptyList() throws Exception {
+        MemberRoleEntity studyLeader = seededRole(LeaderRole.STUDY_LEADER);
+        roleAuthorityRelationRepository.saveAndFlush(
+                RoleAuthorityRelationEntity.create(
+                        studyLeader,
+                        authorityRepository.findById("ACADEMIC_PROGRAM_MANAGE").orElseThrow()));
+        flushAndClear();
+
+        mockMvc.perform(replace(studyLeader.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.grants", hasSize(0)))
+                .andExpect(jsonPath("$.data.effectiveAuthrtCds", hasSize(0)));
+    }
+
     // ------------------------------------------------------------------ 헬퍼
+
+    private MemberRoleEntity seededRole(LeaderRole leaderRole) {
+        List<MemberRoleEntity> roles =
+                memberRoleRepository.findAllByNameOrderByIdAsc(leaderRole.roleName());
+        assertThat(roles).as("시드(V3·V19)가 넣어야 할 리더 역할: " + leaderRole.roleName()).hasSize(1);
+        return roles.get(0);
+    }
 
     private static String rolePath(Long roleId) {
         return "/v1/roles/" + roleId + "/authorities";

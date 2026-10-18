@@ -1,6 +1,7 @@
 package org.sscc.ssccopsserver.domain.academicprogram.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.UUID;
@@ -24,14 +25,22 @@ import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
+import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
+import org.sscc.ssccopsserver.domain.member.entity.RoleAuthorityRelationEntity;
+import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
+import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
+import org.sscc.ssccopsserver.domain.member.service.AuthorityPolicy;
+import org.sscc.ssccopsserver.global.apipayload.exception.GeneralException;
 import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
@@ -56,6 +65,9 @@ class AcademicProgramApprovalEffectsServiceImplTest {
     @Autowired private MemberRoleRepository memberRoleRepository;
     @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
+    @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
+    @Autowired private AuthorityRepository authorityRepository;
+    @Autowired private AuthorityPolicy authorityPolicy;
 
     @Autowired private EventRepository eventRepository;
     @Autowired private EventClassificationRepository eventClassificationRepository;
@@ -151,12 +163,76 @@ class AcademicProgramApprovalEffectsServiceImplTest {
             effectsService.applyPostApprovalEffects(academicProgram);
             flushAndClear();
 
-            assertThat(memberRoleAssignmentRepository.findCurrentByMemberId(leader.getId()))
+            List<MemberRoleAssignmentEntity> assignments =
+                    memberRoleAssignmentRepository.findCurrentByMemberId(leader.getId());
+            assertThat(assignments)
                     .as(
                             "%s 유형의 리더 역할 — 맵(LEADER_ROLE_NAME_BY_TYPE_CODE)과 role 시드가 함께 있어야 한다",
                             typeCd)
                     .isNotEmpty();
+            /*
+             * 내준 역할은 LeaderRole이고, 그 역할로 생긴 권한은 없다 (#687 · ssccops#611). 리더는
+             * 운영진이 아니다 — 앞은 LeaderRoleGuard가 모르는 역할을 승인이 내주지 않는다는 것이고,
+             * 뒤는 승인 한 번이 운영진 권한을 나눠 주지 않는다는 것이다(prod에서 그렇게 됐다).
+             */
+            assertThat(assignments)
+                    .extracting(assignment -> assignment.getRole().getName())
+                    .as("%s 유형의 리더 역할은 LeaderRole에 있어야 한다", typeCd)
+                    .allMatch(LeaderRole::isLeaderRoleName);
+            assertThat(authorityPolicy.capabilitiesOf(leader.getId()))
+                    .as("%s 유형의 리더는 승인으로 아무 권한도 얻지 않는다", typeCd)
+                    .isEmpty();
         }
+    }
+
+    /*
+     * **권한이 붙은 리더 역할은 내주지 않는다** (#687 · ssccops#611).
+     *
+     * 화면·API의 부여는 LeaderRoleGuard가 막고 옛 행은 V33이 지우지만, DB를 직접 고치는 길은 남는다.
+     * 그때 승인이 그 역할을 내주면 ROLE_MANAGE 없이 운영진 권한이 퍼진다 — prod의 사건이 정확히 그
+     * 모양이었다. 역할 없이 조용히 승인하는 대신 409로 승인 전체를 되돌린다(학술국장이 문구를 보고
+     * 역할 관리에서 권한을 지운 뒤 다시 승인한다).
+     */
+    @Test
+    void leaderRoleCarryingAnAuthorityStopsTheApproval() {
+        MemberRoleEntity studyLeader =
+                memberRoleRepository
+                        .findAllByNameOrderByIdAsc(LeaderRole.STUDY_LEADER.roleName())
+                        .get(0);
+        roleAuthorityRelationRepository.saveAndFlush(
+                RoleAuthorityRelationEntity.create(
+                        studyLeader,
+                        authorityRepository.findById("ACADEMIC_PROGRAM_MANAGE").orElseThrow()));
+        MemberEntity leader = saveMember("20260405", "권한리더");
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "권한 붙은 스터디", leader);
+
+        assertThatThrownBy(() -> effectsService.applyPostApprovalEffects(academicProgram))
+                .isInstanceOfSatisfying(
+                        GeneralException.class,
+                        ex ->
+                                assertThat(ex.getErrorCode())
+                                        .isEqualTo(
+                                                MemberErrorCode.LEADER_ROLE_AUTHORITY_FORBIDDEN));
+    }
+
+    /*
+     * 같은 이름의 리더 역할이 둘이면 승인하지 않는다 (#687). 예전에는 id가 작은 쪽을 골랐다 — «먼저
+     * 만든 쪽»이라는 우연이 어느 역할(과 거기 붙은 권한)을 내줄지 정했다. role_nm은 DB UNIQUE가
+     * 아니라(RoleServiceImpl 주석) 이 상태가 만들어질 수 있다.
+     */
+    @Test
+    void duplicatedLeaderRoleNameStopsTheApproval() {
+        memberRoleRepository.saveAndFlush(
+                MemberRoleEntity.create(
+                        99,
+                        LeaderRole.STUDY_LEADER.roleName(),
+                        memberRoleClassificationRepository.findById("POSITION").orElseThrow()));
+        MemberEntity leader = saveMember("20260406", "중복이름리더");
+        AcademicProgramEntity academicProgram = createAcademicProgram("STUDY", "이름 겹친 스터디", leader);
+
+        assertThatThrownBy(() -> effectsService.applyPostApprovalEffects(academicProgram))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining(LeaderRole.STUDY_LEADER.roleName());
     }
 
     /*

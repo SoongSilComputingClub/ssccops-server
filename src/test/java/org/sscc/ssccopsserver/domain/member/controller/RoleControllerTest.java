@@ -23,6 +23,8 @@ import org.hibernate.SessionFactory;
 import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,6 +35,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.dto.RoleResponse;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
@@ -442,6 +445,51 @@ class RoleControllerTest {
                 .andExpect(jsonPath("$.code").value("ROLE_NOT_FOUND"));
     }
 
+    // ------------------------------------------------------------------ 리더 역할 (#687)
+
+    /*
+     * 리더 역할(스터디장·프로젝트장·트랙장)은 이름을 바꿀 수 없다 (#687 · ssccops#611). 기획안 승인이
+     * 이 역할을 **이름으로** 찾으므로, 이름을 바꾸면 승인이 멈추고 권한 있는 다른 역할을 그 이름으로
+     * 바꿔 넣으면 승인이 그 역할을 내준다 — 권한 부여 가드를 이름 맞바꾸기로 우회하는 길이다.
+     */
+    @ParameterizedTest
+    @EnumSource(LeaderRole.class)
+    void leaderRoleCannotBeRenamed(LeaderRole leaderRole) throws Exception {
+        mockMvc.perform(
+                        authorized(patch(ROLES + "/" + seededRoleId(leaderRole)), adminToken)
+                                .content("{\"roleNm\": \"학술 리더\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("LEADER_ROLE_PROTECTED"));
+    }
+
+    // 이름을 그대로 보내고 순번만 바꾸는 것은 막지 않는다 — 승인이 보지 않는 값이다
+    @Test
+    void leaderRoleDisplayOrderCanStillChange() throws Exception {
+        String name = LeaderRole.STUDY_LEADER.roleName();
+
+        mockMvc.perform(
+                        authorized(
+                                        patch(ROLES + "/" + seededRoleId(LeaderRole.STUDY_LEADER)),
+                                        adminToken)
+                                .content("{\"roleNm\": \"" + name + "\", \"indctSeqno\": 9}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.roleNm").value(name))
+                .andExpect(jsonPath("$.data.indctSeqno").value(9));
+    }
+
+    /*
+     * 리더 역할은 지울 수 없다. 아직 아무도 받지 않은 리더 역할(시드 직후의 테스트 DB가 그렇다)은
+     * 배정 이력도 권한도 없어 ROLE_IN_USE에 걸리지 않으므로, 가드가 없으면 여기서 200이 된다 —
+     * 그 뒤 그 유형의 기획안 승인은 500으로 멈춘다.
+     */
+    @ParameterizedTest
+    @EnumSource(LeaderRole.class)
+    void leaderRoleCannotBeDeleted(LeaderRole leaderRole) throws Exception {
+        mockMvc.perform(authorized(delete(ROLES + "/" + seededRoleId(leaderRole)), adminToken))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("LEADER_ROLE_PROTECTED"));
+    }
+
     // ------------------------------------------------------------------ 인가
 
     /*
@@ -487,6 +535,13 @@ class RoleControllerTest {
     private static String createBody(String name, String classificationCode, Integer displayOrder) {
         return "{\"roleNm\": \"%s\", \"roleClsfCd\": \"%s\", \"indctSeqno\": %s}"
                 .formatted(name, classificationCode, displayOrder == null ? "null" : displayOrder);
+    }
+
+    private Long seededRoleId(LeaderRole leaderRole) {
+        List<MemberRoleEntity> roles =
+                memberRoleRepository.findAllByNameOrderByIdAsc(leaderRole.roleName());
+        assertThat(roles).as("시드(V3·V19)가 넣어야 할 리더 역할: " + leaderRole.roleName()).hasSize(1);
+        return roles.get(0).getId();
     }
 
     private MemberRoleEntity saveRole(

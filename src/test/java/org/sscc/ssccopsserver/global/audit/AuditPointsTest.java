@@ -3,6 +3,7 @@ package org.sscc.ssccopsserver.global.audit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -30,7 +31,9 @@ import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleEntity;
 import org.sscc.ssccopsserver.domain.member.repository.AuthorityRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
@@ -400,6 +403,106 @@ class AuditPointsTest {
         assertThat(section(audit, "change"))
                 .containsEntry("before", "PLANNING")
                 .containsEntry("after", "IN_PROGRESS");
+    }
+
+    /*
+     * 리더 역할에 권한을 붙이려다 막힌 시도도 남는다 (#687 · ssccops#611). prod에서 스터디장 역할에
+     * ACADEMIC_PROGRAM_MANAGE가 붙었는데 누가 언제 붙였는지 되짚을 수 없었다 — 이제는 성공이 불가능하니
+     * 남는 것은 시도뿐이고, 그 시도가 «누가 리더를 운영진으로 만들려 했나»다. 롤백 경로라 즉시 쓰인다.
+     */
+    @Test
+    void leaderRoleGrantAttemptIsAuditedAsFailure() throws Exception {
+        Long studyLeaderId =
+                memberRoleRepository
+                        .findAllByNameOrderByIdAsc(LeaderRole.STUDY_LEADER.roleName())
+                        .get(0)
+                        .getId();
+
+        mockMvc.perform(
+                        put("/v1/roles/" + studyLeaderId + "/authorities")
+                                .header("Authorization", "Bearer " + ROUTER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"authrtCds\": [\"ACADEMIC_PROGRAM_MANAGE\"]}"))
+                .andExpect(status().isConflict());
+
+        Map<String, Object> line = onlyLine("role.authority.change");
+        assertThat(section(line, "event")).containsEntry("outcome", "failure");
+        assertThat(section(line, "error")).containsEntry("code", "LEADER_ROLE_AUTHORITY_FORBIDDEN");
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target")).containsEntry("id", String.valueOf(studyLeaderId));
+        assertThat(section(audit, "change")).containsEntry("after", "ACADEMIC_PROGRAM_MANAGE");
+        assertThat(roleAuthorityRelationRepository.findAllByRoleId(studyLeaderId)).isEmpty();
+    }
+
+    /*
+     * 역할 이름 변경이 남는다 (#687). 기획안 승인이 리더 역할을 이름으로 찾으므로 이름이 인가의 열쇠인데
+     * 그전에는 흔적이 없었다. 이 클래스는 커밋하는 DB라 시드 역할 대신 새 역할로 본다.
+     */
+    @Test
+    void roleRenameIsAuditedWithNamesBeforeAndAfter() throws Exception {
+        Long roleId =
+                memberRoleRepository
+                        .saveAndFlush(
+                                MemberRoleEntity.create(
+                                        99,
+                                        "감사 확인용 역할",
+                                        memberRoleClassificationRepository
+                                                .findById("POSITION")
+                                                .orElseThrow()))
+                        .getId();
+
+        mockMvc.perform(
+                        patch("/v1/roles/" + roleId)
+                                .header("Authorization", "Bearer " + ROUTER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"roleNm\": \"감사 확인용 역할(개명)\"}"))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("role.rename");
+        assertThat(section(line, "event")).containsEntry("outcome", "success");
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target"))
+                .containsEntry("type", "role")
+                .containsEntry("id", String.valueOf(roleId));
+        assertThat(section(audit, "change"))
+                .containsEntry("before", "감사 확인용 역할")
+                .containsEntry("after", "감사 확인용 역할(개명)");
+    }
+
+    /*
+     * 권한 트리의 부모 이동이 남는다 (#687). 부모를 옮기면 역할 하나 건드리지 않고 그 아래가 다른 묶음
+     * 권한에 펼쳐진다. 시드 권한을 옮기면 같은 클래스의 다른 지점(«권한 하나» 전제)이 흔들리므로 새 권한으로 본다.
+     */
+    @Test
+    void authorityParentChangeIsAudited() throws Exception {
+        // 트랜잭션 없는 클래스라 엔티티로 부모를 엮으면 지연 로딩이 세션 밖에서 터진다 — API로 만든다
+        mockMvc.perform(
+                        post("/v1/authorities")
+                                .header("Authorization", "Bearer " + ROUTER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"authrtCd\": \"AUDIT_PROBE\", \"authrtNm\": \"감사 확인용"
+                                                + " 권한\", \"upAuthrtCd\": \"OPERATOR\"}"))
+                .andExpect(status().isCreated());
+        captured.list.clear();
+
+        mockMvc.perform(
+                        patch("/v1/authorities/AUDIT_PROBE")
+                                .header("Authorization", "Bearer " + ROUTER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"authrtNm\": \"감사 확인용 권한\", \"upAuthrtCd\":"
+                                                + " \"EXECUTIVE\"}"))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("authority.parent.change");
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target"))
+                .containsEntry("type", "authority")
+                .containsEntry("id", "AUDIT_PROBE");
+        assertThat(section(audit, "change"))
+                .containsEntry("before", "OPERATOR")
+                .containsEntry("after", "EXECUTIVE");
     }
 
     private void designate(Long formId) throws Exception {

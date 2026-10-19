@@ -178,7 +178,8 @@ public class FormTools {
                             + " (순번으로 가리킬 것). **답 원문은 목록에도 상세에도 도구로 나오지 않는다** —"
                             + " 답을 읽어야 결론이 나는 심사는 어드민 화면에서 한다."
                             + " 응답자의 학번은 도구 출력에서 지워진다(ADR-0037)."
-                            + " 응답 심사(RESPONSE_REVIEW) 권한.",
+                            + " 응답 심사(RESPONSE_REVIEW) 권한 — 기획안(시스템 폼 PROPOSAL)의 응답만은 학술 조회"
+                            + "(ACADEMIC_PROGRAM_READ) 권한으로도 읽힌다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<FormResponseSummaryResponse> listFormResponses(
             @McpToolParam(description = "폼 id") Long formId,

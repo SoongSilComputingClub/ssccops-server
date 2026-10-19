@@ -61,7 +61,7 @@ public class AcademicProgramAttendanceController {
             summary = "출석부 조회",
             description =
                     "그 회차의 출석 명단을 등록 순서로 내린다. 다른 활동의 회차 식별자로 부르면 404다."
-                            + " 그 활동의 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만 부를 수 있고"
+                            + " 그 활동의 관계자(팀원·스터디장/팀장·학술 조회 권한 ACADEMIC_PROGRAM_READ)만 부를 수 있고"
                             + " 아니면 403이다.")
     @GetMapping("/attendances")
     public ApiResponse<List<AttendanceResponse>> getAttendances(

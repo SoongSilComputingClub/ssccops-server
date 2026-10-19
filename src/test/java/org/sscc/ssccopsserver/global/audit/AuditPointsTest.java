@@ -171,6 +171,12 @@ class AuditPointsTest {
 
     @BeforeEach
     void setUp() {
+        /*
+         * 앞 테스트의 줄을 비운다. PER_CLASS라 appender가 클래스에 하나이고 stop()은 목록을 비우지 않는다 —
+         * 실패 감사는 즉시 쓰이므로 authz.deny를 남기는 테스트가 둘 이상이면 실행 순서에 따라 onlyLine이
+         * 앞 테스트의 줄까지 센다(#694에서 폼 응답 거절 테스트를 더하며 드러났다).
+         */
+        captured.list.clear();
         captured.start();
         ((Logger) LoggerFactory.getLogger(AuditLog.LOGGER_NAME)).addAppender(captured);
         encoder.setContext(
@@ -220,7 +226,8 @@ class AuditPointsTest {
     /*
      * 전체 학술 프로그램 목록(mine 없음)의 거절도 같은 사건이다 (#688). 이 목록은 조건에 따라 갈려
      * @RequireAuthority를 쓰지 못하지만, 거절의 모양(403 FORBIDDEN · authz.deny · decision=요구 권한)은
-     * 애노테이션과 같아야 Kibana에서 한 질의로 «누가 운영진 화면을 두드렸나»가 모인다.
+     * 애노테이션과 같아야 Kibana에서 한 질의로 «누가 운영진 화면을 두드렸나»가 모인다. 요구 권한은
+     * #694부터 학술 조회(ACADEMIC_PROGRAM_READ)다(ADR-0068).
      */
     @Test
     void unfilteredAcademicProgramListDenialIsAuditedLikeRequireAuthority() throws Exception {
@@ -230,7 +237,23 @@ class AuditPointsTest {
         Map<String, Object> line = onlyLine("authz.deny");
         assertThat(section(line, "event")).containsEntry("outcome", "failure");
         assertThat(section(line, "error")).containsEntry("code", "FORBIDDEN");
-        assertThat(section(line, "audit")).containsEntry("decision", "ACADEMIC_PROGRAM_MANAGE");
+        assertThat(section(line, "audit")).containsEntry("decision", "ACADEMIC_PROGRAM_READ");
+    }
+
+    /*
+     * 폼 응답 조회의 거절도 같은 사건이다 (#694). 클래스 레벨 @RequireAuthority(RESPONSE_REVIEW)를 걷고
+     * FormResponseReadPolicy가 판정하게 됐지만, 남는 줄은 애노테이션 시절과 같아야 한다 — 남의 지원서를
+     * 두드린 시도가 Kibana에서 경로에 따라 갈리지 않게.
+     */
+    @Test
+    void formResponseReadDenialIsAuditedLikeRequireAuthority() throws Exception {
+        mockMvc.perform(get("/v1/forms/1/responses").header("Authorization", "Bearer " + PLAIN))
+                .andExpect(status().isForbidden());
+
+        Map<String, Object> line = onlyLine("authz.deny");
+        assertThat(section(line, "event")).containsEntry("outcome", "failure");
+        assertThat(section(line, "error")).containsEntry("code", "FORBIDDEN");
+        assertThat(section(line, "audit")).containsEntry("decision", "RESPONSE_REVIEW");
     }
 
     /* 남의 상세는 남고, 본인 상세는 남지 않는다 */

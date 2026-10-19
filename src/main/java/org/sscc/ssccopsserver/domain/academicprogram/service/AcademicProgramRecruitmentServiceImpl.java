@@ -192,7 +192,7 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     public List<AcademicProgramMemberHistoryResponse> getMemberHistory(
             Long academicProgramId, MemberEntity requester) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+        academicProgramOwnershipPolicy.requireLeaderOrReader(academicProgram, requester);
 
         return eventParticipantStatusHistoryRepository
                 .findAllByParticipantEventOrderByIdDesc(academicProgram.getEvent())
@@ -210,7 +210,7 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     public List<RecruitmentApplicationResponse> getApplications(
             Long academicProgramId, ResponseStatus responseStatus, MemberEntity requester) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+        academicProgramOwnershipPolicy.requireLeaderOrReader(academicProgram, requester);
         requireRecruitmentStarted(academicProgram);
 
         List<FormResponseSummaryResponse> applications =
@@ -295,11 +295,12 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     public RecruitmentFormResponse getRecruitmentForm(
             Long academicProgramId, MemberEntity requester) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+        academicProgramOwnershipPolicy.requireLeaderOrReader(academicProgram, requester);
 
         FormEntity form = requireRecruitmentForm(academicProgram);
         return RecruitmentFormResponse.of(
-                formService.getForm(form.getId()), isQuestionEditable(academicProgram, form));
+                formService.getForm(form.getId()),
+                isQuestionEditable(academicProgram, form, requester));
     }
 
     /*
@@ -331,7 +332,7 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
          */
         FormDetailResponse saved =
                 formService.changeQuestionComposition(form.getId(), request.qitemCpstCn(), actor);
-        return RecruitmentFormResponse.of(saved, isQuestionEditable(academicProgram, form));
+        return RecruitmentFormResponse.of(saved, isQuestionEditable(academicProgram, form, actor));
     }
 
     /*
@@ -342,7 +343,7 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
     public RecruitmentScheduleResponse getRecruitmentSchedule(
             Long academicProgramId, MemberEntity requester) {
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+        academicProgramOwnershipPolicy.requireLeaderOrReader(academicProgram, requester);
 
         FormEntity form = requireRecruitmentForm(academicProgram);
         return RecruitmentScheduleResponse.of(
@@ -532,9 +533,17 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
      * 응답의 isEditable은 여기에 **활동이 쓰기를 받는가**를 곱한다(#597). 저장 경로는 그 판정을
      * AcademicProgramWritePolicy가 창보다 먼저 끊으므로, 둘을 곱하지 않으면 종료된 활동에서
      * 버튼은 켜져 있는데 저장은 409가 된다.
+     *
+     * **자격도 곱한다**(#694 · ADR-0068). 그전에는 조회 자격과 쓰기 자격이 같아(리더·학술국장)
+     * 여기 닿은 사람은 곧 쓸 수 있는 사람이었다 — 조회가 학술 조회 권한(국원)에게 열리며 그 전제가
+     * 깨졌다. 빼면 국원에게 «고칠 수 있음»이 나가고 저장은 403이 된다. 팀원 명단의 isRosterEditable과
+     * 같은 판정(…OrManager)이며, 질의가 들 수 있는 자격을 마지막에 묻는다.
      */
-    private boolean isQuestionEditable(AcademicProgramEntity academicProgram, FormEntity form) {
-        return academicProgram.getStatus().acceptsWrites() && isWithinQuestionWindow(form);
+    private boolean isQuestionEditable(
+            AcademicProgramEntity academicProgram, FormEntity form, MemberEntity viewer) {
+        return academicProgram.getStatus().acceptsWrites()
+                && isWithinQuestionWindow(form)
+                && academicProgramOwnershipPolicy.isLeaderOrManager(academicProgram, viewer);
     }
 
     private boolean isWithinQuestionWindow(FormEntity form) {

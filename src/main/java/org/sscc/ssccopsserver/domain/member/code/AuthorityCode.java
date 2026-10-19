@@ -115,8 +115,27 @@ public enum AuthorityCode {
      * 유형 코드테이블 쓰기, 신청자 감독 조회를 아우른다. OPERATOR의 자식이라 국장 이상은
      * 자동으로 포함한다 — 스터디장/팀장은 이 권한 없이 leadrMbrId 소유권 정책으로만 판정한다
      * (역할 기반이 아니라 "이 활동 한정 관계 기반"이라 RBAC 트리에 넣지 않는다).
+     *
+     * 조회는 이제 이 권한이 아니라 자식 ACADEMIC_PROGRAM_READ가 연다(#694 · ADR-0068). 이 권한이
+     * 직접 가리키는 것은 쓰기와 «버튼을 켤까»(isEditable)뿐이다.
      */
     ACADEMIC_PROGRAM_MANAGE,
+
+    /*
+     * 학술 프로그램 조회 (#694 · ssccops#614 · ADR-0068). 어드민 학술 화면 전부를 읽기만 하는 권한 —
+     * 전체·회차 횡단·승인 대기 목록, 프로그램 단위 조회(관계자 판정에 든다), 승인 이력·명단 이력·
+     * 신청자·모집 폼·일정, 그리고 기획안(시스템 폼 PROPOSAL) 응답의 조회다.
+     *
+     * ACADEMIC_PROGRAM_MANAGE의 자식이다 — WORK_READ(#101)와 같은 이유로, MANAGE만 직접 받은
+     * 역할도 읽을 수 있어야 하고 OPERATOR 밑 형제로 두면 그 경로에서 조회가 막힌다. 학술국장은
+     * 펼침으로 자동 보유한다. 시드는 국원 역할에 명시 부여다(V34). 리더 역할에는 붙지 않는다
+     * (LeaderRoleGuard — 리더는 소유권으로 자기 프로그램만 본다).
+     *
+     * MANAGE의 조회 판정에 이 권한을 OR로 얹지 않은 것은 그 판정(isLeaderOrManager)이 쓰기와
+     * isEditable에도 쓰이기 때문이다 — 조회 판정은 AcademicProgramOwnershipPolicy의 …OrReader가
+     * 따로 갖는다.
+     */
+    ACADEMIC_PROGRAM_READ,
 
     /*
      * 규정 도우미 코퍼스 관리 (#402 · ADR-0029). 규정 문서의 업로드·재색인·삭제·적용 전환·목록이

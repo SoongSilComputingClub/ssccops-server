@@ -213,6 +213,21 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
         Instant now = Instant.now(clock);
         AcademicProgramSearchQuery query = condition.toQuery(viewer, now);
 
+        /*
+         * **«전부»는 학술국장만, «내 것»은 누구나** (#688 · ssccops#611 · 사용자 결정 2026-10-18).
+         *
+         * mine이 없는 목록은 모집 전(APPROVED)·폐지된 것까지 전 프로그램의 리더명·상태·진행률·신청
+         * 수를 내준다 — 학술국장이 전체를 감독하는 어드민 화면의 첫 조회다. #118은 «활동 열람 자체는
+         * 제한되지 않는다»였지만 지금 이 목록을 mine 없이 부르는 곳은 어드민뿐이고(lms·www는
+         * mine=leader, www 공개 목록은 /public/v1/events), 리더는 운영진이 아니다. 그래서 #118을 목록에
+         * 한해 좁힌다 — 상세·커리큘럼은 그대로 열려 있다. 판정은 질의를 만든 뒤 mineRole로 한다:
+         * mine=false·빈 값도 «필터 없음»이라(AcademicProgramMineRole.from) 원문 문자열로 가르면 샌다.
+         */
+        if (query.mineRole() == null) {
+            academicProgramOwnershipPolicy.requireManager(
+                    viewer, "AcademicProgramController.searchAcademicPrograms(..)");
+        }
+
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
         List<AcademicProgramEntity> fetched = academicProgramRepository.search(query);
         boolean hasNext = fetched.size() > query.size();

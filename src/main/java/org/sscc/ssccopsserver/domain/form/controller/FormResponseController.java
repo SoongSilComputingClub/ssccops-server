@@ -15,7 +15,10 @@ import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentDownloadResponse;
+import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentListResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
+import org.sscc.ssccopsserver.domain.form.service.ProposalAttachmentService;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
@@ -55,6 +58,7 @@ import lombok.RequiredArgsConstructor;
 public class FormResponseController {
 
     private final FormResponseService formResponseService;
+    private final ProposalAttachmentService proposalAttachmentService;
 
     /*
      * 응답 목록. 페이징을 두지 않고 배열을 그대로 내려준다 (FormResponseServiceImpl.getResponses 주석).
@@ -152,5 +156,40 @@ public class FormResponseController {
             @CurrentMember MemberEntity reviewer) {
         return ApiResponse.success(
                 formResponseService.reviewResponse(formId, formRspnsId, request, reviewer));
+    }
+
+    /*
+     * ── 기획안 첨부 자료 — 검토자 경로 (server#685 · ssccops#607) ─────────────────
+     * 학술국장이 개설을 허가할지 정할 때 내려받아 본다. 이 컨트롤러에 둔 것은 **클래스 단위
+     * RESPONSE_REVIEW가 그대로 걸리게** 하기 위해서다 — 첨부도 남의 지원서의 일부라 같은 문턱이어야
+     * 하고, 따로 컨트롤러를 만들면 애노테이션 한 줄을 빠뜨리는 것으로 열린다. 응답 상태와 무관하게
+     * 읽는다(검토 중·반려된 것도). 폼 경계는 응답 상세와 같다 — 다른 폼의 응답 id는 404.
+     */
+    @Operation(
+            summary = "기획안 첨부 목록(검토자)",
+            description =
+                    "응답에 붙은 첨부의 이름·크기·올린 시각(발급 순)과 사용량(totalSize · maxTotalSize ·"
+                            + " maxCount). RESPONSE_REVIEW가 필요하다(없으면 403 FORBIDDEN). 응답 상태와 무관하다."
+                            + " 기획안이 아닌 폼의 응답은 첨부가 생길 길이 없어 빈 목록이다. 다른 폼의 응답 id는 404"
+                            + " FORM_RESPONSE_NOT_FOUND.")
+    @GetMapping("/{formRspnsId}/attachments")
+    public ApiResponse<ProposalAttachmentListResponse> getAttachments(
+            @PathVariable Long formId, @PathVariable Long formRspnsId) {
+        return ApiResponse.success(proposalAttachmentService.listForReview(formId, formRspnsId));
+    }
+
+    @Operation(
+            summary = "기획안 첨부 내려받기 URL(검토자)",
+            description =
+                    "원본 이름이 붙은 15분짜리 서명 GET URL(Content-Disposition: attachment). 그 응답에 붙은"
+                            + " 파일이 아니면 404 PROPOSAL_ATTACHMENT_NOT_FOUND — 다른 응답의 파일 id로는 열리지"
+                            + " 않는다. 링크로 저장하지 말 것.")
+    @GetMapping("/{formRspnsId}/attachments/{fileId}/download-url")
+    public ApiResponse<ProposalAttachmentDownloadResponse> getAttachmentDownloadUrl(
+            @PathVariable Long formId, @PathVariable Long formRspnsId, @PathVariable Long fileId) {
+        String url = proposalAttachmentService.downloadUrlForReview(formId, formRspnsId, fileId);
+        return ApiResponse.success(
+                new ProposalAttachmentDownloadResponse(
+                        url, proposalAttachmentService.downloadUrlTtlSeconds()));
     }
 }

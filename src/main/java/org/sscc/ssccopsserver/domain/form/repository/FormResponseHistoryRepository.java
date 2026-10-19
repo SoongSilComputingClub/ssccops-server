@@ -5,8 +5,11 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -246,6 +249,31 @@ public interface FormResponseHistoryRepository
             Long id, FormEntity form, MemberEntity member);
 
     /*
+     * 첨부를 바꾸는 작성자 경로의 응답 조회 — **행을 잠근다** (server#685). 조건은 위
+     * findByIdAndFormAndMember와 같아 남의 응답은 같은 빈 결과(404)다.
+     *
+     * 잠그는 이유는 개수(5)·합계(20MB) 상한이 DB 제약으로 걸 수 없는 규칙이라서다. 잠그지 않으면 동시
+     * 발급 둘이 각자 «남은 용량 15MB»를 보고 함께 통과해 합계가 30MB가 된다. 잠그는 대상이 file_rfrnc가
+     * 아니라 응답 행인 것은 회차 인증사진이 sesn 행을 잠그는 것(SessionRepository.lockById)과 같은
+     * 이유다 — 첨부가 아직 없는 응답에는 잠글 file_rfrnc 행이 없다. 덤으로 제출(상태 UPDATE)과도 줄을
+     * 선다: 잠근 뒤 읽은 상태로 판정하므로 «판정은 DRAFT로 봤는데 그사이 제출됐다»가 생기지 않는다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query(
+            "select r from FormResponseHistoryEntity r"
+                    + " where r.id = :id and r.form = :form and r.member = :member")
+    Optional<FormResponseHistoryEntity> lockByIdAndFormAndMember(
+            @Param("id") Long id,
+            @Param("form") FormEntity form,
+            @Param("member") MemberEntity member);
+
+    /*
+     * 검토자 경로의 첨부 조회가 «그 폼의 응답인가»만 묻는 자리 (server#685). findByIdAndForm은 목록 표를
+     * 위해 회원·등급·상태를 함께 끌어오는데 첨부 목록에는 그중 아무것도 필요 없다.
+     */
+    boolean existsByIdAndForm(Long id, FormEntity form);
+
+    /*
      * 접수가 끝난 폼에 남은 미제출 초안을 걷어낸다 (#557 · ssccops#502 · #36 결정).
      *
      * ── 왜 «폼의 접수 종료»를 보는가 ────────────────────────────────────────
@@ -266,16 +294,33 @@ public interface FormResponseHistoryRepository
      * 인스턴스가 둘 떠도(배포 겹침) 결과가 같다. `AGENTS.md` 가 이 배치를 미룬 근거였던 «다중
      * 인스턴스에서 중복 실행을 막을 장치가 없다» 는 이 종류의 작업에 애초에 필요 없었고,
      * `NotificationRepository.deleteReadBefore` 가 그것을 이미 코드로 증명해 두었다.
+     *
+     * ── 식별자를 먼저 모은다 (server#685) ───────────────────────────────────
+     * 처음에는 이 조건으로 바로 지우는 벌크 DELETE 하나였다. 기획안 응답에 첨부(file_rfrnc ·
+     * FORM_RESPONSE)가 붙으면서 **지운 초안이 무엇이었는지**를 알아야 그 첨부 행과 R2 오브젝트를 함께
+     * 걷을 수 있게 됐는데 벌크 DELETE는 건수만 돌려준다. file_rfrnc에 FK가 없어 DB가 대신 지워 주지도
+     * 않는다(domain/file/AGENTS.md — 정리는 도메인의 책임). 그래서 조건은 여기 그대로 두고 식별자를
+     * 고른 뒤, 아래 deleteDraftsByIdIn이 그 식별자로 지운다.
      */
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
-            "delete from FormResponseHistoryEntity r"
+            "select r.id from FormResponseHistoryEntity r"
                     + " where r.status = :draft"
                     + " and r.form.status = :closed"
                     + " and r.form.receiptEndAt is not null"
                     + " and r.form.receiptEndAt < :before")
-    int deleteDraftsOfFormsClosedBefore(
+    List<Long> findDraftIdsOfFormsClosedBefore(
             @Param("draft") ResponseStatus draft,
             @Param("closed") FormStatus closed,
             @Param("before") Instant before);
+
+    /*
+     * 위 질의가 고른 초안을 지운다 (server#685). **상태를 한 번 더 건다** — 고른 뒤 지우기 전 사이에 마감
+     * 철회(CLOSED→OPEN)와 제출이 끼어들면 그 행은 더 이상 «낸 적 없는 초안»이 아니다. 그 사이가 같은
+     * 트랜잭션의 몇 밀리초라 실제로 닿을 일은 거의 없지만, 지울 근거(DRAFT)를 지우는 문장에서 다시
+     * 확인하는 값이 0에 가깝다.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("delete from FormResponseHistoryEntity r where r.id in :ids and r.status = :draft")
+    int deleteDraftsByIdIn(
+            @Param("ids") Collection<Long> ids, @Param("draft") ResponseStatus draft);
 }

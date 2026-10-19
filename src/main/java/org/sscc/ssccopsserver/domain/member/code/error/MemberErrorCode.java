@@ -219,6 +219,31 @@ public enum MemberErrorCode implements ErrorCode {
     ROLE_IN_USE(HttpStatus.CONFLICT, "ROLE_IN_USE", "배정 이력이나 권한이 있는 역할은 삭제할 수 없습니다."),
 
     /*
+     * 409 — 리더 역할(스터디장·프로젝트장·트랙장)에 권한을 붙이려 할 때 (#687 · ssccops#611).
+     *
+     * 리더는 운영진이 아니다. 자기 프로그램을 다루는 자격은 소유권(leadr_mbr_id)에서 나오고, 이
+     * 역할은 기획안 승인이 ROLE_MANAGE 없이 자동으로 붙인다 — 여기에 권한이 붙으면 승인 한 번이
+     * 운영진 권한을 나눠 준다. 빈 목록으로 교체(회수)는 막지 않는다. 승인 자리도 같은 코드를 쓴다
+     * (이미 붙어 있던 옛 데이터를 만나면 역할을 내주지 않고 승인을 거절한다 — LeaderRoleGuard).
+     */
+    LEADER_ROLE_AUTHORITY_FORBIDDEN(
+            HttpStatus.CONFLICT,
+            "LEADER_ROLE_AUTHORITY_FORBIDDEN",
+            "스터디장·프로젝트장·트랙장 역할에는 권한을 붙일 수 없습니다 — 운영진 역할이 아닙니다."),
+
+    /*
+     * 409 — 리더 역할의 이름을 바꾸거나 지우려 할 때 (#687 · ssccops#611).
+     *
+     * 기획안 승인은 리더 역할을 **이름으로** 찾는다. 이름을 바꾸면 승인이 500으로 멈추고, 다른
+     * 역할을 그 이름으로 바꿔 넣으면 승인이 그 역할(과 거기 붙은 권한)을 내준다. 지워도 승인이
+     * 멈춘다. 분류·표시 순번은 바꿀 수 있다 — 승인이 보지 않는 값이다.
+     */
+    LEADER_ROLE_PROTECTED(
+            HttpStatus.CONFLICT,
+            "LEADER_ROLE_PROTECTED",
+            "스터디장·프로젝트장·트랙장 역할은 기획안 승인이 쓰는 역할이라 이름을 바꾸거나 삭제할 수 없습니다."),
+
+    /*
      * 400 — 이관용 CSV로 읽을 수 없는 파일 (#84).
      *
      * 확장자·크기(5MB)·인코딩(UTF-8, BOM 허용)이 한 코드에 묶여 있다. 셋을 나누지 않는 것은

@@ -11,7 +11,6 @@ import java.util.UUID;
 
 import jakarta.persistence.EntityManager;
 
-import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -151,17 +150,18 @@ class AcademicSessionControllerTest {
     }
 
     /*
-     * 인증만 요구한다 — 중첩 경로의 회차 상세와 같은 판단이다. 링크를 받은 부원은 그 활동의
-     * 스터디장도 팀원도 아닐 수 있고, 활동으로 좁히지 않는다고 해서 볼 수 있는 것이 늘지 않는다
-     * (중첩 경로도 인증만으로 열려 있다).
+     * 그 활동의 관계자가 아니면 403이다 (#688 · ssccops#611) — 중첩 경로의 회차 상세와 같은 판단이다.
+     *
+     * ⚠️ 2026-10-18 정정: 이 시험은 «다른 회원 → 200»을 못 박고 있었다(«링크를 받은 부원은 스터디장도
+     * 팀원도 아닐 수 있다»). 그 동작이 동아리 전원에게 남의 출석·진행 내용을 열었다. 링크를 받은
+     * 사람에게 토큰이 주는 것은 **미리보기까지**이고(ADR-0016 · 익명 미리보기는 따로 그려진다),
+     * 상세는 그 사람 자신의 자격으로 본다.
      */
     @Test
-    void getAcademicSessionAsOtherMemberReturns200() throws Exception {
+    void getAcademicSessionAsOutsiderReturns403() throws Exception {
         mockMvc.perform(authorized(get(sessionPath(session)), otherToken))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.academicProgramId").value(academicProgram.getId()))
-                // 인증사진은 그 활동의 관계자에게만 실린다 — 좁히는 것은 여전히 사진 하나다
-                .andExpect(jsonPath("$.data.fileReference").value(Matchers.nullValue()));
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     /*
@@ -179,7 +179,8 @@ class AcademicSessionControllerTest {
         changeProgramStatus(academicProgram, AcademicProgramStatus.COMPLETED);
         changeSessionStatus(session, SessionStatus.REVISION_REQUESTED);
 
-        mockMvc.perform(authorized(get(sessionPath(session)), otherToken))
+        // 상태로 감추지 않는가를 본다 — 자격(#688 관계자만)은 위 시험이 따로 보므로 리더로 부른다
+        mockMvc.perform(authorized(get(sessionPath(session)), leaderToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.academicProgramId").value(academicProgram.getId()))
                 .andExpect(jsonPath("$.data.sttsCd").value("REVISION_REQUESTED"));

@@ -79,6 +79,7 @@ public class SessionServiceImpl implements SessionService {
     private final AcademicProgramApprovalRepository academicProgramApprovalRepository;
     private final EventParticipantRepository eventParticipantRepository;
     private final AcademicProgramWritePolicy academicProgramWritePolicy;
+    private final AcademicProgramOwnershipPolicy academicProgramOwnershipPolicy;
 
     /*
      * 신규 제출. 검사 순서는 넓은 것부터다 — 활동(404) → 소유권(403) → 종료(409) → 계획
@@ -162,7 +163,11 @@ public class SessionServiceImpl implements SessionService {
     public SessionDetailResponse getSession(
             Long academicProgramId, Long sessionId, MemberEntity requester) {
         requireAcademicProgramExists(academicProgramId);
-        return detailOf(findSession(sessionId, academicProgramId), requester);
+        SessionEntity session = findSession(sessionId, academicProgramId);
+        // 404(활동·회차) 다음이 403이다 — 관계자만 (#688 · AcademicProgramOwnershipPolicy.requireRelated)
+        academicProgramOwnershipPolicy.requireRelated(
+                session.getCurriculumItem().getAcademicProgram(), requester);
+        return detailOf(session, requester);
     }
 
     /*
@@ -183,7 +188,31 @@ public class SessionServiceImpl implements SessionService {
                                 () ->
                                         new GeneralException(
                                                 AcademicProgramErrorCode.SESSION_NOT_FOUND));
+        // 회차 하나로 읽어도 자격은 중첩 경로와 같다 — 관계자만 (#688). 공유 토큰은 미리보기까지다(ADR-0016)
+        academicProgramOwnershipPolicy.requireRelated(
+                session.getCurriculumItem().getAcademicProgram(), requester);
         return detailOf(session, requester);
+    }
+
+    /*
+     * 회차 공유 중지의 자격 (#688 · 프로그램 쪽 requireShareRevocable · ssccops#501과 같은 판정).
+     *
+     * 그전에는 컨트롤러가 상세 조회(인증만)를 존재 검사로 태우는 것이 전부라 **가입한 아무 회원이나
+     * 남의 회차 공유 링크를 끊을 수 있었다** — ssccops#501(server#556)이 프로그램 쪽만 고치고 회차
+     * 쪽이 빠졌다. 폐기는 이미 퍼진 주소를 죽이고 다시 발급하면 새 토큰이라 되돌릴 수 없으므로,
+     * 발급(«볼 수 있는 사람», 즉 관계자)보다 좁게 리더·학술국장만이다.
+     */
+    @Override
+    public void requireShareRevocable(Long sessionId, MemberEntity requester) {
+        SessionEntity session =
+                sessionRepository
+                        .findDetailById(sessionId)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                AcademicProgramErrorCode.SESSION_NOT_FOUND));
+        academicProgramOwnershipPolicy.requireLeaderOrManager(
+                session.getCurriculumItem().getAcademicProgram(), requester);
     }
 
     /*
@@ -192,8 +221,17 @@ public class SessionServiceImpl implements SessionService {
      */
     @Override
     public SessionSearchResponse searchSessions(
-            Long academicProgramId, SessionCondition condition) {
-        requireAcademicProgramExists(academicProgramId);
+            Long academicProgramId, SessionCondition condition, MemberEntity requester) {
+        // 404 다음이 403 — 남의 프로그램 회차 목록(등록자 이름·출석 수)은 관계자만 본다 (#688)
+        academicProgramOwnershipPolicy.requireRelated(
+                academicProgramRepository
+                        .findById(academicProgramId)
+                        .orElseThrow(
+                                () ->
+                                        new GeneralException(
+                                                AcademicProgramErrorCode
+                                                        .ACADEMIC_PROGRAM_NOT_FOUND)),
+                requester);
         SessionSearchQuery query = condition.toQuery(academicProgramId);
 
         // 다음 페이지가 있는지 알기 위해 한 건 더 읽어 왔으므로, 남는 한 건은 응답에서 덜어낸다
@@ -387,18 +425,27 @@ public class SessionServiceImpl implements SessionService {
      * 어긋남이 생길 자리가 만들어진다.
      */
     private SessionDetailResponse detailOf(SessionEntity session, MemberEntity requester) {
+        AcademicProgramEntity academicProgram = session.getCurriculumItem().getAcademicProgram();
         List<AttendanceEntity> attendances =
                 attendanceRepository.findAllBySessionOrderByIdAsc(session);
         return SessionDetailResponse.of(
                 session,
                 attendances,
                 sessionFileReferenceViewer.viewOf(
-                        session.getCurriculumItem().getAcademicProgram(),
+                        academicProgram,
                         fileReferenceService
                                 .findByTarget(FileTargetType.SESSION, session.getId())
                                 .orElse(null),
                         requester),
-                latestOpinionOf(session));
+                /*
+                 * 수정요청 사유는 리더·학술국장에게만 싣는다 (#688). 승인 이력 API는 의견 본문을
+                 * 팀원에게도 숨기는데(AcademicProgramReviewController) 이 자리는 같은 문장을 상세를
+                 * 연 사람 누구에게나 실었다 — 같은 값이 경로에 따라 다르게 보호됐다. 리더가 아니면
+                 * null이며, 아직 검토되지 않은 회차와 같은 응답이다(필드는 그대로라 하위 호환).
+                 */
+                academicProgramOwnershipPolicy.isLeaderOrManager(academicProgram, requester)
+                        ? latestOpinionOf(session)
+                        : null);
     }
 
     /*

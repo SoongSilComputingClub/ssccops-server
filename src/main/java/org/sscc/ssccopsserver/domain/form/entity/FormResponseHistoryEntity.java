@@ -346,6 +346,39 @@ public class FormResponseHistoryEntity {
     }
 
     /*
+     * 이 응답의 첨부 자료를 지금 바꿀(올리거나 지울) 수 있는가 (server#685 · ssccops#607).
+     *
+     *   DRAFT             → 폼이 접수 중일 때만. 자동 저장(saveDraft)이 findAcceptingForm으로 막는 것과
+     *                       같은 판정이다 — 답은 못 고치는데 첨부만 고칠 수 있는 초안을 만들지 않는다
+     *   CHANGES_REQUESTED → 언제나. 재제출이 접수 마감을 타지 않는 것(isResubmission · #177)과 같은 이유다:
+     *                       검토자의 수정요청에 답하는 것이라 접수 기간은 이미 소용을 다했다
+     *   SUBMITTED         → 409. 검토 중에 첨부가 바뀌면 검토자가 내려받아 본 것과 승인한 것이 갈린다
+     *   ACCEPTED·REJECTED → 409. 종결이다(ADR-0003) — 승인된 응답의 첨부는 학술 활동이 그대로 보여 준다
+     *
+     * **판정을 엔티티에 두는 것은 submit·changeStatus와 같은 이유다** — 상태 어휘가 늘 때 서비스마다
+     * 표를 옮겨 적으면 한쪽만 고쳐진다. 접수 가능 여부는 인자로 받는다: 그 판정은 주입된 Clock을 쓰는
+     * FormReceiptPolicy의 몫이고, 엔티티가 시각을 직접 읽으면 테스트가 시간을 고정할 수 없다
+     * (requireSystemQuestionItemsUnchanged가 계약 유무를 boolean으로 받는 것과 같은 모양).
+     *
+     * 접수가 끝난 폼의 초안도 같은 코드(PROPOSAL_ATTACHMENT_LOCKED)다. 화면이 할 일이 같아서이고,
+     * 문장만 «접수가 끝났다»로 갈아 끼운다 — 기본 문장(«수정요청을 받았을 때만»)은 제출한 응답을 향한 말이다.
+     */
+    public void requireAttachmentsEditable(boolean formAcceptingResponses) {
+        if (this.status == ResponseStatus.CHANGES_REQUESTED) {
+            return;
+        }
+        if (this.status == ResponseStatus.DRAFT) {
+            if (formAcceptingResponses) {
+                return;
+            }
+            throw new GeneralException(
+                    FormErrorCode.PROPOSAL_ATTACHMENT_LOCKED,
+                    "접수가 끝난 기획안 초안에는 첨부 자료를 올리거나 지울 수 없습니다.");
+        }
+        throw new GeneralException(FormErrorCode.PROPOSAL_ATTACHMENT_LOCKED);
+    }
+
+    /*
      * 답이 갱신될 때마다 그 시점의 문항 구성 버전을 다시 찍는다 (#140).
      *
      * 처음 만들 때만 찍으면 자동 저장으로 며칠에 걸쳐 쓴 응답은 첫 타이핑 시점의 버전을 달고

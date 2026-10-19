@@ -32,8 +32,10 @@ import lombok.RequiredArgsConstructor;
  * 다시 내려주는 얇은 프록시이며 새 테이블은 없다(설계 결정 #3).
  *
  * 모집 컨트롤러(AcademicProgramRecruitmentController)와 나누는 것은 인가 레벨이 다르기
- * 때문이다 — 이쪽은 **인증만**이고(팀원 명단은 활동 상세 화면의 일부라 팀원 누구나 본다,
- * §6 매트릭스) 그쪽은 스터디장 소유권 또는 학술국장 권한이 걸린다. 한 컨트롤러에 두면 핸들러가
+ * 때문이다 — 이쪽은 **그 활동의 관계자**(팀원·스터디장/팀장·학술국장)이고(팀원 명단은 활동 상세
+ * 화면의 일부라 팀원 누구나 본다, §6 매트릭스) 그쪽은 스터디장 소유권 또는 학술국장 권한이 걸린다.
+ * ⚠️ 2026-10-18 정정(#688 · ssccops#611): 여기는 «인증만»이었다 — «팀원 누구나»를 근거로 들고
+ * 실제로는 동아리 전원에게 남의 프로그램 명단을 열었다. 판정은 OwnershipPolicy.requireRelated다. 한 컨트롤러에 두면 핸들러가
  * 하나 늘 때 자격을 빠뜨리는 것만으로 신청자 명부가 전원에게 열린다(회차 기록 #135와 회차
  * 검토 #136을 나눈 것과 같은 판단).
  *
@@ -70,7 +72,9 @@ public class AcademicProgramMemberController {
                             + " 정렬은 등록 순번(식별자 오름차순)이며, isLeader는 명단이 아니라"
                             + " acdm_actv.leadr_mbr_id와의 비교에서 온다."
                             + " 모집 시작 전이어도 409가 아니라 빈 목록이다 — 아직 아무도 뽑지 않은"
-                            + " 활동의 빈 명단은 정상적인 답이다(신청자 조회·선발과 갈리는 지점).")
+                            + " 활동의 빈 명단은 정상적인 답이다(신청자 조회·선발과 갈리는 지점)."
+                            + " 그 활동의 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만 부를 수 있고"
+                            + " 아니면 403이다.")
     @GetMapping
     public ApiResponse<List<AcademicProgramMemberResponse>> getMembers(
             @PathVariable Long academicProgramId,

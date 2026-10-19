@@ -5,7 +5,9 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,10 +22,15 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseSubmitResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseOverviewResponse;
 import org.sscc.ssccopsserver.domain.form.dto.MyFormResponseSummaryResponse;
+import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentDownloadResponse;
+import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentListResponse;
+import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentUploadRequest;
+import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentUploadResponse;
 import org.sscc.ssccopsserver.domain.form.dto.PublicFormResponse;
 import org.sscc.ssccopsserver.domain.form.dto.SystemFormResponse;
 import org.sscc.ssccopsserver.domain.form.service.FormRefResolver;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
+import org.sscc.ssccopsserver.domain.form.service.ProposalAttachmentService;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.global.apipayload.ApiResponse;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
@@ -60,6 +67,7 @@ public class PublicFormController {
 
     private final FormResponseService formResponseService;
     private final FormRefResolver formRefResolver;
+    private final ProposalAttachmentService proposalAttachmentService;
 
     /*
      * 응답자용 폼 조회. 운영자용 상세(GET /v1/forms/{formId})와 경로도 응답도 나눈다.
@@ -275,6 +283,93 @@ public class PublicFormController {
         return ApiResponse.success(
                 formResponseService.getMyResponse(
                         formRefResolver.resolveId(formId), formRspnsId, respondent));
+    }
+
+    /*
+     * ── 기획안 첨부 자료 — 작성자 경로 (server#685 · ssccops#607) ─────────────────
+     * 내 응답 상세(/mine/{formRspnsId})와 같은 경계를 쓴다: 경로에 회원 식별자가 없고, 남의 응답이면
+     * 없는 응답과 같은 404 FORM_RESPONSE_NOT_FOUND다. @RequireAuthority를 붙이지 않는 것도 이 컨트롤러의
+     * 다른 핸들러와 같다 — «본인 응답만»은 애노테이션으로 표현되지 않아 서비스가 회원까지 걸어 찾는다.
+     * 규칙(기획안 한정 · 상태 잠금 · 형식 · 합계·개수 상한)의 정본은 ProposalAttachmentServiceImpl이다.
+     *
+     * 내려받기는 302가 아니라 JSON이다(운영 건 첨부와 같다). 이 경로는 Bearer 헤더가 있어야 부를 수 있어
+     * 브라우저 이동으로는 못 쓴다 — 화면이 서명 URL을 받아 그 주소로 간다.
+     */
+    @Operation(
+            summary = "기획안 첨부 업로드 허가 발급",
+            description =
+                    "원본 파일 이름과 크기를 받아 R2 presigned PUT URL을 발급한다(201). 발급이 곧 첨부 한 건이며 PUT이 실패하면"
+                        + " DELETE로 치운다. **기획안(sys_form_cd = PROPOSAL) 응답에만** 열리고 그 밖은 400"
+                        + " PROPOSAL_ATTACHMENT_NOT_SUPPORTED. 응답이 DRAFT(폼이 접수 중)이거나"
+                        + " CHANGES_REQUESTED일 때만 되고 그 밖은 409 PROPOSAL_ATTACHMENT_LOCKED. 형식은 이름의"
+                        + " 확장자로 판정해 pdf·txt·md만 받는다(400 PROPOSAL_ATTACHMENT_UNSUPPORTED_TYPE). 응답당"
+                        + " 5개(409 PROPOSAL_ATTACHMENT_LIMIT_EXCEEDED) · 합계 20MB(413"
+                        + " PROPOSAL_ATTACHMENT_TOO_LARGE — 메시지에 남은 용량이 실린다)이며 파일 하나는 남은 용량까지 쓸 수"
+                        + " 있다. 웹은 응답의 contentType을 그대로 PUT 헤더에 쓴다(서명에 들어 있다). 남의 응답은 404"
+                        + " FORM_RESPONSE_NOT_FOUND.")
+    @PostMapping("/{formId}/responses/mine/{formRspnsId}/attachments")
+    public ResponseEntity<ApiResponse<ProposalAttachmentUploadResponse>> issueAttachmentUploadUrl(
+            @PathVariable String formId,
+            @PathVariable Long formRspnsId,
+            @Valid @RequestBody ProposalAttachmentUploadRequest request,
+            @CurrentMember MemberEntity respondent) {
+        ProposalAttachmentUploadResponse response =
+                proposalAttachmentService.issueUploadUrl(
+                        formRefResolver.resolveId(formId), formRspnsId, request, respondent);
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
+    }
+
+    @Operation(
+            summary = "내 기획안 첨부 목록",
+            description =
+                    "이름·크기·올린 시각(발급 순)과 사용량(totalSize · maxTotalSize · maxCount). 화면은 «12.3MB /"
+                            + " 20MB»를 이 값으로 그린다 — 상한을 화면에 박아 두지 않는다. 응답 상태와 무관하게"
+                            + " 조회된다(반려된 것도). 남의 응답은 404 FORM_RESPONSE_NOT_FOUND.")
+    @GetMapping("/{formId}/responses/mine/{formRspnsId}/attachments")
+    public ApiResponse<ProposalAttachmentListResponse> getMyAttachments(
+            @PathVariable String formId,
+            @PathVariable Long formRspnsId,
+            @CurrentMember MemberEntity respondent) {
+        return ApiResponse.success(
+                proposalAttachmentService.listMine(
+                        formRefResolver.resolveId(formId), formRspnsId, respondent));
+    }
+
+    @Operation(
+            summary = "내 기획안 첨부 내려받기 URL",
+            description =
+                    "원본 이름이 붙은 15분짜리 서명 GET URL(Content-Disposition: attachment). 누를 때마다 받는다 —"
+                            + " 링크로 저장하지 말 것. 그 응답에 붙은 파일이 아니면 404"
+                            + " PROPOSAL_ATTACHMENT_NOT_FOUND(다른 응답의 파일 id로는 열리지 않는다).")
+    @GetMapping("/{formId}/responses/mine/{formRspnsId}/attachments/{fileId}/download-url")
+    public ApiResponse<ProposalAttachmentDownloadResponse> getMyAttachmentDownloadUrl(
+            @PathVariable String formId,
+            @PathVariable Long formRspnsId,
+            @PathVariable Long fileId,
+            @CurrentMember MemberEntity respondent) {
+        String url =
+                proposalAttachmentService.downloadUrlOfMine(
+                        formRefResolver.resolveId(formId), formRspnsId, fileId, respondent);
+        return ApiResponse.success(
+                new ProposalAttachmentDownloadResponse(
+                        url, proposalAttachmentService.downloadUrlTtlSeconds()));
+    }
+
+    @Operation(
+            summary = "내 기획안 첨부 삭제",
+            description =
+                    "참조 행을 지우고 오브젝트는 커밋 뒤 지운다. 올리기와 같은 문(기획안 한정 · DRAFT(접수 중)·"
+                            + "CHANGES_REQUESTED에서만)을 지나며, 그 응답에 붙은 파일이 아니면 404"
+                            + " PROPOSAL_ATTACHMENT_NOT_FOUND. 감사 로그에 남는다(파일 이름은 싣지 않는다).")
+    @DeleteMapping("/{formId}/responses/mine/{formRspnsId}/attachments/{fileId}")
+    public ApiResponse<Void> deleteMyAttachment(
+            @PathVariable String formId,
+            @PathVariable Long formRspnsId,
+            @PathVariable Long fileId,
+            @CurrentMember MemberEntity respondent) {
+        proposalAttachmentService.deleteMine(
+                formRefResolver.resolveId(formId), formRspnsId, fileId, respondent);
+        return ApiResponse.success(null);
     }
 
     /*

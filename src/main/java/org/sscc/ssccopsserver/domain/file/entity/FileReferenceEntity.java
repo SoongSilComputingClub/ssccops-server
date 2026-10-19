@@ -95,8 +95,9 @@ public class FileReferenceEntity {
     private String fileUrl;
 
     /*
-     * 첨부 메타 (#493 · V18). 운영 건 첨부만 채운다 — 사용자에게 «무슨 파일인가»를 보여야 하는
-     * 첫 대상이라서다. 다른 대상(회차 사진·규정 문서·갤러리)은 NULL이고 읽지 않는다.
+     * 첨부 메타 (#493 · V18). 첨부 두 대상(운영 건 OPERATION · 기획안 응답 FORM_RESPONSE, server#685)만
+     * 채운다 — 사용자에게 «무슨 파일인가»를 보여야 하는 대상이라서다. 다른 대상(회차 사진·규정 문서·
+     * 갤러리)은 NULL이고 읽지 않는다. 기획안 첨부는 file_size를 응답당 합계 상한의 재료로도 쓴다.
      * 올린 사람은 표시용 식별자라 FK도 연관도 걸지 않는다(회원이 지워져도 첨부는 남는다).
      */
     @Column(name = "orgnl_file_nm", length = 255)

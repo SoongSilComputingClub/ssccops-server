@@ -88,8 +88,10 @@ public class AcademicSessionController {
                     "활동 id 없이 회차 하나를 읽는다. 응답은 중첩 경로(GET"
                         + " /v1/academic-programs/{academicProgramId}/sessions/{sessionId})와 같은"
                         + " 모양이며 **academicProgramId가 함께 실린다** — 공유 링크의 착지가 그 값으로 lms 주소를 조립한다. 없는"
-                        + " 회차는 404 SESSION_NOT_FOUND다. 인증사진(fileReference) 규칙도 중첩 경로와 같다 — 그 활동의"
-                        + " 관계자가 아니면 null이다.")
+                        + " 회차는 404 SESSION_NOT_FOUND다. **그 활동의"
+                        + " 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만** 읽으며 아니면 403 FORBIDDEN이다(공유"
+                        + " 링크 토큰은 미리보기까지다 — ADR-0016). latestOpinion은"
+                        + " 스터디장/팀장·ACADEMIC_PROGRAM_MANAGE에게만 실린다.")
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionDetailResponse> getAcademicSession(
             @PathVariable Long sessionId, @CurrentMember MemberEntity requester) {
@@ -119,7 +121,8 @@ public class AcademicSessionController {
             description =
                     "발급은 멱등이다 — 살아 있는 링크가 있으면 그것을 돌려주므로 응답은 언제나 200이다."
                             + " 응답은 URL이 아니라 토큰(shrTkn)이며 웹이 `{자기 origin}/s/{token}`을"
-                            + " 조립한다. 없는 회차는 404 SESSION_NOT_FOUND다.")
+                            + " 조립한다. 없는 회차는 404 SESSION_NOT_FOUND, 그 활동의 관계자가 아니면 403이다"
+                            + "(볼 수 있는 사람이 공유한다).")
     @PostMapping("/{sessionId}/share")
     public ApiResponse<ShareLinkResponse> issueShareLink(
             @PathVariable Long sessionId, @CurrentMember MemberEntity issuer) {
@@ -136,7 +139,8 @@ public class AcademicSessionController {
      */
     @Operation(
             summary = "회차 공유 상태 조회",
-            description = "공유 중이 아니면 404가 아니라 data가 null인 200이다. 없는 회차면 404다.")
+            description =
+                    "공유 중이 아니면 404가 아니라 data가 null인 200이다. 없는 회차면 404, 그 활동의" + " 관계자가 아니면 403이다.")
     @GetMapping("/{sessionId}/share")
     public ApiResponse<ShareLinkResponse> getShareLink(
             @PathVariable Long sessionId, @CurrentMember MemberEntity requester) {
@@ -155,11 +159,17 @@ public class AcademicSessionController {
             summary = "회차 공유 중지",
             description =
                     "폐기하면 그 토큰으로는 미리보기가 404가 된다. 살아 있는 링크가 없어도 200이다 —"
-                            + " 결과가 같은데 두 번째 요청만 오류로 만들 이유가 없다.")
+                            + " 결과가 같은데 두 번째 요청만 오류로 만들 이유가 없다. 스터디장/팀장 본인과"
+                            + " ACADEMIC_PROGRAM_MANAGE만 부를 수 있고 그 밖은 403이다(프로그램 공유 중지와 같다).")
     @DeleteMapping("/{sessionId}/share")
     public ApiResponse<Void> revokeShareLink(
             @PathVariable Long sessionId, @CurrentMember MemberEntity requester) {
-        sessionService.getSessionById(sessionId, requester);
+        /*
+         * **폐기는 발급과 자격이 다르다** (#688 · 프로그램 쪽 ssccops#501과 같은 판단). 그전에는
+         * 상세 조회(그때는 인증만)를 존재 검사로 태우는 것이 전부라 가입한 아무 회원이나 남의 회차
+         * 공유 링크를 끊을 수 있었다 — 프로그램 쪽만 고쳐지고 이 자리가 빠져 있었다.
+         */
+        sessionService.requireShareRevocable(sessionId, requester);
         shareLinkService.revoke(ShareTargetType.ACADEMIC_SESSION, sessionId);
         return ApiResponse.successWithNoData();
     }

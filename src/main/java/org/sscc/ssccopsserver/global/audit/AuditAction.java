@@ -23,7 +23,21 @@ public enum AuditAction {
     MEMBER_STATUS_CHANGE("member.status.change", "member"),
     MEMBER_ROLE_GRANT("member.role.grant", "member"),
     MEMBER_ROLE_REVOKE("member.role.revoke", "member"),
+    /** 리더 역할에 권한을 붙이려다 막힌 시도(409 LEADER_ROLE_AUTHORITY_FORBIDDEN)도 failure로 남긴다 (#687) */
     ROLE_AUTHORITY_CHANGE("role.authority.change", "role"),
+    /*
+     * 역할 이름 변경 (#687 · ssccops#611). 기획안 승인이 리더 역할을 **이름으로** 찾으므로 이름이 곧
+     * 인가의 열쇠인데, 그전에는 흔적이 없었다 — 이름을 맞바꿔 승인이 다른 역할을 내주게 만들어도
+     * Kibana로 되짚을 수 없었다. change는 이름 전후(역할명은 조직의 직책이지 개인정보가 아니다).
+     * 분류·순번만 바뀐 수정은 남기지 않는다.
+     */
+    ROLE_RENAME("role.rename", "role"),
+    /*
+     * 권한 트리의 부모 이동 (#687). 부모를 옮기면 그 아래가 통째로 다른 묶음 권한에 펼쳐진다 — 역할
+     * 하나 바꾸지 않고 여러 역할의 인가 범위가 바뀌는 사건인데 남는 것이 없었다. 대상은 권한 코드,
+     * change는 옛 부모 코드 → 새 부모 코드. 이름·설명만 바뀐 수정은 남기지 않는다.
+     */
+    AUTHORITY_PARENT_CHANGE("authority.parent.change", "authority"),
     /** 하드 삭제(ADR-0021). 409로 막힌 시도도 failure로 남긴다 */
     MEMBER_DELETE("member.delete", "member"),
     MEMBER_IMPORT("member.import", "member_import"),
@@ -43,6 +57,13 @@ public enum AuditAction {
     OPERATION_ATTACHMENT_DELETE("operation.attachment.delete", "file_rfrnc"),
     SUBWORK_APPROVAL_VOTE("subwork.approval.vote", "sub_work"),
     FORM_RESPONSE_REVIEW("form.response.review", "form_response"),
+    /*
+     * 기획안 첨부 삭제 (server#685 · ssccops#607). 운영 건 첨부와 같이 지운 것만 남긴다 — 추가는 파일이 곧
+     * 증거다(ADR-0042 «추가»는 이력 대상 아님). 대상은 file_rfrnc id, decision은 응답 id·형식·크기
+     * (`formRspnsId=… type=PDF size=…`). **원본 파일 이름은 싣지 않는다** — 이름에 실명이 들어갈 수
+     * 있다(ADR-0024). 형식은 이름이 아니라 오브젝트 키의 확장자에서 읽는다.
+     */
+    FORM_RESPONSE_ATTACHMENT_DELETE("form.response.attachment.delete", "file_rfrnc"),
     ACADEMIC_PROGRAM_TRANSITION("academic.program.transition", "academic_program"),
     ACADEMIC_SESSION_TRANSITION("academic.session.transition", "session"),
     EVENT_STATUS_CHANGE("event.status.change", "event"),

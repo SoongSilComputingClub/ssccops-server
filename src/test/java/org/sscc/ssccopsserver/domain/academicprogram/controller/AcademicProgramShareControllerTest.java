@@ -283,16 +283,33 @@ class AcademicProgramShareControllerTest {
     }
 
     /*
-     * 회차를 볼 수 있는 사람이 공유할 수 있다(ssccops#306) — 회차 상세가 인증만 요구하므로
-     * 발급도 그렇다. 스터디장이 아닌 회원이 눌러도 같은 토큰이 나오며, 그것이 발급이 멱등인
-     * 것과 같은 사실이다.
+     * 회차를 볼 수 있는 사람이 공유할 수 있다(ssccops#306). ⚠️ 2026-10-18 정정(#688 · ssccops#611):
+     * 여기는 «회차 상세가 인증만 요구하므로 발급도 그렇다 — 스터디장이 아닌 회원이 눌러도 같은 토큰»을
+     * 못 박고 있었다. 회차 상세가 관계자(팀원·리더·학술국장)만이 되어 발급·조회도 관계자만이다 —
+     * «볼 수 있는 사람이 공유한다»는 규칙은 그대로이고 «볼 수 있는 사람»이 좁아졌다.
      */
     @Test
-    void anyAuthenticatedMemberCanIssueTheSessionShare() throws Exception {
-        String byLeader = issueSessionShareToken();
-        String byOther = issueShareToken(sessionShare(), otherToken);
+    void outsiderCannotIssueTheSessionShare() throws Exception {
+        issueSessionShareToken();
 
-        assertThat(byOther).isEqualTo(byLeader);
+        mockMvc.perform(authorized(post(sessionShare()), otherToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    /*
+     * **회차 공유 중지는 리더·학술국장만이다** (#688). 그전에는 상세 조회(인증만)를 존재 검사로 태우는
+     * 것이 전부라 가입한 아무 회원이나 남의 회차 링크를 끊을 수 있었다 — 프로그램 쪽(ssccops#501)만
+     * 고쳐지고 회차 쪽이 빠져 있었다. 폐기는 이미 퍼진 주소를 죽이고 되돌릴 수 없다. 403이 revoke보다
+     * 먼저 나므로 링크는 그대로다(실패 요청 뒤에는 상태를 다시 읽지 않는다 — 클래스 트랜잭션).
+     */
+    @Test
+    void outsiderCannotRevokeTheSessionShare() throws Exception {
+        issueSessionShareToken();
+
+        mockMvc.perform(authorized(delete(sessionShare()), otherToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
     /* ── 발급은 익명이 아니다 ──────────────────────────────── */

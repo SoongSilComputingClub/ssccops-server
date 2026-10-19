@@ -45,6 +45,11 @@ import org.sscc.ssccopsserver.support.MemberFixture;
  * 그 SQL 을 그대로 옮기면 **접수가 열려 있는 폼의 초안도 지운다.** 장기 모집 폼에서 90일 넘게
  * 손대지 않은 «작성 중인 지원서»가 사라지는데, 그것은 정책이 아니라 사고다. 문장에는 근거가
  * 있고 SQL 에는 없으므로 문장을 정본으로 삼았고, **아래 두 번째 테스트가 그 선택을 지킨다.**
+ *
+ * ── 질의가 둘로 나뉘었다 (server#685) ──────────────────────────────────────
+ * 조건은 `findDraftIdsOfFormsClosedBefore`가 갖고 지우기는 `deleteDraftsByIdIn`이 한다 — 기획안 첨부를
+ * 함께 걷으려면 무엇을 지웠는지 알아야 하는데 벌크 DELETE는 건수만 돌려준다. 아래 `purge()`가 서비스와
+ * 같은 순서로 둘을 잇고, 첨부 정리 자체는 `ProposalAttachmentCommitTest`가 실제 커밋으로 본다.
  */
 @DataJpaTest
 @ActiveProfiles("test")
@@ -152,9 +157,38 @@ class FormDraftRetentionQueryTest {
         Assertions.assertThat(formResponseHistoryRepository.findAll()).hasSize(1);
     }
 
+    /*
+     * 고른 뒤 지울 때 상태를 한 번 더 본다 (server#685). 고른 식별자 사이에 제출된 응답이 끼어 있으면 그
+     * 행은 더 이상 «낸 적 없는 초안»이 아니다 — 지우는 문장이 DRAFT를 다시 걸어 그 행을 남긴다.
+     */
+    @Test
+    void deleteByIdsKeepsRowsThatAreNoLongerDrafts() {
+        FormEntity closedLongAgo =
+                saveForm("2024 신규모집", FormStatus.CLOSED, NOW.minusSeconds(200L * 24 * 60 * 60));
+        FormResponseHistoryEntity submitted =
+                formResponseHistoryRepository.saveAndFlush(
+                        FormResponseHistoryEntity.createSubmitted(
+                                closedLongAgo,
+                                applicant,
+                                ResponseContent.of(Map.of("q1", "홍길동")),
+                                NOW.minusSeconds(201L * 24 * 60 * 60)));
+
+        int deleted =
+                formResponseHistoryRepository.deleteDraftsByIdIn(
+                        List.of(submitted.getId()), ResponseStatus.DRAFT);
+
+        Assertions.assertThat(deleted).isZero();
+        Assertions.assertThat(formResponseHistoryRepository.findAll()).hasSize(1);
+    }
+
+    /* 서비스(FormDraftRetentionService.purge)와 같은 순서 — 조건으로 고르고, 고른 식별자로 지운다 */
     private int purge() {
-        return formResponseHistoryRepository.deleteDraftsOfFormsClosedBefore(
-                ResponseStatus.DRAFT, FormStatus.CLOSED, NINETY_DAYS_AGO);
+        List<Long> ids =
+                formResponseHistoryRepository.findDraftIdsOfFormsClosedBefore(
+                        ResponseStatus.DRAFT, FormStatus.CLOSED, NINETY_DAYS_AGO);
+        return ids.isEmpty()
+                ? 0
+                : formResponseHistoryRepository.deleteDraftsByIdIn(ids, ResponseStatus.DRAFT);
     }
 
     /*

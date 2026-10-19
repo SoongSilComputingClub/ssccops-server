@@ -58,7 +58,19 @@ public enum FileTargetType {
      * V18이 file_rfrnc에 붙인 열(orgnl_file_nm·file_size·rgtr_mbr_id·crt_dt)에 — 사용자에게 «무슨
      * 파일인가»를 보여야 하는 첫 대상이다(이미지 갤러리는 그림 자체가 답이었다).
      */
-    OPERATION("operations/");
+    OPERATION("operations/"),
+    /*
+     * 기획안 응답의 첨부 자료 (server#685 · ssccops#607). 대상은 **form_rspns_hstry 행**이다 —
+     * 폼 문항(FILE 유형)이 아니라 응답 옆에 붙인다(ADR-0004가 문항 유형 추가를 기각한 이유와
+     * 같다 · 운영 중인 기획안 폼은 문항이 잠겨 있다). 대상당 여러 건(최대 5). 키는
+     * form-responses/{formRspnsId}/{uuid}.{ext}. 메타 열은 OPERATION과 같이 채운다. 승인 뒤
+     * 학술 활동은 acdm_actv.form_rspns_id로 **이 대상을 그대로 읽는다** — 활동 대상으로 복사하지
+     * 않는다(ADR-0002·0003). 이름은 데이터사전(ssccops#608)이 정했다.
+     *
+     * **이 값은 지우지 않는다** — 올라온 행이 있으면 그 행을 읽는 질의가 enum 변환에서 터진다.
+     * 기능을 닫을 때는 API를 닫는다(ssccops#607 «되돌리는 방법»).
+     */
+    FORM_RESPONSE("form-responses/");
 
     /** 이 대상의 오브젝트 키 접두사 */
     private final String objectKeyPrefix;

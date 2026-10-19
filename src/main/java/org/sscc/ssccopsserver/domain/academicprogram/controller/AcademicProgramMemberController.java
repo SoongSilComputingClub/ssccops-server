@@ -32,7 +32,7 @@ import lombok.RequiredArgsConstructor;
  * 다시 내려주는 얇은 프록시이며 새 테이블은 없다(설계 결정 #3).
  *
  * 모집 컨트롤러(AcademicProgramRecruitmentController)와 나누는 것은 인가 레벨이 다르기
- * 때문이다 — 이쪽은 **그 활동의 관계자**(팀원·스터디장/팀장·학술국장)이고(팀원 명단은 활동 상세
+ * 때문이다 — 이쪽은 **그 활동의 관계자**(팀원·스터디장/팀장·학술 조회 권한 보유자 — #694)이고(팀원 명단은 활동 상세
  * 화면의 일부라 팀원 누구나 본다, §6 매트릭스) 그쪽은 스터디장 소유권 또는 학술국장 권한이 걸린다.
  * ⚠️ 2026-10-18 정정(#688 · ssccops#611): 여기는 «인증만»이었다 — «팀원 누구나»를 근거로 들고
  * 실제로는 동아리 전원에게 남의 프로그램 명단을 열었다. 판정은 OwnershipPolicy.requireRelated다. 한 컨트롤러에 두면 핸들러가
@@ -73,7 +73,7 @@ public class AcademicProgramMemberController {
                             + " acdm_actv.leadr_mbr_id와의 비교에서 온다."
                             + " 모집 시작 전이어도 409가 아니라 빈 목록이다 — 아직 아무도 뽑지 않은"
                             + " 활동의 빈 명단은 정상적인 답이다(신청자 조회·선발과 갈리는 지점)."
-                            + " 그 활동의 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만 부를 수 있고"
+                            + " 그 활동의 관계자(팀원·스터디장/팀장·학술 조회 권한 ACADEMIC_PROGRAM_READ)만 부를 수 있고"
                             + " 아니면 403이다.")
     @GetMapping
     public ApiResponse<List<AcademicProgramMemberResponse>> getMembers(
@@ -133,10 +133,10 @@ public class AcademicProgramMemberController {
     @Operation(
             summary = "학술 활동 팀원 명단 변경 이력",
             description =
-                    "스터디장 본인 또는 학술국장만 본다. 최신순이며 모집 선발(RECRUITMENT_SELECTION)·"
-                            + "행사 참가자 API(EVENT_PARTICIPANTS)·팀원 관리(TEAM_MEMBERS) 세 경로가 남긴 줄이"
-                            + " 전부 나온다. bfrPtcpSttsCd가 null이면 처음 명단에 오른 줄이다. 종료·폐지된"
-                            + " 활동도 볼 수 있다.")
+                    "스터디장 본인 또는 학술 조회 권한(ACADEMIC_PROGRAM_READ) 보유자만 본다. 최신순이며 모집"
+                        + " 선발(RECRUITMENT_SELECTION)·행사 참가자 API(EVENT_PARTICIPANTS)·팀원"
+                        + " 관리(TEAM_MEMBERS) 세 경로가 남긴 줄이 전부 나온다. bfrPtcpSttsCd가 null이면 처음 명단에 오른"
+                        + " 줄이다. 종료·폐지된 활동도 볼 수 있다.")
     @GetMapping("/history")
     public ApiResponse<List<AcademicProgramMemberHistoryResponse>> getMemberHistory(
             @PathVariable Long academicProgramId,

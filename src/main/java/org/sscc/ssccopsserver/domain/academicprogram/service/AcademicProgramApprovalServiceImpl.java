@@ -24,7 +24,8 @@ import lombok.RequiredArgsConstructor;
  * 승인 이력 조회의 구현 (#139).
  *
  * 이 클래스가 새로 만드는 규칙은 없다 — 열람 자격은 AcademicProgramOwnershipPolicy
- * .requireLeaderOrManager(#138)가, 커서·페이지 봉투 조립은 SessionReviewServiceImpl과 같은
+ * .requireLeaderOrReader(#138 · #694 — 리더 또는 학술 조회 권한)가, 커서·페이지 봉투 조립은
+ * SessionReviewServiceImpl과 같은
  * 골격이 갖는다. 소유권과 관리권한의 OR을 여기서 다시 적지 않는 것이 중요한데, 복제하면 신청자
  * 조회(#138)와 이 조회가 같은 문장에 대해 다른 답을 낼 여지가 생긴다.
  */
@@ -49,7 +50,7 @@ public class AcademicProgramApprovalServiceImpl implements AcademicProgramApprov
             MemberEntity requester) {
 
         AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
-        academicProgramOwnershipPolicy.requireLeaderOrManager(academicProgram, requester);
+        academicProgramOwnershipPolicy.requireLeaderOrReader(academicProgram, requester);
 
         AcademicProgramApprovalSearchQuery query = condition.toQuery(academicProgramId);
 

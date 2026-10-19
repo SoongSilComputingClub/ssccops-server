@@ -102,10 +102,10 @@ public class AcademicProgramSessionController {
             description =
                     "계획(회차 번호·주제·예정일)과 출석부·집계를 함께 내린다."
                             + " 출석 인증사진(fileReference)은 **그 활동의 관계자**(팀원·스터디장/팀장·"
-                            + "ACADEMIC_PROGRAM_MANAGE)에게만 실리며, 값은 만료가 있는 서명된 URL이다"
+                            + "학술 조회 권한 ACADEMIC_PROGRAM_READ)에게만 실리며, 값은 만료가 있는 서명된 URL이다"
                             + "(expiresInSeconds로 남은 시간을 함께 내린다 — 만료되면 이 조회를 다시"
                             + " 부른다). **조회 자체가 그 활동의 관계자만**이며 아니면 403 FORBIDDEN이다."
-                            + " latestOpinion(마지막 수정요청 사유)은 스터디장/팀장·ACADEMIC_PROGRAM_MANAGE에게만"
+                            + " latestOpinion(마지막 수정요청 사유)은 스터디장/팀장·ACADEMIC_PROGRAM_READ 보유자에게만"
                             + " 실리고 팀원에게는 null이다.")
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionDetailResponse> getSession(
@@ -122,7 +122,7 @@ public class AcademicProgramSessionController {
                     "활동 상세 화면 안에서 그 활동의 회차만 본다. 커서 페이징이며 기본 정렬은 회차 번호"
                             + " 오름차순이다. sttsCd에 NOT_SUBMITTED를 넘기면 언제나 빈 목록이다 — 그 상태는"
                             + " 실적 행이 없다는 뜻이라 미제출 회차는 커리큘럼 조회(#134)에서 본다. 그 활동의"
-                            + " 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만 부를 수 있고 아니면 403이다.")
+                            + " 관계자(팀원·스터디장/팀장·학술 조회 권한 ACADEMIC_PROGRAM_READ)만 부를 수 있고 아니면 403이다.")
     @GetMapping
     public ApiResponse<List<SessionSummaryResponse>> searchSessions(
             @PathVariable Long academicProgramId,

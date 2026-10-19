@@ -222,9 +222,12 @@ public class AcademicProgramServiceImpl implements AcademicProgramService {
          * mine=leader, www 공개 목록은 /public/v1/events), 리더는 운영진이 아니다. 그래서 #118을 목록에
          * 한해 좁힌다 — 상세·커리큘럼은 그대로 열려 있다. 판정은 질의를 만든 뒤 mineRole로 한다:
          * mine=false·빈 값도 «필터 없음»이라(AcademicProgramMineRole.from) 원문 문자열로 가르면 샌다.
+         *
+         * «학술국장만»은 #694부터 «학술 조회 권한(ACADEMIC_PROGRAM_READ) 보유자만»이다 — 국원도 감독
+         * 화면을 읽는다(ADR-0068). 학술국장은 펼침으로 그대로다.
          */
         if (query.mineRole() == null) {
-            academicProgramOwnershipPolicy.requireManager(
+            academicProgramOwnershipPolicy.requireReader(
                     viewer, "AcademicProgramController.searchAcademicPrograms(..)");
         }
 

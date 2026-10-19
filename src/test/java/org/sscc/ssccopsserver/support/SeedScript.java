@@ -29,7 +29,8 @@ public final class SeedScript {
                     "db/migration/V3__seed_reference_data.sql",
                     "db/migration/V11__seed_rag_document_manage_authority.sql",
                     "db/migration/V16__seed_content_manage_authority.sql",
-                    "db/migration/V19__seed_track_program_type.sql");
+                    "db/migration/V19__seed_track_program_type.sql",
+                    "db/migration/V34__seed_academic_program_read_authority.sql");
 
     private SeedScript() {}
 

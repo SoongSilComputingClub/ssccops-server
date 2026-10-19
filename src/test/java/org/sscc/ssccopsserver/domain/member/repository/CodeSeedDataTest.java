@@ -229,6 +229,34 @@ class CodeSeedDataTest {
         assertThat(grantedCodesOf("국원")).doesNotContain("RAG_DOCUMENT_MANAGE");
     }
 
+    /*
+     * 학술 조회 권한 (#694 · V34 · ADR-0068). ACADEMIC_PROGRAM_MANAGE의 자식인 것이 판정의 절반이다 —
+     * 학술국장(국장 → OPERATOR)은 이 한 줄로 조회를 잃지 않는다. OPERATOR 밑 형제로 옮기면
+     * MANAGE만 직접 받은 역할의 조회가 조용히 막힌다(WORK_READ #101과 같은 이유).
+     */
+    @Test
+    void seedsAcademicProgramReadUnderManage() {
+        assertThat(authorityRepository.findById("ACADEMIC_PROGRAM_READ"))
+                .get()
+                .satisfies(
+                        authority -> {
+                            assertThat(authority.getParent().getCode())
+                                    .isEqualTo("ACADEMIC_PROGRAM_MANAGE");
+                            assertThat(authority.isSystemDefined()).isTrue();
+                        });
+    }
+
+    /*
+     * 나머지 절반은 국원 부여다 — 국원이 어드민 학술 화면을 읽기만 한다. 국원은 학술 쓰기를 받지 않고,
+     * 리더 역할은 여전히 아무것도 받지 않는다(위 grantsApprovalAndVotingAuthoritiesToSeededRoles).
+     */
+    @Test
+    void grantsAcademicProgramReadToStaffOnly() {
+        assertThat(grantedCodesOf("국원"))
+                .contains("ACADEMIC_PROGRAM_READ")
+                .doesNotContain("ACADEMIC_PROGRAM_MANAGE");
+    }
+
     private List<String> grantedCodesOf(String roleName) {
         MemberRoleEntity role =
                 memberRoleRepository.findAll().stream()

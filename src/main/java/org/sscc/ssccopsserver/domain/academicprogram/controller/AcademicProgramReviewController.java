@@ -44,8 +44,12 @@ import lombok.RequiredArgsConstructor;
  * 자기 활동의 처리 이력을 보러 온 스터디장이 소유권 판정에 닿기도 전에 403을 받는다(메서드
  * 애노테이션은 클래스 것을 덮어쓸 뿐 해제하지 못한다). 그래서 세 핸들러에 같은 권한을 그대로
  * 옮겨 적고, 승인 이력의 OR은 서비스 레이어의
- * AcademicProgramOwnershipPolicy.requireLeaderOrManager가 판정한다 —
+ * AcademicProgramOwnershipPolicy.requireLeaderOrReader가 판정한다 —
  * AcademicProgramRecruitmentController(#138)의 recruitment/applications와 같은 패턴이다.
+ *
+ * **#694부터 조회와 전이의 권한이 갈린다**(ADR-0068). 회차를 훑는 두 목록은 학술 조회 권한
+ * ACADEMIC_PROGRAM_READ(국원이 읽는다 · 학술국장은 펼침으로 포함), 회차 승인·수정요청 전이만
+ * ACADEMIC_PROGRAM_MANAGE다. 새 핸들러는 조회면 READ, 쓰기면 MANAGE를 고른다.
  *
  * 그 결과 이 컨트롤러에도 '자격이 걸리지 않은 핸들러'가 없다 — 셋은 애노테이션이, 하나는
  * 정책이 끊는다. 핸들러를 추가할 때 애노테이션을 빠뜨리면 인증만으로 열리므로 주의할 것.
@@ -100,7 +104,7 @@ public class AcademicProgramReviewController {
                             + " 잃는다. 활동 하나의 회차만 보는 화면은 이 API가 아니라 GET"
                             + " /v1/academic-programs/{id}/sessions다.")
     @GetMapping("/sessions")
-    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
+    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_READ)
     public ApiResponse<List<SessionCrossListResponse>> searchCrossSessions(
             @Valid @ModelAttribute SessionCrossCondition condition) {
         SessionCrossSearchResponse result = sessionReviewService.searchCrossSessions(condition);
@@ -116,7 +120,7 @@ public class AcademicProgramReviewController {
                             + " 오름차순이다(오래 기다린 건부터). page.overallCount는 대기 건수가 아니라"
                             + " 회차 전체 건수다.")
     @GetMapping("/reviews/sessions")
-    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_MANAGE)
+    @RequireAuthority(AuthorityCode.ACADEMIC_PROGRAM_READ)
     public ApiResponse<List<SessionCrossListResponse>> searchPendingSessions(
             @Valid @ModelAttribute SessionReviewCondition condition) {
         SessionCrossSearchResponse result = sessionReviewService.searchPendingSessions(condition);
@@ -128,7 +132,7 @@ public class AcademicProgramReviewController {
      * 이 배열을 공유한다.
      *
      * **@RequireAuthority가 없는 유일한 핸들러다.** 빠뜨린 것이 아니라 표현할 수 없는 것이며
-     * (클래스 주석), 자격은 서비스가 활동을 찾은 뒤 requireLeaderOrManager로 끊는다.
+     * (클래스 주석), 자격은 서비스가 활동을 찾은 뒤 requireLeaderOrReader로 끊는다.
      */
     @Operation(
             summary = "승인 이력 조회",
@@ -137,7 +141,7 @@ public class AcademicProgramReviewController {
                             + "COMPLETION만 받으며(기획안 승인 이력은 폼 응답 상세의 검토 이력에서 본다)"
                             + " 그 밖의 값은 400 INVALID_CODE_VALUE다. sessionId로 회차 하나의 이력만"
                             + " 좁힐 수 있고, 커서 페이징이다. 자격은 이 활동의 스터디장/팀장 본인 **또는**"
-                            + " ACADEMIC_PROGRAM_MANAGE이고 어느 쪽도 아니면 403 FORBIDDEN이다 —"
+                            + " 학술 조회 권한(ACADEMIC_PROGRAM_READ)이고 어느 쪽도 아니면 403 FORBIDDEN이다 —"
                             + " 수정요청 사유(opnnCn)가 실리므로 팀원에게도 열지 않는다."
                             + " page.overallCount는 필터와 무관한 그 활동의 이력 전체 건수다.")
     @GetMapping("/{academicProgramId}/approvals")

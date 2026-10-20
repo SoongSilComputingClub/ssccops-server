@@ -71,15 +71,14 @@ public class AcademicProgramController {
     @Operation(
             summary = "활동 목록 조회",
             description =
-                    "스터디·프로젝트 목록 화면, 대시보드 상태별 카운트 겸용. 커서 페이징이다."
-                            + " mine은 역할 표기다 — mine=true는 **스터디장 또는 기획안 제출자**(지금까지의 동작),"
-                            + " mine=leader는 스터디장/팀장 본인, mine=proposer는 제출자 본인의 활동만 본다."
-                            + " mine 없음·빈 값·mine=false는 필터를 걸지 않고, 그 밖의 값은 400"
-                            + " INVALID_CODE_VALUE다. **\"이 사람이 스터디장인가\"를 판정할 때는 mine=true가"
-                            + " 아니라 mine=leader를 쓴다** — true는 제출만 한 회원에게도 결과를 주고, 그 행들은"
-                            + " isLeader가 전부 false다. **mine 없이(필터 없음) 부르면 ACADEMIC_PROGRAM_MANAGE가"
-                            + " 필요하다** — 없으면 403 AUTHORITY_REQUIRED다(전체 목록은 학술국장의 감독 화면이다)."
-                            + " mine이 있으면 누구나 자기 것을 본다.")
+                    "스터디·프로젝트 목록 화면, 대시보드 상태별 카운트 겸용. 커서 페이징이다. mine은 역할 표기다 — mine=true는 **스터디장 또는"
+                        + " 기획안 제출자**(지금까지의 동작), mine=leader는 스터디장/팀장 본인, mine=proposer는 제출자 본인의"
+                        + " 활동만 본다. mine 없음·빈 값·mine=false는 필터를 걸지 않고, 그 밖의 값은 400"
+                        + " INVALID_CODE_VALUE다. **\"이 사람이 스터디장인가\"를 판정할 때는 mine=true가 아니라"
+                        + " mine=leader를 쓴다** — true는 제출만 한 회원에게도 결과를 주고, 그 행들은 isLeader가 전부"
+                        + " false다. **mine 없이(필터 없음) 부르면 학술 조회 권한(ACADEMIC_PROGRAM_READ)이 필요하다** —"
+                        + " 없으면 403 AUTHORITY_REQUIRED다(전체 목록은 학술 감독 화면이다). mine이 있으면 누구나 자기 것을"
+                        + " 본다.")
     @GetMapping
     public ApiResponse<List<AcademicProgramSummaryResponse>> searchAcademicPrograms(
             @Valid @ModelAttribute AcademicProgramCondition condition,

@@ -17,6 +17,7 @@ import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentDownloadResponse;
 import org.sscc.ssccopsserver.domain.form.dto.ProposalAttachmentListResponse;
+import org.sscc.ssccopsserver.domain.form.service.FormResponseReadPolicy;
 import org.sscc.ssccopsserver.domain.form.service.FormResponseService;
 import org.sscc.ssccopsserver.domain.form.service.ProposalAttachmentService;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
@@ -26,6 +27,7 @@ import org.sscc.ssccopsserver.global.security.authorization.RequireAuthority;
 import org.sscc.ssccopsserver.global.security.resolver.CurrentMember;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 
 import lombok.RequiredArgsConstructor;
 
@@ -50,15 +52,26 @@ import lombok.RequiredArgsConstructor;
  * 연락처·지원서 내용을 통째로 내려주므로, 핸들러가 하나 늘 때 애노테이션을 빠뜨리는 것만으로
  * 개인정보가 열리는 자리를 만들지 않는다. 조회와 심사를 나누지 않은 것은 남의 지원서를 읽는
  * 것 자체가 심사 권한이기 때문이다.
+ *
+ * ⚠️ #694(ssccops#614 · ADR-0068)부터 위 문단은 **검토에만** 사실이다. 조회 넷(목록 · 상세 · 첨부
+ * 목록 · 내려받기)은 «RESPONSE_REVIEW, 또는 기획안(PROPOSAL) 폼이고 학술 조회 권한»이라 — 국원이
+ * 기획안 검토를 읽기만 한다 — 경로의 폼에 따라 갈리는 판정을 애노테이션이 표현하지 못해
+ * FormResponseReadPolicy가 맡는다(근거와 기각한 대안은 그 클래스 주석). 그래서 클래스 레벨
+ * 애노테이션을 걷고 검토 핸들러에 메서드로 옮겼다. **새 핸들러는 둘 중 하나를 반드시 지닌다** —
+ * @RequireAuthority, 또는 첫 줄의 readPolicy.requireReadable. 빠뜨린 핸들러는 인증만으로 열리며,
+ * FormResponseControllerAuthorizationTest가 그것을 잡는다.
+ *
+ * 판정을 서비스가 아니라 여기서 부르는 것은 그것이 걷어 낸 애노테이션의 자리이기 때문이다 — 같은
+ * 서비스 메서드(getResponses)를 학술 신청자 조회가 자기 판정을 마친 뒤 부른다.
  */
 @RestController
 @RequiredArgsConstructor
-@RequireAuthority(AuthorityCode.RESPONSE_REVIEW)
 @RequestMapping("/v1/forms/{formId}/responses")
 public class FormResponseController {
 
     private final FormResponseService formResponseService;
     private final ProposalAttachmentService proposalAttachmentService;
+    private final FormResponseReadPolicy readPolicy;
 
     /*
      * 응답 목록. 페이징을 두지 않고 배열을 그대로 내려준다 (FormResponseServiceImpl.getResponses 주석).
@@ -79,10 +92,17 @@ public class FormResponseController {
                             + " 화면은 값이 없으면 순번(rspnsSeq)만으로 표시한다."
                             + " 정렬은 제출 일시 내림차순이고, 제출 일시가 없는 작성 중 응답은 최종 수정 일시로 정렬한다."
                             + " 응답 내용(rspnsCn)은 목록에 싣지 않는다 — 상세에서만 준다."
-                            + " 페이징은 두지 않는다(배열을 그대로 내려준다).")
+                            + " 페이징은 두지 않는다(배열을 그대로 내려준다)."
+                            + " 응답 심사(RESPONSE_REVIEW) 권한이 필요하고, 기획안(시스템 폼 PROPOSAL)의 응답은"
+                            + " 학술 조회(ACADEMIC_PROGRAM_READ) 권한으로도 읽힌다 — 어느 쪽도 아니면 403"
+                            + " AUTHORITY_REQUIRED다(없는 폼도 같다).")
     @GetMapping
     public ApiResponse<List<FormResponseSummaryResponse>> getFormResponses(
-            @PathVariable Long formId, @RequestParam(required = false) ResponseStatus statusCode) {
+            @PathVariable Long formId,
+            @RequestParam(required = false) ResponseStatus statusCode,
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
+        readPolicy.requireReadable(
+                formId, requester, "FormResponseController.getFormResponses(..)");
         return ApiResponse.success(formResponseService.getResponses(formId, statusCode));
     }
 
@@ -102,12 +122,15 @@ public class FormResponseController {
                             + " 아직 아무 처리도 없으면 빈 배열이다. sbmsnSeq는 현재 제출 회차(최초 1)이고"
                             + " 이력의 각 줄에도 그 처리가 몇 회차에 대한 것이었는지 함께 실린다."
                             + " **다른 폼의 응답 식별자는 404 FORM_RESPONSE_NOT_FOUND다** — 없는 응답과 같은 코드로"
-                            + " 내려, 그 폼에 그 번호가 있는지 없는지도 알려주지 않는다.")
+                            + " 내려, 그 폼에 그 번호가 있는지 없는지도 알려주지 않는다."
+                            + " 자격은 목록과 같다 — RESPONSE_REVIEW, 또는 기획안(PROPOSAL)이면"
+                            + " ACADEMIC_PROGRAM_READ. 연락처는 그와 별개로 MEMBER_MANAGE 보유자에게만 실린다.")
     @GetMapping("/{formRspnsId}")
     public ApiResponse<FormResponseDetailResponse> getFormResponse(
             @PathVariable Long formId,
             @PathVariable Long formRspnsId,
             @CurrentMember MemberEntity requester) {
+        readPolicy.requireReadable(formId, requester, "FormResponseController.getFormResponse(..)");
         // 요청자를 넘기는 것은 연락처를 담을지 가르기 위해서다 (#277)
         return ApiResponse.success(formResponseService.getResponse(formId, formRspnsId, requester));
     }
@@ -149,6 +172,7 @@ public class FormResponseController {
                             + " 처리자는 요청 본문이 아니라 인증 주체(@CurrentMember)에서 온다."
                             + " 상태 변경과 이력 저장은 한 트랜잭션이라 이력이 저장되지 않으면 상태도 되돌아간다.")
     @PostMapping("/{formRspnsId}/reviews")
+    @RequireAuthority(AuthorityCode.RESPONSE_REVIEW)
     public ApiResponse<FormResponseSummaryResponse> reviewFormResponse(
             @PathVariable Long formId,
             @PathVariable Long formRspnsId,
@@ -164,17 +188,23 @@ public class FormResponseController {
      * RESPONSE_REVIEW가 그대로 걸리게** 하기 위해서다 — 첨부도 남의 지원서의 일부라 같은 문턱이어야
      * 하고, 따로 컨트롤러를 만들면 애노테이션 한 줄을 빠뜨리는 것으로 열린다. 응답 상태와 무관하게
      * 읽는다(검토 중·반려된 것도). 폼 경계는 응답 상세와 같다 — 다른 폼의 응답 id는 404.
+     * #694부터 그 문턱은 응답 상세와 같은 readPolicy다(클래스 주석) — 첨부를 볼 수 있는 사람과
+     * 응답을 볼 수 있는 사람이 갈리면 검토 화면이 반쯤 열린다.
      */
     @Operation(
             summary = "기획안 첨부 목록(검토자)",
             description =
                     "응답에 붙은 첨부의 이름·크기·올린 시각(발급 순)과 사용량(totalSize · maxTotalSize ·"
-                            + " maxCount). RESPONSE_REVIEW가 필요하다(없으면 403 FORBIDDEN). 응답 상태와 무관하다."
+                            + " maxCount). RESPONSE_REVIEW가 필요하다(없으면 403 FORBIDDEN) — 기획안(PROPOSAL)"
+                            + " 응답이면 학술 조회(ACADEMIC_PROGRAM_READ)로도 된다. 응답 상태와 무관하다."
                             + " 기획안이 아닌 폼의 응답은 첨부가 생길 길이 없어 빈 목록이다. 다른 폼의 응답 id는 404"
                             + " FORM_RESPONSE_NOT_FOUND.")
     @GetMapping("/{formRspnsId}/attachments")
     public ApiResponse<ProposalAttachmentListResponse> getAttachments(
-            @PathVariable Long formId, @PathVariable Long formRspnsId) {
+            @PathVariable Long formId,
+            @PathVariable Long formRspnsId,
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
+        readPolicy.requireReadable(formId, requester, "FormResponseController.getAttachments(..)");
         return ApiResponse.success(proposalAttachmentService.listForReview(formId, formRspnsId));
     }
 
@@ -186,7 +216,12 @@ public class FormResponseController {
                             + " 않는다. 링크로 저장하지 말 것.")
     @GetMapping("/{formRspnsId}/attachments/{fileId}/download-url")
     public ApiResponse<ProposalAttachmentDownloadResponse> getAttachmentDownloadUrl(
-            @PathVariable Long formId, @PathVariable Long formRspnsId, @PathVariable Long fileId) {
+            @PathVariable Long formId,
+            @PathVariable Long formRspnsId,
+            @PathVariable Long fileId,
+            @Parameter(hidden = true) @CurrentMember MemberEntity requester) {
+        readPolicy.requireReadable(
+                formId, requester, "FormResponseController.getAttachmentDownloadUrl(..)");
         String url = proposalAttachmentService.downloadUrlForReview(formId, formRspnsId, fileId);
         return ApiResponse.success(
                 new ProposalAttachmentDownloadResponse(

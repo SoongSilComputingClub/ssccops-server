@@ -42,7 +42,8 @@ import lombok.RequiredArgsConstructor;
  * **또는** 학술국장"이다. 클래스에 관리권한을 걸어 두면 애스펙트가 먼저 돌아, 자기 활동의
  * 신청자를 보러 온 스터디장이 소유권 판정에 닿기도 전에 403을 받는다(메서드 애노테이션은
  * 클래스 것을 덮어쓸 뿐 해제하지 못한다). 그래서 선발에만 메서드 레벨로 걸고, 조회의 OR은
- * 서비스 레이어의 AcademicProgramOwnershipPolicy.requireLeaderOrManager가 판정한다.
+ * 서비스 레이어의 AcademicProgramOwnershipPolicy.requireLeaderOrReader가 판정한다(#694 — 조회의
+ * 권한 쪽은 학술 조회 권한 ACADEMIC_PROGRAM_READ다 · ADR-0068).
  *
  * 그 결과 이 컨트롤러에는 '자격이 걸리지 않은 핸들러'가 없다 — 하나는 애노테이션이, 하나는
  * 정책이 끊는다. 인증만으로 열리는 팀원 명단은 이 클래스가 아니라
@@ -82,7 +83,7 @@ public class AcademicProgramRecruitmentController {
                             + " 같은 회원의 응답이 여러 줄이면 같은 값이 함께 실린다."
                             + " statusCode를 생략하면 작성 중(DRAFT)을 뺀 전부이며 정렬은 제출"
                             + " 일시 내림차순이다. 자격은 이 활동의 스터디장/팀장 본인 **또는**"
-                            + " ACADEMIC_PROGRAM_MANAGE이고 어느 쪽도 아니면 403 FORBIDDEN이다."
+                            + " 학술 조회 권한(ACADEMIC_PROGRAM_READ)이고 어느 쪽도 아니면 403 FORBIDDEN이다."
                             + " 모집 시작 전(APPROVED)이면 빈 목록이 아니라 409"
                             + " RECRUITMENT_NOT_STARTED다 — 빈 배열은 '아무도 지원하지 않았다'로 읽힌다."
                             + " 수락·거절 심사 자체는 이 경로가 아니라 폼 응답 검토 API"
@@ -143,8 +144,9 @@ public class AcademicProgramRecruitmentController {
             description =
                     "연결된 모집 폼의 상세를 그대로 싣고(GET /v1/forms/{formId}와 같은 모양)"
                             + " 지금 문항을 고칠 수 있는지(isEditable)를 함께 내린다."
-                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** ACADEMIC_PROGRAM_MANAGE이며"
-                            + " 어느 쪽도 아니면 403 FORBIDDEN이다."
+                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** 학술 조회 권한"
+                            + "(ACADEMIC_PROGRAM_READ)이며 어느 쪽도 아니면 403 FORBIDDEN이다. isEditable은"
+                            + " 그중 스터디장/팀장 본인과 ACADEMIC_PROGRAM_MANAGE에게만 참일 수 있다."
                             + " **접수가 시작된 뒤에도 200이다** — 그때는 isEditable만 false이고 문항은"
                             + " 그대로 보인다(화면의 '지원서 문항 보기')."
                             + " 모집 시작 전(APPROVED)에도 열린다 — 신청자 목록과 달리"
@@ -196,8 +198,8 @@ public class AcademicProgramRecruitmentController {
             summary = "학술 활동 모집 일정 조회",
             description =
                     "연결된 모집 폼의 접수 시작·종료 일시와 그것에서 파생된 접수 상태를 내린다."
-                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** ACADEMIC_PROGRAM_MANAGE이며"
-                            + " 어느 쪽도 아니면 403 FORBIDDEN이다."
+                            + " 자격은 이 활동의 스터디장/팀장 본인 **또는** 학술 조회 권한"
+                            + "(ACADEMIC_PROGRAM_READ)이며 어느 쪽도 아니면 403 FORBIDDEN이다."
                             + " **모집 시작 전(APPROVED)에도 200이다** — 그때는 두 일시가 null이고"
                             + " 아직 일정이 정해지지 않았다는 뜻이다."
                             + " 폼이 연결되지 않은 활동은 409 FORM_NOT_LINKED,"

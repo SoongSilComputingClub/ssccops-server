@@ -88,10 +88,9 @@ public class AcademicSessionController {
                     "활동 id 없이 회차 하나를 읽는다. 응답은 중첩 경로(GET"
                         + " /v1/academic-programs/{academicProgramId}/sessions/{sessionId})와 같은"
                         + " 모양이며 **academicProgramId가 함께 실린다** — 공유 링크의 착지가 그 값으로 lms 주소를 조립한다. 없는"
-                        + " 회차는 404 SESSION_NOT_FOUND다. **그 활동의"
-                        + " 관계자(팀원·스터디장/팀장·ACADEMIC_PROGRAM_MANAGE)만** 읽으며 아니면 403 FORBIDDEN이다(공유"
-                        + " 링크 토큰은 미리보기까지다 — ADR-0016). latestOpinion은"
-                        + " 스터디장/팀장·ACADEMIC_PROGRAM_MANAGE에게만 실린다.")
+                        + " 회차는 404 SESSION_NOT_FOUND다. **그 활동의 관계자(팀원·스터디장/팀장·학술 조회 권한"
+                        + " ACADEMIC_PROGRAM_READ)만** 읽으며 아니면 403 FORBIDDEN이다(공유 링크 토큰은 미리보기까지다 —"
+                        + " ADR-0016). latestOpinion은 스터디장/팀장·ACADEMIC_PROGRAM_READ 보유자에게만 실린다.")
     @GetMapping("/{sessionId}")
     public ApiResponse<SessionDetailResponse> getAcademicSession(
             @PathVariable Long sessionId, @CurrentMember MemberEntity requester) {

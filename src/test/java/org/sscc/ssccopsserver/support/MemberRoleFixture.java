@@ -45,6 +45,13 @@ public final class MemberRoleFixture {
 
     public static final String PLANNING_STAFF = "기획국원";
 
+    /*
+     * 시드된 '국원'. 쓰기 권한 없이 읽기만 하는 운영진이다 — 업무·회의 조회·안건·투표(V3 · #101 ·
+     * #123)와 학술 조회 ACADEMIC_PROGRAM_READ(V34 · #694)가 붙어 있다. «읽을 수는 있는데 쓸 수는
+     * 없다»를 보는 테스트가 이 역할을 쓴다.
+     */
+    public static final String STAFF = "국원";
+
     /** 운영진이 아닌 역할. 투표 자격 차단을 확인하는 데 쓴다 */
     public static final String STUDY_LEADER = "스터디장";
 

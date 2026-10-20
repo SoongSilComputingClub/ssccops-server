@@ -442,8 +442,11 @@ public class SessionServiceImpl implements SessionService {
                  * 팀원에게도 숨기는데(AcademicProgramReviewController) 이 자리는 같은 문장을 상세를
                  * 연 사람 누구에게나 실었다 — 같은 값이 경로에 따라 다르게 보호됐다. 리더가 아니면
                  * null이며, 아직 검토되지 않은 회차와 같은 응답이다(필드는 그대로라 하위 호환).
+                 *
+                 * 권한 쪽은 학술 조회 권한(READ)이다(#694 · ADR-0068) — 승인 이력 API가 같은 의견을
+                 * READ 보유자에게 내주므로 여기만 MANAGE로 두면 같은 문장이 경로에 따라 다시 갈린다.
                  */
-                academicProgramOwnershipPolicy.isLeaderOrManager(academicProgram, requester)
+                academicProgramOwnershipPolicy.isLeaderOrReader(academicProgram, requester)
                         ? latestOpinionOf(session)
                         : null);
     }

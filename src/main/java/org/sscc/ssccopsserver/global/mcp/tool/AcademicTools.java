@@ -112,7 +112,7 @@ public class AcademicTools {
                     "학술 활동(스터디·프로젝트·트랙) 목록. typeCd(유형 코드)·sttsCd(상태)·keyword(제목)로 거르고, mine으로 내 것만"
                         + " 본다 — leader(내가 스터디장/팀장) · proposer(내가 기획안 제출자) · true(둘 중 하나). 팀원으로 참여한"
                         + " 활동을 고르는 값은 없다. false·빈 값은 거르지 않고, 그 밖의 값은 400 INVALID_CODE_VALUE다. 전부"
-                        + " 비우면 전체이고 **그때는 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다** — 없으면 403이니"
+                        + " 비우면 전체이고 **그때는 학술 조회(ACADEMIC_PROGRAM_READ) 권한이 필요하다** — 없으면 403이니"
                         + " 스터디장/팀장은 mine=leader로 부른다. 상태는 APPROVED(승인됨 · 모집 전)·ONGOING(진행"
                         + " 중)·COMPLETED(종료)·DISCONTINUED(폐지) 넷이다. isDelayed는 «진행 중인데 예정된 운영 기간이"
                         + " 끝났고 진행률(승인 회차 ÷ 계획 항목)이 100% 미만»이며, delayed=true면 그것만 본다(sttsCd와 함께 주면"
@@ -152,7 +152,7 @@ public class AcademicTools {
                     "학술 활동의 팀원. ptcpSttsCd로 거른다(CONFIRMED 확정·WAITLISTED 대기·CANCELLED 취소),"
                             + " 비우면 전체. 리더 여부와 합류 시각이 함께 온다."
                             + " 연락처·학번은 도구 출력에서 지워진다(ADR-0037). 그 활동의 관계자(팀원·리더·"
-                            + "ACADEMIC_PROGRAM_MANAGE)만 볼 수 있고 아니면 403이다.",
+                            + "ACADEMIC_PROGRAM_READ 보유자)만 볼 수 있고 아니면 403이다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramMemberResponse> listAcademicProgramMembers(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -177,7 +177,7 @@ public class AcademicTools {
                             + " 그 값으로 거르면 언제나 빈 목록이다. 계획된 회차 수는"
                             + " get_academic_program의 curriculumItemCount다."
                             + " 여러 활동에 걸쳐 검토할 것을 찾을 때는 list_academic_sessions_to_review를 쓴다."
-                            + " 그 활동의 관계자(팀원·리더·ACADEMIC_PROGRAM_MANAGE)만 볼 수 있고 아니면 403이다."
+                            + " 그 활동의 관계자(팀원·리더·ACADEMIC_PROGRAM_READ 보유자)만 볼 수 있고 아니면 403이다."
                             + PAGING_NOTE,
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public McpListResult<SessionSummaryResponse> listAcademicSessions(
@@ -196,10 +196,10 @@ public class AcademicTools {
     @McpTool(
             name = "get_academic_session",
             description =
-                    "회차 하나 — 계획일(planYmd)·실제일(actlYmd), 진행 내용·공지, 출석 명단과 출석 수,"
-                            + " 인증사진, 가장 최근 검토 의견(latestOpinion — 리더·ACADEMIC_PROGRAM_MANAGE에게만 실리고"
-                            + " 팀원에게는 null). 승인 이력 전체는 오지 않는다. 회차 번호가 아니라 회차 식별자(sessionId)다."
-                            + " 그 활동의 관계자(팀원·리더·ACADEMIC_PROGRAM_MANAGE)만 볼 수 있고 아니면 403이다.",
+                    "회차 하나 — 계획일(planYmd)·실제일(actlYmd), 진행 내용·공지, 출석 명단과 출석 수, 인증사진, 가장 최근 검토"
+                        + " 의견(latestOpinion — 리더·ACADEMIC_PROGRAM_READ 보유자에게만 실리고 팀원에게는 null). 승인"
+                        + " 이력 전체는 오지 않는다. 회차 번호가 아니라 회차 식별자(sessionId)다. 그 활동의"
+                        + " 관계자(팀원·리더·ACADEMIC_PROGRAM_READ 보유자)만 볼 수 있고 아니면 403이다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public SessionDetailResponse getAcademicSession(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -219,7 +219,7 @@ public class AcademicTools {
                             + " «승인할 게 뭐 있어»의 답이며, 여기서 고른 뒤 transition_academic_session으로 처리한다."
                             + " 종료(COMPLETED)·폐지(DISCONTINUED)된 활동의 회차는 빠진다 — 처리할 수 없는"
                             + " 줄이라서다. 재시작(REOPEN)·복원(REINSTATE)하면 다시 나온다."
-                            + " 학술 활동 관리(ACADEMIC_PROGRAM_MANAGE) 권한이 필요하다."
+                            + " 학술 조회(ACADEMIC_PROGRAM_READ) 권한이 필요하다."
                             + PAGING_NOTE,
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public McpListResult<SessionCrossListResponse> listAcademicSessionsToReview(
@@ -312,12 +312,11 @@ public class AcademicTools {
     @McpTool(
             name = "list_academic_recruitment_applications",
             description =
-                    "모집 지원 목록 — 지원서(폼 응답)와 지금 참가 상태가 함께 온다."
-                            + " statusCode로 응답 상태를 거른다, 비우면 전체."
-                            + " **select_academic_recruitment에 넘길 formRspnsId가 여기서 나온다.**"
-                            + " 지원자의 연락처·학번은 도구 출력에서 지워진다(ADR-0037)."
-                            + " 그 활동의 스터디장 본인이나 학술국장만 볼 수 있고(아니면 403), 모집 시작 전"
-                            + "(APPROVED)이면 409 RECRUITMENT_NOT_STARTED다.",
+                    "모집 지원 목록 — 지원서(폼 응답)와 지금 참가 상태가 함께 온다. statusCode로 응답 상태를 거른다, 비우면 전체."
+                        + " **select_academic_recruitment에 넘길 formRspnsId가 여기서 나온다.** 지원자의 연락처·학번은"
+                        + " 도구 출력에서 지워진다(ADR-0037). 그 활동의 스터디장 본인이나 학술 조회(ACADEMIC_PROGRAM_READ) 권한"
+                        + " 보유자만 볼 수 있고(아니면 403), 모집 시작 전(APPROVED)이면 409"
+                        + " RECRUITMENT_NOT_STARTED다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<RecruitmentApplicationResponse> listAcademicRecruitmentApplications(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -428,7 +427,7 @@ public class AcademicTools {
             description =
                     "팀원 명단 변경 이력(최신순). 모집 선발 · 행사 참가자 · 팀원 관리 세 경로(chgPathSeCd)가 남긴"
                             + " 줄이 전부 나온다. bfrPtcpSttsCd가 null이면 처음 명단에 오른 줄이다. 종료·폐지된"
-                            + " 활동도 볼 수 있다. 스터디장 본인이나 학술국장만 볼 수 있다.",
+                            + " 활동도 볼 수 있다. 스터디장 본인이나 학술 조회(ACADEMIC_PROGRAM_READ) 권한 보유자만 볼 수 있다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AcademicProgramMemberHistoryResponse> listAcademicProgramMemberHistory(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,
@@ -455,7 +454,7 @@ public class AcademicTools {
             description =
                     "회차의 출석부. **correct_academic_attendances에 넘길 eventPtcpId가 여기서 나온다** —"
                             + " 회원 식별자가 아니라 그 활동의 참가자 식별자다. 그 활동의 관계자(팀원·리더·"
-                            + "ACADEMIC_PROGRAM_MANAGE)만 볼 수 있고 아니면 403이다.",
+                            + "ACADEMIC_PROGRAM_READ 보유자)만 볼 수 있고 아니면 403이다.",
             annotations = @McpTool.McpAnnotations(readOnlyHint = true))
     public List<AttendanceResponse> listAcademicAttendances(
             @McpToolParam(description = PROGRAM_ID) Long academicProgramId,

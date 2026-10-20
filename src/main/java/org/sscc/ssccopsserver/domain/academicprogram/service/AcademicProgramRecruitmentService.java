@@ -34,6 +34,11 @@ import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
  * AcademicProgramOwnershipPolicy(쓰기는 AcademicProgramWritePolicy)를 태운다. 선발은
  * ACADEMIC_PROGRAM_MANAGE 단일 권한이라 컨트롤러의 애노테이션이 이미 끊고, 팀원 조회는 인증만
  * 요구하므로 판정 자체가 없다(isEditable만 요청자를 본다).
+ *
+ * #694(ADR-0068)부터 그 OR의 권한 쪽이 조회와 쓰기에서 갈린다 — 조회(신청자 · 모집 폼 · 모집 일정 ·
+ * 명단 이력)는 «리더 또는 ACADEMIC_PROGRAM_READ», 쓰기(문항 저장 · 팀원 추가·변경)와 isEditable은
+ * «리더 또는 ACADEMIC_PROGRAM_MANAGE»다. 국원이 읽기만 한다. (팀원 조회는 그 뒤 #688에서 관계자
+ * 판정이 걸렸다 — 관계자에도 READ 보유자가 든다.)
  */
 public interface AcademicProgramRecruitmentService {
 
@@ -76,8 +81,8 @@ public interface AcademicProgramRecruitmentService {
             MemberEntity actor);
 
     /*
-     * 팀원 명단 변경 이력, 최신순 (#612). 스터디장·학술국장만 본다 — 누가 누구를 뺐는지는 팀원
-     * 전원이 볼 자리가 아니다. 경로를 가리지 않는다: 모집 선발·행사 참가자 API·팀원 관리가 남긴 줄이
+     * 팀원 명단 변경 이력, 최신순 (#612). 스터디장·학술 조회 권한 보유자(학술국장·국원 — #694)만
+     * 본다 — 누가 누구를 뺐는지는 팀원 전원이 볼 자리가 아니다. 경로를 가리지 않는다: 모집 선발·행사 참가자 API·팀원 관리가 남긴 줄이
      * 전부 나온다. 조회라 종료·폐지와 무관하다.
      */
     List<AcademicProgramMemberHistoryResponse> getMemberHistory(
@@ -127,12 +132,13 @@ public interface AcademicProgramRecruitmentService {
             Long academicProgramId, RecruitmentSelectRequest request, MemberEntity performer);
 
     /*
-     * 모집 폼(지원서) 조회 (#483). 자격은 신청자 조회와 같은 "이 활동의 리더 본인 또는 학술국장"이다.
+     * 모집 폼(지원서) 조회 (#483). 자격은 신청자 조회와 같은 "이 활동의 리더 본인 또는 학술 조회
+     * 권한(ACADEMIC_PROGRAM_READ) 보유자"다(#694 · ADR-0068 — 학술국장은 펼침으로 포함한다).
      *
      * **창이 닫혀도 돌려준다.** 접수 중·접수 종료에도 리더는 자기 공고의 문항을 볼 수 있어야
      * 하고(화면의 "지원서 문항 보기"), 막는 것은 응답을 받는 도중에 물음이 바뀌는 것이지
      * 열람이 아니다. 지금 고칠 수 있는지는 isEditable이 말한다 — 창이 열려 있고 활동이 종료되지
-     * 않았을 때만 참이다(#597).
+     * 않았고(#597) 요청자가 리더 본인이나 학술국장일 때만 참이다(#694 — 국원은 읽기만 한다).
      *
      * 모집 시작 여부(RECRUITMENT_NOT_STARTED)를 보지 않는다 — 이 경로가 있어야 하는 구간이
      * 바로 모집 전이다. 신청자 조회와 갈리는 유일한 지점이며, 그쪽은 "아직 물어볼 것이 없다"를
@@ -158,7 +164,7 @@ public interface AcademicProgramRecruitmentService {
             MemberEntity actor);
 
     /*
-     * 모집 일정 조회. 자격은 모집 폼 조회와 같다("리더 본인 또는 학술국장") — 리더는 자기
+     * 모집 일정 조회. 자격은 모집 폼 조회와 같다("리더 본인 또는 학술 조회 권한") — 리더는 자기
      * 공고가 언제 열리고 닫히는지 알아야 문항 편집 창이 언제까지인지 계산할 수 있다.
      *
      * 모집 시작 전(APPROVED)에도 200이며 그때는 두 일시가 비어 있다 — 아직 정해지지 않았다는

@@ -5,6 +5,7 @@ import java.util.List;
 import org.sscc.ssccopsserver.domain.event.code.EventStatus;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventIntroductionUpdateRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSummaryResponse;
@@ -19,6 +20,13 @@ public interface EventService {
     EventDetailResponse createEvent(EventSaveRequest request, MemberEntity creator);
 
     EventDetailResponse updateEvent(Long eventId, EventSaveRequest request);
+
+    /*
+     * 소개 칸 넷(제목 · 본문 · 대표 이미지 · 장소)만 고친다 (ssccops#618 · ADR-0069 참고). 학술
+     * 도메인의 스터디장 경로가 부른다 — 누가 언제 부를 수 있는지는 부르는 쪽이 판정하고, 여기는
+     * updateEvent와 같은 저장 규칙(본문 상한 413 · 빠진 이미지 정리)만 갖는다. 지워진 행사는 404.
+     */
+    void updateIntroduction(Long eventId, EventIntroductionUpdateRequest request);
 
     EventDetailResponse changeStatus(Long eventId, EventStatusChangeRequest request);
 

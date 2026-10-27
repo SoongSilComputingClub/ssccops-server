@@ -66,6 +66,14 @@ public enum AuditAction {
     FORM_RESPONSE_ATTACHMENT_DELETE("form.response.attachment.delete", "file_rfrnc"),
     ACADEMIC_PROGRAM_TRANSITION("academic.program.transition", "academic_program"),
     ACADEMIC_SESSION_TRANSITION("academic.session.transition", "session"),
+    /*
+     * 스터디장의 행사 게시물(소개 글) 수정 (ssccops#618 · ADR-0069 참고). 운영진이 아닌 리더가
+     * 공개 웹사이트에 실리는 행사 본문을 바꾸는 자리라 «누가 언제 어느 칸을»이 남아야 한다 — 행위자는
+     * AuditLog가 SecurityContext에서 채운다(리더 본인). 대상은 event_id, changed_fields는 실제로 바뀐
+     * 칸의 **이름**만(eventTtl · mtxtCn · thmbUrlAddr · plcNm)이고 본문 값은 싣지 않는다(ADR-0024).
+     * 관리자 페이지의 행사 수정(PUT /v1/events/{id})에는 아직 감사 지점이 없다 — 이 사건은 학술 경로만이다.
+     */
+    ACADEMIC_PROGRAM_EVENT_POST_UPDATE("academic.program.event_post.update", "event"),
     EVENT_STATUS_CHANGE("event.status.change", "event"),
     FORM_STATUS_CHANGE("form.status.change", "form"),
     /*

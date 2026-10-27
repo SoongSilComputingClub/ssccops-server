@@ -20,6 +20,7 @@ import org.sscc.ssccopsserver.domain.event.code.error.EventErrorCode;
 import org.sscc.ssccopsserver.domain.event.dto.AcademicProgramRef;
 import org.sscc.ssccopsserver.domain.event.dto.EventDetailResponse;
 import org.sscc.ssccopsserver.domain.event.dto.EventDuplicateResponse;
+import org.sscc.ssccopsserver.domain.event.dto.EventIntroductionUpdateRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSaveRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventStatusChangeRequest;
 import org.sscc.ssccopsserver.domain.event.dto.EventSummaryResponse;
@@ -311,6 +312,39 @@ public class EventServiceImpl implements EventService {
         }
 
         return toDetail(event);
+    }
+
+    /*
+     * 소개 칸 넷만 고친다 (ssccops#618 · ADR-0069 참고 — 스터디장의 학술 경로가 부른다).
+     *
+     * 저장 규칙은 updateEvent와 **같은 자리**를 지난다 — 본문 상한(413)과 빠진 이미지 정리
+     * (ssccops#188). 이 경로만 정리를 빼면 스터디장이 본문에서 지운 이미지가 버킷에 고아로 남고,
+     * 상한을 빼면 관리자 페이지가 그 본문을 다시 저장할 때 413이 난다.
+     *
+     * 분류 잠금 · 폼 연결 검사가 없는 것은 그 값들을 받지 않기 때문이다(EventIntroductionUpdateRequest).
+     * 누가 부를 수 있는지는 묻지 않는다 — 행사 도메인은 학술의 리더를 모르고(DomainCycleTest),
+     * 판정은 부르는 쪽(AcademicProgramEventPostServiceImpl)의 몫이다.
+     */
+    @Override
+    @Transactional
+    public void updateIntroduction(Long eventId, EventIntroductionUpdateRequest request) {
+        EventEntity event = findEvent(eventId);
+        requireContentWithinLimit(request.mtxtCn());
+
+        // 고치기 전 값을 먼저 읽는다 — updateEvent와 같은 이유(ssccops#188)
+        Set<String> referencedBefore =
+                EventImageLocation.fileNamesReferencedIn(
+                        eventId, event.getContentMarkdown(), event.getThumbnailUrlAddress());
+
+        event.updateIntroduction(
+                request.eventTtl(), request.mtxtCn(), request.thmbUrlAddr(), request.plcNm());
+
+        fileEraser.eraseAfterCommit(
+                droppedImageKeys(
+                        eventId, referencedBefore, request.mtxtCn(), request.thmbUrlAddr()));
+
+        // mdfcn_dt는 @LastModifiedDate가 flush 시점에 채운다
+        eventRepository.flush();
     }
 
     /*

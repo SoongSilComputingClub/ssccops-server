@@ -25,11 +25,19 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.sscc.ssccopsserver.domain.academicprogram.entity.AcademicProgramEntity;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.AcademicProgramTypeRepository;
+import org.sscc.ssccopsserver.domain.academicprogram.repository.CurriculumItemRepository;
+import org.sscc.ssccopsserver.domain.event.entity.EventEntity;
+import org.sscc.ssccopsserver.domain.event.repository.EventClassificationRepository;
+import org.sscc.ssccopsserver.domain.event.repository.EventRepository;
 import org.sscc.ssccopsserver.domain.form.code.FormStatus;
 import org.sscc.ssccopsserver.domain.form.code.QuestionItemType;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
 import org.sscc.ssccopsserver.domain.form.entity.QuestionCompositionContent;
 import org.sscc.ssccopsserver.domain.form.repository.FormRepository;
+import org.sscc.ssccopsserver.domain.form.repository.FormResponseHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
 import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
@@ -43,6 +51,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.member.repository.RoleAuthorityRelationRepository;
 import org.sscc.ssccopsserver.global.logging.EcsJsonEncoder;
+import org.sscc.ssccopsserver.support.AcademicProgramFixture;
 import org.sscc.ssccopsserver.support.AuthorityFixture;
 import org.sscc.ssccopsserver.support.MemberFixture;
 import org.sscc.ssccopsserver.support.MemberRoleFixture;
@@ -86,6 +95,12 @@ class AuditPointsTest {
     @Autowired private AuthorityRepository authorityRepository;
     @Autowired private RoleAuthorityRelationRepository roleAuthorityRelationRepository;
     @Autowired private FormRepository formRepository;
+    @Autowired private FormResponseHistoryRepository formResponseHistoryRepository;
+    @Autowired private EventRepository eventRepository;
+    @Autowired private EventClassificationRepository eventClassificationRepository;
+    @Autowired private AcademicProgramRepository academicProgramRepository;
+    @Autowired private AcademicProgramTypeRepository academicProgramTypeRepository;
+    @Autowired private CurriculumItemRepository curriculumItemRepository;
 
     private final ListAppender<ILoggingEvent> captured = new ListAppender<>();
     private final EcsJsonEncoder encoder = new EcsJsonEncoder();
@@ -575,6 +590,49 @@ class AuditPointsTest {
                         FormEntity.create(
                                 managerEntity, title, composition, null, null, FormStatus.DRAFT))
                 .getId();
+    }
+
+    /*
+     * 스터디장의 행사 게시물 수정 (ssccops#618 · ADR-0069). 행위자는 리더 본인이고(리더 판정은 권한이 아니라
+     * leadr_mbr_id라 MANAGER를 리더로 세운다), 바뀐 칸의 **이름**만 실리며 제목 · 장소 값은 어디에도 없다.
+     */
+    @Test
+    void academicEventPostUpdateIsAuditedWithFieldNamesOnly() throws Exception {
+        AcademicProgramEntity program =
+                AcademicProgramFixture.save(
+                        eventRepository,
+                        eventClassificationRepository,
+                        academicProgramRepository,
+                        academicProgramTypeRepository,
+                        curriculumItemRepository,
+                        formRepository,
+                        formResponseHistoryRepository,
+                        "STUDY",
+                        "감사 스터디",
+                        managerEntity,
+                        List.of("OT"));
+        EventEntity event = program.getEvent();
+        event.linkForm(formRepository.findById(saveForm("감사 스터디 모집")).orElseThrow());
+        eventRepository.saveAndFlush(event);
+
+        mockMvc.perform(
+                        put("/v1/academic-programs/" + program.getId() + "/event-post")
+                                .header("Authorization", "Bearer " + MANAGER)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"eventTtl\": \"비밀스러운 새 제목\", \"mtxtCn\": \"본문\","
+                                                + " \"thmbUrlAddr\": null, \"plcNm\": \"정보과학관\"}"))
+                .andExpect(status().isOk());
+
+        Map<String, Object> line = onlyLine("academic.program.event_post.update");
+        assertThat(section(line, "event")).containsEntry("outcome", "success");
+        assertThat(section(line, "user")).containsEntry("id", String.valueOf(managerId));
+        Map<String, Object> audit = section(line, "audit");
+        assertThat(section(audit, "target"))
+                .containsEntry("type", "event")
+                .containsEntry("id", String.valueOf(event.getId()));
+        assertThat(audit.get("changed_fields")).isEqualTo(List.of("eventTtl", "plcNm"));
+        assertThat(line.toString()).doesNotContain("비밀스러운").doesNotContain("정보과학관");
     }
 
     /* ── 헬퍼: 실제 인코더로 JSON을 만들어 Map으로 — Kibana가 보는 모양 그대로 ─────── */

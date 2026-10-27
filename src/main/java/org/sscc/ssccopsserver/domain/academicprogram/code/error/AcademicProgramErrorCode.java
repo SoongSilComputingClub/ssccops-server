@@ -229,6 +229,24 @@ public enum AcademicProgramErrorCode implements ErrorCode {
             HttpStatus.CONFLICT, "RECRUITMENT_FORM_NOT_EDITABLE", "모집이 시작되어 지원서 문항을 고칠 수 없습니다."),
 
     /*
+     * 409 — 모집 접수가 끝난 뒤(EXPIRED · CLOSED) 스터디장이 행사 게시물(소개 글)을 고치거나 본문
+     * 이미지를 발급받으려 할 때 (ssccops#618 · ADR-0069 참고).
+     *
+     * 창은 FormReceiptPolicy가 준 접수 상태가 DRAFT · SCHEDULED · ACCEPTING인 동안이다 — 공개
+     * 웹사이트가 학술 행사를 접수 중일 때만 보여 주므로(#187) «게시물이 읽히는 동안»과 같다.
+     * RECRUITMENT_FORM_NOT_EDITABLE(문항 · 접수 시작 전까지)과 창이 달라 코드를 나눴다 — 한 코드로
+     * 묶으면 화면이 «모집이 시작되어»를 접수 중인 게시물에 띄운다.
+     *
+     * 수료 · 폐지는 여기 오지 않는다 — 그쪽은 AcademicProgramWritePolicy가 먼저 409
+     * ACADEMIC_PROGRAM_COMPLETED · ACADEMIC_PROGRAM_DISCONTINUED로 끊는다(종료된 활동의 쓰기를
+     * 거절하는 유일한 자리 · #597). 판정 순서는 활동 404 → 리더 403 → 수료 · 폐지 409 → 이것이다.
+     */
+    ACADEMIC_PROGRAM_EVENT_POST_LOCKED(
+            HttpStatus.CONFLICT,
+            "ACADEMIC_PROGRAM_EVENT_POST_LOCKED",
+            "모집 접수가 끝나 행사 게시물을 고칠 수 없습니다."),
+
+    /*
      * 400 — 인증사진 업로드(#137)의 fileExt가 허용 목록 밖일 때. 허용 목록 자체는 행사 이미지와
      * 같은 ImageFileType이며(형식을 늘리는 자리를 한 곳으로 묶는다) SVG를 빼는 이유도 같다 —
      * 공개 도메인에서 그대로 열리므로 스크립트를 담을 수 있는 문서를 허용하면 XSS 경로가 된다.

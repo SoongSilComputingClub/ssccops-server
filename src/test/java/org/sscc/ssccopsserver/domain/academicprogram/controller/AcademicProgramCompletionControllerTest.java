@@ -452,6 +452,23 @@ class AcademicProgramCompletionControllerTest {
                         .content("{\"ptcpSttsCd\": \"CANCELLED\"}");
             }
         },
+        UPDATE_EVENT_POST(Qualification.LEADER) {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {
+                // 스터디장의 행사 게시물 수정(ssccops#618 · ADR-0069) — 리더 본인만이다
+                return put(test.programPath() + "/event-post")
+                        .content(
+                                "{\"eventTtl\": \"고친 제목\", \"mtxtCn\": \"본문\","
+                                        + " \"thmbUrlAddr\": null, \"plcNm\": null}");
+            }
+        },
+        ISSUE_EVENT_POST_IMAGE(Qualification.LEADER) {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {
+                return post(test.programPath() + "/event-post/images")
+                        .content("{\"fileExt\": \"png\", \"fileSize\": 1024}");
+            }
+        },
         UPDATE_RECRUITMENT_FORM(Qualification.LEADER_OR_MANAGER) {
             @Override
             MockHttpServletRequestBuilder request(AcademicProgramCompletionControllerTest test) {

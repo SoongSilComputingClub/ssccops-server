@@ -29,6 +29,7 @@
   - **경로(`chg_path_se_cd`)는 부르는 쪽이 정한다** — `EVENT_PARTICIPANTS`(이 도메인의 참가자 API가 스스로 채운다) · `RECRUITMENT_SELECTION` · `TEAM_MEMBERS`(학술이 넘긴다). 이 도메인은 학술을 모르므로(`DomainCycleTest`) `registerOrUpdateParticipant`·`admitParticipant`·`reviseParticipantStatus`가 경로를 인자로 받는다.
   - **재합류(취소 → 확정)는 전이표 밖이다** — `EventParticipantEntity.rejoin`은 학술 팀원 관리 전용이고(`admitParticipant`·`reviseParticipantStatus`), 이 도메인의 참가자 API(`changeParticipantStatus`)는 여전히 취소에서 나가는 길이 없다. 정원·대기 순서를 우회하는 길이 되기 때문이다.
   - FK 둘의 삭제 규칙이 다르다 — `event_ptcp_id`는 CASCADE(참가 행과 함께 간다 · `atndc`와 같다), `prfmr_id`는 NO ACTION(행위자 참조 · 회원 하드 삭제를 막고 `MemberReferenceConstraints`가 번역한다). 기존 참가 행의 이력은 채우지 않았다 — 이력은 V28 이후의 변경부터다.
+- **행사를 고치는 경로는 둘이다 — 관리자 페이지(`PUT /v1/events/{id}` · `EVENT_MANAGE`)와 학술 도메인의 스터디장 경로** (server#699 · ssccops#618 · [ADR-0069](https://github.com/SoongSilComputingClub/ssccops/blob/develop/docs/decisions/0069-program-leader-edits-own-event-post-until-recruitment-ends.md)). 뒤의 것은 `EventService.updateIntroduction`(제목 · 본문 · 대표 이미지 · 장소만 · 요청 `EventIntroductionUpdateRequest`)과 `EventImageService.issueUploadUrl`을 부른다. 이 도메인은 **누가 부르는지 판정하지 않는다** — 리더 판정 · 접수 창 · 수료 잠금은 학술의 몫이고(`../academicprogram/AGENTS.md`), 여기는 `updateEvent`와 같은 저장 규칙(본문 상한 413 · 빠진 이미지 정리)만 갖는다. 그 규칙을 바꾸면 두 메서드를 함께 본다 — 한쪽만 바뀌면 한 경로에서 저장된 본문을 다른 경로가 거절한다. 동시에 고치면 나중 저장이 이긴다.
 
 ## 다른 도메인과 닿는 곳
 

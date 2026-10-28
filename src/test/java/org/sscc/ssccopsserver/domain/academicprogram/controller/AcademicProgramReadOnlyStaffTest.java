@@ -432,6 +432,23 @@ class AcademicProgramReadOnlyStaffTest {
                                         .formatted(laterBy(1), laterBy(30)));
             }
         },
+        UPDATE_EVENT_POST {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramReadOnlyStaffTest test) {
+                // 스터디장의 행사 게시물 수정(ssccops#618 · ADR-0069) — 리더 본인만이다
+                return put(test.programPath() + "/event-post")
+                        .content(
+                                "{\"eventTtl\": \"고친 제목\", \"mtxtCn\": \"본문\","
+                                        + " \"thmbUrlAddr\": null, \"plcNm\": null}");
+            }
+        },
+        ISSUE_EVENT_POST_IMAGE {
+            @Override
+            MockHttpServletRequestBuilder request(AcademicProgramReadOnlyStaffTest test) {
+                return post(test.programPath() + "/event-post/images")
+                        .content("{\"fileExt\": \"png\", \"fileSize\": 1024}");
+            }
+        },
         UPDATE_RECRUITMENT_FORM {
             @Override
             MockHttpServletRequestBuilder request(AcademicProgramReadOnlyStaffTest test) {

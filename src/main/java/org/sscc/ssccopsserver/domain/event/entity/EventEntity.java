@@ -258,6 +258,19 @@ public class EventEntity {
     }
 
     /*
+     * 소개 칸 넷(제목 · 본문 · 대표 이미지 · 장소)만 바꾼다 (ssccops#618 · ADR-0069 참고 — 스터디장이
+     * 학술 경로로 고치는 칸). 분류 · 폼 연결 · 기간 · 정원 · 상태는 받지 않는다 — update()로 저장된 값을
+     * 되돌려 넣어도 결과는 같지만, 그러면 «넷 말고는 손대지 않는다»가 호출부의 약속으로만 남는다.
+     */
+    public void updateIntroduction(
+            String title, String contentMarkdown, String thumbnailUrlAddress, String placeName) {
+        this.title = title;
+        this.contentMarkdown = contentMarkdown;
+        this.thumbnailUrlAddress = thumbnailUrlAddress;
+        this.placeName = placeName;
+    }
+
+    /*
      * 연결 폼 지정 (#133 학술 활동 승인 후속 처리 전용). 학술 활동은 승인(=생성) 시점에
      * Event만 먼저 만들고, 같은 트랜잭션에서 모집용 빈 폼을 만든 뒤 이 메서드로 연결한다 —
      * create() 팩토리 하나로 두 순서를 다 감당하려 하면 "폼을 만들기 전에는 Event를 못 만든다"

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationDetailResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
@@ -96,6 +97,43 @@ public class AcademicProgramRecruitmentController {
         return ApiResponse.success(
                 academicProgramRecruitmentService.getApplications(
                         academicProgramId, statusCode, requester));
+    }
+
+    /*
+     * 지원서 한 건 (ssccops#625). LMS «모집 관리»의 지원자 목록에서 한 줄을 열면 이 경로로 온다 — 리더가
+     * 자기 프로그램에 들어온 지원서의 답을 **읽기만** 한다. 선발·심사는 여전히 학술국장의 몫이다.
+     *
+     * 자격은 목록과 다르다(리더 한 사람 · 목록은 리더 또는 학술 조회 권한). 근거는 서비스 인터페이스 주석이고,
+     * 애노테이션이 아니라 정책이 끊는 것은 클래스 주석의 AND/OR 설명과 같다 — «이 활동의 리더인가»는 권한
+     * 코드로 표현되지 않는다.
+     *
+     * 운영자용 GET /v1/forms/{formId}/responses/{id}를 리더에게 여는 대신 여기 둔 것은, 그쪽 판정
+     * (FormResponseReadPolicy)에 «리더면 통과»를 섞으면 폼 도메인이 학술의 리더를 알아야 해 의존이 거꾸로
+     * 서기 때문이다(DomainCycleTest · ADR-0069 선택지 B와 같은 판단). 경로에 활동 식별자만 있고 폼은
+     * 활동에서 파생하므로 남의 폼 응답 번호를 실어 읽는 길이 구조적으로 없다(다른 폼의 번호는 404).
+     */
+    @Operation(
+            summary = "학술 활동 모집 지원서 상세 조회(리더 전용)",
+            description =
+                    "연결된 모집 폼의 응답 한 건을 문항 구성(qitemCpstCn)과 함께 내린다."
+                            + " 자격은 이 활동의 스터디장/팀장 **본인만**이다 — 학술국장·국원(학술 조회 권한)·"
+                            + "팀원·다른 회원은 403 FORBIDDEN이다(학술국장은 폼 응답 상세 API를 쓴다)."
+                            + " **연락처(telno)와 검토 이력은 싣지 않는다** — 지원자 정보는 이름·학번·학과·등급·"
+                            + "상태·기수·학년이고, 상태는 응답 상태(rspnsSttsCd)와 참가 상태(eventPtcpId·ptcpSttsCd ·"
+                            + " 미선발이면 둘 다 null)뿐이다. prevFormRspnsId·nextFormRspnsId는 신청자 목록의 기본"
+                            + " 조회(작성 중 제외 · 제출 일시 내림차순)와 같은 순서의 이웃이며 끝이면 null이다."
+                            + " 모집 시작 전(APPROVED)이면 409 RECRUITMENT_NOT_STARTED, 폼이 연결되지 않은 활동은"
+                            + " 409 FORM_NOT_LINKED, 다른 폼의 응답이거나 작성 중(DRAFT)인 응답은 404"
+                            + " FORM_RESPONSE_NOT_FOUND, 없는 활동은 404 ACADEMIC_PROGRAM_NOT_FOUND다."
+                            + " 수료·폐지된 활동에서도 읽힌다.")
+    @GetMapping("/applications/{formRspnsId}")
+    public ApiResponse<RecruitmentApplicationDetailResponse> getApplication(
+            @PathVariable Long academicProgramId,
+            @PathVariable Long formRspnsId,
+            @CurrentMember MemberEntity requester) {
+        return ApiResponse.success(
+                academicProgramRecruitmentService.getApplication(
+                        academicProgramId, formRspnsId, requester));
     }
 
     /*

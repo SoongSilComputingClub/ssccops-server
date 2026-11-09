@@ -17,6 +17,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAd
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationDetailResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
@@ -39,7 +40,9 @@ import org.sscc.ssccopsserver.domain.event.repository.EventParticipantStatusHist
 import org.sscc.ssccopsserver.domain.event.service.EventParticipationService;
 import org.sscc.ssccopsserver.domain.form.code.FormReceiptStatus;
 import org.sscc.ssccopsserver.domain.form.code.ResponseStatus;
+import org.sscc.ssccopsserver.domain.form.code.error.FormErrorCode;
 import org.sscc.ssccopsserver.domain.form.dto.FormDetailResponse;
+import org.sscc.ssccopsserver.domain.form.dto.FormResponseDetailResponse;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseReviewRequest;
 import org.sscc.ssccopsserver.domain.form.dto.FormResponseSummaryResponse;
 import org.sscc.ssccopsserver.domain.form.entity.FormEntity;
@@ -224,6 +227,48 @@ public class AcademicProgramRecruitmentServiceImpl implements AcademicProgramRec
                                 RecruitmentApplicationResponse.of(
                                         application, roster.get(application.member().mbrId())))
                 .toList();
+    }
+
+    /*
+     * 지원서 한 건 (ssccops#625). 순서는 목록과 같고 자격만 리더 한 사람이다(인터페이스 주석).
+     *
+     * 응답을 읽는 것은 폼 도메인의 상세 조회에 위임한다 — 다른 폼의 응답 식별자가 없는 응답과 같은 404인
+     * 범위 검사와 이웃(이전·다음)의 순서·범위가 그쪽에 있고, 여기에 한 벌 더 두면 목록에서 본 순서와 이동
+     * 순서가 갈린다. 운영자 경로의 판정(FormResponseReadPolicy)은 타지 않는다 — 그것은 운영자 경로의 입구에
+     * 있고 자격은 학술이 방금 판정했다(목록이 getResponses를 부르는 것과 같은 자리 · 그 정책 주석).
+     *
+     * 넘기는 requester는 폼 쪽이 연락처를 담을지 가르는 데 쓴다(MEMBER_MANAGE). 리더가 그 권한을 겸하면
+     * 중간 값에 연락처가 실리지만, 옮겨 담는 RecruitmentApplicantResponse에 자리가 없어 밖으로 나가지 않는다 —
+     * 요청자를 null로 바꿔 넘기는 식으로 막지 않은 것은 그 경로의 계약(요청자 필수)을 학술이 비트는 셈이고,
+     * 막는 자리가 «넘긴 값»이 아니라 «받는 모양»이어야 다음에 필드가 늘어도 같은 방식으로 막히기 때문이다.
+     *
+     * **작성 중(DRAFT)은 404다.** 운영자용 상세는 DRAFT도 열지만(이웃 없이), 제출하지 않은 답안은 지원이
+     * 아니다 — 지원자가 아직 쓰고 있는 문장을 리더가 읽을 이유가 없다. 409나 403이 아니라 «없는 응답»과
+     * 같은 404인 것은 목록 기본값(DRAFT 제외)에서 보이지 않는 응답이라 그 번호가 이 경로에서 뜻을 갖지
+     * 않기 때문이다.
+     *
+     * 참가 상태는 목록과 같은 접기(rosterByMemberId)에서 꺼낸다. 회원 한 명이라 명단 전체를 읽는 것은
+     * 넉넉하지만, 같은 함수를 지나야 «목록에서 확정으로 본 사람이 상세에서 미선발»이 구조적으로 생기지 않는다
+     * (명단은 활동당 수십 줄이다).
+     */
+    @Override
+    public RecruitmentApplicationDetailResponse getApplication(
+            Long academicProgramId, Long formResponseId, MemberEntity requester) {
+        AcademicProgramEntity academicProgram = findAcademicProgram(academicProgramId);
+        academicProgramOwnershipPolicy.requireLeader(academicProgram, requester);
+        requireRecruitmentStarted(academicProgram);
+
+        FormEntity form = requireRecruitmentForm(academicProgram);
+        FormResponseDetailResponse application =
+                formResponseService.getResponse(form.getId(), formResponseId, requester);
+        if (application.rspnsSttsCd() == ResponseStatus.DRAFT) {
+            throw new GeneralException(FormErrorCode.FORM_RESPONSE_NOT_FOUND);
+        }
+
+        EventParticipantEntity participant =
+                rosterByMemberId(academicProgram).get(application.member().mbrId());
+        return RecruitmentApplicationDetailResponse.of(
+                application, form.getQuestionComposition(), participant);
     }
 
     /*

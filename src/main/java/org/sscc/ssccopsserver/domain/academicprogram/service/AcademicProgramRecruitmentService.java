@@ -6,6 +6,7 @@ import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberAd
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberHistoryResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.AcademicProgramMemberStatusChangeRequest;
+import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationDetailResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentApplicationResponse;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormQuestionUpdateRequest;
 import org.sscc.ssccopsserver.domain.academicprogram.dto.RecruitmentFormResponse;
@@ -101,6 +102,22 @@ public interface AcademicProgramRecruitmentService {
      */
     List<RecruitmentApplicationResponse> getApplications(
             Long academicProgramId, ResponseStatus responseStatus, MemberEntity requester);
+
+    /*
+     * 지원서 한 건 — 리더가 답을 읽기 전용으로 본다 (ssccops#625).
+     *
+     * **자격은 리더 한 사람이다**(requireLeader). 목록의 …OrReader가 아니다 — ADR-0068은 학술 조회 권한
+     * (국원)에 기획안 응답만 열었고 «기획안이 아닌 폼의 응답은 READ로 403»이라, 모집 지원서의 답을 국원
+     * 전원에게 여는 것은 별개의 결정이다. 학술국장은 어드민 응답 상세(RESPONSE_REVIEW)를 쓴다 — 행사 게시물
+     * 편집(ADR-0069)과 같은 «리더 전용 학술 경로»다.
+     *
+     * 연락처와 검토 이력은 싣지 않는다(RecruitmentApplicationDetailResponse 주석 · 사용자 결정 2026-11-09).
+     * 검사 순서는 목록과 같고 끝에 응답 404가 붙는다 — 활동 404 → 리더 403 → 모집 시작 전 409 → 폼 미연결
+     * 409 → 다른 폼의 응답·작성 중(DRAFT) 404 FORM_RESPONSE_NOT_FOUND. 수료·폐지 뒤에도 읽힌다(종료는 쓰기만
+     * 멈춘다 · ADR-0057·0058).
+     */
+    RecruitmentApplicationDetailResponse getApplication(
+            Long academicProgramId, Long formResponseId, MemberEntity requester);
 
     /*
      * 선발 저장 — 폼 응답 심사(ACCEPTED)와 event_ptcp 등록·상태 조정을 **한 트랜잭션**으로 묶는다.

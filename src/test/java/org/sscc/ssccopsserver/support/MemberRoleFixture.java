@@ -52,6 +52,14 @@ public final class MemberRoleFixture {
      */
     public static final String STAFF = "국원";
 
+    /*
+     * 업무 담당자 자격(WORK_MANAGE)만 줄 시드 밖 역할 (ssccops#628). 업무·하위 업무의 담당자는 그 일을
+     * 처리할 권한이 있어야 하는데(OperationOwnerPolicy), 시드된 국장은 투표(APPROVAL_VOTE)와 국장
+     * 결재(SUB_WORK_APPROVE_DIRECTOR)까지 함께 준다. 승인·투표 자격을 세는 테스트에서 담당자가 투표자가
+     * 되면 안 되므로, 이 역할을 붙이고 grantAuthorities로 WORK_MANAGE만 부여해 쓴다.
+     */
+    public static final String WORK_OWNER = "업무담당";
+
     /** 운영진이 아닌 역할. 투표 자격 차단을 확인하는 데 쓴다 */
     public static final String STUDY_LEADER = "스터디장";
 

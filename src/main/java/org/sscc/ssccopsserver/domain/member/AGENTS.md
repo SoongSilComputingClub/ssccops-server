@@ -86,6 +86,8 @@
     - **표시명은 서버가 내린다.** 유형·상세·승인함 응답이 `authorizerAuthorityCode`와 함께 `authorizerAuthorityName`(`authrt_nm`, `AuthorityNameFinder` 경유)을 싣고, 유형 폼의 선택지는 `GET /v1/sub-work-types/authorizer-authorities`가 준다 — 권한 이름은 화면에서 바뀌는 데이터라 웹이 코드 → 이름 사전을 하드코딩하면(옛 `AUTZR_ROLE_NM`) 개명 즉시 어긋난다.
     - 직위 코드 시절 `PATCH /v1/roles/{roleId}`에 있던 **'빈 문자열 = 해제' 특례는 필드와 함께 사라졌다.** 역할 CRUD에는 자격 관련 필드가 없다 — 자격 부여·회수는 `PUT /v1/roles/{roleId}/authorities` 하나로 수렴한다.
 
+- **담당자 후보 목록의 역할 칸은 `displayRoleName`이다** (ssccops#628 · #709 · `AssignableMemberResponse`). 운영진 역할(리더 역할이 아닌 역할)을 먼저 싣는다 — ① 대표 역할이 운영진 역할이면 그것 ② 운영진 역할 중 표시 순번이 가장 앞선 것 ③ 대표 역할(리더 포함) ④ null. `representativeRoleName`은 뜻을 바꾸지 않고 남겼다(lms 팀원 추가 시트가 «대표 역할»로 읽는다). 대표 역할만 그리면 대표 표시 없는 회장이 «정회원»(등급)으로, 대표가 트랙장인 최고관리자가 «트랙장»으로 찍혀 «역할 없는 회원이 담당자 후보에 있다»는 제보가 됐다(dev 2026-11-11 실측 — 후보 7명 모두 운영진이었다). 운영진 여부는 `LeaderRole.isLeaderRoleName` 하나로 가른다. 후보를 거르는 기준(`authority`)과 등록·수정의 판정은 운영 도메인 `OperationOwnerPolicy`(`../operation/AGENTS.md` «담당자는 그 일을 처리할 권한이 있는 활동 회원이다»).
+
 ## 다른 도메인과 닿는 곳
 
 - 운영: 담당 하위 업무 건수는 `MemberSubWorkLoadProvider` 하나로 묻는다. 운영의 `ApprovalAuthorityPolicy`는 `AuthorityPolicy`의 펼침을 부른다(위 «승인·투표 자격도 권한이 준다» 항목).

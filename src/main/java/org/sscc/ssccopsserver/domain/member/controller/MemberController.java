@@ -148,15 +148,20 @@ public class MemberController {
      * 목록이고, 동아리 회원 수 규모에서 나누어 받을 이유가 없다 (#37의 응답 목록과 같은 판단).
      *
      * authority 쿼리 파라미터(#101): 업무 등록의 담당자·회의 등록의 책임자는 국장 이상
-     * (WORK_MANAGE·MEETING_MANAGE)만 고를 수 있어야 한다 — 생략하면 지금처럼 전체(하위 업무
-     * 담당자는 국원도 될 수 있다). 판정은 AuthorityPolicy.memberIdsWithAuthority 하나뿐이다.
+     * (WORK_MANAGE·MEETING_MANAGE)만 고를 수 있어야 한다. 하위 업무 담당자는 WORK_READ
+     * 보유자다(ssccops#628 · #709 — 국원 이상, 리더 역할·역할 없는 회원 제외). 판정은
+     * AuthorityPolicy.memberIdsWithAuthority 하나뿐이고, 등록·수정이 같은 기준으로 거절한다
+     * (OperationOwnerPolicy). 생략하면 탈퇴·제명만 뺀 전체다 — 학술 팀원 추가(lms)·행사 수동
+     * 등록처럼 운영진이 아닌 회원을 고르는 화면이 쓴다.
      */
     @Operation(
             summary = "담당자 후보 조회",
             description =
                     "담당자·회의 책임자로 지정할 수 있는 회원 목록. 탈퇴·제명 회원은 빠진다."
-                            + " authority를 주면 그 권한을 오늘 행사할 수 있는 회원으로 좁힌다(예:"
-                            + " WORK_MANAGE·MEETING_MANAGE). 권한 없이 부를 수 있는 목록이라"
+                            + " authority를 주면 그 권한을 오늘 행사할 수 있는 회원으로 좁힌다(업무"
+                            + " 담당자 WORK_MANAGE · 하위 업무 담당자 WORK_READ · 회의 책임자"
+                            + " MEETING_MANAGE). displayRoleName은 목록에 적을 역할명으로, 운영진"
+                            + " 역할을 리더 역할보다 먼저 싣는다. 권한 없이 부를 수 있는 목록이라"
                             + " 연락처·이메일·학번은 내리지 않는다.")
     @GetMapping("/assignable")
     public ApiResponse<List<AssignableMemberResponse>> findAssignableMembers(

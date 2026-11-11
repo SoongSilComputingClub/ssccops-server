@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.service.AuthorityNameFinder;
-import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.ApprovalQuorumResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
@@ -92,7 +91,12 @@ public class SubWorkServiceImpl implements SubWorkService {
     private final SubWorkApprovalRepository subWorkApprovalRepository;
     private final SubWorkApprovalVoteRepository subWorkApprovalVoteRepository;
     private final SubWorkRejectionRepository subWorkRejectionRepository;
-    private final MemberService memberService;
+    /*
+     * 담당자 판정 (ssccops#628 · #709). 하위 업무 담당자는 WORK_READ를 오늘 행사할 수 있는 활동
+     * 회원이다 — 아래 API가 전부 WORK_READ를 요구하므로 그 권한이 없으면 자기 건을 열지 못한다.
+     * 규칙은 업무 담당자와 함께 OperationOwnerPolicy 한 곳에 있다.
+     */
+    private final OperationOwnerPolicy ownerPolicy;
 
     // 승인자 결재 권한의 표시명(authrt_nm)을 상세 응답에 싣는다 (#123, AR-07 경유)
     private final AuthorityNameFinder authorityNameFinder;
@@ -132,14 +136,10 @@ public class SubWorkServiceImpl implements SubWorkService {
     @Transactional
     public SubWorkCreateResponse createSubWork(
             SubWorkCreateRequest request, MemberEntity registrant) {
-        // 담당자 실재 여부는 회원 도메인 Service를 경유해 확인한다 (AR-07·LY-10)
+        // 담당자는 활동 회원이면서 WORK_READ 보유자다 (ssccops#628 · OperationOwnerPolicy)
         MemberEntity owner =
-                memberService
-                        .findAssignableMember(request.ownerId())
-                        .orElseThrow(
-                                () ->
-                                        new GeneralException(
-                                                OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER));
+                ownerPolicy.requireAssignable(
+                        OperationOwnerPolicy.Kind.SUB_WORK, request.ownerId());
 
         // 화면 안내대로 하위 업무는 상위 업무 안에서만 생긴다. 삭제된 상위 업무는 없는 것으로 본다
         WorkEntity parentWork =
@@ -224,22 +224,18 @@ public class SubWorkServiceImpl implements SubWorkService {
         SubWorkEntity subWork = findSubWork(subWorkId);
         // WORK_MANAGE가 없는 회원은 자신이 담당자인 건만 수정할 수 있다 (#101)
         subWorkOwnershipPolicy.requireOwnerOrManager(subWork, viewer);
+        OperationEntity operation = subWork.getOperation();
 
-        // 담당자 실재 여부는 등록과 같은 규칙이다 (AR-07·LY-10)
+        // 담당자 규칙은 등록과 같고, 담당자가 그대로면 다시 보지 않는다 (ssccops#628 · OperationOwnerPolicy)
         MemberEntity owner =
-                memberService
-                        .findAssignableMember(request.ownerId())
-                        .orElseThrow(
-                                () ->
-                                        new GeneralException(
-                                                OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER));
+                ownerPolicy.requireAssignableOnUpdate(
+                        OperationOwnerPolicy.Kind.SUB_WORK, operation, request.ownerId());
 
         Instant beginAt = toInstant(request.startAt());
         Instant endAt = toInstant(request.endAt());
         validatePeriod(beginAt, endAt);
 
         // sub_work_ttl은 oper_ttl과 값이 같아야 하므로 둘을 나란히 바꾼다 (SubWorkEntity 주석)
-        OperationEntity operation = subWork.getOperation();
         operation.changeTitle(request.title());
         operation.changeSchedule(beginAt, endAt);
         // 등록 팩토리(createForSubWork)와 같은 기본값 — 생략하면 NORMAL이다

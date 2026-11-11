@@ -21,11 +21,13 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.ActiveProfiles;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
+import org.sscc.ssccopsserver.domain.member.entity.MemberRoleAssignmentEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberChangeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
@@ -63,6 +65,7 @@ import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 /*
  * @DataJpaTest는 @Configuration을 걸러내므로 JpaAuditingConfig를 명시적으로 들여온다.
@@ -94,6 +97,7 @@ class WorkServiceImplTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
@@ -131,7 +135,7 @@ class WorkServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         Clock.systemDefaultZone(),
                         entityManager.getEntityManager(),
                         new AuditLog());
@@ -140,6 +144,8 @@ class WorkServiceImplTest {
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
         owner = saveMember("20200002", "이서연", "owner@sscc.org");
         ownerId = owner.getId();
+        // 업무 담당자는 WORK_MANAGE 보유자다 (ssccops#628) — 등록자는 담당자가 아니므로 역할이 없다
+        assignRole(owner, MemberRoleFixture.DIRECTOR);
     }
 
     @Test
@@ -234,6 +240,33 @@ class WorkServiceImplTest {
         assertThat(workRepository.count()).isZero();
     }
 
+    /*
+     * 업무 담당자는 WORK_MANAGE를 오늘 행사할 수 있어야 한다 (ssccops#628 · #709). 역할이 없는 회원,
+     * 조회만 하는 국원(WORK_READ), 리더 역할(스터디장 — 권한을 갖지 못한다 · ADR-0067)은 모두
+     * 활동 회원이라 OWNER_NOT_ACTIVE_MEMBER가 아니라 WORK_OWNER_NOT_ELIGIBLE이다.
+     */
+    @Test
+    void createWorkWithOwnerLackingWorkManageIsRejected() {
+        MemberEntity noRole = saveMember("20200011", "한지우", "no-role@sscc.org");
+        MemberEntity staff = saveMember("20200012", "오세린", "staff@sscc.org");
+        assignRole(staff, MemberRoleFixture.STAFF);
+        MemberEntity studyLeader = saveMember("20200013", "류하람", "leader@sscc.org");
+        assignRole(studyLeader, MemberRoleFixture.STUDY_LEADER);
+
+        for (MemberEntity candidate : new MemberEntity[] {noRole, staff, studyLeader}) {
+            WorkCreateRequest request =
+                    new WorkCreateRequest(
+                            "권한 없는 담당자", WorkType.EVENT, candidate.getId(), START, END, null, null);
+
+            assertThatThrownBy(() -> workService.createWork(request, registrant))
+                    .as(candidate.getName())
+                    .isInstanceOf(GeneralException.class)
+                    .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                    .isEqualTo(OperationErrorCode.WORK_OWNER_NOT_ELIGIBLE);
+        }
+        assertThat(operationRepository.count()).isZero();
+    }
+
     @Test
     void createWorkWithInvertedPeriodIsRejected() {
         WorkCreateRequest request =
@@ -245,6 +278,15 @@ class WorkServiceImplTest {
                 .isEqualTo(OperationErrorCode.INVALID_OPERATION_PERIOD);
 
         assertThat(operationRepository.count()).isZero();
+    }
+
+    private MemberRoleAssignmentEntity assignRole(MemberEntity member, String roleName) {
+        return MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                member,
+                roleName);
     }
 
     private MemberEntity saveMember(String studentNumber, String name, String email) {
@@ -541,6 +583,7 @@ class WorkServiceImplTest {
     void updateWorkChangesAllEditableFields() {
         Long workId = createWork("수정 전 업무", "수정 전 총평");
         MemberEntity newOwner = saveMember("20200003", "박준호", "new-owner@sscc.org");
+        assignRole(newOwner, MemberRoleFixture.DIRECTOR);
         OffsetDateTime newStart = START.plusDays(1);
         OffsetDateTime newEnd = END.plusDays(1);
 
@@ -603,6 +646,63 @@ class WorkServiceImplTest {
 
         // 실패한 수정은 아무것도 바꾸지 않는다
         assertThat(detailOf(workId).title()).isEqualTo("담당자 교체 실패");
+    }
+
+    // 담당자를 바꿀 때는 등록과 같은 판정이다 (ssccops#628)
+    @Test
+    void updateWorkToOwnerLackingWorkManageIsRejected() {
+        Long workId = createWork("담당자를 국원으로", null);
+        MemberEntity staff = saveMember("20200014", "남궁솔", "staff2@sscc.org");
+        assignRole(staff, MemberRoleFixture.STAFF);
+
+        WorkUpdateRequest request =
+                new WorkUpdateRequest(
+                        "담당자를 국원으로", WorkType.EVENT, staff.getId(), START, END, null, null);
+
+        assertThatThrownBy(() -> workService.updateWork(workId, request))
+                .isInstanceOf(GeneralException.class)
+                .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                .isEqualTo(OperationErrorCode.WORK_OWNER_NOT_ELIGIBLE);
+    }
+
+    /*
+     * 담당자가 그대로면 자격을 다시 보지 않는다 (ssccops#628 · OperationOwnerPolicy). 국장 임기가
+     * 끝난 뒤에도 그가 맡았던 업무의 제목·총평은 담당자를 바꾸지 않고 고칠 수 있어야 한다.
+     */
+    @Test
+    void updateWorkKeepsOwnerWhoNoLongerHasWorkManage() {
+        MemberEntity formerDirector = saveMember("20200015", "서도윤", "former@sscc.org");
+        MemberRoleAssignmentEntity term = assignRole(formerDirector, MemberRoleFixture.DIRECTOR);
+        Long workId =
+                workService
+                        .createWork(
+                                new WorkCreateRequest(
+                                        "임기 중 맡은 업무",
+                                        WorkType.EVENT,
+                                        formerDirector.getId(),
+                                        START,
+                                        END,
+                                        null,
+                                        null),
+                                registrant)
+                        .workId();
+        memberRoleAssignmentRepository.delete(term);
+        entityManager.flush();
+
+        WorkDetailResponse updated =
+                workService.updateWork(
+                        workId,
+                        new WorkUpdateRequest(
+                                "임기 중 맡은 업무",
+                                WorkType.EVENT,
+                                formerDirector.getId(),
+                                START,
+                                END,
+                                null,
+                                "임기 뒤에 쓴 총평"));
+
+        assertThat(updated.owner().memberId()).isEqualTo(formerDirector.getId());
+        assertThat(updated.generalReview()).isEqualTo("임기 뒤에 쓴 총평");
     }
 
     @Test

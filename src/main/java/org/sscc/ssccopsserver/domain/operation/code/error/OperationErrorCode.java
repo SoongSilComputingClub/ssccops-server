@@ -24,6 +24,23 @@ public enum OperationErrorCode implements ErrorCode {
     // 400 — 담당자로 지정한 회원이 없거나 활동 회원이 아닐 때
     OWNER_NOT_ACTIVE_MEMBER(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "담당자로 지정할 수 없는 회원입니다."),
 
+    /*
+     * 400 — 활동 회원이지만 그 운영 건을 처리할 권한이 없을 때 (ssccops#628 · #709). 업무 담당자는
+     * WORK_MANAGE, 하위 업무 담당자는 WORK_READ를 오늘 행사할 수 있어야 한다 — 기준은 담당자 후보
+     * 목록(GET /v1/members/assignable?authority=)이 거르는 것과 같다.
+     *
+     * OWNER_NOT_ACTIVE_MEMBER와 나눈 것은 고칠 길이 달라서다. 저쪽은 회원 상태를, 이쪽은 역할과
+     * 역할별 권한을 손봐야 한다 — MCP 호출자는 메시지만 보고 다음 행동을 고른다. 코드 문자열은
+     * 정의서에 없는 값을 새로 만들지 않으려고 같은 VALIDATION_FAILED다(INVALID_CURSOR와 같은 판단).
+     */
+    WORK_OWNER_NOT_ELIGIBLE(
+            HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "업무 담당자는 업무 관리 권한이 있는 회원만 지정할 수 있습니다."),
+
+    SUB_WORK_OWNER_NOT_ELIGIBLE(
+            HttpStatus.BAD_REQUEST,
+            "VALIDATION_FAILED",
+            "하위 업무 담당자는 업무·하위 업무 조회 권한이 있는 회원만 지정할 수 있습니다."),
+
     // 400 — 종료 일시가 시작 일시보다 빠를 때. DTO 검증을 통과해도 서비스에서 한 번 더 막는다
     INVALID_OPERATION_PERIOD(
             HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "종료 일시는 시작 일시보다 빠를 수 없습니다."),

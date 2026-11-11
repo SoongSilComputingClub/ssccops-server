@@ -82,6 +82,13 @@ class ShareLinkControllerTest {
     void setUp() {
         MemberEntity owner = saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org");
         ownerId = owner.getId();
+        // 업무 담당자는 WORK_MANAGE 보유자다 (ssccops#628 · OperationOwnerPolicy) — 시드된 국장이 준다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                owner,
+                MemberRoleFixture.DIRECTOR);
         MemberEntity registrant = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org");
         MemberRoleFixture.assign(
                 memberRoleRepository,

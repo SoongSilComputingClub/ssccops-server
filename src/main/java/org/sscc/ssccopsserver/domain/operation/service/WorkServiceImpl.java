@@ -16,7 +16,6 @@ import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
-import org.sscc.ssccopsserver.domain.member.service.MemberService;
 import org.sscc.ssccopsserver.domain.operation.code.error.OperationErrorCode;
 import org.sscc.ssccopsserver.domain.operation.dto.OperationTagSummaryResponse;
 import org.sscc.ssccopsserver.domain.operation.dto.WorkCreateRequest;
@@ -61,7 +60,11 @@ public class WorkServiceImpl implements WorkService {
     private final WorkRepository workRepository;
     private final SubWorkRepository subWorkRepository;
     private final SubWorkChecklistItemRepository subWorkChecklistItemRepository;
-    private final MemberService memberService;
+    /*
+     * 담당자 판정 (ssccops#628 · #709). 업무 담당자는 WORK_MANAGE를 오늘 행사할 수 있는 활동 회원이고,
+     * 그 규칙은 하위 업무 담당자와 함께 OperationOwnerPolicy 한 곳에 있다.
+     */
+    private final OperationOwnerPolicy ownerPolicy;
 
     // 삭제 일시 등 '지금'이 필요한 자리. 테스트에서 고정할 수 있도록 주입받는다 (#125)
     private final Clock clock;
@@ -83,14 +86,9 @@ public class WorkServiceImpl implements WorkService {
     @Override
     @Transactional
     public WorkCreateResponse createWork(WorkCreateRequest request, MemberEntity registrant) {
-        // 담당자 실재 여부는 회원 도메인 Service를 경유해 확인한다 (AR-07·LY-10)
+        // 담당자는 활동 회원이면서 WORK_MANAGE 보유자다 (ssccops#628 · OperationOwnerPolicy)
         MemberEntity owner =
-                memberService
-                        .findAssignableMember(request.ownerId())
-                        .orElseThrow(
-                                () ->
-                                        new GeneralException(
-                                                OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER));
+                ownerPolicy.requireAssignable(OperationOwnerPolicy.Kind.WORK, request.ownerId());
 
         Instant beginAt = toInstant(request.startAt());
         Instant endAt = toInstant(request.endAt());
@@ -135,21 +133,17 @@ public class WorkServiceImpl implements WorkService {
     @Transactional
     public WorkDetailResponse updateWork(Long workId, WorkUpdateRequest request) {
         WorkEntity work = findWork(workId);
+        OperationEntity operation = work.getOperation();
 
-        // 담당자 실재 여부는 등록과 같은 규칙이다 (AR-07·LY-10)
+        // 담당자 규칙은 등록과 같고, 담당자가 그대로면 다시 보지 않는다 (ssccops#628 · OperationOwnerPolicy)
         MemberEntity owner =
-                memberService
-                        .findAssignableMember(request.ownerId())
-                        .orElseThrow(
-                                () ->
-                                        new GeneralException(
-                                                OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER));
+                ownerPolicy.requireAssignableOnUpdate(
+                        OperationOwnerPolicy.Kind.WORK, operation, request.ownerId());
 
         Instant beginAt = toInstant(request.startAt());
         Instant endAt = toInstant(request.endAt());
         validatePeriod(beginAt, endAt);
 
-        OperationEntity operation = work.getOperation();
         operation.changeTitle(request.title());
         operation.changeSchedule(beginAt, endAt);
         // 등록 팩토리(createForWork)와 같은 기본값 — 생략하면 NORMAL이다

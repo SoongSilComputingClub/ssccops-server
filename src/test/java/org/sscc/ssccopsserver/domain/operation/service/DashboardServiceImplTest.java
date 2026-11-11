@@ -145,7 +145,7 @@ class DashboardServiceImplTest {
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
                         approvalAuthorityPolicy,
                         new SubWorkOwnershipPolicy(authorityPolicy),
@@ -191,6 +191,13 @@ class DashboardServiceImplTest {
                 viewer,
                 MemberRoleFixture.DIRECTOR);
         otherOwner = saveMember("20200003", "박현우");
+        // 하위 업무 담당자는 WORK_READ 보유자다 (ssccops#628) — 남의 담당 건을 만드는 데 국원을 쓴다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                otherOwner,
+                MemberRoleFixture.STAFF);
 
         approvalFreeTypeId =
                 SubWorkTypeFixture.idOf(subWorkTypeRepository, SubWorkTypeFixture.APPROVAL_FREE);
@@ -203,7 +210,7 @@ class DashboardServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager(),
                         new AuditLog());

@@ -160,7 +160,9 @@ public interface MemberService {
      * 업무·회의 등록의 담당자는 국장 이상(WORK_MANAGE·MEETING_MANAGE)만 고를 수 있어야
      * 하는데, 그 판정은 AuthorityPolicy.memberIdsWithAuthority 한 곳에서만 한다(BR-M28과
      * 같은 이유 — 화면이 이 판정을 다시 구현하면 후보 목록과 실제 등록 가능 여부가 갈린다).
-     * null이면 지금처럼 탈퇴·제명만 뺀 전체다(하위 업무 담당자는 국원도 될 수 있어야 한다).
+     * 하위 업무 담당자는 WORK_READ다(ssccops#628). 등록·수정 쪽 판정은 운영 도메인의
+     * OperationOwnerPolicy가 같은 두 규칙(findAssignableMember · AuthorityPolicy)으로 한다.
+     * null이면 탈퇴·제명만 뺀 전체다(학술 팀원 추가·행사 수동 등록 — 운영진이 아닌 회원을 고른다).
      */
     List<AssignableMemberResponse> findAssignableMembers(AuthorityCode requiredAuthority);
 

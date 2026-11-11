@@ -112,6 +112,9 @@ class SubWorkNotificationListenerTest {
         ownerId = owner.getId();
         assign(treasurer, MemberRoleFixture.TREASURER);
         assign(superAdmin, "최고관리자");
+        // 업무 담당자는 WORK_MANAGE 보유자다 (ssccops#628). 국장 결재는 총무 결재의 형제라 예산지출의
+        // 승인 요청 수신자는 그대로 총무·최고관리자다
+        assign(owner, MemberRoleFixture.DIRECTOR);
         parentWorkId =
                 workService
                         .createWork(

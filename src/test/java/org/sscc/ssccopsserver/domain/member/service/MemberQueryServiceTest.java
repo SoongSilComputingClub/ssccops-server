@@ -536,6 +536,53 @@ class MemberQueryServiceTest {
                         org.assertj.core.api.Assertions.tuple("이서연", null));
     }
 
+    /*
+     * 담당자 목록 한 줄의 역할명(displayRoleName)은 운영진 역할을 먼저 싣는다 (ssccops#628 · #709).
+     * ① 대표 역할이 운영진 역할이면 그것 ② 운영진 역할 중 표시 순번이 가장 앞선 것 ③ 대표 역할(리더
+     * 포함) ④ null. 대표 역할만 보면 «대표 표시 없는 회장»이 등급으로, «대표가 트랙장인 최고관리자»가
+     * 트랙장으로 찍혀 운영진이 아닌 것처럼 보였다(dev 2026-11-11). representativeRoleName은 그대로다.
+     *
+     * 여기서 만든 역할은 표시 순번이 모두 99라, 같은 순번 안에서는 먼저 만든 역할(식별자 순)이 앞선다.
+     */
+    @Test
+    void assignableDisplayRoleNamePrefersStaffRoles() {
+        MemberEntity leaderRepresentative = saveMember("20200001", "가람", 31);
+        assignRole(leaderRepresentative, "최고관리자", false);
+        assignRole(leaderRepresentative, "트랙장", true);
+
+        MemberEntity staffWithoutRepresentative = saveMember("20200002", "나래", 32);
+        assignRole(staffWithoutRepresentative, "회장", false);
+
+        MemberEntity staffRepresentative = saveMember("20200003", "다솜", 33);
+        assignRole(staffRepresentative, "국원", false);
+        assignRole(staffRepresentative, "홍보국장", true);
+
+        MemberEntity leaderOnly = saveMember("20200004", "라온", 34);
+        assignRole(leaderOnly, "스터디장", true);
+
+        MemberEntity leaderOnlyWithoutRepresentative = saveMember("20200005", "마루", 35);
+        assignRole(leaderOnlyWithoutRepresentative, "프로젝트장", false);
+
+        saveMember("20200006", "바다", 36);
+
+        assertThat(memberService.findAssignableMembers(null))
+                .extracting(
+                        AssignableMemberResponse::name,
+                        AssignableMemberResponse::representativeRoleName,
+                        AssignableMemberResponse::displayRoleName)
+                .containsExactly(
+                        // 대표가 리더 역할이면 운영진 역할을 싣는다
+                        org.assertj.core.api.Assertions.tuple("가람", "트랙장", "최고관리자"),
+                        // 대표 표시가 없어도 운영진 역할을 싣는다 — 화면이 등급으로 물러서지 않는다
+                        org.assertj.core.api.Assertions.tuple("나래", null, "회장"),
+                        // 운영진 역할이 둘이면 대표 표시가 이긴다
+                        org.assertj.core.api.Assertions.tuple("다솜", "홍보국장", "홍보국장"),
+                        // 운영진 역할이 없으면 대표 역할(리더) 그대로
+                        org.assertj.core.api.Assertions.tuple("라온", "스터디장", "스터디장"),
+                        org.assertj.core.api.Assertions.tuple("마루", null, null),
+                        org.assertj.core.api.Assertions.tuple("바다", null, null));
+    }
+
     /* ── 계정 연결 여부 ──────────────────────────────────── */
 
     /*

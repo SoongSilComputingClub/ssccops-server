@@ -153,7 +153,7 @@ class ApprovalServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager(),
                         new AuditLog());
@@ -169,7 +169,7 @@ class ApprovalServiceImplTest {
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
                         new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
@@ -192,7 +192,16 @@ class ApprovalServiceImplTest {
                         new DeadlinePolicy(FIXED_CLOCK),
                         FIXED_CLOCK);
 
-        registrant = saveMember("20200001", "김도현", null);
+        // 등록자가 곧 상위 업무·하위 업무의 담당자다 — 담당자는 그 일을 처리할 권한이 있어야 하므로
+        // (ssccops#628) WORK_MANAGE만 준다. 승인·투표 자격은 없어 승인함 판정은 그대로다
+        registrant = saveMember("20200001", "김도현", MemberRoleFixture.WORK_OWNER);
+        MemberRoleFixture.grantAuthorities(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                authorityRepository,
+                roleAuthorityRelationRepository,
+                MemberRoleFixture.WORK_OWNER,
+                AuthorityCode.WORK_MANAGE);
         president = saveMember("20200002", "백승우", MemberRoleFixture.PRESIDENT);
         staff = saveMember("20200003", "박지훈", MemberRoleFixture.PLANNING_STAFF);
         // 기획국원은 시드에 없는 역할이라 투표 자격(APPROVAL_VOTE)을 직접 부여한다 (#123)

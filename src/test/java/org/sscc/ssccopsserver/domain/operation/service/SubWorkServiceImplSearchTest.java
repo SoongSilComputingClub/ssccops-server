@@ -176,7 +176,7 @@ class SubWorkServiceImplSearchTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager(),
                         new AuditLog());
@@ -192,7 +192,7 @@ class SubWorkServiceImplSearchTest {
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
                         new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
@@ -215,6 +215,14 @@ class SubWorkServiceImplSearchTest {
                 MemberRoleFixture.TREASURER);
         owner = saveMember("20200002", "이서연", "owner@sscc.org");
         ownerId = owner.getId();
+        // 업무·하위 업무 담당자는 그 일을 처리할 권한이 있어야 한다 (ssccops#628 · OperationOwnerPolicy).
+        // 시드된 국장이 WORK_MANAGE를 준다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                owner,
+                MemberRoleFixture.DIRECTOR);
 
         noChecklistTypeId =
                 subWorkTypeRepository

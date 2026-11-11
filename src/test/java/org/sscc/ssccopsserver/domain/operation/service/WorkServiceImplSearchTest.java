@@ -28,6 +28,7 @@ import org.sscc.ssccopsserver.domain.member.repository.MemberGradeHistoryReposit
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusHistoryRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
@@ -73,6 +74,7 @@ import org.sscc.ssccopsserver.global.audit.AuditLog;
 import org.sscc.ssccopsserver.global.config.ClockConfig;
 import org.sscc.ssccopsserver.global.config.JpaAuditingConfig;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 
 /*
  * 상위 업무 목록 조회(OPS-020)만 다룬다. WorkServiceImplTest와 클래스를 나눈 것은 목록이
@@ -111,6 +113,7 @@ class WorkServiceImplSearchTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
     @Autowired private MemberGradeHistoryRepository memberGradeHistoryRepository;
@@ -150,7 +153,7 @@ class WorkServiceImplSearchTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager(),
                         new AuditLog());
@@ -166,7 +169,7 @@ class WorkServiceImplSearchTest {
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
                         new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
@@ -182,6 +185,20 @@ class WorkServiceImplSearchTest {
         registrant = saveMember("20200001", "김도현", "registrant@sscc.org");
         owner = saveMember("20200002", "박지훈", "owner@sscc.org");
         ownerId = owner.getId();
+        // 업무·하위 업무 담당자는 그 일을 처리할 권한이 있어야 한다 (ssccops#628 · OperationOwnerPolicy).
+        // 등록자도 «남이 담당» 업무의 담당자로 쓰인다. 시드된 국장이 WORK_MANAGE를 준다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                registrant,
+                MemberRoleFixture.DIRECTOR);
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                owner,
+                MemberRoleFixture.DIRECTOR);
     }
 
     // 카드 한 장이 그리는 값이 모두 실린다 — 상태·유형 배지, 제목, 담당자, 기간

@@ -18,6 +18,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.code.AuthorityCode;
+import org.sscc.ssccopsserver.domain.member.code.LeaderRole;
 import org.sscc.ssccopsserver.domain.member.code.MemberGradeCode;
 import org.sscc.ssccopsserver.domain.member.code.MemberStatusCode;
 import org.sscc.ssccopsserver.domain.member.code.error.MemberErrorCode;
@@ -655,13 +656,37 @@ public class MemberServiceImpl implements MemberService {
 
         return candidates.stream()
                 .map(
-                        member ->
-                                AssignableMemberResponse.of(
-                                        member,
-                                        representativeRoleNameOf(
-                                                rolesByMemberId.getOrDefault(
-                                                        member.getId(), List.of()))))
+                        member -> {
+                            List<MemberRoleResponse> roles =
+                                    rolesByMemberId.getOrDefault(member.getId(), List.of());
+                            return AssignableMemberResponse.of(
+                                    member,
+                                    representativeRoleNameOf(roles),
+                                    displayRoleNameOf(roles));
+                        })
                 .toList();
+    }
+
+    /*
+     * 담당자 목록 한 줄에 적을 역할명 (ssccops#628 · #709) — 운영진 역할을 먼저 싣는다.
+     * 고르는 순서와 그 이유는 AssignableMemberResponse 주석.
+     *
+     * roles는 currentRolesOf가 표시 순번(role.displayOrder) → 역할 식별자 순으로 받아 온 그대로다
+     * (findValidByMemberIds의 order by). 그래서 «운영진 역할 중 첫 것»이 곧 표시 순번이 가장 앞선
+     * 것이고, 여기서 다시 정렬하지 않는다. 운영진인지는 역할 이름이 리더 역할(LeaderRole)인지로만
+     * 가른다 — 리더 역할의 이름이 정해진 곳이 거기 한 곳이다(ADR-0067).
+     */
+    private static String displayRoleNameOf(List<MemberRoleResponse> roles) {
+        List<MemberRoleResponse> staffRoles =
+                roles.stream()
+                        .filter(role -> !LeaderRole.isLeaderRoleName(role.roleName()))
+                        .toList();
+        return staffRoles.stream()
+                .filter(MemberRoleResponse::representative)
+                .findFirst()
+                .or(() -> staffRoles.stream().findFirst())
+                .map(MemberRoleResponse::roleName)
+                .orElseGet(() -> representativeRoleNameOf(roles));
     }
 
     @Override

@@ -189,7 +189,7 @@ class SubWorkServiceImplTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager(),
                         new AuditLog());
@@ -205,7 +205,7 @@ class SubWorkServiceImplTest {
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
                         new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
@@ -233,6 +233,14 @@ class SubWorkServiceImplTest {
                 MemberRoleFixture.TREASURER);
         MemberEntity owner = saveMember("20200002", "이서연", "owner@sscc.org");
         ownerId = owner.getId();
+        // 업무·하위 업무 담당자는 그 일을 처리할 권한이 있어야 한다 (ssccops#628 · OperationOwnerPolicy).
+        // 시드된 국장이 WORK_MANAGE를 준다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                owner,
+                MemberRoleFixture.DIRECTOR);
         parentWorkId =
                 workService
                         .createWork(
@@ -466,6 +474,77 @@ class SubWorkServiceImplTest {
                 .isEqualTo(OperationErrorCode.OWNER_NOT_ACTIVE_MEMBER);
 
         assertThat(subWorkRepository.count()).isZero();
+    }
+
+    /*
+     * 하위 업무 담당자는 WORK_READ를 오늘 행사할 수 있어야 한다 (ssccops#628 · #709) — 아래 API가 전부
+     * 그 권한을 요구하므로 없으면 자기 건을 열지 못한다. 역할이 없는 회원과 리더 역할(스터디장 — 권한을
+     * 갖지 못한다 · ADR-0067)만 가진 회원은 활동 회원이라 SUB_WORK_OWNER_NOT_ELIGIBLE이다.
+     */
+    @Test
+    void createSubWorkWithOwnerLackingWorkReadIsRejected() {
+        MemberEntity noRole = saveMember("20200021", "한지우", "no-role@sscc.org");
+        MemberEntity studyLeader = saveMember("20200022", "류하람", "leader@sscc.org");
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                studyLeader,
+                MemberRoleFixture.STUDY_LEADER);
+
+        for (MemberEntity candidate : new MemberEntity[] {noRole, studyLeader}) {
+            SubWorkCreateRequest request =
+                    new SubWorkCreateRequest(
+                            parentWorkId,
+                            "권한 없는 담당자",
+                            approvalFreeTypeId,
+                            candidate.getId(),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null);
+
+            assertThatThrownBy(() -> subWorkService.createSubWork(request, registrant))
+                    .as(candidate.getName())
+                    .isInstanceOf(GeneralException.class)
+                    .extracting(ex -> ((GeneralException) ex).getErrorCode())
+                    .isEqualTo(OperationErrorCode.SUB_WORK_OWNER_NOT_ELIGIBLE);
+        }
+        assertThat(subWorkRepository.count()).isZero();
+    }
+
+    // 국원은 업무 담당자는 못 되지만(WORK_MANAGE 없음) 하위 업무 담당자는 된다 (#101 · ssccops#628)
+    @Test
+    void createSubWorkAcceptsStaffOwner() {
+        MemberEntity staff = saveMember("20200023", "오세린", "staff@sscc.org");
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                staff,
+                MemberRoleFixture.STAFF);
+
+        Long subWorkId =
+                subWorkService
+                        .createSubWork(
+                                new SubWorkCreateRequest(
+                                        parentWorkId,
+                                        "국원이 맡은 하위 업무",
+                                        approvalFreeTypeId,
+                                        staff.getId(),
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        null),
+                                registrant)
+                        .subWorkId();
+
+        assertThat(subWorkService.getSubWork(subWorkId, registrant).owner().memberId())
+                .isEqualTo(staff.getId());
     }
 
     @Test
@@ -1137,6 +1216,13 @@ class SubWorkServiceImplTest {
     void updateSubWorkChangesAllEditableFields() {
         Long subWorkId = createSubWork(approvalFreeTypeId);
         MemberEntity newOwner = saveMember("20200003", "박준호", "new-owner@sscc.org");
+        // 하위 업무 담당자는 WORK_READ 보유자면 된다 (ssccops#628) — 국원으로 바꾼다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                newOwner,
+                MemberRoleFixture.STAFF);
         OffsetDateTime newStart = START.plusDays(1);
         OffsetDateTime newEnd = END.plusDays(1);
         OffsetDateTime newDueAt = newEnd;

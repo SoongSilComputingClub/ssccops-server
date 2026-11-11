@@ -124,7 +124,8 @@ class SubWorkApprovalVoteServiceTest {
 
     private SubWorkService subWorkService;
 
-    private MemberEntity registrant; // 등록자. 역할이 없어 승인도 투표도 할 수 없다
+    // 등록자·담당자. WORK_MANAGE만 있어 담당자는 될 수 있지만(ssccops#628) 승인도 투표도 할 수 없다
+    private MemberEntity registrant;
     private MemberEntity president; // 회장 — 정족수 유형(대외공지)의 승인자
     private MemberEntity vicePresident; // 부회장 — 회장이 아니므로 승인자가 아니다
     private MemberEntity treasurer; // 총무 — 단독 유형(예산지출)의 승인자
@@ -160,7 +161,7 @@ class SubWorkApprovalVoteServiceTest {
                         workRepository,
                         subWorkRepository,
                         subWorkChecklistItemRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         FIXED_CLOCK,
                         entityManager.getEntityManager(),
                         new AuditLog());
@@ -176,7 +177,7 @@ class SubWorkApprovalVoteServiceTest {
                         subWorkApprovalRepository,
                         subWorkApprovalVoteRepository,
                         subWorkRejectionRepository,
-                        memberService,
+                        new OperationOwnerPolicy(memberService, authorityPolicy),
                         new AuthorityNameFinder(authorityRepository),
                         new ApprovalAuthorityPolicy(authorityPolicy),
                         new SubWorkOwnershipPolicy(authorityPolicy),
@@ -188,7 +189,8 @@ class SubWorkApprovalVoteServiceTest {
                             // 전이 이벤트(알림 도메인이 듣는다)는 이 테스트의 관심이 아니다
                         });
 
-        registrant = saveMember("20200001", "김도현", null);
+        registrant = saveMember("20200001", "김도현", MemberRoleFixture.WORK_OWNER);
+        grantAuthorities(MemberRoleFixture.WORK_OWNER, AuthorityCode.WORK_MANAGE);
         president = saveMember("20200002", "백승우", MemberRoleFixture.PRESIDENT);
         vicePresident = saveMember("20200003", "원영진", "부회장");
         treasurer = saveMember("20200004", "이서연", MemberRoleFixture.TREASURER);

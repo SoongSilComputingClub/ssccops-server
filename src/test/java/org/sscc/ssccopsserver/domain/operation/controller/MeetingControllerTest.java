@@ -89,7 +89,17 @@ class MeetingControllerTest {
 
     @BeforeEach
     void setUp() {
-        otherMemberId = saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org").getId();
+        MemberEntity otherMember =
+                saveMember(UUID.randomUUID(), "20200001", "김도현", "owner@sscc.org");
+        otherMemberId = otherMember.getId();
+        // 안건을 업무로 만드는 시험이 이 회원을 담당자로 쓴다
+        // 업무 담당자는 WORK_MANAGE 보유자다 (ssccops#628 · OperationOwnerPolicy) — 시드된 국장이 준다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                otherMember,
+                MemberRoleFixture.DIRECTOR);
         // 토큰의 sub(AUTH_USER_ID)와 연결된 회원. 회의 책임자로도 쓰여 전이 권한 테스트가 이 회원을 의장으로 삼는다
         registrant = saveMember(AUTH_USER_ID, "20200002", "이서연", "actor@sscc.org");
         registrantId = registrant.getId();

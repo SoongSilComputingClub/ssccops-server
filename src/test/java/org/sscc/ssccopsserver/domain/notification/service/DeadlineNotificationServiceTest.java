@@ -18,6 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.sscc.ssccopsserver.domain.member.entity.MemberEntity;
 import org.sscc.ssccopsserver.domain.member.repository.MemberGradeRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleAssignmentRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleClassificationRepository;
+import org.sscc.ssccopsserver.domain.member.repository.MemberRoleRepository;
 import org.sscc.ssccopsserver.domain.member.repository.MemberStatusRepository;
 import org.sscc.ssccopsserver.domain.notification.code.NotificationApp;
 import org.sscc.ssccopsserver.domain.notification.code.NotificationTargetType;
@@ -31,6 +34,7 @@ import org.sscc.ssccopsserver.domain.operation.repository.SubWorkTypeRepository;
 import org.sscc.ssccopsserver.domain.operation.service.SubWorkService;
 import org.sscc.ssccopsserver.domain.operation.service.WorkService;
 import org.sscc.ssccopsserver.support.MemberFixture;
+import org.sscc.ssccopsserver.support.MemberRoleFixture;
 import org.sscc.ssccopsserver.support.SubWorkTypeFixture;
 
 /*
@@ -54,6 +58,9 @@ class DeadlineNotificationServiceTest {
     @Autowired private MemberRepository memberRepository;
     @Autowired private MemberGradeRepository memberGradeRepository;
     @Autowired private MemberStatusRepository memberStatusRepository;
+    @Autowired private MemberRoleRepository memberRoleRepository;
+    @Autowired private MemberRoleClassificationRepository memberRoleClassificationRepository;
+    @Autowired private MemberRoleAssignmentRepository memberRoleAssignmentRepository;
     @Autowired private WorkService workService;
     @Autowired private SubWorkService subWorkService;
     @Autowired private SubWorkTypeRepository subWorkTypeRepository;
@@ -84,6 +91,13 @@ class DeadlineNotificationServiceTest {
                         "20200002",
                         "이서연",
                         "actor@sscc.org");
+        // 업무 담당자는 WORK_MANAGE 보유자다 (ssccops#628 · OperationOwnerPolicy) — 시드된 국장이 준다
+        MemberRoleFixture.assign(
+                memberRoleRepository,
+                memberRoleClassificationRepository,
+                memberRoleAssignmentRepository,
+                owner,
+                MemberRoleFixture.DIRECTOR);
         workId =
                 workService
                         .createWork(
